@@ -65,6 +65,11 @@ export interface StepResult {
   activityState?: RunnerStatusStep["activityState"];
   /** Per-child terminal state and evidence-only facts. */
   terminalResult?: import("../../shared/types.ts").SubagentTerminalResult;
+  /**
+   * Resolved per-child dispatch cwd carried through to the result artifact
+   * for result-only revival (#766).
+   */
+  cwd?: string;
 }
 
 export function isPausedStepStatus(status: RunnerStatusStep["status"]): boolean {

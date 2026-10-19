@@ -682,7 +682,7 @@ function showTextPopover(trigger, options) {
       <div class="text-[10px] text-review-subtle">↵ to save · Esc to close</div>
       <div class="flex gap-2">
         <button id="review-popover-cancel" class="cursor-pointer rounded-md border border-review-border bg-review-panel px-3 py-1 text-[12px] font-medium text-review-text hover:bg-review-panel-hover">Cancel</button>
-        <button id="review-popover-save" class="cursor-pointer rounded-md border border-[rgba(240,246,252,0.1)] bg-review-success-emphasis px-3 py-1 text-[12px] font-medium text-white hover:bg-review-success">${escapeHtml(options.saveLabel ?? "Save")}</button>
+        <button id="review-popover-save" class="cursor-pointer rounded-md border border-white/10 bg-review-success-emphasis px-3 py-1 text-[12px] font-medium text-white hover:bg-review-success">${escapeHtml(options.saveLabel ?? "Save")}</button>
       </div>
     </div>
   `;

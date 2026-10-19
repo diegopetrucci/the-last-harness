@@ -37,8 +37,10 @@ import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.ts";
 import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
 
-// These limits are display/message trust boundaries for text originating in a
-// child result. They are deliberately independent of the awaited-result limit.
+// Child-controlled text that enters the parent transcript, message envelope,
+// or TUI is a trust boundary, not a token-tuning knob.
+// MAX_SUMMARY_CHARS (8_000) is a per-child budget, not a shared pool.
+// MAX_COMPLETION_MESSAGE_CHARS is 32_000. MAX_DISPLAY_SUMMARY_CHARS is 1_200.
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
@@ -622,8 +624,10 @@ export default function registerSubagentNotify(
   globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
 }
 
-// Branch does not have completion batching; these type/guard stubs preserve
-// the index.ts import surface without requiring callers to change.
+// The branch does not have completion batching. SubagentCompletionBatchDetails
+// is kept as a type alias so the index.ts import surface does not need to change;
+// the isSubagentCompletionBatchDetails guard stub (always-false) has been removed
+// because nothing imports it and it only existed for main's batching design.
 export type SubagentCompletionBatchDetails = SubagentNotifyDetails;
 export function isSubagentNotifyDetails(value: unknown): value is SubagentNotifyDetails {
   return (
@@ -633,9 +637,4 @@ export function isSubagentNotifyDetails(value: unknown): value is SubagentNotify
     "status" in value &&
     "resultPreview" in value
   );
-}
-export function isSubagentCompletionBatchDetails(
-  _value: unknown,
-): _value is SubagentCompletionBatchDetails {
-  return false;
 }

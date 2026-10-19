@@ -146,7 +146,7 @@ function parseStatusPorcelainZ(output) {
         const code = token.slice(0, 2);
         const path = token.slice(3);
         const isRenameOrCopy = code.includes("R") || code.includes("C");
-        const isReviewablePath = code !== "!!" && path.length > 0 && isIncludedReviewPath(path);
+        const isReviewablePath = code !== "!!" && path.length > 0;
         if (code !== "!!") {
             info.hasChanges = true;
         }
@@ -344,11 +344,6 @@ function classifyFilePath(path) {
         return { kind: "binary", mimeType: null };
     return { kind: "text", mimeType: null };
 }
-function isIncludedReviewPath(path) {
-    const lowerPath = path.toLowerCase();
-    const fileName = lowerPath.split("/").pop() ?? lowerPath;
-    return fileName.length > 0;
-}
 function bufferToDataUrl(buffer, mimeType) {
     return `data:${mimeType};base64,${buffer.toString("base64")}`;
 }
@@ -464,7 +459,7 @@ async function listReviewableRepositoryPaths(pi, repoRoot) {
     const seen = new Set();
     const paths = [];
     for (const path of output.split("\0")) {
-        if (path.length === 0 || seen.has(path) || !isIncludedReviewPath(path))
+        if (path.length === 0 || seen.has(path))
             continue;
         seen.add(path);
         paths.push(path);
@@ -528,7 +523,7 @@ export async function getReviewWindowData(pi, cwd) {
     const branchChanges = repositoryHasHead
         ? await getBranchReviewChanges(pi, repoRoot, branchComparisonBase, workingTreeStatus)
         : await getWorkingTreeReviewChanges(pi, repoRoot, false);
-    const reviewableBranchChanges = branchChanges.filter((change) => isIncludedReviewPath(change.newPath ?? change.oldPath ?? ""));
+    const reviewableBranchChanges = branchChanges.filter((change) => (change.newPath ?? change.oldPath ?? "").length > 0);
     const { allFiles: files, branchFiles } = await getAllReviewFiles(pi, repoRoot, reviewableBranchChanges);
     const commits = reviewBase
         ? await listRangeCommits(pi, repoRoot, `${reviewBase.mergeBase}..HEAD`, 100)
@@ -580,7 +575,7 @@ async function listRangeCommits(pi, repoRoot, range, limit) {
 export async function getCommitFiles(pi, repoRoot, sha) {
     if (isWorkingTreeCommitSha(sha)) {
         const repositoryHasHead = await hasHead(pi, repoRoot);
-        const changes = (await getWorkingTreeReviewChanges(pi, repoRoot, repositoryHasHead)).filter((change) => isIncludedReviewPath(change.newPath ?? change.oldPath ?? ""));
+        const changes = (await getWorkingTreeReviewChanges(pi, repoRoot, repositoryHasHead)).filter((change) => (change.newPath ?? change.oldPath ?? "").length > 0);
         return changes
             .map((change) => {
             const comparison = toComparison(change);
@@ -602,7 +597,7 @@ export async function getCommitFiles(pi, repoRoot, sha) {
         "-r",
         sha,
     ]);
-    const changes = parseNameStatus(output).filter((change) => isIncludedReviewPath(change.newPath ?? change.oldPath ?? ""));
+    const changes = parseNameStatus(output).filter((change) => (change.newPath ?? change.oldPath ?? "").length > 0);
     return changes
         .map((change) => {
         const comparison = toComparison(change);

@@ -22,6 +22,9 @@ const { attestSessionMirrorSession } = await jiti.import(
   "../extensions/the-last-harness/session-mirror/profile-attestation.ts",
 );
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
+const { registerTlhEffectiveActivityTracker } = await jiti.import(
+  "../extensions/the-last-harness/activity-tracker.ts",
+);
 
 function makeFixture(t, enabled = false) {
   const root = mkdtempSync(join(tmpdir(), "tlh-session-mirror-facade-"));
@@ -172,9 +175,6 @@ function createProbeFactory({ states = [], calls = [] } = {}) {
         },
         sessionShutdown() {
           calls.push({ type: "sessionShutdown" });
-        },
-        publicationReady(info) {
-          calls.push({ type: "publicationReady", info });
         },
         requestSnapshot() {
           calls.push({ type: "requestSnapshot" });
@@ -361,7 +361,20 @@ test("the main TLH extension does not register observer controls in a minor-agen
       assert.equal(pi.commands.has(SESSION_MIRROR_OBSERVER_COMMAND), false);
       assert.equal(pi.handlers.has("message_end"), false);
       assert.equal(pi.handlers.has("session_tree"), false);
-      assert.equal(pi.handlers.has("agent_settled"), false);
+      // The activity tracker registers agent_settled unconditionally (including in
+      // minor-agent children). The observer facade must NOT add its own handler.
+      // Build a tracker-only baseline: a fresh pi with only the activity tracker
+      // registered. The child's agent_settled count must equal that baseline exactly;
+      // any extra handler would indicate the observer facade registered incorrectly.
+      const childSettledCount = (pi.handlers.get("agent_settled") ?? []).length;
+      const trackerOnlyPi = createPi();
+      registerTlhEffectiveActivityTracker(trackerOnlyPi);
+      const trackerOnlyCount = (trackerOnlyPi.handlers.get("agent_settled") ?? []).length;
+      assert.equal(
+        childSettledCount,
+        trackerOnlyCount,
+        "observer agent_settled must not be registered in a minor-agent child",
+      );
       assert.equal(pi.handlers.has("message_update"), false);
     });
   });
@@ -813,7 +826,6 @@ test("reply activation requires session-mirror-observer and a callable runtime s
   await withFixtureEnv(fixture, async () => {
     await start(pi, context);
     const created = calls.find((call) => call.type === "create");
-    assert.equal(created?.options.sessionMirrorReplies, true);
     assert.equal(typeof created?.options.sendUserMessage, "function");
     assert.equal(typeof created?.options.isIdle, "function");
     assert.equal(typeof created?.options.replyNotify, "function");

@@ -17,7 +17,6 @@ import {
   readDefaultExtensionProvenance,
   readDefaultExtensions,
   RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
-  repairTargetedDefaultExtensionLoadOrder,
   setDefaultExtensionProvenance,
   withLegacyRetiredDefaultPackageIdentities,
 } from "./lib/default-extensions.mjs";
@@ -723,23 +722,6 @@ function applyRetiredTlhDefaultPackageCleanup(
   }
 }
 
-function applyDefaultExtensionLoadOrder(
-  settings: JsonObject,
-  defaultExtensions: readonly DefaultExtensionEntry[],
-  disabledIds: Set<string>,
-  changes: string[],
-): void {
-  const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(
-    settings,
-    defaultExtensions,
-    disabledIds,
-  );
-  if (!loadOrderRepair) return;
-  changes.push(
-    `reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`,
-  );
-}
-
 function purgeForceRemovedRetiredDefaultExtensionPackages(
   settings: JsonObject,
   changes: string[],
@@ -752,55 +734,6 @@ function purgeForceRemovedRetiredDefaultExtensionPackages(
       changes.push(`force-remove retired default extension package: ${source}`);
     }
   }
-}
-
-function pruneContextCapDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (!Array.isArray(values)) return;
-  const nextValues = values.filter(
-    (value: unknown) => !(typeof value === "string" && value.trim() === "context-cap"),
-  );
-  if (nextValues.length === values.length) return;
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale context-cap opt-out from tlh.disabledDefaultExtensions");
-}
-
-function pruneOracleDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (!Array.isArray(values)) return;
-  const nextValues = values.filter(
-    (value: unknown) => !(typeof value === "string" && value.trim() === "oracle"),
-  );
-  if (nextValues.length === values.length) return;
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
-}
-
-function pruneRtkDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (!Array.isArray(values)) return;
-  const nextValues = values.filter(
-    (value: unknown) => !(typeof value === "string" && ["rtk", "pi-rtk"].includes(value.trim())),
-  );
-  if (nextValues.length === values.length) return;
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
-}
-
-function pruneIntercomDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (!Array.isArray(values)) return;
-  const nextValues = values.filter(
-    (value: unknown) =>
-      !(typeof value === "string" && ["intercom", "pi-intercom"].includes(value.trim())),
-  );
-  if (nextValues.length === values.length) return;
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale intercom opt-out from tlh.disabledDefaultExtensions");
 }
 
 function pruneQuietToolsDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
@@ -816,50 +749,20 @@ function pruneQuietToolsDisabledDefaultExtension(settings: JsonObject, changes: 
   changes.push("remove stale quiet-tools opt-out from tlh.disabledDefaultExtensions");
 }
 
-function pruneFffDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (!Array.isArray(values)) return;
-  const nextValues = values.filter(
-    (value: unknown) => !(typeof value === "string" && ["fff", "pi-fff"].includes(value.trim())),
-  );
-  if (nextValues.length === values.length) return;
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale fff opt-out from tlh.disabledDefaultExtensions");
-}
-
-function pruneSubagentsDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
+function pruneVoiceTranscribeDisabledDefaultExtension(
+  settings: JsonObject,
+  changes: string[],
+): void {
   if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
   const values = settings.tlh.disabledDefaultExtensions;
   if (!Array.isArray(values)) return;
   const nextValues = values.filter(
     (value: unknown) =>
-      !(typeof value === "string" && ["subagents", "pi-subagents"].includes(value.trim())),
+      !(typeof value === "string" && ["pi-voice", "pi-transcribe"].includes(value.trim())),
   );
   if (nextValues.length === values.length) return;
   settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale subagents opt-out from tlh.disabledDefaultExtensions");
-}
-
-function scrubGnosisSettings(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  if (!Object.hasOwn(settings.tlh, "gnosis")) return;
-  delete settings.tlh.gnosis;
-  changes.push("remove tlh.gnosis (one-time cleanup)");
-}
-
-function scrubRtkSettings(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  if (!Object.hasOwn(settings.tlh, "rtk")) return;
-  delete settings.tlh.rtk;
-  changes.push("remove tlh.rtk (one-time cleanup)");
-}
-
-function scrubDisableBuiltinsSettings(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.subagents)) return;
-  if (!Object.hasOwn(settings.subagents, "disableBuiltins")) return;
-  delete settings.subagents.disableBuiltins;
-  changes.push("remove subagents.disableBuiltins (one-time cleanup)");
+  changes.push("remove stale voice/transcribe opt-out from tlh.disabledDefaultExtensions");
 }
 
 function scrubRetiredSubagentToolBudgets(settings: JsonObject, changes: string[]): void {
@@ -1289,20 +1192,11 @@ function main(): void {
       readDefaultExtensionProvenance(next).managedPackageIdentities,
     ),
   );
-  applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
   removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
-  scrubGnosisSettings(next, changes);
-  scrubRtkSettings(next, changes);
-  scrubDisableBuiltinsSettings(next, changes);
   scrubRetiredSubagentToolBudgets(next, changes);
   purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
-  pruneContextCapDisabledDefaultExtension(next, changes);
-  pruneOracleDisabledDefaultExtension(next, changes);
-  pruneRtkDisabledDefaultExtension(next, changes);
-  pruneIntercomDisabledDefaultExtension(next, changes);
   pruneQuietToolsDisabledDefaultExtension(next, changes);
-  pruneFffDisabledDefaultExtension(next, changes);
-  pruneSubagentsDisabledDefaultExtension(next, changes);
+  pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
   applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
   syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 

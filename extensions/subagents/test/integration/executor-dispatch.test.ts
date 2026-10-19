@@ -16,6 +16,7 @@ import {
   makeExtensionAPI,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   makeSubagentState,
   removeTempDir,
   tryImport,
@@ -143,14 +144,15 @@ function providerErrorResponse(model: string) {
   };
 }
 
-function providerAwareContext(
+async function providerAwareContext(
   cwd: string,
   availableModels: ReturnType<typeof providerAwareAvailableModels>,
 ) {
-  const ctx = makeMinimalCtx(cwd);
+  const { context: ctx } = await makeModelRegistryContext(
+    cwd,
+    availableModels.map((model) => ({ provider: model.provider, models: [model] })),
+  );
   ctx.model = makeModel("session", { provider: "anthropic" });
-  ctx.modelRegistry.getAvailable = () => availableModels;
-  ctx.modelRegistry.getAll = () => availableModels;
   return ctx;
 }
 
@@ -888,7 +890,7 @@ process.stdout.write(ticket.body);
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -912,7 +914,7 @@ process.stdout.write(ticket.body);
       { tasks: [task] },
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -934,7 +936,7 @@ process.stdout.write(ticket.body);
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, providerAwareAvailableModels()),
+      await providerAwareContext(tempDir, providerAwareAvailableModels()),
     );
 
     assert.equal(result.isError, undefined);

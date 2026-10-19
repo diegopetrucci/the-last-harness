@@ -13,11 +13,6 @@ const {
   SESSION_LIMIT_REPORT_COMMAND_NAME,
 } = await jiti.import("../extensions/the-last-harness/session-limit-report.ts");
 
-// Verify that the executable /tokens handler is still intact after changes to tokens.ts
-const { createTokensCommandHandler } = await jiti.import(
-  "../extensions/the-last-harness/tokens.ts",
-);
-
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
@@ -921,16 +916,4 @@ test("buildSessionLimitReportHtml escapes dynamic content to prevent XSS", () =>
   // Raw HTML must not appear
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
   assert.doesNotMatch(html, /<img src=x/);
-});
-
-// ---------------------------------------------------------------------------
-// /tokens still works after tokens.ts changes
-// ---------------------------------------------------------------------------
-
-test("/tokens still builds an executable handler after tokens.ts changes", () => {
-  const pi = createPiHarness();
-  const handler = createTokensCommandHandler(pi, {
-    openReport: async () => {},
-  });
-  assert.ok(typeof handler === "function", "handler is a function");
 });

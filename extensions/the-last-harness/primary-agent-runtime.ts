@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   getAgentDir,
+  parseArgs,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -142,6 +143,11 @@ type TlhPrimaryAgentRuntimeOptions = {
    */
   now?: () => number;
   /**
+   * Injectable process.argv for testing launch-flag detection.
+   * Defaults to process.argv.
+   */
+  argv?: string[];
+  /**
    * AgentSession exported by Pi's virtual bundled module when the extension
    * loader provides one. The model persistence seam also validates/uses the
    * published bundle path when this optional route is unavailable.
@@ -157,7 +163,7 @@ type SessionThinkingOverride = {
 };
 
 export type TlhPrimaryAgentRuntime = {
-  applySessionStart(ctx: ExtensionContext): Promise<void>;
+  applySessionStart(ctx: ExtensionContext, reason?: string): Promise<void>;
   projectAgentGuidanceSnapshot(): ProjectAgentGuidanceInventory | undefined;
   currentPrimaryAgentLabel(): string;
   activePrimaryAgentPrompt(): AgentPrompt | undefined;
@@ -245,9 +251,12 @@ function createTlhPrimaryAgentRuntime(
   runtimeOptions: {
     getProviderAuthHealthStore?: () => ProviderAuthHealthStore | undefined;
     now?: () => number;
+    argv?: string[];
   } = {},
 ): TlhPrimaryAgentRuntime & { registerCommands(): void; registerLifecycleHooks(): void } {
   const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
+  const argv = runtimeOptions.argv ?? process.argv;
+  const parsedLaunchArgs = parseArgs(argv.slice(2));
   const warned = new Set<string>();
   const primaryToolState = createPrimaryToolState();
   const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
@@ -923,6 +932,7 @@ function createTlhPrimaryAgentRuntime(
     if (sessionOnlyModel && !preservesSessionOnlyModel) {
       updateSessionOnlyModel(undefined);
     }
+
     if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     const activePrimaryModel =
       shouldApplyModel && !preservesSessionOnlyModel
@@ -1217,23 +1227,33 @@ function createTlhPrimaryAgentRuntime(
     });
   }
 
-  async function applySessionStart(ctx: ExtensionContext): Promise<void> {
+  async function applySessionStart(ctx: ExtensionContext, reason?: string): Promise<void> {
     const sessionStartOperation = projectAgentLifecycle.beginSessionStart();
     // Session-only model intent does not cross session_start. This includes
     // /reload: a replacement runtime cannot safely prove that an older
     // process-global call belongs to the new session.
     beginModelSelectionSession(ctx);
     updateSessionOnlyModel(undefined);
+    // On startup, --model locks the CLI-resolved model as the session-only choice.
+    if (reason === "startup") {
+      if (parsedLaunchArgs.model !== undefined && ctx.model) {
+        updateSessionOnlyModel(ctx.model);
+      }
+    }
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     clearSessionThinkingOverride();
-    // Treat session_start as a fresh notification scope even if the host did
-    // not deliver the prior session_shutdown event.
-    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     activateTlhTicketSessionScope(ctx.cwd);
     await projectAgentLifecycle.loadSessionResources(ctx, sessionStartOperation);
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     syncPrimaryAgentState(ctx);
+    // On startup, --thinking locks the CLI thinking level over packaged defaults.
+    if (reason === "startup" && parsedLaunchArgs.thinking !== undefined) {
+      const level: string | undefined = ctx.thinkingLevel;
+      if (level !== undefined && isThinkingLevel(level)) {
+        recordUserThinkingLevel(level);
+      }
+    }
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     await applyPrimaryDefaults(ctx, {
       warnOnMissing: false,
@@ -1593,6 +1613,7 @@ export function registerTlhPrimaryAgentRuntime(
     {
       getProviderAuthHealthStore: options.getProviderAuthHealthStore,
       now: options.now,
+      argv: options.argv,
     },
   );
   runtime.registerCommands();

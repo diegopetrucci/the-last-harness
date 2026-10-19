@@ -1,6 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { keyText, } from "@earendil-works/pi-coding-agent";
-import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
@@ -261,9 +260,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 contextPercentStr = theme.fg("dim", contextPercentDisplay);
             }
             agentLine2Str += dimSep + contextPercentStr;
-            if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
-                agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
-            }
             const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
             const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
             const agentLine2 = fastLine2SuffixWidth <= width

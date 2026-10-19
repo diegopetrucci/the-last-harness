@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, packageIdentity, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./default-extensions.mjs";
+import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, packageIdentity, } from "./default-extensions.mjs";
 import { parseGitSource } from "./tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, isSymlink, validateProfileRelativePath, } from "./tlh-install-paths.mjs";
 import { backupPathWithTimestamp, isTlhOwnedBackupFilename, selectExpiredBackups, } from "./tlh-install-utils.mjs";
@@ -99,11 +99,6 @@ function readCleanupMetadata(config, target, label, io) {
 // Each path is relative to config.agentDir and must not contain '..' components.
 // The cleanup is idempotent: absent files are silently skipped.
 export const LEGACY_MANAGED_PROFILE_ARTIFACTS = Object.freeze(["bin/rtk", "tlh/tlh-rtk.mjs"]);
-export const RETIRED_PROFILE_FILES = Object.freeze(["extensions/librarian.json"]);
-// Retired state directories left by retired default extensions.
-// Each path is relative to config.agentDir and must not contain '..' components.
-// The cleanup is idempotent: absent directories are silently skipped.
-export const RETIRED_PROFILE_DIRECTORIES = Object.freeze(["intercom"]);
 /**
  * Walk agentDir → relativePath, guarding against symlinks at agentDir and at
  * every existing intermediate directory component.
@@ -144,47 +139,6 @@ function resolveGuardedProfilePath(agentDir, relativePath, label, io) {
         }
     }
     return join(cursor, lastName);
-}
-function cleanupRelativeProfileDirs(config, relativePaths, io) {
-    for (const relativePath of relativePaths) {
-        try {
-            validateProfileRelativePath(relativePath, "retired profile directory path");
-        }
-        catch {
-            io.warn(`Skipping invalid retired profile directory path: ${relativePath}`);
-            continue;
-        }
-        const target = resolveGuardedProfilePath(config.agentDir, relativePath, "retired profile directory cleanup", io);
-        if (target === null)
-            continue;
-        try {
-            assertProfilePathWithinAgent(config, target, "retired profile directory");
-        }
-        catch (error) {
-            io.warn(`Skipping retired profile directory cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
-            continue;
-        }
-        if (isSymlink(target))
-            continue;
-        if (!existsSync(target))
-            continue;
-        if (!lstatSync(target).isDirectory())
-            continue;
-        if (config.dryRun) {
-            io.log(`Would remove retired profile directory: ${target}`);
-            continue;
-        }
-        try {
-            rmSync(target, { recursive: true });
-            io.detailLog(`Removed retired profile directory: ${target}`);
-        }
-        catch (error) {
-            io.warn(`failed to remove retired profile directory ${target}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
-}
-export function cleanupRetiredProfileDirectories(config, io) {
-    cleanupRelativeProfileDirs(config, RETIRED_PROFILE_DIRECTORIES, io);
 }
 function cleanupRelativeProfileFiles(config, relativePaths, io) {
     for (const relativePath of relativePaths) {
@@ -227,42 +181,8 @@ export function cleanupLegacyManagedProfileArtifacts(config, io) {
 function isJsonRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-export function cleanupRetiredProfileFiles(config, io) {
-    // FIX 2: Read post-merge settings to decide whether to keep managed files.
-    // Fail safe: if settings cannot be read, skip file removal rather than risk wrong deletion.
-    let postMergePackages = []; // default empty → proceed with removal when no settings present
-    if (config.settingsPath && existsSync(config.settingsPath)) {
-        try {
-            const raw = readFileSync(config.settingsPath, "utf8");
-            const parsed = JSON.parse(raw);
-            if (isJsonRecord(parsed) && Array.isArray(parsed.packages)) {
-                postMergePackages = parsed.packages;
-            }
-        }
-        catch {
-            postMergePackages = null; // fail safe: unreadable settings → skip removal
-        }
-    }
-    for (const relativePath of RETIRED_PROFILE_FILES) {
-        if (relativePath === "extensions/librarian.json") {
-            if (postMergePackages === null) {
-                if (config.dryRun)
-                    io.log(`Would skip removal of retired profile file (settings unreadable, fail safe): ${join(config.agentDir, relativePath)}`);
-                continue;
-            }
-            const librarianIdentity = packageIdentity("npm:@diegopetrucci/pi-librarian");
-            const librarianPresent = postMergePackages.some((entry) => packageIdentity(entry) === librarianIdentity);
-            if (librarianPresent) {
-                if (config.dryRun)
-                    io.log(`Skipping retired profile file removal (user-added package preserved): ${join(config.agentDir, relativePath)}`);
-                continue;
-            }
-        }
-        cleanupRelativeProfileFiles(config, [relativePath], io);
-    }
-}
 export function cleanupOldSettingsBackups(config, io) {
-    // Skip entirely when agentDir itself is a symlink — same safety posture as cleanupRetiredProfileFiles.
+    // Skip entirely when agentDir itself is a symlink — same safety posture as cleanupLegacyManagedProfileArtifacts.
     if (isSymlink(config.agentDir)) {
         io.warn(`Skipping stale settings backup cleanup: agentDir is a symlink: ${config.agentDir}`);
         return;
@@ -425,19 +345,20 @@ export function reclaimRetiredExtensionResidues(config, io) {
             }
         }
     }
-    // RETIRED_TLH_DEFAULT_PACKAGE_SOURCES may be kept by users; skip removal
-    // when the identity is still in the post-merge settings file.
+    // Legacy inferred sources may be kept by users; skip removal when the
+    // identity is still in the post-merge settings file. Provenance-gated
+    // Voice/Transcribe sources are intentionally excluded: unlike the legacy
+    // list, their disk residue is never safe to reclaim without settings proof.
     //
-    // Known dry-run limitation: these sources are provenance-gated, so we cannot
-    // tell whether the merge WOULD have removed the entry without replicating the
-    // merge's provenance decision here. In --dry-run the merge does not write, so
-    // this gate reads pre-merge settings and a TLH-managed copy still listed there
-    // is treated as preserved, omitting a `pi remove` line that a real run would
-    // print. This under-reports (never over-reports) and was accepted over
-    // duplicating provenance logic in the installer, which would risk diverging
-    // from merge-settings. FORCE_REMOVED sources above are unaffected because
-    // their removal is unconditional and needs no settings gate.
-    for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
+    // Known dry-run limitation: merge may infer ownership of a legacy source when
+    // provenance is absent, but cleanup does not duplicate that decision. In
+    // --dry-run the merge does not write, so this gate reads pre-merge settings
+    // and a TLH-managed copy still listed there is treated as preserved, omitting
+    // a `pi remove` line that a real run would print. This under-reports (never
+    // over-reports) and avoids duplicating merge-settings ownership logic.
+    // FORCE_REMOVED sources above are unaffected because their removal is
+    // unconditional and needs no settings gate.
+    for (const source of LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
         const identity = packageIdentity(source);
         if (!identity)
             continue;

@@ -294,6 +294,12 @@ export function validatePersistedAsyncStatus(
   status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   for (const step of status.steps ?? []) {
     step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
+    // Validate the per-step child cwd: only a non-empty string is forwarded;
+    // any other value (number, null, missing) is silently dropped so revival
+    // falls back to the next tier (childLocation.childCwd or run cwd).
+    if (step.cwd !== undefined && (typeof step.cwd !== "string" || step.cwd.length === 0)) {
+      step.cwd = undefined;
+    }
   }
 }
 function statusToSummary(

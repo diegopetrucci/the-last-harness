@@ -1,13 +1,8 @@
 // /reconcile command: review and resolve model/effort override drift from TLH packaged defaults.
 // TUI-only picker; non-TUI invocation prints read-only drift status.
-import {
-  SettingsManager,
-  getAgentDir,
-  type ExtensionAPI,
-  type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { formatHomePath, isRecord } from "./common.js";
+import { formatHomePath } from "./common.js";
 import {
   computeModelEffortDrift,
   readReconcileState,
@@ -19,27 +14,14 @@ import {
   clearPrimaryAgentModelOverrideByName,
   type TlhPrimaryAgentRuntime,
 } from "./primary-agent-runtime.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { tlhSettingsPathForWrite } from "./profile-state.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 import { resetSubagentOverride } from "./subagent-settings.js";
-import type { TlhSettings } from "./types.js";
 
 const RECONCILE_COMMAND = "reconcile";
 const RECONCILE_COMMAND_DESCRIPTION =
   "Review and resolve model/effort override drift from TLH packaged defaults";
-
-// ---------------------------------------------------------------------------
-// Settings helpers
-// ---------------------------------------------------------------------------
-
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-    return isRecord(settings) ? (settings as TlhSettings) : {};
-  } catch {
-    return {};
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Drift computation
@@ -307,7 +289,7 @@ async function runReconcilePicker(
 
     let acknowledgmentFailed = false;
     if (clearedEntries.length > 0 && provider) {
-      // Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
+      // Skip acknowledgment when provider is unknown.
       const acknowledged = updateReconcileAcknowledgedSnapshot(
         buildAcknowledgedSnapshot(clearedEntries, provider),
         new Date().toISOString(),
@@ -389,7 +371,7 @@ async function runReconcilePicker(
       return;
     }
     notifyResetResult(ctx, outcome.result, entry.name);
-    // Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
+    // Skip acknowledgment when provider is unknown.
     if (provider) {
       const acknowledged = updateReconcileAcknowledgedSnapshot(
         buildSingleAcknowledgedSnapshot(entry, provider),
@@ -414,7 +396,7 @@ export function registerReconcileCommand(pi: ExtensionAPI, runtime?: TlhPrimaryA
     description: RECONCILE_COMMAND_DESCRIPTION,
     handler: async (_args, ctx) => {
       // Capture the provider once so comparison and acknowledgment always use
-      // the same value, even if ctx.model were mutated mid-command (ts-7w6o).
+      // the same value, even if ctx.model were mutated mid-command.
       const provider = ctx.model?.provider;
 
       if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {

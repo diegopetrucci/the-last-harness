@@ -666,6 +666,7 @@ async function runSubagentWithInput(
             ? statusOwner.pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
             : undefined,
         activityState: statusPayload.steps[fi]?.activityState,
+        cwd: statusPayload.steps[fi]?.cwd,
         terminalResult: terminalResultForStatusStep(
           pr,
           cancelProjection
@@ -771,6 +772,7 @@ async function runSubagentWithInput(
         contextPressureCrossedThresholds: singleResult.contextPressureCrossedThresholds,
         terminationReason: statusOwner.cancelled ? "cancelled" : singleResult.terminationReason,
         activityState: statusPayload.steps[flatIndex]?.activityState,
+        cwd: statusPayload.steps[flatIndex]?.cwd,
         terminalResult: singleResult.terminalResult,
       };
       applyCancelledStepProjection(

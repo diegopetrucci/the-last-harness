@@ -447,6 +447,3 @@ export function isSubagentNotifyDetails(value) {
         "status" in value &&
         "resultPreview" in value);
 }
-export function isSubagentCompletionBatchDetails(_value) {
-    return false;
-}

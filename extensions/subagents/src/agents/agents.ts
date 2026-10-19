@@ -80,7 +80,6 @@ interface BuiltinAgentOverrideConfig {
   inheritProjectContext?: boolean;
   inheritSkills?: boolean;
   disabled?: boolean;
-  systemPrompt?: string;
   skills?: string[] | false;
   tools?: string[] | false;
   subagentOnlyExtensions?: string[] | false;
@@ -396,14 +395,6 @@ function parseBuiltinOverrideEntry(
         );
       override.maxExecutionTimeMs = parsed;
     }
-  }
-
-  if (Object.hasOwn(input, "systemPrompt")) {
-    if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
-    else
-      throw new Error(
-        `Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`,
-      );
   }
 
   const fallbackModels = parseOverrideStringArrayOrFalse(

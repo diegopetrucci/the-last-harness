@@ -605,11 +605,11 @@ describe(
         assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
         const revivedId = result.details?.asyncId;
         assert.ok(revivedId, "expected revived async id");
-        const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-        const deadline = Date.now() + 10_000;
-        while (!fs.existsSync(resultPath)) {
-          if (Date.now() > deadline)
-            assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
+        const resultPath608 = path.join(RESULTS_DIR, `${revivedId}.json`);
+        const deadline608 = Date.now() + 10_000;
+        while (!fs.existsSync(resultPath608)) {
+          if (Date.now() > deadline608)
+            assert.fail(`Timed out waiting for revived result file: ${resultPath608}`);
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
       } finally {
@@ -901,11 +901,11 @@ describe(
       assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
       const revivedId = revived.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
-      const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-      const deadline = Date.now() + 10_000;
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline)
-          assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
+      const resultPath898 = path.join(RESULTS_DIR, `${revivedId}.json`);
+      const deadline898 = Date.now() + 10_000;
+      while (!fs.existsSync(resultPath898)) {
+        if (Date.now() > deadline898)
+          assert.fail(`Timed out waiting for revived result file: ${resultPath898}`);
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     });

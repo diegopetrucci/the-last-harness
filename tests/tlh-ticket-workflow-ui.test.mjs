@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url);
 const { createTlhTicketWorkflowUiRuntime } = await jiti.import(
   "../extensions/the-last-harness/ticket-workflow-ui.ts",
 );
-const { registerLazyTlhTicketWorkflowUi } = await jiti.import(
+const { registerTlhTicketWorkflowUi } = await jiti.import(
   "../extensions/the-last-harness/ticket-workflow-ui-facade.ts",
 );
 
@@ -71,7 +71,7 @@ function createCtx(cwd, ui) {
 }
 
 function registerTicketWorkflowFacade(pi, options = {}) {
-  registerLazyTlhTicketWorkflowUi(pi, {
+  registerTlhTicketWorkflowUi(pi, {
     createRuntime: () => createTlhTicketWorkflowUiRuntime(pi, options),
   });
 }

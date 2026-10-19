@@ -1,11 +1,10 @@
 import { createConnection } from "node:net";
-import { frame, json, MAX_CONTROL_BYTES, MAX_FRAME_BYTES, MAX_PATH_BYTES, option, parseReadyResult, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
+import { frame, json, MAX_CONTROL_BYTES, MAX_FRAME_BYTES, option, parseReadyResult, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
+import { bestEffort, FAILURE_EVENTS, hasMethod, isBridgeSocket, remove, waitConnect, writeFrame, } from "./local-bridge-socket.js";
 export const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
 export const SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES = MAX_FRAME_BYTES;
 export const SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES = MAX_CONTROL_BYTES;
-export const SESSION_MIRROR_OBSERVER_SINK_MAX_PATH_BYTES = MAX_PATH_BYTES;
 const CAPABILITIES = ["snapshot-replace", "cursor-recovery"];
-const FAILURE_EVENTS = ["error", "end", "close"];
 const FAILURE = "local bridge publication failed";
 function publishedSnapshotTarget(envelope) {
     try {
@@ -72,113 +71,6 @@ function schedule(value) {
 function clearTimer(value) {
     const result = option(value, "clearTimeout");
     return isClearTimer(result) ? result : clearTimeout;
-}
-function bestEffort(action) {
-    try {
-        action();
-    }
-    catch { }
-}
-function hasMethod(value, key) {
-    if (value === null || typeof value !== "object")
-        return false;
-    try {
-        let current = value;
-        for (let depth = 0; current !== null && depth < 8; depth += 1) {
-            const descriptor = Object.getOwnPropertyDescriptor(current, key);
-            if (descriptor)
-                return Object.hasOwn(descriptor, "value") && typeof descriptor.value === "function";
-            current = Object.getPrototypeOf(current);
-        }
-    }
-    catch {
-        return false;
-    }
-    return false;
-}
-function isBridgeSocket(value) {
-    if (value === null || typeof value !== "object")
-        return false;
-    return ["once", "on", "removeListener", "write", "destroy", "pause", "resume"].every((key) => hasMethod(value, key));
-}
-function remove(socket, event, listener) {
-    bestEffort(() => socket.removeListener(event, listener));
-}
-function waitConnect(socket, register) {
-    return new Promise((resolve, reject) => {
-        let done = false;
-        const connected = () => finish(true);
-        const failed = () => finish(false);
-        const finish = (ok) => {
-            if (done)
-                return;
-            done = true;
-            remove(socket, "connect", connected);
-            for (const event of FAILURE_EVENTS)
-                remove(socket, event, failed);
-            if (ok)
-                resolve();
-            else
-                reject(new Error(FAILURE));
-        };
-        register(() => finish(false));
-        try {
-            socket.once("connect", connected);
-            for (const event of FAILURE_EVENTS)
-                if (!done)
-                    socket.once(event, failed);
-        }
-        catch {
-            finish(false);
-        }
-    });
-}
-function writeFrame(socket, bytes, register) {
-    return new Promise((resolve, reject) => {
-        let callbackDone = false;
-        let drainDone = true;
-        let returned = false;
-        let done = false;
-        const failed = () => finish(false);
-        const drained = () => {
-            drainDone = true;
-            finish(true);
-        };
-        const finish = (ok) => {
-            if (done || (ok && (!returned || !callbackDone || !drainDone)))
-                return;
-            done = true;
-            for (const event of FAILURE_EVENTS)
-                remove(socket, event, failed);
-            remove(socket, "drain", drained);
-            if (ok)
-                resolve();
-            else
-                reject(new Error(FAILURE));
-        };
-        register(() => finish(false));
-        try {
-            for (const event of FAILURE_EVENTS)
-                if (!done)
-                    socket.once(event, failed);
-            const written = (error) => {
-                if (error !== undefined && error !== null)
-                    return finish(false);
-                callbackDone = true;
-                finish(true);
-            };
-            if (done)
-                return;
-            drainDone = socket.write(Buffer.from(bytes), written);
-            returned = true;
-            if (!drainDone)
-                socket.once("drain", drained);
-            finish(true);
-        }
-        catch {
-            finish(false);
-        }
-    });
 }
 function readFrame(socket, maximum, register) {
     return new Promise((resolve, reject) => {
@@ -380,10 +272,10 @@ export function createSessionMirrorObserverSocketSink(options = {}) {
                 }
                 record = attach(candidate, sessionId);
                 const current = record;
-                await waitConnect(current.socket, register);
+                await waitConnect(current.socket, register, FAILURE);
                 if (settled || closed || !current.healthy || current.closed)
                     throw new Error(FAILURE);
-                await writeFrame(current.socket, helloFrame, register);
+                await writeFrame(current.socket, helloFrame, register, FAILURE);
                 if (settled || closed || !current.healthy || current.closed)
                     throw new Error(FAILURE);
                 const ready = parseReadyResult(await readFrame(current.socket, MAX_CONTROL_BYTES, register));
@@ -430,7 +322,7 @@ export function createSessionMirrorObserverSocketSink(options = {}) {
                     }
                     if (settled || closed || !healthyRecord(record))
                         return finish(false);
-                    await writeFrame(record.socket, dataFrame, register);
+                    await writeFrame(record.socket, dataFrame, register, FAILURE);
                     if (settled || closed || !healthyRecord(record))
                         return finish(false);
                     const readyRecord = record;

@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { createRetryableLazyImport } from "./common.js";
 import type {
   TlhSubscriptionUsageSnapshot,
   TlhSubscriptionUsageSnapshotProvider,
@@ -12,21 +13,6 @@ type TlhSubscriptionUsageServiceLike = TlhSubscriptionUsageSnapshotProvider & {
     options?: TlhUsageRefreshOptions,
   ): Promise<TlhSubscriptionUsageSnapshot | undefined>;
 };
-
-function createRetryableLazyImport<TModule>(
-  loader: () => Promise<TModule>,
-): () => Promise<TModule> {
-  let modulePromise: Promise<TModule> | undefined;
-  return () => {
-    if (!modulePromise) {
-      modulePromise = loader().catch((error) => {
-        modulePromise = undefined;
-        throw error;
-      });
-    }
-    return modulePromise;
-  };
-}
 
 class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotProvider {
   private readonly loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));

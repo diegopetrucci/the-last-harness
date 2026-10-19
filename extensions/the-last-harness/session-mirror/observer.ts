@@ -4,6 +4,7 @@ import type {
   SessionMirrorAttestationReason,
   SessionMirrorAttestationResult,
 } from "./profile-attestation.js";
+import type { SessionMirrorObserverDiagnosticCode } from "./status-allowlists.js";
 import {
   projectSessionMirrorSnapshot,
   type SessionMirrorReadonlySessionManager,
@@ -46,28 +47,7 @@ export type SessionMirrorObserverProjector = (
 ) => SessionMirrorSnapshotProjectionResult;
 
 /** Stable aggregate-only diagnostics exposed by the observer. */
-export type SessionMirrorObserverDiagnosticCode =
-  | "queue-overflow"
-  | "stale-generation"
-  | "scheduler-failure"
-  | "session-unavailable"
-  | "attestation-failure"
-  | "attestation-not-ready"
-  | "projection-failure"
-  | "sink-throw"
-  | "sink-reject";
-
-export const SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES = Object.freeze([
-  "queue-overflow",
-  "stale-generation",
-  "scheduler-failure",
-  "session-unavailable",
-  "attestation-failure",
-  "attestation-not-ready",
-  "projection-failure",
-  "sink-throw",
-  "sink-reject",
-] as const);
+export type { SessionMirrorObserverDiagnosticCode };
 
 export type SessionMirrorObserverAttestationState =
   | "pending"
@@ -359,8 +339,7 @@ function markerIndex(queue: readonly Marker[], kind: MarkerKind): number {
  * The returned lifecycle methods are intentionally synchronous. They only
  * mutate bounded aggregate flags/counters and enqueue content-free markers.
  * Attestation, source projection, and sink work happen later on the injected
- * scheduler. This module does not register extension handlers; the opt-in
- * integration is owned by a later task.
+ * scheduler. This module does not register extension handlers.
  */
 export function createSessionMirrorObserverRuntime(
   options: SessionMirrorObserverRuntimeOptions = {},
@@ -1031,8 +1010,3 @@ export function createSessionMirrorObserverRuntime(
     getState,
   });
 }
-
-/** Short public alias used by the future opt-in extension integration. */
-export const createSessionMirrorObserver = createSessionMirrorObserverRuntime;
-
-export default createSessionMirrorObserverRuntime;

@@ -41,23 +41,17 @@ export type ProviderAuthHealthStore = {
   /**
    * Mark a provider as healthy and clear any in-flight probe.
    * Call this after a successful provider interaction or confirmed re-auth.
-   * Also clears any run-level auth observation recorded via recordRunLevelAuthObservation.
    */
   clearProvider(provider: string): void;
 
   /**
    * Record a high-confidence runtime auth failure observed in a completed run's attempt history.
    *
-   * Sets the provider's current status to 'reauth-required' (surfaced in the footer) and
-   * marks it as a run-level observation for historical tracking.
-   *
-   * The footer warning CAN clear: a subsequent successful probe (e.g. from the turn_end
-   * clearing pass) records 'healthy' and dismisses the warning, just as it would for any
-   * other probe-observed failure. The historical observation record stays until clearProvider
-   * or dispose; it does not gate what the footer shows.
+   * Sets the provider's current status to 'reauth-required' (surfaced in the footer).
+   * A subsequent successful probe records 'healthy' and dismisses the warning.
    *
    * Known v1 tradeoff: a revoked-but-unexpired token passes the local probe while live
-   * requests fail, causing a brief flap. See runLevelObservedProviders comment for details.
+   * requests fail, causing a brief flap until the next failed run.
    */
   recordRunLevelAuthObservation(provider: string): void;
 
@@ -443,24 +437,6 @@ export function createProviderAuthHealthStore(
   // before a clear do not overwrite the cleared state when they finally resolve.
   const generations = new Map<string, number>();
 
-  // Providers with a run-level auth observation (historical fact from a completed run).
-  // This is a read-only record of degradation; it does NOT gate what the footer shows.
-  // A successful probe records 'healthy' and clears the footer warning even for these
-  // providers, because current health is what the footer reports and a replaced credential
-  // must be able to dismiss the warning.
-  //
-  // Known tradeoff (v1): a revoked-but-unexpired token passes the local probe while live
-  // provider requests fail (pi-ai/dist/auth/resolve.js:56-66 skips the network call for
-  // tokens that have not expired). That causes a brief warning flap — clear on turn_end,
-  // reappear after the next failed run. Accept this for v1: self-correcting, and a
-  // warning that briefly clears is strictly better than one that never clears.
-  //
-  // Follow-up idea (out of scope): capture a credential fingerprint (SHA-256 of the access
-  // token, as in subscription-usage.ts:accessTokenFingerprint) when the observation is
-  // recorded, and clear the observation only when the fingerprint changes on a successful
-  // probe — a real re-auth changes the credential, a revocation does not.
-  const runLevelObservedProviders = new Set<string>();
-
   // Render listeners to notify on changes (wired up by dependent tickets).
   const renderListeners = new Set<() => void>();
 
@@ -514,12 +490,6 @@ export function createProviderAuthHealthStore(
           if (result.ok) {
             const status: ProviderAuthHealthStatus = "healthy";
             if (!disposed && generation(provider) === startGeneration) {
-              // Record healthy unconditionally — even for providers with a run-level
-              // observation. Current health is what the footer shows; suppressing a
-              // healthy probe result here would make the warning unclearable for the
-              // entire session (no production caller ever calls clearProvider).
-              // The run-level observation remains in runLevelObservedProviders as a
-              // historical record; the footer is driven by healthEntries only.
               recordEntry(provider, status);
               notifyListeners();
             }
@@ -553,19 +523,12 @@ export function createProviderAuthHealthStore(
       // not overwrite the fresh healthy state when it eventually resolves.
       bumpGeneration(provider);
       inFlight.delete(provider);
-      runLevelObservedProviders.delete(provider);
       recordEntry(provider, "healthy");
       notifyListeners();
     },
 
     recordRunLevelAuthObservation(provider) {
       if (disposed) return;
-      // Historical fact: a completed run's attempt received a definitive auth rejection.
-      // Records reauth-required in healthEntries (drives footer) and marks the provider
-      // in runLevelObservedProviders (historical record only — does not gate probe results).
-      // A subsequent successful probe will clear the footer warning by recording healthy;
-      // the run-level record in runLevelObservedProviders stays until clearProvider or dispose.
-      runLevelObservedProviders.add(provider);
       recordEntry(provider, "reauth-required");
       notifyListeners();
     },
@@ -608,7 +571,6 @@ export function createProviderAuthHealthStore(
       healthEntries.clear();
       inFlight.clear();
       generations.clear();
-      runLevelObservedProviders.clear();
       renderListeners.clear();
     },
   };

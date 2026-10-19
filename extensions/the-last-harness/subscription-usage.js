@@ -682,14 +682,6 @@ class TlhSubscriptionUsageService {
             this.activeCacheKeys.set(provider, cacheKey);
         }
     }
-    clear() {
-        this.snapshots.clear();
-        this.lastAttempts.clear();
-        this.inFlight.clear();
-        this.activeCacheKeys.clear();
-        this.ineligibleCacheKeys.clear();
-        this.refreshGenerations.clear();
-    }
     async refresh(ctx, options = {}) {
         const provider = ctx?.model?.provider;
         if (!isSupportedTlhSubscriptionUsageProvider(provider)) {

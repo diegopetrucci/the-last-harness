@@ -10,20 +10,16 @@ __INLINE_TAILWIND_JS__
 <style>
   :root {
               --color-review-bg: #0d1117;
-              --color-review-inset: #010409;
               --color-review-panel: #151b23;
               --color-review-panel-hover: #1f242c;
               --color-review-border: #3d444d;
-              --color-review-border-muted: #2f353d;
               --color-review-text: #f0f6fc;
               --color-review-muted: #9198a1;
               --color-review-subtle: #6e7681;
               --color-review-accent: #4493f8;
-              --color-review-accent-emphasis: #1f6feb;
               --color-review-success: #3fb950;
               --color-review-success-emphasis: #238636;
               --color-review-danger: #f85149;
-              --color-review-attention: #d29922;
             }
 
             .bg-review-bg { background-color: var(--color-review-bg); }
@@ -31,9 +27,20 @@ __INLINE_TAILWIND_JS__
             .border-review-border { border-color: var(--color-review-border); }
             .text-review-text { color: var(--color-review-text); }
             .text-review-muted { color: var(--color-review-muted); }
+            .text-review-subtle { color: var(--color-review-subtle); }
+            .text-review-accent { color: var(--color-review-accent); }
+            .text-review-danger { color: var(--color-review-danger); }
+            .text-review-success { color: var(--color-review-success); }
             .placeholder\:text-review-muted::placeholder { color: var(--color-review-muted); }
             .focus\:border-review-accent:focus { border-color: var(--color-review-accent); }
             .focus\:ring-review-accent:focus { --tw-ring-color: var(--color-review-accent); }
+            .hover\:bg-review-panel-hover:hover { background-color: var(--color-review-panel-hover); }
+            .bg-review-success-emphasis { background-color: var(--color-review-success-emphasis); }
+            .hover\:bg-review-success:hover { background-color: var(--color-review-success); }
+            .border-white\/10 { border-color: rgb(255 255 255 / 10%); }
+            .border-review-success-emphasis\/40 { border-color: color-mix(in srgb, var(--color-review-success-emphasis) 40%, transparent); }
+            .bg-review-success-emphasis\/15 { background-color: color-mix(in srgb, var(--color-review-success-emphasis) 15%, transparent); }
+            .hover\:bg-review-success-emphasis\/25:hover { background-color: color-mix(in srgb, var(--color-review-success-emphasis) 25%, transparent); }
 </style>
 <style>
   html, body {

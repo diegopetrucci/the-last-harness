@@ -2,9 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../runs/shared/pi-spawn.js";
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
-const RUNTIME_CONFIG_DIR = Symbol("runtime-config-dir");
 export const PI_CODING_AGENT_PACKAGE_ROOT_ENV = "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT";
 let cachedRuntimeConfigDirName;
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function normalizeConfigDirName(value) {
     if (typeof value !== "string")
         return undefined;
@@ -12,12 +14,12 @@ function normalizeConfigDirName(value) {
     return trimmed ? trimmed : undefined;
 }
 function resolveConfigDirNameFromSource(source) {
-    if (!source || typeof source !== "object")
+    if (!isRecord(source))
         return undefined;
-    const direct = source;
-    return (normalizeConfigDirName(direct.CONFIG_DIR_NAME) ??
-        normalizeConfigDirName(direct.configDir) ??
-        normalizeConfigDirName(direct.piConfig?.configDir));
+    const piConfig = source.piConfig;
+    return (normalizeConfigDirName(source.CONFIG_DIR_NAME) ??
+        normalizeConfigDirName(source.configDir) ??
+        normalizeConfigDirName(isRecord(piConfig) ? piConfig.configDir : undefined));
 }
 function readConfigDirNameFromPackageRoot(packageRoot, deps) {
     if (!packageRoot)
@@ -39,25 +41,6 @@ function safeResolvePackageRoot(resolvePackageRoot) {
     catch {
         return undefined;
     }
-}
-function resolveConfigDirNameFromEntryPoint(entryPoint, packageRoot, deps) {
-    const explicitRootValue = readConfigDirNameFromPackageRoot(packageRoot, deps);
-    if (explicitRootValue !== undefined)
-        return explicitRootValue;
-    if (!entryPoint)
-        return undefined;
-    try {
-        let dir = path.dirname(fs.realpathSync(entryPoint));
-        while (dir !== path.dirname(dir)) {
-            const value = readConfigDirNameFromPackageRoot(dir, deps);
-            if (value !== undefined)
-                return value;
-            dir = path.dirname(dir);
-        }
-    }
-    catch {
-    }
-    return undefined;
 }
 export function resolveRuntimeConfigDirName(deps = {}) {
     const useCache = deps.useCache ??
@@ -83,16 +66,8 @@ export function resolveRuntimeConfigDirName(deps = {}) {
         cachedRuntimeConfigDirName = value ?? null;
     return value;
 }
-export function resolveConfigDirName(codingAgentModule = RUNTIME_CONFIG_DIR, entryPointOrDeps, packageRoot) {
-    if (codingAgentModule !== RUNTIME_CONFIG_DIR) {
-        return resolveConfigDirNameFromSource(codingAgentModule) ?? DEFAULT_CONFIG_DIR_NAME;
-    }
-    if (typeof entryPointOrDeps === "string" || packageRoot !== undefined) {
-        const value = resolveConfigDirNameFromEntryPoint(entryPointOrDeps, packageRoot, {});
-        return value ?? DEFAULT_CONFIG_DIR_NAME;
-    }
-    const deps = entryPointOrDeps ?? {};
-    return resolveRuntimeConfigDirName(deps) ?? DEFAULT_CONFIG_DIR_NAME;
+export function resolveConfigDirName() {
+    return resolveRuntimeConfigDirName() ?? DEFAULT_CONFIG_DIR_NAME;
 }
 export function getConfigDirName() {
     return resolveConfigDirName();

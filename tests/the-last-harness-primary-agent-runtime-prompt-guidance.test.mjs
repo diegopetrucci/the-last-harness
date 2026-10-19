@@ -13,8 +13,6 @@ import {
   withEnv,
 } from "./test-fixture-helpers.mjs";
 import {
-  CI_FAILURE_INVESTIGATION_FEATURE,
-  DELTA_FOLLOW_UP_REVIEWS_FEATURE,
   registerTlhPrimaryAgentRuntime,
   createPiHarness,
   createToolCallContext,
@@ -28,6 +26,12 @@ import {
   createPrimaryPrompt,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
+const RETIRED_DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
+const RETIRED_CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
+const RETIRED_EXPERIMENTAL_FEATURES = [
+  RETIRED_DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+  RETIRED_CI_FAILURE_INVESTIGATION_FEATURE,
+];
 const jiti = createJiti(import.meta.url);
 const { formatProjectAgentGuidance } = await jiti.import(
   "../extensions/the-last-harness/prompts.ts",
@@ -577,7 +581,9 @@ test("child hook composition is idempotent in either registration order", async 
   writeFileSync(
     join(fixture.agent, "settings.json"),
     `${JSON.stringify(
-      { tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } },
+      {
+        tlh: { experimental: { enabledFeatures: RETIRED_EXPERIMENTAL_FEATURES } },
+      },
       null,
       2,
     )}\n`,
@@ -688,9 +694,9 @@ test("child hook composition is idempotent in either registration order", async 
           `${label}: quoted and authoritative root defaults must both survive`,
         );
         assert.equal(
-          (onePass.match(/## TLH Experimental Feature: delta-follow-up-reviews/g) ?? []).length,
-          1,
-          `${label}: optional root experimental content must be singular`,
+          (onePass.match(/## TLH Experimental Feature:/g) ?? []).length,
+          0,
+          `${label}: retired experimental content must stay inert`,
         );
         assert.equal(
           (onePass.match(/## TLH Git Commit Attribution/g) ?? []).length,
@@ -1061,7 +1067,7 @@ test("before_agent_start keeps the architect prompt when stale tlh.experimental 
   });
 });
 
-test("before_agent_start gates delta follow-up review guidance behind isolated TLH settings for architect", async (t) => {
+test("before_agent_start ignores retired experimental flags for every primary agent", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1073,118 +1079,33 @@ test("before_agent_start gates delta follow-up review guidance behind isolated T
       { systemPrompt: "base prompt" },
       createToolCallContext([], undefined, { cwd: fixture.cwd }),
     );
-    assert.doesNotMatch(
-      defaultPrompt.systemPrompt,
-      /## TLH Experimental Feature: delta-follow-up-reviews/,
-    );
-    for (const enabledFeatures of [true, [123]]) {
-      writeFileSync(
-        join(fixture.agent, "settings.json"),
-        `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
-      );
-      const malformedPrompt = await beforeAgentStart(
-        { systemPrompt: "base prompt" },
-        createToolCallContext([], undefined, { cwd: fixture.cwd }),
-      );
-      assert.doesNotMatch(
-        malformedPrompt.systemPrompt,
-        /## TLH Experimental Feature: delta-follow-up-reviews/,
-      );
-    }
+    assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature:/);
 
-    const deltaConfig = { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] };
-    writeFileSync(
-      join(fixture.agent, "settings.json"),
-      `${JSON.stringify({ tlh: { experimental: deltaConfig } }, null, 2)}\n`,
-    );
-    const enabledPrompt = await beforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
-    );
-    assert.match(
-      enabledPrompt.systemPrompt,
-      /## TLH Experimental Feature: delta-follow-up-reviews/,
-    );
-    const architectExperimentalPrompt = buildPrimaryExperimentalPrompt(
-      { name: "architect" },
-      deltaConfig,
-    );
-    assert.ok(architectExperimentalPrompt);
-    assert.ok(enabledPrompt.systemPrompt.includes(architectExperimentalPrompt));
+    for (const enabledFeatures of [true, [123], RETIRED_EXPERIMENTAL_FEATURES]) {
+      for (const primary of ["architect", "rush", "product", "bug-hunter"]) {
+        writeFileSync(
+          join(fixture.agent, "settings.json"),
+          `${JSON.stringify(
+            { tlh: { primaryAgent: { selected: primary }, experimental: { enabledFeatures } } },
+            null,
+            2,
+          )}\n`,
+        );
+        const prompt = await beforeAgentStart(
+          { systemPrompt: "base prompt" },
+          createToolCallContext([], undefined, { cwd: fixture.cwd }),
+        );
+        assert.doesNotMatch(prompt.systemPrompt, /## TLH Experimental Feature:/);
+        assert.equal(
+          buildPrimaryExperimentalPrompt({ name: primary }, { enabledFeatures }),
+          undefined,
+        );
+      }
+    }
   });
 });
 
-test("before_agent_start gates ci failure investigation guidance behind isolated TLH settings for architect only", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const { beforeAgentStart } = registerRuntimeHarness({
-      primaryAgents: selectablePrimaryAgents(),
-      subagentMetadata: [],
-    });
-    const defaultPrompt = await beforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
-    );
-    assert.doesNotMatch(
-      defaultPrompt.systemPrompt,
-      /## TLH Experimental Feature: ci-failure-investigation/,
-    );
-    for (const enabledFeatures of [true, [123]]) {
-      writeFileSync(
-        join(fixture.agent, "settings.json"),
-        `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
-      );
-      const malformedPrompt = await beforeAgentStart(
-        { systemPrompt: "base prompt" },
-        createToolCallContext([], undefined, { cwd: fixture.cwd }),
-      );
-      assert.doesNotMatch(
-        malformedPrompt.systemPrompt,
-        /## TLH Experimental Feature: ci-failure-investigation/,
-      );
-    }
-
-    writeFileSync(
-      join(fixture.agent, "settings.json"),
-      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } }, null, 2)}\n`,
-    );
-    const architectPrompt = await beforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
-    );
-    assert.match(
-      architectPrompt.systemPrompt,
-      /## TLH Experimental Feature: ci-failure-investigation/,
-    );
-    writeFileSync(
-      join(fixture.agent, "settings.json"),
-      `${JSON.stringify(
-        {
-          tlh: {
-            primaryAgent: { selected: "rush" },
-            experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] },
-          },
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    const rushPrompt = await beforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
-    );
-    assert.doesNotMatch(
-      rushPrompt.systemPrompt,
-      /## TLH Experimental Feature: ci-failure-investigation/,
-    );
-  });
-});
-
-test("before_agent_start ci-failure-investigation guidance stays per-turn: enabling mid-session takes effect on the next turn", async (t) => {
-  // Guards against regressing prompt-only experimental features to session-start semantics.
-  // Delta-follow-up-reviews and ci-failure-investigation guidance must read settings fresh each
-  // turn, matching pre-feature main; embedded-agent guidance is stable and not experimental.
+test("before_agent_start stays inert when retired flags are enabled mid-session", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1194,23 +1115,17 @@ test("before_agent_start ci-failure-investigation guidance stays per-turn: enabl
     });
     const ctx = createToolCallContext([], undefined, { cwd: fixture.cwd });
 
-    // Turn 1: session start + first before_agent_start with the feature OFF (no settings file).
     await applySessionStart(ctx);
     const offPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
-    assert.doesNotMatch(
-      offPrompt.systemPrompt,
-      /## TLH Experimental Feature: ci-failure-investigation/,
-    );
-    // Enable the feature mid-session.
+    assert.doesNotMatch(offPrompt.systemPrompt, /## TLH Experimental Feature:/);
+
     writeFileSync(
       join(fixture.agent, "settings.json"),
-      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: RETIRED_EXPERIMENTAL_FEATURES } } }, null, 2)}\n`,
     );
 
-    // Turn 2: a second before_agent_start (no new session start) must now surface the guidance,
-    // because prompt-only experimental features read settings fresh every turn.
     const onPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
-    assert.match(onPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+    assert.doesNotMatch(onPrompt.systemPrompt, /## TLH Experimental Feature:/);
   });
 });
 
@@ -1337,7 +1252,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
   });
 });
 
-test("child mode gates delta follow-up review guidance to enabled code-reviewer sessions", async (t) => {
+test("child mode keeps retired experimental flags inert for code-reviewer sessions", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1358,67 +1273,29 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
       ),
       undefined,
     );
-    const defaultPrompt = buildSystemPrompt(defaultEvent.systemPromptOptions);
-    assert.doesNotMatch(defaultPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
-    for (const enabledFeatures of [true, [123]]) {
+    assert.doesNotMatch(
+      buildSystemPrompt(defaultEvent.systemPromptOptions),
+      /## TLH Experimental Feature:/,
+    );
+
+    for (const enabledFeatures of [true, [123], RETIRED_EXPERIMENTAL_FEATURES]) {
       writeFileSync(
         join(fixture.agent, "settings.json"),
         `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
       );
-      const malformedEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
+      const event = makeStructuredPromptEvent("base prompt", fixture.cwd);
       assert.equal(
         await codeReviewerBeforeAgentStart(
-          malformedEvent,
+          event,
           createToolCallContext([], undefined, { cwd: fixture.cwd }),
         ),
         undefined,
       );
       assert.doesNotMatch(
-        buildSystemPrompt(malformedEvent.systemPromptOptions),
-        /## TLH Experimental Feature: delta-follow-up-reviews/,
+        buildSystemPrompt(event.systemPromptOptions),
+        /## TLH Experimental Feature:/,
       );
+      assert.equal(buildChildExperimentalPrompt("code-reviewer", { enabledFeatures }), undefined);
     }
-
-    const deltaConfig = { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] };
-    writeFileSync(
-      join(fixture.agent, "settings.json"),
-      `${JSON.stringify({ tlh: { experimental: deltaConfig } }, null, 2)}\n`,
-    );
-    const enabledEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
-    assert.equal(
-      await codeReviewerBeforeAgentStart(
-        enabledEvent,
-        createToolCallContext([], undefined, { cwd: fixture.cwd }),
-      ),
-      undefined,
-    );
-    const enabledPrompt = buildSystemPrompt(enabledEvent.systemPromptOptions);
-    assert.match(enabledPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
-    const codeReviewerExperimentalPrompt = buildChildExperimentalPrompt(
-      "code-reviewer",
-      deltaConfig,
-    );
-    assert.ok(codeReviewerExperimentalPrompt);
-    assert.ok(enabledPrompt.includes(codeReviewerExperimentalPrompt));
-    const developerPi = createPiHarness();
-    registerTlhPrimaryAgentRuntime(developerPi, {
-      env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
-    });
-    const developerBeforeAgentStart = developerPi.events.find(
-      (event) => event.name === "before_agent_start",
-    )?.handler;
-    assert.equal(typeof developerBeforeAgentStart, "function");
-    const developerEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
-    assert.equal(
-      await developerBeforeAgentStart(
-        developerEvent,
-        createToolCallContext([], undefined, { cwd: fixture.cwd }),
-      ),
-      undefined,
-    );
-    assert.doesNotMatch(
-      buildSystemPrompt(developerEvent.systemPromptOptions),
-      /## TLH Experimental Feature: delta-follow-up-reviews/,
-    );
   });
 });

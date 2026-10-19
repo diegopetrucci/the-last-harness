@@ -221,6 +221,7 @@ function resultItems(results) {
         ...(result.cancel ? { cancel: result.cancel } : {}),
         activityState: result.activityState,
         ...(result.terminalResult ? { terminalResult: result.terminalResult } : {}),
+        ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
     }));
 }
 function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt) {

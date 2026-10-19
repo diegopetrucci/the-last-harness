@@ -48,7 +48,7 @@ import {
   writeLifecycleLock,
 } from "../support/async-execution-helpers.ts";
 
-describe("async execution utilities", () => {
+describe("async execution supervisor", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -1279,7 +1279,7 @@ describe("async execution utilities", () => {
   );
 
   it(
-    "keeps non-blocking supervisor updates live and pauses only active cohort children for supervisor blocks",
+    "keeps a non-blocking supervisor progress update live without pausing the child",
     {
       skip:
         process.platform === "win32"

@@ -3,6 +3,25 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 export const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 const PI_SUBAGENT_PI_BINARY_ENV = "PI_SUBAGENT_PI_BINARY";
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readPackageBinPath(packageJson) {
+    if (!isRecord(packageJson))
+        return undefined;
+    const binField = packageJson.bin;
+    if (typeof binField === "string")
+        return binField;
+    if (!isRecord(binField))
+        return undefined;
+    if (typeof binField.pi === "string")
+        return binField.pi;
+    for (const value of Object.values(binField)) {
+        if (typeof value === "string")
+            return value;
+    }
+    return undefined;
+}
 export function buildSubagentSpawnEnv(inheritedEnv, explicitEnv, depthEnv) {
     const filteredInheritedEnv = Object.fromEntries(Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("HERDR_")));
     return { ...filteredInheritedEnv, ...explicitEnv, ...depthEnv };
@@ -13,7 +32,7 @@ function findPiPackageRootFromEntry(entryPoint) {
         const packageJsonPath = path.join(dir, "package.json");
         if (fs.existsSync(packageJsonPath)) {
             const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
-            if (pkg.name === PI_CODING_AGENT_PACKAGE)
+            if (isRecord(pkg) && pkg.name === PI_CODING_AGENT_PACKAGE)
                 return dir;
         }
         dir = path.dirname(dir);
@@ -92,8 +111,7 @@ function resolvePiCliScriptFromPackageJson(deps, packageRoot) {
             });
         const packageJsonPath = resolvePackageJson();
         const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-        const binField = packageJson.bin;
-        const binPath = typeof binField === "string" ? binField : (binField?.pi ?? Object.values(binField ?? {})[0]);
+        const binPath = readPackageBinPath(packageJson);
         if (!binPath) {
             return packageRoot
                 ? { packageRoot, error: `No Pi CLI bin entry found in ${packageJsonPath}` }

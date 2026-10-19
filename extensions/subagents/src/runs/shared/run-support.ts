@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentDiscoveryDiagnostic } from "../../agents/agents.ts";
 import { getProviderAwareFallbackModels } from "../../../../the-last-harness-subagent-safety.mjs";
+import { getUnfilteredAvailableModels } from "../../../../the-last-harness/model-visibility.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 
 interface ModelRegistrySnapshot {
@@ -9,12 +10,12 @@ interface ModelRegistrySnapshot {
 }
 
 /**
- * Capture the registry's current available view for model-default selection
- * and context-window diagnostics. Availability is not used to remove or
- * rewrite configured fallback candidates.
+ * Capture all available models (including hidden) for model-default selection
+ * and context-window diagnostics. Hidden authenticated models must remain
+ * available to subagents (#723).
  */
 export function readModelRegistrySnapshot(ctx: ExtensionContext): ModelRegistrySnapshot {
-  return { availableModels: ctx.modelRegistry.getAvailable().map(toModelInfo) };
+  return { availableModels: getUnfilteredAvailableModels(ctx.modelRegistry).map(toModelInfo) };
 }
 
 export const providerFallbackModelsForTarget = getProviderAwareFallbackModels;

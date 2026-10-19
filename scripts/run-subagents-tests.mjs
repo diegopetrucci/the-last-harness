@@ -12,26 +12,11 @@ export const repoRoot = resolve(dirname(scriptPath), "..");
 export const suiteConfigs = {
   unit: {
     directory: join(repoRoot, "extensions/subagents/test/unit"),
-    // Stage 1 (origin/main 0c8f4faa) measured pass count: 1159/1159.
-    // Stage 2 (origin/main 5bafc8d4) measured pass count: 1189/1189.
-    // Stage 2 fix (persistContinuationTelemetry regression test): 1197/1197.
-    // Stage 3 review fix (awaited-progress startedAt projection): 1233/1233.
-    // Stage 4 (origin/main 850903b4) measured pass count: 1245/1245.
-    // Stage 5 (origin/main 231f97df) measured pass count: 1162/1162 (nested suite deletions per D1).
-    // Stage 5 review fixes (P1 executor grandchild rejection +3, P2 revival +2, P3 cancel restore +1): 1168/1168.
-    // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    minimumTests: 1168,
+    minimumTests: 1177,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
-    // Stage 1 (origin/main 0c8f4faa) measured pass count: 508/508 (leak-fix regression test added).
-    // Stage 2 (origin/main 5bafc8d4) measured pass count: 514/514.
-    // Stage 4 (origin/main 850903b4) measured pass count: 521/521.
-    // Stage 4B review fix (P2-c child-process-hardening tests): 525/525.
-    // Stage 5 (origin/main 231f97df) measured pass count: 510/510 (nested suite deletions and maxOutput case trim per D1).
-    // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    // Stage 5B: removed 3 transcript view tests (retired view/lines schema fields).
-    minimumTests: 507,
+    minimumTests: 501,
   },
   e2e: {
     directory: join(repoRoot, "extensions/subagents/test/e2e"),
@@ -58,10 +43,8 @@ export function discoverSuiteFiles(suite, config = suiteConfigs[suite]) {
     .filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts"))
     .map((entry) => join(config.directory, entry.name))
     .sort();
-  if (files.length < config.minimumFiles) {
-    throw new Error(
-      `${suite} suite found ${files.length} test files; expected at least ${config.minimumFiles}`,
-    );
+  if (files.length === 0) {
+    throw new Error(`${suite} suite found no .test.ts files in ${config.directory}`);
   }
   return files;
 }

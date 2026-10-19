@@ -598,21 +598,7 @@ if [[ "${AGENT_DIR_PRESENT}" == "true" ]]; then
 fi
 
 # ── parse install-state; compute pi-removal decision ──────────────────────────
-#
-# piInstalledByTlh=true now means TLH owns the PRIVATE runtime at
-# PROFILE_ROOT/runtime, NOT a global package at ~/.local.
-#
-# Decision matrix (REMOVE_PI initial value; ownership gate may override below):
-#   --keep-pi                             → skip pi/runtime (regardless of state)
-#   --force-include-pi                    → REMOVE_PI=true (affects legacy path only;
-#                                           private runtime removal requires a valid marker)
-#   state absent OR file missing          → REMOVE_PI=false
-#   piInstalledByTlh = true               → REMOVE_PI=true
-#   piInstalledByTlh = false              → REMOVE_PI=false
-#
-# For private runtime (RUNTIME_DIR): the ownership gate below is authoritative.
-# A valid path-matched marker authorizes removal even when REMOVE_PI=false.
-# An unmarked/invalid runtime skips regardless of REMOVE_PI or --force-include-pi.
+# Unmarked or invalid private runtimes are skipped.
 
 PI_STATE="$(read_pi_installed_by_tlh "${INSTALL_STATE}")"
 
@@ -636,32 +622,7 @@ else
 fi
 
 # ── disambiguate what pi/runtime removal means (new-model vs legacy) ───────────
-#
-#  private runtime + valid origin=created marker  → rm -rf RUNTIME_DIR (after layout/tripwire checks)
-#  private runtime + valid origin=migrated marker → npm uninstall -g --prefix RUNTIME_DIR (preserve shared prefix)
-#  private runtime + missing/invalid marker       → skip with conditional hint
-#  legacy ~/.local/bin/pi                         → npm uninstall -g (ONLY with --force-include-pi; never auto)
-#  neither exists                                 → no-op (skip with reason)
-#
-# Safety invariant: never delete ~/.local/bin/pi without --force-include-pi.
-# The uninstall script cannot snapshot pre-install state and therefore cannot
-# know whether ~/.local/bin/pi belongs to TLH or the user.  It is always kept
-# unless the operator explicitly passes --force-include-pi.
-#
-# Ownership gate for RUNTIME_DIR:
-#   1. Valid RUNTIME_MARKER_FILENAME marker: parseable JSON, schemaVersion=1,
-#      packageName match, origin in {created, migrated}. Fail-closed: any
-#      missing / malformed / symlinked / unreadable / schema-mismatched state
-#      → treat as no valid claim → SKIP.
-#   2. Recorded runtimeAbsPath equals realpath of RUNTIME_DIR. Defends against
-#      marker-copied-into-foreign-dir and relocation.
-#   3. Neither RUNTIME_DIR nor the marker file is a symlink.
-#   4. Positive pi layout present: bin/pi and lib/node_modules/<PI_PACKAGE_NAME>.
-#
-# origin=created means TLH created the prefix exclusively, so rm -rf remains
-# eligible — but ONLY after the existing top-level tripwire passes. origin=migrated
-# means TLH adopted an existing prefix, so uninstall must be surgical:
-# npm uninstall -g --ignore-scripts --prefix <prefix> ${PI_PACKAGE_NAME}.
+# Never delete ~/.local/bin/pi without --force-include-pi.
 
 PI_REMOVE_MODE="none"   # "runtime" | "runtime-package" | "legacy" | "none"
 PI_UNINSTALL_DISPLAY=""

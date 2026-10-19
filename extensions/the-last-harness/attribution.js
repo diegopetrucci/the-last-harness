@@ -215,33 +215,6 @@ function buildTlhGitCommitAttributionBlockReason(footer) {
         footer,
     ].join("\n\n");
 }
-function hasObviousGitCommitInTokens(tokens, depth = 0) {
-    if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
-        return true;
-    }
-    const normalizedTokens = normalizeShellCommandTokensFromTokens(tokens);
-    const commitArguments = getGitCommitArgumentsFromTokens(normalizedTokens);
-    if (commitArguments) {
-        return hasInlineLikeGitCommitMessageOrFileArgument(commitArguments);
-    }
-    const wrappedCommand = getWrappedShellCommandFromTokens(normalizedTokens);
-    return wrappedCommand !== undefined && hasObviousGitCommitInCommand(wrappedCommand, depth + 1);
-}
-function hasObviousGitCommitInCommand(command, depth = 0) {
-    if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
-        return true;
-    }
-    for (const { segment } of splitShellCommandSegments(command)) {
-        const trimmedSegment = segment.trim();
-        if (!trimmedSegment) {
-            continue;
-        }
-        if (hasObviousGitCommitInTokens(tokenizeShellWords(trimmedSegment), depth)) {
-            return true;
-        }
-    }
-    return false;
-}
 function getWrappedShellGitCommitAttributionBlockReasonFromTokens(tokens, footer, depth = 0, failClosedOnCommitLike = false, sourceSegment) {
     if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
         return buildTlhGitCommitAttributionBlockReason(footer);

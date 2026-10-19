@@ -11,7 +11,17 @@ import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, type ArtifactPaths } from "../../src/shared/types.ts";
 import type { MockPi } from "./helpers.ts";
 import { makeAgent, makeMinimalCtx, tryImport } from "./helpers.ts";
-import { scaleTestTimeout } from "./scale-timeout.ts";
+import { type ScaledMs, scaleTestTimeout } from "./scale-timeout.ts";
+import {
+  startedMockPiPids,
+  waitForAsyncState as waitForAsyncDirState,
+  waitForAsyncStatusPredicate as waitForAsyncDirStatusPredicate,
+  waitForMarker,
+  waitForMockPiArgs,
+  waitForMockPiCall as waitForRecordedMockPiCall,
+} from "./async-execution-helpers.ts";
+
+export { startedMockPiPids };
 
 export interface ExecutorResult {
   content: Array<{ text?: string }>;
@@ -104,48 +114,23 @@ export function createRecordingEventBus() {
   return bus;
 }
 
-export async function readMockCallArgs(mockPi: MockPi, index: number): Promise<string[]> {
-  const deadline = Date.now() + 10_000;
-  let callFile: string | undefined;
-  while (!callFile) {
-    callFile = fs
-      .readdirSync(mockPi.dir)
-      .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-      .sort()[index];
-    if (callFile || Date.now() > deadline) break;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  assert.ok(callFile, `expected mock pi call at index ${index}`);
-  return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
+export function readMockCallArgs(mockPi: MockPi, index: number): Promise<string[]> {
+  return waitForMockPiArgs(mockPi, index, scaleTestTimeout(10_000));
 }
 
-export async function waitForFile(
+export function waitForFile(
   filePath: string,
-  timeoutMs = scaleTestTimeout(10_000),
+  timeoutMs: ScaledMs = scaleTestTimeout(10_000),
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!fs.existsSync(filePath)) {
-    if (Date.now() > deadline) assert.fail(`Timed out waiting for file: ${filePath}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  return waitForMarker(filePath, timeoutMs);
 }
 
-export async function waitForAsyncState(
+export function waitForAsyncState(
   runId: string,
   expected: string,
-  timeoutMs = scaleTestTimeout(10_000),
+  timeoutMs: ScaledMs = scaleTestTimeout(10_000),
 ): Promise<void> {
-  const statusPath = path.join(ASYNC_DIR, runId, "status.json");
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    if (fs.existsSync(statusPath)) {
-      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { state?: string };
-      if (status.state === expected) return;
-    }
-    if (Date.now() > deadline)
-      assert.fail(`Timed out waiting for async state '${expected}' for ${runId}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  return waitForAsyncDirState(path.join(ASYNC_DIR, runId), expected, timeoutMs);
 }
 
 export interface AsyncStatusProbe {
@@ -159,19 +144,14 @@ export async function waitForAsyncStatusPredicate(
   runId: string,
   predicate: (status: AsyncStatusProbe) => boolean,
   label: string,
-  timeoutMs = scaleTestTimeout(10_000),
+  timeoutMs: ScaledMs = scaleTestTimeout(10_000),
 ): Promise<void> {
-  const statusPath = path.join(ASYNC_DIR, runId, "status.json");
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    if (fs.existsSync(statusPath)) {
-      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusProbe;
-      if (predicate(status)) return;
-    }
-    if (Date.now() > deadline)
-      assert.fail(`Timed out waiting for async status predicate '${label}' for ${runId}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  await waitForAsyncDirStatusPredicate(
+    path.join(ASYNC_DIR, runId),
+    (status) => predicate(status),
+    label,
+    timeoutMs,
+  );
 }
 
 export function readAsyncStatusJson<T>(runId: string): T {
@@ -181,19 +161,9 @@ export function readAsyncStatusJson<T>(runId: string): T {
 export async function waitForMockPiCall(
   mockPi: MockPi,
   index: number,
-  timeoutMs = scaleTestTimeout(10_000),
+  timeoutMs: ScaledMs = scaleTestTimeout(10_000),
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    const callFile = fs
-      .readdirSync(mockPi.dir)
-      .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-      .sort()
-      .at(index);
-    if (callFile) return;
-    if (Date.now() > deadline) assert.fail(`Timed out waiting for recorded mock pi call ${index}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+  await waitForRecordedMockPiCall(mockPi, index, timeoutMs);
 }
 
 export async function waitForRevivedAsyncResult(
@@ -205,14 +175,6 @@ export async function waitForRevivedAsyncResult(
   const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
   await waitForFile(resultPath, timeoutMs);
   return revivedId;
-}
-
-export function startedMockPiPids(mockPi: MockPi): number[] {
-  return fs
-    .readdirSync(mockPi.dir)
-    .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-    .map((name) => Number(name.split("-")[2]))
-    .filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
 export function isPidAlive(pid: number): boolean {

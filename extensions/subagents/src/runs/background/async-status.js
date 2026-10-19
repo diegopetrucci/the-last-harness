@@ -123,6 +123,9 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
     status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     for (const step of status.steps ?? []) {
         step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
+        if (step.cwd !== undefined && (typeof step.cwd !== "string" || step.cwd.length === 0)) {
+            step.cwd = undefined;
+        }
     }
 }
 function statusToSummary(asyncDir, status) {

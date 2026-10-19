@@ -787,5 +787,3 @@ function bestEffortClose(
     channel.close(reason);
   } catch {}
 }
-
-export default createSessionMirrorReplyProducer;

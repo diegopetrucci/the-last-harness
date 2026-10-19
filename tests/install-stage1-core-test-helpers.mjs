@@ -21,8 +21,7 @@ import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 export const TLH_NON_PINNED_PI_VERSION = "0.80.1";
-export const TLH_PINNED_PI_VERSION = "1.0.3";
-export const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
+export const TLH_PINNED_PI_VERSION = "1.1.0";
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -123,24 +122,6 @@ export function writeFakeNpmCiInstaller(fakebin, { npmLog, templatePiPath }) {
   );
 }
 
-/**
- * Write a fake npm that handles the OLD `npm install -g --prefix` approach.
- * Kept for any tests that still need to simulate the legacy path.
- * @deprecated Use writeFakeNpmCiInstaller for the lockfile-based install path.
- */
-export function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPath }) {
-  writeFakeCommand(
-    fakebin,
-    "npm",
-    [
-      `printf '%s\\n' "$*" >>"${npmLog}"`,
-      `mkdir -p "${dirname(installedPiPath)}"`,
-      `cp "${templatePiPath}" "${installedPiPath}"`,
-      `chmod +x "${installedPiPath}"`,
-    ].join("\n"),
-  );
-}
-
 export function writeLoggingPi(commandDir, logPath, version = TLH_PINNED_PI_VERSION) {
   writeFakePi(
     commandDir,
@@ -196,7 +177,6 @@ export function runStage1LocalPackageInstall(
     verbose = false,
     existingSupportFiles,
     existingAgentFiles,
-    existingLibrarianConfig,
     existingManagedRtk = false,
     envOverrides = {},
   } = {},
@@ -228,13 +208,6 @@ export function runStage1LocalPackageInstall(
     npmLog,
     templatePiPath: join(templateDir, "pi"),
   });
-  if (existingLibrarianConfig !== undefined) {
-    mkdirSync(join(agentDir, "extensions"), { recursive: true });
-    writeFileSync(
-      join(agentDir, "extensions", "librarian.json"),
-      JSON.stringify(existingLibrarianConfig, null, 2),
-    );
-  }
   if (existingSupportFiles) {
     for (const [relativePath, content] of Object.entries(existingSupportFiles)) {
       const target = join(agentDir, "tlh", relativePath);

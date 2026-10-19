@@ -853,9 +853,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         };
       }
       return handleManagementAction(action, buildManagementActionParams(paramsWithResolvedCwd), {
-        ...ctx,
         cwd: requestCwd,
-        config: deps.config,
       });
     }
 

@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
-import { parseGitStatusPorcelainV2 } from "./footer-git.js";
+import { parseGitStatusPorcelainV2, } from "./footer-git.js";
 const DEFAULT_REFRESH_INTERVAL_MS = 8_000;
 const DEFAULT_GIT_TIMEOUT_MS = 1_500;
 const DEFAULT_GH_TIMEOUT_MS = 3_000;
+const DEFAULT_PULL_REQUEST_REFRESH_INTERVAL_MS = 300_000;
 const GIT_STATUS_ARGS = ["--no-optional-locks", "status", "--porcelain=v2", "--branch"];
+const GIT_SYMBOLIC_REF_ARGS = ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
 const GH_PR_VIEW_ARGS = ["pr", "view", "--json", "number,state,isDraft,url,title"];
 function defaultRunner(command, args, options) {
     return new Promise((resolve, reject) => {
@@ -105,10 +107,11 @@ function parsePullRequestJson(stdout) {
     if (typeof record.title === "string") {
         snapshot.title = record.title;
     }
-    return snapshot;
+    return snapshot.number === undefined ? undefined : snapshot;
 }
 function gitStatusSnapshotsEqual(left, right) {
     return (left?.branch === right?.branch &&
+        left?.upstream === right?.upstream &&
         left?.staged === right?.staged &&
         left?.unstaged === right?.unstaged &&
         left?.untracked === right?.untracked &&
@@ -130,6 +133,8 @@ export class FooterGitCache {
     refreshIntervalMs;
     gitTimeoutMs;
     ghTimeoutMs;
+    pullRequestRefreshIntervalMs;
+    now;
     onChange;
     intervalHandle;
     inflightControllers = new Set();
@@ -139,6 +144,10 @@ export class FooterGitCache {
     statusSnapshot;
     pullRequestSnapshot;
     lastSeenBranch;
+    lastSeenUpstream;
+    lastPrFetchMs;
+    lastSeenCwd;
+    defaultBranchCache = new Map();
     constructor(options) {
         this.cwd = options.cwd;
         this.runner = options.runner ?? defaultRunner;
@@ -146,6 +155,9 @@ export class FooterGitCache {
         this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
         this.gitTimeoutMs = options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
         this.ghTimeoutMs = options.ghTimeoutMs ?? DEFAULT_GH_TIMEOUT_MS;
+        this.pullRequestRefreshIntervalMs =
+            options.pullRequestRefreshIntervalMs ?? DEFAULT_PULL_REQUEST_REFRESH_INTERVAL_MS;
+        this.now = options.now ?? (() => Date.now());
         this.onChange = options.onChange;
         this.intervalHandle = this.clock.setInterval(() => {
             void this.refresh();
@@ -181,45 +193,82 @@ export class FooterGitCache {
         return run;
     }
     async runRefresh() {
+        const cwd = this.cwd();
         const previousStatusSnapshot = this.statusSnapshot;
         const previousPullRequestSnapshot = this.pullRequestSnapshot;
-        const result = await this.fetchGitStatus();
+        const cwdChanged = this.lastSeenCwd !== undefined && cwd !== this.lastSeenCwd;
+        if (cwdChanged) {
+            this.pullRequestSnapshot = undefined;
+            this.lastSeenBranch = undefined;
+            this.lastSeenUpstream = undefined;
+            this.lastPrFetchMs = undefined;
+        }
+        this.lastSeenCwd = cwd;
+        const result = await this.fetchGitStatus(cwd);
         if (this.disposed) {
             return;
         }
         if (result.kind === "transient") {
+            if (cwdChanged) {
+                this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
+            }
             return;
         }
         if (result.kind === "not-a-repo") {
             this.statusSnapshot = undefined;
             this.pullRequestSnapshot = undefined;
             this.lastSeenBranch = undefined;
+            this.lastSeenUpstream = undefined;
+            this.lastPrFetchMs = undefined;
             this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
             return;
         }
         const status = result.status;
         this.statusSnapshot = status;
         const branch = typeof status.branch === "string" ? status.branch : undefined;
+        const upstream = typeof status.upstream === "string" ? status.upstream : undefined;
         const isValidBranch = !!branch && branch !== "detached";
-        const branchChanged = branch !== this.lastSeenBranch;
+        const branchChanged = cwdChanged || branch !== this.lastSeenBranch;
         if (branchChanged) {
             this.pullRequestSnapshot = undefined;
+            this.lastPrFetchMs = undefined;
         }
+        const hadUpstream = this.lastSeenUpstream !== undefined;
         this.lastSeenBranch = branch;
+        this.lastSeenUpstream = upstream;
         if (!isValidBranch) {
             this.pullRequestSnapshot = undefined;
             this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
             return;
         }
-        const pr = await this.fetchPullRequest();
+        const isDefault = await this.isDefaultBranch(branch, cwd);
         if (this.disposed) {
             return;
         }
-        if (pr !== undefined) {
-            this.pullRequestSnapshot = pr;
-        }
-        else if (branchChanged) {
+        if (isDefault) {
             this.pullRequestSnapshot = undefined;
+            this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
+            return;
+        }
+        const now = this.now();
+        const firstUpstreamAppearance = !branchChanged && !hadUpstream && upstream !== undefined;
+        const elapsedSinceLastPrFetch = this.lastPrFetchMs === undefined ? undefined : now - this.lastPrFetchMs;
+        const ttlExpired = elapsedSinceLastPrFetch === undefined ||
+            elapsedSinceLastPrFetch < 0 ||
+            elapsedSinceLastPrFetch >= this.pullRequestRefreshIntervalMs;
+        const shouldFetch = branchChanged || firstUpstreamAppearance || ttlExpired;
+        if (shouldFetch) {
+            this.lastPrFetchMs = now;
+            const pr = await this.fetchPullRequest(cwd);
+            if (this.disposed) {
+                return;
+            }
+            if (pr !== undefined) {
+                this.pullRequestSnapshot = pr;
+            }
+            else if (branchChanged) {
+                this.pullRequestSnapshot = undefined;
+            }
         }
         this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
     }
@@ -237,8 +286,33 @@ export class FooterGitCache {
         catch {
         }
     }
-    async fetchGitStatus() {
-        const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs);
+    async getDefaultBranch(cwd) {
+        if (this.defaultBranchCache.has(cwd)) {
+            return this.defaultBranchCache.get(cwd) ?? null;
+        }
+        const result = await this.runCommandSafely("git", GIT_SYMBOLIC_REF_ARGS, this.gitTimeoutMs, cwd);
+        if (!result) {
+            return null;
+        }
+        let defaultBranch = null;
+        if (result.exitCode === 0) {
+            const ref = result.stdout.trim();
+            const slashIndex = ref.indexOf("/");
+            const name = slashIndex >= 0 ? ref.slice(slashIndex + 1) : ref;
+            defaultBranch = name || null;
+        }
+        this.defaultBranchCache.set(cwd, defaultBranch);
+        return defaultBranch;
+    }
+    async isDefaultBranch(branch, cwd) {
+        const defaultBranch = await this.getDefaultBranch(cwd);
+        if (defaultBranch === null) {
+            return branch === "main" || branch === "master";
+        }
+        return branch === defaultBranch;
+    }
+    async fetchGitStatus(cwd) {
+        const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs, cwd);
         if (!result) {
             return { kind: "transient" };
         }
@@ -251,14 +325,14 @@ export class FooterGitCache {
         }
         return { kind: "ok", status: parsed };
     }
-    async fetchPullRequest() {
-        const result = await this.runCommandSafely("gh", GH_PR_VIEW_ARGS, this.ghTimeoutMs);
+    async fetchPullRequest(cwd) {
+        const result = await this.runCommandSafely("gh", GH_PR_VIEW_ARGS, this.ghTimeoutMs, cwd);
         if (!result || result.exitCode !== 0) {
             return undefined;
         }
         return parsePullRequestJson(result.stdout);
     }
-    async runCommandSafely(command, args, timeoutMs) {
+    async runCommandSafely(command, args, timeoutMs, cwd) {
         if (this.disposed) {
             return undefined;
         }
@@ -268,7 +342,7 @@ export class FooterGitCache {
             controller.abort();
         }, timeoutMs);
         try {
-            return await this.runner(command, args, { cwd: this.cwd(), signal: controller.signal });
+            return await this.runner(command, args, { cwd, signal: controller.signal });
         }
         catch {
             return undefined;

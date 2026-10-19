@@ -177,6 +177,8 @@ export type TlhSettings = {
 
 export type TlhStartupState = {
   lastSeenVersion?: string;
+  /** Whether the one-off legacy-theme migration notice was displayed. */
+  legacyThemeNoticeDisplayed?: boolean;
   updateCheck?: {
     checkedAt?: string;
     latestVersion?: string;

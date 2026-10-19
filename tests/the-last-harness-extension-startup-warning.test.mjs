@@ -119,6 +119,7 @@ function createCtx({
   projectTrusted,
   model,
   systemPrompt = "",
+  getSessionName = () => undefined,
 }) {
   return {
     mode,
@@ -134,7 +135,7 @@ function createCtx({
     sessionManager: {
       getEntries: () => [],
       getCwd: () => cwd,
-      getSessionName: () => undefined,
+      getSessionName,
       getBranch: () => undefined,
     },
     getContextUsage: () => undefined,
@@ -316,6 +317,7 @@ async function createExtensionHarness({
       projectTrusted,
       model,
       systemPrompt,
+      getSessionName,
     } = {}) {
       const notifications = [];
       let title;
@@ -334,6 +336,7 @@ async function createExtensionHarness({
         projectTrusted,
         model,
         systemPrompt,
+        getSessionName,
         onSetHeader(factory) {
           headerFactory = factory;
         },
@@ -403,6 +406,7 @@ async function runSessionStart({
   terminalTitleScheduler,
   model,
   systemPrompt,
+  getSessionName,
 }) {
   const harness = await createExtensionHarness({
     installState,
@@ -420,6 +424,7 @@ async function runSessionStart({
       projectTrusted,
       model,
       systemPrompt,
+      getSessionName,
     });
     await new Promise((resolve) => setImmediate(resolve));
     const header = session.buildHeader();
@@ -442,99 +447,6 @@ async function runSessionStart({
     harness.cleanup();
   }
 }
-
-test("TLH filters only the exact Pi Voice setup info notice once per shared UI", async () => {
-  const harness = await createExtensionHarness({
-    installState: LATEST_STABLE_INSTALL_STATE,
-  });
-
-  try {
-    const notifications = [];
-    const ctx = createCtx({ cwd: harness.cwd, notifications });
-    const filterHandler = harness.sessionStartHandlers[0];
-    assert.equal(typeof filterHandler, "function", "TLH notice filter must register first");
-
-    await filterHandler({ reason: "startup" }, ctx);
-    const wrappedNotify = ctx.ui.notify;
-    await filterHandler({ reason: "reload" }, ctx);
-    assert.equal(
-      ctx.ui.notify,
-      wrappedNotify,
-      "repeated session starts must not stack notifier wrappers",
-    );
-
-    const setupNotice = "Pi Voice installed · press Ctrl+Alt+Z or run /voice-settings to set up";
-    const alternatePlatformSetupNotice =
-      "Pi Voice installed · press Ctrl+Option+Z or run /voice-settings to set up";
-    ctx.ui.notify(setupNotice, "info");
-    ctx.ui.notify(alternatePlatformSetupNotice, "info");
-    ctx.ui.notify(setupNotice, "warning");
-    ctx.ui.notify(`${setupNotice} now`, "info");
-    ctx.ui.notify(
-      "Pi Voice installed · press Ctrl+Shift+Z or run /voice-settings to set up",
-      "info",
-    );
-    ctx.ui.notify("Pi Voice ready", "info");
-    ctx.ui.notify(setupNotice, "error");
-
-    assert.deepEqual(notifications, [
-      { message: setupNotice, type: "warning" },
-      { message: `${setupNotice} now`, type: "info" },
-      {
-        message: "Pi Voice installed · press Ctrl+Shift+Z or run /voice-settings to set up",
-        type: "info",
-      },
-      { message: "Pi Voice ready", type: "info" },
-      { message: setupNotice, type: "error" },
-    ]);
-  } finally {
-    harness.cleanup();
-  }
-});
-
-test("TLH wraps a distinct UI object independently", async () => {
-  const harness = await createExtensionHarness({
-    installState: LATEST_STABLE_INSTALL_STATE,
-  });
-
-  try {
-    const setupNotice = "Pi Voice installed · press Ctrl+Alt+Z or run /voice-settings to set up";
-    const firstNotifications = [];
-    const secondNotifications = [];
-    const firstCtx = createCtx({ cwd: harness.cwd, notifications: firstNotifications });
-    const secondCtx = createCtx({ cwd: harness.cwd, notifications: secondNotifications });
-    const filterHandler = harness.sessionStartHandlers[0];
-
-    await filterHandler({ reason: "startup" }, firstCtx);
-    await filterHandler({ reason: "reload" }, secondCtx);
-
-    assert.notEqual(firstCtx.ui.notify, secondCtx.ui.notify);
-    firstCtx.ui.notify(setupNotice, "info");
-    secondCtx.ui.notify(setupNotice, "info");
-    firstCtx.ui.notify("first UI remains usable", "info");
-    secondCtx.ui.notify("second UI remains usable", "info");
-
-    assert.deepEqual(firstNotifications, [{ message: "first UI remains usable", type: "info" }]);
-    assert.deepEqual(secondNotifications, [{ message: "second UI remains usable", type: "info" }]);
-  } finally {
-    harness.cleanup();
-  }
-});
-
-test("headless sessions leave the shared UI notifier untouched", async () => {
-  const harness = await createExtensionHarness({
-    installState: LATEST_STABLE_INSTALL_STATE,
-  });
-
-  try {
-    const ctx = createCtx({ cwd: harness.cwd, notifications: [], hasUI: false });
-    const originalNotify = ctx.ui.notify;
-    await harness.sessionStartHandlers[0]({ reason: "startup" }, ctx);
-    assert.equal(ctx.ui.notify, originalNotify);
-  } finally {
-    harness.cleanup();
-  }
-});
 
 function createDeferred() {
   let resolve;
@@ -706,6 +618,81 @@ test("queued title reassertions stop after session replacement and shutdown", as
       [250, 250],
       "an invalidated shutdown callback must not schedule another pass",
     );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("named session title includes session name between brand and cwd", async () => {
+  const interactive = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "my-session",
+  });
+  assert.equal(interactive.title, "tlh - my-session - workspace");
+});
+
+test("unnamed session title falls back to brand and cwd only", async () => {
+  const noName = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "",
+  });
+  assert.equal(noName.title, "tlh - workspace");
+
+  const whitespace = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "   ",
+  });
+  assert.equal(whitespace.title, "tlh - workspace");
+
+  const undef = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => undefined,
+  });
+  assert.equal(undef.title, "tlh - workspace");
+});
+
+test("rename via session_info_changed picks up new session name immediately", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+
+  try {
+    let currentName = "";
+    const session = await harness.startSession({
+      reason: "restore",
+      getSessionName: () => currentName,
+    });
+    assert.equal(session.getTitle(), "tlh - workspace");
+
+    currentName = "renamed-session";
+    await harness.emit("session_info_changed", { type: "session_info_changed" }, session.ctx);
+    assert.equal(session.getTitle(), "tlh - renamed-session - workspace");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("getSessionName that throws falls back to unnamed title format", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+
+  try {
+    const session = await harness.startSession({
+      reason: "restore",
+      getSessionName: () => {
+        throw new Error("sessionManager unavailable");
+      },
+    });
+    assert.equal(session.getTitle(), "tlh - workspace");
   } finally {
     harness.cleanup();
   }

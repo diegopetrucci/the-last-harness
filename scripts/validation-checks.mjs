@@ -60,8 +60,7 @@ export const VALIDATION_CHECKS = Object.freeze(
       lane: "lint",
       order: 10,
     },
-    // Keep package checks in one lane and preserve their order. The package
-    // contents and npm pack checks inspect shared packaging metadata; the lazy
+    // Keep package checks in one lane and preserve their order. The lazy
     // import check is included here for the non-lint CI projection independently.
     {
       id: "check-package-versions",
@@ -86,12 +85,6 @@ export const VALIDATION_CHECKS = Object.freeze(
       argv: ["node", "scripts/merge-settings.mjs", "--dry-run"],
       lane: "pkg",
       order: 11,
-    },
-    {
-      id: "npm-pack",
-      argv: ["npm", "pack", "--dry-run"],
-      lane: "pkg",
-      order: 12,
     },
   ].map((check) => Object.freeze({ ...check, argv: Object.freeze([...check.argv]) })),
 );

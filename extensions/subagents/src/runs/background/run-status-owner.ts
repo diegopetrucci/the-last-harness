@@ -8,7 +8,7 @@ import type {
   SubagentAttemptFacts,
   SubagentTerminalResult,
 } from "../../shared/types.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { readStatus, resolveChildCwd } from "../../shared/utils.ts";
 import {
   boundChildError,
   claimChildTerminalReason,
@@ -302,7 +302,6 @@ export function createBackgroundRunStatusOwner(
       status: "pending",
       ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
       ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
-      ...(task.cwd && path.resolve(task.cwd) !== path.resolve(cwd) ? { cwd: task.cwd } : {}),
       ...(terminalResult ? { terminalResult } : {}),
       ...(transcriptPath ? { transcriptPath } : {}),
       skills: task.skills,
@@ -323,6 +322,12 @@ export function createBackgroundRunStatusOwner(
           ? [task.model]
           : undefined,
       ...(task.childLocation ? { childLocation: task.childLocation } : {}),
+      // Record the fully resolved per-step dispatch cwd so revival can prefer
+      // it over the run-level cwd.  resolveChildCwd returns the base run cwd
+      // when the task has no explicit cwd (undefined), making this a no-op
+      // write for same-cwd tasks; the revival logic only acts on it when it
+      // differs from the run-level cwd.
+      cwd: resolveChildCwd(cwd, task.cwd),
       recentTools: [],
       recentOutput: [],
     };

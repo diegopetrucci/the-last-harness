@@ -30,12 +30,8 @@ import {
 } from "./lib/tlh-install-paths.mjs";
 import {
   LEGACY_MANAGED_PROFILE_ARTIFACTS,
-  RETIRED_PROFILE_DIRECTORIES,
-  RETIRED_PROFILE_FILES,
   cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl,
   cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl,
-  cleanupRetiredProfileDirectories as cleanupRetiredProfileDirectoriesImpl,
-  cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl,
   backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl,
   reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl,
   pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache,
@@ -85,7 +81,7 @@ import { provisionPiRuntime } from "./lib/tlh-install-runtime.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "1.0.3";
+const PINNED_PI_VERSION = "1.1.0";
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
@@ -1127,14 +1123,8 @@ function profileCleanupIo(
       runtimeConfig ? runCommand(runtimeConfig, commandArgs, options) : undefined,
   };
 }
-export function cleanupRetiredProfileDirectories(config: ProfileCleanupConfig): void {
-  cleanupRetiredProfileDirectoriesImpl(config, profileCleanupIo(config));
-}
 export function cleanupLegacyManagedProfileArtifacts(config: ProfileCleanupConfig): void {
   cleanupLegacyManagedProfileArtifactsImpl(config, profileCleanupIo(config));
-}
-export function cleanupRetiredProfileFiles(config: InstallConfig): void {
-  cleanupRetiredProfileFilesImpl(config, profileCleanupIo(config));
 }
 export function cleanupOldSettingsBackups(config: InstallConfig): void {
   cleanupOldSettingsBackupsImpl(config, profileCleanupIo(config));
@@ -1879,8 +1869,6 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   }
   await mergeSettings(config);
   cleanupLegacyManagedProfileArtifacts(config);
-  cleanupRetiredProfileDirectories(config);
-  if (!config.noSettings) cleanupRetiredProfileFiles(config);
   if (!config.noSettings) reclaimRetiredExtensionResidues(config);
   if (!config.noSettings) cleanupOldSettingsBackups(config);
   await writeInstallState(config);
@@ -1944,8 +1932,6 @@ if (isMainModule()) {
 export {
   LEGACY_MANAGED_PROFILE_ARTIFACTS,
   MIN_NODE_VERSION,
-  RETIRED_PROFILE_DIRECTORIES,
-  RETIRED_PROFILE_FILES,
   RUNTIME_MARKER_FILENAME,
   RUNTIME_OWNED_TOPLEVEL,
   assertSupportedNodeRuntime,

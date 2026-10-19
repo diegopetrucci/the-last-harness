@@ -364,6 +364,7 @@ function resultItems(results: RunnerStepResult[]): AsyncResultArtifact["results"
     ...(result.cancel ? { cancel: result.cancel } : {}),
     activityState: result.activityState,
     ...(result.terminalResult ? { terminalResult: result.terminalResult } : {}),
+    ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
   }));
 }
 

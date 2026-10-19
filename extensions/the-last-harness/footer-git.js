@@ -1,4 +1,5 @@
 const BRANCH_HEAD_PREFIX = "# branch.head ";
+const BRANCH_UPSTREAM_PREFIX = "# branch.upstream ";
 const BRANCH_AB_PREFIX = "# branch.ab ";
 function createEmptyGitStatus() {
     return {
@@ -49,6 +50,13 @@ export function parseGitStatusPorcelainV2(output) {
         }
         if (line.startsWith(BRANCH_HEAD_PREFIX)) {
             status.branch = normalizeBranchHead(line.slice(BRANCH_HEAD_PREFIX.length)) || undefined;
+            continue;
+        }
+        if (line.startsWith(BRANCH_UPSTREAM_PREFIX)) {
+            const upstream = line.slice(BRANCH_UPSTREAM_PREFIX.length).trim();
+            if (upstream) {
+                status.upstream = upstream;
+            }
             continue;
         }
         if (line.startsWith(BRANCH_AB_PREFIX)) {

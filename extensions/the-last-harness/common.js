@@ -130,3 +130,15 @@ export function formatCompactTokenCount(count) {
     }
     return `${Math.round(count / 1000000)}M`;
 }
+export function createRetryableLazyImport(loader) {
+    let modulePromise;
+    return () => {
+        if (!modulePromise) {
+            modulePromise = loader().catch((error) => {
+                modulePromise = undefined;
+                throw error;
+            });
+        }
+        return modulePromise;
+    };
+}

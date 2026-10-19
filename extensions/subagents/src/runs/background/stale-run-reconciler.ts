@@ -138,6 +138,8 @@ function resultStep(
   const complete = isCompletedLifecycleStepState(step.status);
   return {
     agent: step.agent,
+    // Carry per-child cwd for result-only revival after stale repair.
+    ...(typeof step.cwd === "string" && step.cwd.length > 0 ? { cwd: step.cwd } : {}),
     output: "",
     success: complete,
     ...(complete ? {} : { error: message }),

@@ -13,7 +13,6 @@ import {
   packageSourceOf,
   readDefaultExtensionProvenance,
   readDefaultExtensions,
-  repairTargetedDefaultExtensionLoadOrder,
   setDefaultExtensionProvenance,
   withLegacyRetiredDefaultPackageIdentities,
   type DefaultExtensionEntry,
@@ -152,10 +151,6 @@ function settingsPackages(settings: Settings): unknown[] {
   return settings.packages ?? [];
 }
 
-function isLegacyRtkDisabledId(id: string): boolean {
-  return id === "rtk" || id === "pi-rtk";
-}
-
 function orderedDisabledIds(
   ids: Set<string>,
   defaultExtensions: readonly DefaultExtensionEntry[],
@@ -165,9 +160,7 @@ function orderedDisabledIds(
   for (const extension of defaultExtensions) {
     if (ids.has(extension.id)) ordered.push(extension.id);
   }
-  const unknown = [...ids]
-    .filter((id) => !knownIds.has(id) && !isLegacyRtkDisabledId(id))
-    .sort((a, b) => a.localeCompare(b));
+  const unknown = [...ids].filter((id) => !knownIds.has(id)).sort((a, b) => a.localeCompare(b));
   return [...ordered, ...unknown];
 }
 
@@ -396,10 +389,6 @@ function assertNotNormalPiSettings(settingsPath: string): void {
 
 function scrubRetiredTlhSettings(settings: Settings): boolean {
   let changed = false;
-  if (isPlainObject(settings.tlh) && Object.hasOwn(settings.tlh, "rtk")) {
-    delete settings.tlh.rtk;
-    changed = true;
-  }
   if (isPlainObject(settings.subagents) && isPlainObject(settings.subagents.agentOverrides)) {
     for (const value of Object.values(settings.subagents.agentOverrides)) {
       if (!isPlainObject(value) || !Object.hasOwn(value, "toolBudget")) continue;
@@ -415,7 +404,6 @@ function writeSettings(
   value: Settings,
   previousRaw: string,
 ): string | undefined {
-  scrubRetiredTlhSettings(value);
   const formatted = `${JSON.stringify(value, null, 2)}\n`;
   if (formatted === previousRaw) return undefined;
 
@@ -582,7 +570,6 @@ function commandEnable(
   disabledIds.delete(extension.id);
   setDisabledIds(settings, disabledIds, defaultExtensions);
   enablePackage(settings, extension);
-  repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
   if (extension.id === MCPORTER_EXTENSION_ID) {
     applyBuiltinMcpExclusionOnEnable(settings);
   }
@@ -647,6 +634,7 @@ function main(): void {
   }
 
   ensureMutableSettings(settings);
+  scrubRetiredTlhSettings(settings);
 
   if (args.command === "disable") {
     const id = args.commandArgs[0];
@@ -654,8 +642,7 @@ function main(): void {
     const before = JSON.stringify(settings);
     const warningChanged = commandDisable(settings, defaultExtensions, id);
     syncDefaultExtensionProvenance(settings, defaultExtensions);
-    const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-    const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+    const changed = before !== JSON.stringify(settings);
     const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
     console.log(`${id} is disabled for the tlh profile.`);
     if (warningChanged)
@@ -673,8 +660,7 @@ function main(): void {
     const before = JSON.stringify(settings);
     const warningChanged = commandEnable(settings, defaultExtensions, id);
     syncDefaultExtensionProvenance(settings, defaultExtensions);
-    const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-    const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+    const changed = before !== JSON.stringify(settings);
     const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
     console.log(`${id} is enabled for the tlh profile.`);
     if (warningChanged) console.log("Suppressed warnings.anthropicExtraUsage (tlh default).");

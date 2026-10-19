@@ -234,12 +234,6 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             override.maxExecutionTimeMs = parsed;
         }
     }
-    if (Object.hasOwn(input, "systemPrompt")) {
-        if (typeof input.systemPrompt === "string")
-            override.systemPrompt = input.systemPrompt;
-        else
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`);
-    }
     const fallbackModels = parseOverrideStringArrayOrFalse(Object.hasOwn(input, "fallbackModels") ? input.fallbackModels : undefined, {
         filePath,
         name,

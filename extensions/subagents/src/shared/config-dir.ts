@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../runs/shared/pi-spawn.ts";
 
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
-const RUNTIME_CONFIG_DIR = Symbol("runtime-config-dir");
 
 // Detached async runners cannot peer-import the Pi runtime; the parent forwards
 // its resolved Pi package root through this env var so config-dir resolution
@@ -20,6 +19,10 @@ interface RuntimeConfigDirDeps {
   useCache?: boolean;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function normalizeConfigDirName(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -27,17 +30,12 @@ function normalizeConfigDirName(value: unknown): string | undefined {
 }
 
 function resolveConfigDirNameFromSource(source: unknown): string | undefined {
-  if (!source || typeof source !== "object") return undefined;
-
-  const direct = source as {
-    CONFIG_DIR_NAME?: unknown;
-    configDir?: unknown;
-    piConfig?: { configDir?: unknown } | null;
-  };
+  if (!isRecord(source)) return undefined;
+  const piConfig = source.piConfig;
   return (
-    normalizeConfigDirName(direct.CONFIG_DIR_NAME) ??
-    normalizeConfigDirName(direct.configDir) ??
-    normalizeConfigDirName(direct.piConfig?.configDir)
+    normalizeConfigDirName(source.CONFIG_DIR_NAME) ??
+    normalizeConfigDirName(source.configDir) ??
+    normalizeConfigDirName(isRecord(piConfig) ? piConfig.configDir : undefined)
   );
 }
 
@@ -51,9 +49,7 @@ function readConfigDirNameFromPackageRoot(
     const readFileSync =
       deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
     const packageJsonPath = path.join(packageRoot, "package.json");
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-      piConfig?: { configDir?: unknown } | null;
-    };
+    const packageJson: unknown = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
     return resolveConfigDirNameFromSource(packageJson);
   } catch {
     return undefined;
@@ -66,28 +62,6 @@ function safeResolvePackageRoot(resolvePackageRoot: () => string | undefined): s
   } catch {
     return undefined;
   }
-}
-
-function resolveConfigDirNameFromEntryPoint(
-  entryPoint: string | undefined,
-  packageRoot: string | undefined,
-  deps: RuntimeConfigDirDeps,
-): string | undefined {
-  const explicitRootValue = readConfigDirNameFromPackageRoot(packageRoot, deps);
-  if (explicitRootValue !== undefined) return explicitRootValue;
-  if (!entryPoint) return undefined;
-
-  try {
-    let dir = path.dirname(fs.realpathSync(entryPoint));
-    while (dir !== path.dirname(dir)) {
-      const value = readConfigDirNameFromPackageRoot(dir, deps);
-      if (value !== undefined) return value;
-      dir = path.dirname(dir);
-    }
-  } catch {
-    // Package metadata lookup is best-effort; detached runners must not fail here.
-  }
-  return undefined;
 }
 
 export function resolveRuntimeConfigDirName(deps: RuntimeConfigDirDeps = {}): string | undefined {
@@ -125,38 +99,9 @@ export function resolveRuntimeConfigDirName(deps: RuntimeConfigDirDeps = {}): st
   return value;
 }
 
-/**
- * Resolves the active Pi config directory name (e.g. ".pi").
- *
- * Supports two call shapes to stay compatible with both fork and upstream callers:
- *  - `resolveConfigDirName(codingAgentModule)` — fork-style: resolve from an explicit
- *    module-shaped source, or (when omitted) from the resolved parent/private Pi runtime.
- *  - `resolveConfigDirName(codingAgentModule, entryPoint, packageRoot)` — upstream-style:
- *    resolve by walking up from an explicit entrypoint path and/or reading an explicit
- *    package root directly, without needing runtime dependency injection.
- *  - `resolveConfigDirName(codingAgentModule, deps)` — fork test-injection style: pass a
- *    `RuntimeConfigDirDeps` object to override how the runtime package root is resolved.
- */
-export function resolveConfigDirName(
-  codingAgentModule: unknown = RUNTIME_CONFIG_DIR,
-  entryPointOrDeps?: string | RuntimeConfigDirDeps,
-  packageRoot?: string,
-): string {
-  if (codingAgentModule !== RUNTIME_CONFIG_DIR) {
-    return resolveConfigDirNameFromSource(codingAgentModule) ?? DEFAULT_CONFIG_DIR_NAME;
-  }
-
-  if (typeof entryPointOrDeps === "string" || packageRoot !== undefined) {
-    const value = resolveConfigDirNameFromEntryPoint(
-      entryPointOrDeps as string | undefined,
-      packageRoot,
-      {},
-    );
-    return value ?? DEFAULT_CONFIG_DIR_NAME;
-  }
-
-  const deps = (entryPointOrDeps as RuntimeConfigDirDeps | undefined) ?? {};
-  return resolveRuntimeConfigDirName(deps) ?? DEFAULT_CONFIG_DIR_NAME;
+/** Active Pi config directory name, from the resolved runtime package root. */
+export function resolveConfigDirName(): string {
+  return resolveRuntimeConfigDirName() ?? DEFAULT_CONFIG_DIR_NAME;
 }
 
 export function getConfigDirName(): string {

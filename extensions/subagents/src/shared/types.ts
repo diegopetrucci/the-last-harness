@@ -604,6 +604,9 @@ export interface AsyncStatus {
   error?: string;
   activityState?: ActivityState;
   lastActivityAt?: number;
+  activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
   currentTool?: string;
   currentToolStartedAt?: number;
   currentPath?: string;
@@ -636,8 +639,6 @@ export interface AsyncStatus {
       | "continued"
       | "cancelled";
     sessionFile?: string;
-    /** Child working directory when it differs from the run-level cwd. */
-    cwd?: string;
     transcriptPath?: string;
     transcriptError?: string;
     activityState?: ActivityState;
@@ -698,6 +699,13 @@ export interface AsyncStatus {
      * child cwd differs from the parent session cwd; absent for same-cwd steps.
      */
     childLocation?: ChildLocationSnapshot;
+    /**
+     * Fully resolved per-child dispatch cwd. Written by the status owner from
+     * the plan task cwd at run start. Preferred over childLocation.childCwd and
+     * run-level cwd on revival; absent in artifacts written before this field
+     * was introduced.
+     */
+    cwd?: string;
   }>;
   sessionDir?: string;
   outputFile?: string;
@@ -769,6 +777,15 @@ export interface AsyncResultArtifactResultItem {
   ticketId?: string;
   /** Per-child terminal state and evidence-only facts, when persisted. */
   terminalResult?: SubagentTerminalResult;
+  activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
+  /**
+   * Fully resolved per-child dispatch cwd. Written by the runner from the plan
+   * task cwd so result-only revival (status.json absent) uses the correct child
+   * working directory instead of falling back to the run-level cwd.
+   */
+  cwd?: string;
 }
 
 /**

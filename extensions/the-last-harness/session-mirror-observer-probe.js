@@ -260,7 +260,7 @@ export function createSessionMirrorObserverProbe(options = {}) {
         queueCapacity: options.queueCapacity,
     };
     const runtime = createSessionMirrorObserverRuntime(runtimeOptions);
-    if (options.sessionMirrorReplies === true && typeof options.sendUserMessage === "function") {
+    if (typeof options.sendUserMessage === "function") {
         replyProducer = createSessionMirrorReplyProducer({
             enabled: true,
             bridgeDirectory: options.bridgeDirectory,
@@ -375,7 +375,6 @@ export function createSessionMirrorObserverProbe(options = {}) {
         invokeReply(() => replyProducer?.sessionCompact());
         invokeLifecycle(() => runtime.sessionCompact(), metrics);
     };
-    const publicationReady = (info) => invokeReply(() => replyProducer?.publicationReady(info));
     const sessionShutdown = () => {
         invokeReply(() => replyProducer?.sessionShutdown());
         shutdownSink(publicationSink);
@@ -400,9 +399,7 @@ export function createSessionMirrorObserverProbe(options = {}) {
         sessionBeforeCompact,
         sessionCompact,
         sessionShutdown,
-        publicationReady,
         requestSnapshot,
         getState,
     });
 }
-export default createSessionMirrorObserverProbe;

@@ -13,1216 +13,36 @@ const { scheduleTlhLaunchTelemetry, sendTlhLaunchTelemetry } = await jiti.import
   "../extensions/the-last-harness/launch-telemetry.ts",
 );
 
-// ── Tlh.Subagent.NAME.modelEffort tests ──────────────────────────────────────
-
-test("launch telemetry emits all nine bundled subagent keys with unknown:unknown when no config present", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
-  writeTelemetryState(fixture);
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  const bundledNames = [
-    "code-reviewer",
-    "contrarian",
-    "developer",
-    "diff-summarizer",
-    "librarian",
-    "oracle",
-    "repo-scout",
-    "test-runner",
-    "web-scout",
-  ];
-  for (const name of bundledNames) {
-    assert.equal(
-      event.payload[`Tlh.Subagent.${name}.modelEffort`],
-      "unknown:unknown",
-      `expected unknown:unknown modelEffort for ${name}`,
-    );
-  }
-
-  // Regression: no key ending in ".thinking" must appear anywhere in the payload.
-  const thinkingKeys = Object.keys(event.payload).filter((k) => k.endsWith(".thinking"));
-  assert.deepEqual(thinkingKeys, [], "no emitted payload key should end in '.thinking'");
-});
-
-test("launch telemetry reflects settings agentOverrides thinking change", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
-  writeTelemetryState(fixture);
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    `${JSON.stringify(
-      {
-        subagents: {
-          agentOverrides: { developer: { thinking: "high", model: "claude-opus-4-5" } },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "claude-opus-4-5:high",
-    "settings override thinking and model should be reflected as combined modelEffort",
-  );
-  // Other agents should still be unknown:unknown
-  assert.equal(event.payload["Tlh.Subagent.librarian.modelEffort"], "unknown:unknown");
-});
-
-test("launch telemetry reflects hand-edited frontmatter thinking value", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
-  writeTelemetryState(fixture);
-
-  // Simulate an installed subagent file with user-edited thinking field
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "librarian.md"),
-    "---\nname: librarian\nthinking: medium\nmodel: claude-opus-4-5\n---\nPrompt body here.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // Bare model name "claude-opus-4-5" (no slash) is reported as-is; thinking "medium" from frontmatter.
-  assert.equal(
-    event.payload["Tlh.Subagent.librarian.modelEffort"],
-    "claude-opus-4-5:medium",
-    "frontmatter model and thinking should be reflected as combined modelEffort",
-  );
-});
-
-test("launch telemetry: settings agentOverrides wins over frontmatter", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
-  writeTelemetryState(fixture);
-
-  // Frontmatter says "low"; settings override says "max"
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "oracle.md"),
-    "---\nname: oracle\nthinking: low\nmodel: gpt-4o\n---\nPrompt body.\n",
-  );
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    `${JSON.stringify(
-      {
-        subagents: { agentOverrides: { oracle: { thinking: "max", model: "claude-opus-4-5" } } },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  assert.equal(
-    event.payload["Tlh.Subagent.oracle.modelEffort"],
-    "claude-opus-4-5:max",
-    "settings override should win over frontmatter, combined as modelEffort",
-  );
-});
-
-test("launch telemetry: disabled agentOverride is reported as 'disabled' (single token)", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
-  writeTelemetryState(fixture);
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    `${JSON.stringify(
-      {
-        subagents: { agentOverrides: { "repo-scout": { disabled: true } } },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // A disabled agent emits the single token "disabled" — not "disabled:disabled".
-  // "disabled" does not collide with any THINKING_LEVELS member.
-  assert.equal(
-    event.payload["Tlh.Subagent.repo-scout.modelEffort"],
-    "disabled",
-    "disabled agent must report single token 'disabled' as modelEffort",
-  );
-});
-
-test("launch telemetry never emits keys for agent names outside the bundled nine", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
-  writeTelemetryState(fixture);
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    `${JSON.stringify(
-      {
-        // "skunkworks" is not a bundled subagent name
-        subagents: { agentOverrides: { skunkworks: { thinking: "high", model: "secret-model" } } },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  const payloadKeys = Object.keys(event.payload);
-  const unbundledKeys = payloadKeys.filter(
-    (k) => k.startsWith("Tlh.Subagent.") && k.includes("skunkworks"),
-  );
-  assert.equal(unbundledKeys.length, 0, "no telemetry key should exist for non-bundled agent name");
-});
-
-test("launch telemetry: non-public model in frontmatter is reported as 'custom'", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "contrarian.md"),
-    "---\nname: contrarian\nthinking: high\nmodel: acme-internal/super-secret-model\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // The model is provider-qualified so it must be in availableModels to be reported.
-        // privacySafeTlhTelemetryModelId then redacts it as "custom" (not on allowlist).
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          availableModels: [{ provider: "acme-internal", id: "super-secret-model" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // "super-secret-model" is not on the public allowlist → "custom"; thinking "high" is valid.
-  assert.equal(
-    event.payload["Tlh.Subagent.contrarian.modelEffort"],
-    "custom:high",
-    "non-public model is redacted to 'custom'; combined as modelEffort",
-  );
-});
-
-// ── provider-aware frontmatter tests ────────────────────────────────────────
-
-test("launch telemetry reports provider-aware defaults for bundled agents (Anthropic active)", async (t) => {
-  // developer.md: Anthropic effort=medium, OpenAI Codex effort=max
-  //               Anthropic model=claude-sonnet-4-6, OpenAI Codex model=gpt-5.6-luna
-  // Expected for Anthropic provider: modelEffort="claude-sonnet-4-6:medium"
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-provider-aware-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "developer.md"),
-    `---
-name: developer
-tlhModelDefaults:
-  - provider: openai-codex
-    models: [gpt-5.6-luna]
-    effort: max
-  - provider: anthropic
-    models: [claude-sonnet-4-6]
-    effort: medium
----
-Body.
-`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // Supply the real available-models list; only models present here can be reported.
-        // This mirrors how scheduleTlhLaunchTelemetry captures the registry at schedule time.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // Anthropic provider: normalized Anthropic effort=medium, model resolved as claude-sonnet-4-6.
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "claude-sonnet-4-6:medium",
-    "Anthropic: expected claude-sonnet-4-6:medium modelEffort",
-  );
-});
-
-test("launch telemetry reports provider-aware defaults for bundled agents (OpenAI active)", async (t) => {
-  // Same normalized frontmatter as above but with OpenAI Codex provider
-  // Expected: modelEffort="gpt-5.6-luna:max"
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-provider-aware-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "developer.md"),
-    `---
-name: developer
-tlhModelDefaults:
-  - provider: openai-codex
-    models: [gpt-5.6-luna]
-    effort: max
-  - provider: anthropic
-    models: [claude-sonnet-4-6]
-    effort: medium
----
-Body.
-`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // Supply the real available-models list so resolver can find openai-codex model.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "openai-codex",
-          availableModels: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // OpenAI-codex provider: normalized effort=max, model resolved as gpt-5.6-luna.
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "gpt-5.6-luna:max",
-    "OpenAI: expected gpt-5.6-luna:max modelEffort",
-  );
-  // Verify they differ from Anthropic (developer is the canonical case where they diverge)
-  assert.notEqual(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "claude-sonnet-4-6:medium",
-    "OpenAI modelEffort should differ from Anthropic modelEffort for developer",
-  );
-});
-
-test("launch telemetry uses normalized provider entries and ignores generic compatibility fields in a present block", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-normalized-defaults-", {
-    test: t,
-  });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "developer.md"),
-    `---
-name: developer
-model: anthropic/legacy-model
-thinking: high
-tlhModelDefaults:
-  - provider: openai-codex
-    models: [gpt-5.6-luna]
-    effort: max
-  - provider: anthropic
-    models: [claude-sonnet-4-6]
-    effort: medium
----
-Body.
-`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "claude-sonnet-4-6:medium",
-    "telemetry must use the matching normalized provider entry instead of generic thinking/model",
-  );
-});
-
-test("launch telemetry handles quoted frontmatter model values", async (t) => {
-  // tlhAnthropicModels value is quoted in YAML: 'anthropic/claude-haiku-4-5'
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-provider-aware-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "librarian.md"),
-    "---\nname: librarian\ntlhAnthropicModels: 'anthropic/claude-haiku-4-5'\ntlhAnthropicThinking: \"high\"\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // Supply the model as available so the registry-based resolver can select it.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "anthropic", id: "claude-haiku-4-5" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // Quoted frontmatter values must be unquoted correctly; model resolved against available list.
-  assert.equal(
-    event.payload["Tlh.Subagent.librarian.modelEffort"],
-    "claude-haiku-4-5:high",
-    "quoted frontmatter values should parse correctly into modelEffort",
-  );
-});
-
-test("launch telemetry handles list-valued model fields (comma-separated tlhOpenaiModels)", async (t) => {
-  // tlhOpenaiModels contains a comma-separated list; the first matching provider entry is used
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-provider-aware-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "oracle.md"),
-    "---\nname: oracle\ntlhOpenaiModels: openai-codex/gpt-5.6-sol, openai/gpt-4o\ntlhAnthropicModels: anthropic/claude-opus-5\ntlhOpenaiThinking: high\ntlhAnthropicThinking: high\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // Supply openai-codex/gpt-5.6-sol as available; the resolver must pick it first
-        // over openai/gpt-4o since it matches the current provider more precisely.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "openai-codex",
-          availableModels: [
-            { provider: "openai-codex", id: "gpt-5.6-sol" },
-            { provider: "openai", id: "gpt-4o" },
-          ],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // First matching openai-codex entry from the comma-separated list is selected; thinking is high.
-  assert.equal(
-    event.payload["Tlh.Subagent.oracle.modelEffort"],
-    "gpt-5.6-sol:high",
-    "first matching openai-codex model from list should be selected, combined as modelEffort",
-  );
-});
-
-test("launch telemetry: model: false clearing override reports 'cleared', not the frontmatter value", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-clearing-", { test: t });
-  writeTelemetryState(fixture);
-
-  // Install frontmatter with a real model value
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "developer.md"),
-    "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
-  );
-  // Settings override clears the model explicitly
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ subagents: { agentOverrides: { developer: { model: false } } } }, null, 2)}\n`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3", providerId: "anthropic" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // model: false → "cleared" on the model side; thinking from frontmatter → "medium".
-  // Combined: "cleared:medium".
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "cleared:medium",
-    "model: false must report 'cleared' on the model side; thinking still comes from frontmatter",
-  );
-});
-
-test("launch telemetry: thinking: false clearing override reports 'cleared', not the frontmatter value", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-clearing-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "developer.md"),
-    "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
-  );
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: false } } } }, null, 2)}\n`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // Provide the model as available so the registry-based resolver can find it
-        // and the test demonstrates that only thinking is cleared, not model.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // thinking: false → "cleared" on the thinking side; model from frontmatter → "claude-sonnet-4-6".
-  // Combined: "claude-sonnet-4-6:cleared".
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "claude-sonnet-4-6:cleared",
-    "thinking: false must report 'cleared' on the thinking side; model still comes from frontmatter",
-  );
-});
-
-test("launch telemetry: settings override wins over provider-aware frontmatter", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-override-wins-", { test: t });
-  writeTelemetryState(fixture);
-
-  // Frontmatter has provider-aware keys
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "developer.md"),
-    "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
-  );
-  // Settings override should win over frontmatter values
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: "high", model: "anthropic/claude-opus-5" } } } }, null, 2)}\n`,
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3", providerId: "anthropic" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // model "anthropic/claude-opus-5" → last segment "claude-opus-5" → matches claude-* pattern.
-  // thinking "high" from override. Combined: "claude-opus-5:high".
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "claude-opus-5:high",
-    "settings override should win over provider-aware frontmatter, combined as modelEffort",
-  );
-});
-
-// ── registry-accurate resolution tests ──────────────────────────────────────
-
-test("registry-accurate: provider-aware candidate NOT available is reported as 'unknown'", async (t) => {
-  // When availableModels does NOT include the frontmatter-declared model, the resolver
-  // cannot select it, so the model side must be "unknown" rather than the frontmatter value.
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-registry-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "developer.md"),
-    "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // availableModels does NOT include anthropic/claude-sonnet-4-6.
-        // The resolver cannot select it, so model side must be "unknown".
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "openai-codex", id: "gpt-5.6-luna" }], // different model
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // Model NOT in available list → "unknown"; thinking still resolves from provider key → "medium".
-  assert.equal(
-    event.payload["Tlh.Subagent.developer.modelEffort"],
-    "unknown:medium",
-    "unavailable model must resolve to unknown; thinking still resolves from provider key",
-  );
-});
-
-test("registry-accurate: empty availableModels yields 'unknown' for provider-qualified model fields", async (t) => {
-  // When the registry was not captured (empty availableModels), provider-qualified model
-  // references cannot be verified and must not be guessed — report 'unknown'.
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-registry-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "librarian.md"),
-    "---\nname: librarian\ntlhAnthropicModels: anthropic/claude-haiku-4-5\ntlhAnthropicThinking: low\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // No availableModels in snapshot (defaults to []). Provider-qualified model
-        // references cannot be found → model side must report 'unknown'.
-        await sendTlhLaunchTelemetry({ version: "1.2.3", providerId: "anthropic" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // Empty registry → "unknown" on model side; thinking from provider key → "low".
-  assert.equal(
-    event.payload["Tlh.Subagent.librarian.modelEffort"],
-    "unknown:low",
-    "empty registry must yield unknown for provider-qualified models; thinking still resolves",
-  );
-});
-
-test("registry-accurate: preferOppositeProvider agent — opposite-provider model IS available is reported", async (t) => {
-  // When preferOppositeProvider is true and the opposite-provider model is in availableModels,
-  // it is selected and reported (this is the correct runtime behaviour).
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-registry-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "contrarian.md"),
-    "---\nname: contrarian\npreferOppositeProvider: true\ntlhOpenaiModels: openai-codex/gpt-5.6-luna\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhOpenaiThinking: max\ntlhAnthropicThinking: medium\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // Provider is anthropic; preferOppositeProvider → looks for openai-codex model.
-        // openai-codex/gpt-5.6-luna IS available here, so it must be selected.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // preferOppositeProvider + anthropic provider → openai-codex model selected → "gpt-5.6-luna:max".
-  assert.equal(
-    event.payload["Tlh.Subagent.contrarian.modelEffort"],
-    "gpt-5.6-luna:max",
-    "preferOppositeProvider with available opposite-provider model → gpt-5.6-luna:max",
-  );
-});
-
-test("registry-accurate: preferOppositeProvider agent — opposite-provider model NOT available yields same-provider fallback", async (t) => {
-  // Old code (synthetic list) incorrectly reported the opposite-provider model even when it
-  // was not in the real registry. With the real registry, if the opposite-provider model is
-  // unavailable the resolver falls through to the standard same-provider selection.
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-registry-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "contrarian.md"),
-    "---\nname: contrarian\npreferOppositeProvider: true\ntlhOpenaiModels: openai-codex/gpt-5.6-luna\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhOpenaiThinking: max\ntlhAnthropicThinking: medium\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // Provider is anthropic; preferOppositeProvider → looks for openai-codex model.
-        // openai-codex/gpt-5.6-luna is NOT available, so the opposite-provider selection
-        // fails and the resolver falls back to the standard same-provider selection.
-        // anthropic/claude-sonnet-4-6 IS available, so it is reported as the fallback.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // Old synthetic code would have wrongly reported gpt-5.6-luna here.
-  // New registry-accurate code correctly reports the same-provider fallback → "claude-sonnet-4-6:medium".
-  assert.notEqual(
-    event.payload["Tlh.Subagent.contrarian.modelEffort"],
-    "gpt-5.6-luna:max",
-    "unavailable opposite-provider model must not be reported",
-  );
-  assert.equal(
-    event.payload["Tlh.Subagent.contrarian.modelEffort"],
-    "claude-sonnet-4-6:medium",
-    "same-provider fallback selected when opposite-provider model unavailable",
-  );
-});
-
-test("registry-accurate: hand-edited generic model: field wins when provider-aware models unavailable", async (t) => {
-  // When tlhAnthropicModels / tlhOpenaiModels are all absent from availableModels but the
-  // generic model: field IS in the registry, the generic field wins. This is the same
-  // precedence as selectStandardProviderAwareAgentModel which checks agent.model first.
-  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-registry-", { test: t });
-  writeTelemetryState(fixture);
-
-  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
-  mkdirSync(subagentDir, { recursive: true });
-  writeFileSync(
-    join(subagentDir, "oracle.md"),
-    // model: is provider-qualified; tlhAnthropicModels is a different model that
-    // is NOT in availableModels. The generic model: field must win here.
-    "---\nname: oracle\nmodel: anthropic/claude-opus-5\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: high\n---\nBody.\n",
-  );
-
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // availableModels contains only the generic model: field's model.
-        // tlhAnthropicModels refers to claude-sonnet-4-6 which is NOT available.
-        // selectStandardProviderAwareAgentModel checks agent.model first, so claude-opus-5 wins.
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          availableModels: [{ provider: "anthropic", id: "claude-opus-5" }],
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-
-  assert.ok(request, "expected telemetry fetch call");
-  const [event] = JSON.parse(request.options?.body ?? "[]");
-  // The generic model: field IS available and is checked first → "claude-opus-5:high".
-  assert.equal(
-    event.payload["Tlh.Subagent.oracle.modelEffort"],
-    "claude-opus-5:high",
-    "generic model: field wins when it is the only available model, combined as modelEffort",
-  );
-});
-
-// ── project-vs-user agentOverrides precedence tests ───────────────────────────
-//
-// TLH's nine subagents are installed under the fixed `tlh/agents/subagents` path and reach the
-// runtime as canonical USER-scope roles via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts).
-// That gives a two-rule precedence: project `agentOverrides[name]`, else user
-// `agentOverrides[name]`, else unmodified. `disableBuiltins` and `disableThinking` have been
-// removed from the extension, so only the two-rule custom override precedence above applies.
-
 const { CONFIG_DIR_NAME: PI_CONFIG_DIR_NAME } = await import("@earendil-works/pi-coding-agent");
 
 /**
- * Run sendTlhLaunchTelemetry against a fixture with optional user/project settings and return
- * the decoded telemetry payload.
- *
  * `projectSettings` semantics:
- *   - undefined      → no project config dir at all
- *   - null           → project config dir exists but contains no settings.json
- *   - string         → written verbatim (used for malformed JSON)
- *   - object         → JSON-stringified
+ *   - undefined → no project config dir
+ *   - null → project config dir exists but contains no settings.json
+ *   - string → written verbatim
+ *   - object → JSON-stringified
  */
 async function captureSubagentPayload(
   t,
-  { userSettings, projectSettings, snapshot = {}, frontmatter } = {},
+  {
+    userSettings,
+    projectSettings,
+    snapshot = {},
+    frontmatter,
+    agent = "developer",
+    isolateProjectRoot = true,
+  } = {},
 ) {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-precedence-", {
     test: t,
-    cwd: true,
+    cwd: isolateProjectRoot,
   });
   writeTelemetryState(fixture);
 
   if (frontmatter !== undefined) {
     const subagentsDir = join(fixture.agent, "tlh", "agents", "subagents");
     mkdirSync(subagentsDir, { recursive: true });
-    writeFileSync(join(subagentsDir, "developer.md"), frontmatter);
+    writeFileSync(join(subagentsDir, `${agent}.md`), frontmatter);
   }
 
   if (userSettings !== undefined) {
@@ -1267,7 +87,7 @@ async function captureSubagentPayload(
       async () => {
         await sendTlhLaunchTelemetry({
           version: "1.2.3",
-          cwd: fixture.cwd,
+          ...(isolateProjectRoot ? { cwd: fixture.cwd } : {}),
           ...snapshot,
         });
       },
@@ -1281,6 +101,299 @@ async function captureSubagentPayload(
   assert.ok(event, "expected a telemetry event");
   return event.payload;
 }
+
+const developerProviderDefaults = `---
+name: developer
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: max
+  - provider: anthropic
+    models: [claude-sonnet-4-6]
+    effort: medium
+---
+Body.
+`;
+
+test("launch telemetry emits all nine bundled subagent keys with unknown:unknown when no config present", async (t) => {
+  const payload = await captureSubagentPayload(t, { isolateProjectRoot: false });
+  const bundledNames = [
+    "code-reviewer",
+    "contrarian",
+    "developer",
+    "diff-summarizer",
+    "librarian",
+    "oracle",
+    "repo-scout",
+    "test-runner",
+    "web-scout",
+  ];
+  for (const name of bundledNames) {
+    assert.equal(
+      payload[`Tlh.Subagent.${name}.modelEffort`],
+      "unknown:unknown",
+      `expected unknown:unknown modelEffort for ${name}`,
+    );
+  }
+  const thinkingKeys = Object.keys(payload).filter((key) => key.endsWith(".thinking"));
+  assert.deepEqual(thinkingKeys, [], "no emitted payload key should end in '.thinking'");
+});
+
+test("launch telemetry reflects settings agentOverrides thinking change", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    userSettings: {
+      subagents: {
+        agentOverrides: { developer: { thinking: "high", model: "claude-opus-4-5" } },
+      },
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "claude-opus-4-5:high");
+  assert.equal(payload["Tlh.Subagent.librarian.modelEffort"], "unknown:unknown");
+});
+
+test("launch telemetry reflects hand-edited frontmatter thinking value", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "librarian",
+    frontmatter:
+      "---\nname: librarian\nthinking: medium\nmodel: claude-opus-4-5\n---\nPrompt body here.\n",
+  });
+  assert.equal(payload["Tlh.Subagent.librarian.modelEffort"], "claude-opus-4-5:medium");
+});
+
+test("launch telemetry: settings agentOverrides wins over frontmatter", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "oracle",
+    frontmatter: "---\nname: oracle\nthinking: low\nmodel: gpt-4o\n---\nPrompt body.\n",
+    userSettings: {
+      subagents: { agentOverrides: { oracle: { thinking: "max", model: "claude-opus-4-5" } } },
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.oracle.modelEffort"], "claude-opus-4-5:max");
+});
+
+test("launch telemetry: disabled agentOverride is reported as 'disabled' (single token)", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    userSettings: { subagents: { agentOverrides: { "repo-scout": { disabled: true } } } },
+  });
+  assert.equal(payload["Tlh.Subagent.repo-scout.modelEffort"], "disabled");
+});
+
+test("launch telemetry never emits keys for agent names outside the bundled nine", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    userSettings: {
+      subagents: { agentOverrides: { skunkworks: { thinking: "high", model: "secret-model" } } },
+    },
+  });
+  const unbundledKeys = Object.keys(payload).filter(
+    (key) => key.startsWith("Tlh.Subagent.") && key.includes("skunkworks"),
+  );
+  assert.equal(unbundledKeys.length, 0, "no telemetry key should exist for non-bundled agent name");
+});
+
+test("launch telemetry: non-public model in frontmatter is reported as 'custom'", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "contrarian",
+    frontmatter:
+      "---\nname: contrarian\nthinking: high\nmodel: acme-internal/super-secret-model\n---\nBody.\n",
+    snapshot: {
+      availableModels: [{ provider: "acme-internal", id: "super-secret-model" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.contrarian.modelEffort"], "custom:high");
+});
+
+test("launch telemetry reports provider-aware defaults for bundled agents (Anthropic active)", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    frontmatter: developerProviderDefaults,
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "claude-sonnet-4-6:medium");
+});
+
+test("launch telemetry reports provider-aware defaults for bundled agents (OpenAI active)", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    frontmatter: developerProviderDefaults,
+    snapshot: {
+      providerId: "openai-codex",
+      availableModels: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "gpt-5.6-luna:max");
+  assert.notEqual(payload["Tlh.Subagent.developer.modelEffort"], "claude-sonnet-4-6:medium");
+});
+
+test("launch telemetry uses normalized provider entries and ignores generic compatibility fields in a present block", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    frontmatter: `---
+name: developer
+model: anthropic/legacy-model
+thinking: high
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: max
+  - provider: anthropic
+    models: [claude-sonnet-4-6]
+    effort: medium
+---
+Body.
+`,
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "claude-sonnet-4-6:medium");
+});
+
+test("launch telemetry handles quoted frontmatter model values", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "librarian",
+    frontmatter:
+      "---\nname: librarian\ntlhAnthropicModels: 'anthropic/claude-haiku-4-5'\ntlhAnthropicThinking: \"high\"\n---\nBody.\n",
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "anthropic", id: "claude-haiku-4-5" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.librarian.modelEffort"], "claude-haiku-4-5:high");
+});
+
+test("launch telemetry handles list-valued model fields (comma-separated tlhOpenaiModels)", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "oracle",
+    frontmatter:
+      "---\nname: oracle\ntlhOpenaiModels: openai-codex/gpt-5.6-sol, openai/gpt-4o\ntlhAnthropicModels: anthropic/claude-opus-5\ntlhOpenaiThinking: high\ntlhAnthropicThinking: high\n---\nBody.\n",
+    snapshot: {
+      providerId: "openai-codex",
+      availableModels: [
+        { provider: "openai-codex", id: "gpt-5.6-sol" },
+        { provider: "openai", id: "gpt-4o" },
+      ],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.oracle.modelEffort"], "gpt-5.6-sol:high");
+});
+
+test("launch telemetry: model: false clearing override reports 'cleared', not the frontmatter value", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    frontmatter:
+      "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
+    userSettings: { subagents: { agentOverrides: { developer: { model: false } } } },
+    snapshot: { providerId: "anthropic" },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "cleared:medium");
+});
+
+test("launch telemetry: thinking: false clearing override reports 'cleared', not the frontmatter value", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    frontmatter:
+      "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
+    userSettings: { subagents: { agentOverrides: { developer: { thinking: false } } } },
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "claude-sonnet-4-6:cleared");
+});
+
+test("launch telemetry: settings override wins over provider-aware frontmatter", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    frontmatter:
+      "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
+    userSettings: {
+      subagents: {
+        agentOverrides: { developer: { thinking: "high", model: "anthropic/claude-opus-5" } },
+      },
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "claude-opus-5:high");
+});
+
+test("registry-accurate: provider-aware candidate NOT available is reported as 'unknown'", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    frontmatter:
+      "---\nname: developer\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\n---\nBody.\n",
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "unknown:medium");
+});
+
+test("registry-accurate: empty availableModels yields 'unknown' for provider-qualified model fields", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "librarian",
+    frontmatter:
+      "---\nname: librarian\ntlhAnthropicModels: anthropic/claude-haiku-4-5\ntlhAnthropicThinking: low\n---\nBody.\n",
+    snapshot: { providerId: "anthropic" },
+  });
+  assert.equal(payload["Tlh.Subagent.librarian.modelEffort"], "unknown:low");
+});
+
+test("registry-accurate: preferOppositeProvider agent — opposite-provider model IS available is reported", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "contrarian",
+    frontmatter:
+      "---\nname: contrarian\npreferOppositeProvider: true\ntlhOpenaiModels: openai-codex/gpt-5.6-luna\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhOpenaiThinking: max\ntlhAnthropicThinking: medium\n---\nBody.\n",
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.contrarian.modelEffort"], "gpt-5.6-luna:max");
+});
+
+test("registry-accurate: preferOppositeProvider agent — opposite-provider model NOT available yields same-provider fallback", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "contrarian",
+    frontmatter:
+      "---\nname: contrarian\npreferOppositeProvider: true\ntlhOpenaiModels: openai-codex/gpt-5.6-luna\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhOpenaiThinking: max\ntlhAnthropicThinking: medium\n---\nBody.\n",
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+    },
+  });
+  assert.notEqual(payload["Tlh.Subagent.contrarian.modelEffort"], "gpt-5.6-luna:max");
+  assert.equal(payload["Tlh.Subagent.contrarian.modelEffort"], "claude-sonnet-4-6:medium");
+});
+
+test("registry-accurate: hand-edited generic model: field wins when provider-aware models unavailable", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    isolateProjectRoot: false,
+    agent: "oracle",
+    frontmatter:
+      "---\nname: oracle\nmodel: anthropic/claude-opus-5\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: high\n---\nBody.\n",
+    snapshot: {
+      providerId: "anthropic",
+      availableModels: [{ provider: "anthropic", id: "claude-opus-5" }],
+    },
+  });
+  assert.equal(payload["Tlh.Subagent.oracle.modelEffort"], "claude-opus-5:high");
+});
 
 test("launch telemetry follows a registry-missing OpenRouter session model and normalized effort", async (t) => {
   const payload = await captureSubagentPayload(t, {
@@ -1476,37 +589,8 @@ test("project settings are filtered when launch telemetry is sent", async (t) =>
 // ── deferral tests ───────────────────────────────────────────────────────────
 
 test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch before timer fires, fetch occurs after (behavioural)", async (t) => {
-  // This test proves the deferral property at runtime: no settings read, no subagent
-  // frontmatter read, and no fetch call may occur before the deferred timer fires.
-  //
-  // Observation mechanism: file-swap / late-write technique. We write SETTINGS_A to
-  // settings.json BEFORE calling scheduleTlhLaunchTelemetry, then IMMEDIATELY (in the
-  // same synchronous turn of the event loop, before any await) write SETTINGS_B.
-  // The key property of sendTlhLaunchTelemetry: its very first statement is a
-  // synchronous `readTlhLaunchSettings()` call — BEFORE the first `await`. With
-  // correct deferral, that call only happens inside the timer callback, AFTER the swap
-  // (gets SETTINGS_B). With deferral removed the call happens synchronously INSIDE
-  // scheduleTlhLaunchTelemetry, BEFORE the swap (gets SETTINGS_A). The telemetry
-  // payload then proves which settings were used, making the assertion fail for the
-  // non-deferred regression.
-  //
-  // Why it cannot pass vacuously:
-  // - If no settings read occurs → payload uses default thinking=unknown → assertion fails.
-  // - If settings are read with SETTINGS_A → payload thinking="low" → assertion fails.
-  // - Only if settings are read with SETTINGS_B → payload thinking="high" → assertion passes.
-  // There is no way for the assertion to pass without a REAL readTlhLaunchSettings call
-  // that happens AFTER the swap (i.e., inside the deferred callback).
-  //
-  // Why direct readFileSync spy is not used: jiti resolves `node:fs` via a native ESM
-  // namespace object that is separate from and not affected by patching
-  // require("node:fs"). The namespace is immutable ([object Module]); there is no way
-  // to intercept readFileSync calls from jiti-loaded modules from outside. The
-  // file-swap approach bypasses this by observing the EFFECT of the read (settings
-  // content reflected in payload) rather than the read mechanism itself.
-  //
-  // Note: scheduleTlhLaunchTelemetry has a module-level sentTlhLaunchTelemetry guard
-  // (one-shot dedup). This is the only test that calls it so the guard does not
-  // interfere.
+  // File-swap stands in for a readFileSync spy: jiti's node:fs namespace is immutable.
+  // SETTINGS_B is written synchronously after schedule and must be what the deferred read observes.
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-deferral-behav-", { test: t });
   writeTelemetryState(fixture);
 

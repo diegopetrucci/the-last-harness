@@ -866,9 +866,6 @@ export function analyzeSubagentSessions(
   };
 }
 
-/** Short alias for callers that use the CLI mode name as the function name. */
-export const analyzeSubagents = analyzeSubagentSessions;
-
 export type {
   SubagentAggregate,
   SubagentAggregateMap,

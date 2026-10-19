@@ -28,7 +28,15 @@ type TimerApi = {
 
 type HerdrProtocolState = "working" | "blocked" | "idle";
 type CmuxStatusState = "working" | "waiting" | "idle";
-type ActivityReportState = HerdrProtocolState | CmuxStatusState;
+type ProgramStatusState =
+  | "working"
+  | "blocked"
+  | "blocked:permission"
+  | "blocked:question"
+  | "done"
+  | "idle"
+  | "error";
+type ActivityReportState = HerdrProtocolState | CmuxStatusState | ProgramStatusState;
 type StateSender<State extends ActivityReportState> = (state: State) => Promise<void>;
 type StateResolver<State extends ActivityReportState> = (
   snapshot: TlhEffectiveActivitySnapshot,
@@ -46,6 +54,8 @@ type TlhActivityReporter = {
   handleSessionStart(ctx: Pick<ExtensionContext, "mode" | "sessionManager">): void;
   handleSnapshot(snapshot: TlhEffectiveActivitySnapshot): void;
   handleSessionShutdown(): void;
+  /** Called when session metadata changes (e.g. a /name rename). Optional; cmux/noop reporters may omit it. */
+  handleSessionInfoChanged?(ctx: Pick<ExtensionContext, "sessionManager">): void;
   dispose(): void;
 };
 
@@ -75,6 +85,16 @@ type CmuxActivityReporterOptions = TlhActivityReporterOptions & {
   env?: NodeJS.ProcessEnv;
   runner?: CommandRunner;
   cmuxBin?: string;
+};
+
+type ProgramStatusOutputWriter = {
+  write(data: string): void | boolean;
+  readonly isTTY?: boolean;
+};
+
+type ProgramStatusActivityReporterOptions = TlhActivityReporterOptions & {
+  env?: NodeJS.ProcessEnv;
+  output?: ProgramStatusOutputWriter;
 };
 
 type ActivitySessionRef = {
@@ -236,6 +256,17 @@ function readSessionRef(ctx: Pick<ExtensionContext, "sessionManager">): Activity
   return { agentSessionId, agentSessionPath };
 }
 
+function readSessionName(ctx: Pick<ExtensionContext, "sessionManager">): string | undefined {
+  try {
+    const name = ctx.sessionManager.getSessionName();
+    if (typeof name !== "string") return undefined;
+    const trimmed = name.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function withSessionRef(
   params: Record<string, unknown>,
   sessionRef: ActivitySessionRef,
@@ -363,6 +394,8 @@ export function createHerdrActivityReporter(
   let heartbeatStarted = false;
   let displayMetadataPending = false;
   let displayMetadataInFlight = false;
+  let displayMetadataDirty = false;
+  let currentSessionTitle: string | undefined;
   let outboundChain: Promise<void> = Promise.resolve();
 
   const nextReportSeq = (): number => {
@@ -402,6 +435,10 @@ export function createHerdrActivityReporter(
   };
 
   const sendDisplayMetadata = async (): Promise<void> => {
+    // Capture the title at send time so the correct value is sent even if
+    // a rename arrives while this async call is queued behind other work.
+    const titleParam: Record<string, unknown> =
+      currentSessionTitle !== undefined ? { title: currentSessionTitle } : { clear_title: true };
     try {
       await sendRequest({
         id: `${HERDR_METADATA_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
@@ -412,6 +449,7 @@ export function createHerdrActivityReporter(
           agent: HERDR_AGENT,
           applies_to_source: HERDR_SOURCE,
           display_agent: HERDR_DISPLAY_AGENT,
+          ...titleParam,
         },
       });
     } catch {
@@ -422,8 +460,14 @@ export function createHerdrActivityReporter(
   const retryDisplayMetadata = (): void => {
     if (!displayMetadataPending || displayMetadataInFlight || !rootSession || disposed) return;
     displayMetadataInFlight = true;
+    displayMetadataDirty = false;
     void sendDisplayMetadata().finally(() => {
       displayMetadataInFlight = false;
+      // If a rename arrived while the send was in flight, resend immediately
+      // with the latest title rather than waiting for the next heartbeat.
+      if (displayMetadataDirty && rootSession && !disposed) {
+        retryDisplayMetadata();
+      }
     });
   };
 
@@ -512,6 +556,7 @@ export function createHerdrActivityReporter(
       }
       rootSession = true;
       sessionRef = readSessionRef(ctx);
+      currentSessionTitle = readSessionName(ctx);
       const startedSessionRef = sessionRef;
       if (startedSessionRef.agentSessionId || startedSessionRef.agentSessionPath) {
         void sendRequest({
@@ -534,16 +579,37 @@ export function createHerdrActivityReporter(
       // Keep it pending for this session so every heartbeat reasserts the
       // display name if Herdr restarts after the initial report.
       displayMetadataPending = true;
+      // Mark dirty so that if a metadata send from a previous session is still
+      // in flight when this session starts (e.g. shutdown → restart on the
+      // same instance), the in-flight send's finally() handler will trigger a
+      // follow-up with the new session's title rather than leaving the stale
+      // title in place until the next heartbeat.
+      displayMetadataDirty = true;
       retryDisplayMetadata();
     },
     handleSnapshot(snapshot) {
       if (!rootSession || disposed) return;
       queuedReporter.handleSnapshot(snapshot);
     },
+    handleSessionInfoChanged(ctx) {
+      if (!rootSession || disposed) return;
+      const name = readSessionName(ctx);
+      if (name === currentSessionTitle) return;
+      currentSessionTitle = name;
+      if (displayMetadataInFlight) {
+        // Mark dirty so the pending in-flight send triggers a follow-up
+        // rather than having the stale title take effect.
+        displayMetadataDirty = true;
+        return;
+      }
+      displayMetadataPending = true;
+      retryDisplayMetadata();
+    },
     handleSessionShutdown() {
       if (!rootSession) return;
       rootSession = false;
       displayMetadataPending = false;
+      displayMetadataDirty = false;
       stopHeartbeat();
       queuedReporter.handleSessionShutdown();
       // No pane.release_agent: herdr v0.8.0 (commit e608a751) made pane
@@ -556,6 +622,7 @@ export function createHerdrActivityReporter(
       disposed = true;
       rootSession = false;
       displayMetadataPending = false;
+      displayMetadataDirty = false;
       stopHeartbeat();
       queuedReporter.dispose();
     },
@@ -674,17 +741,136 @@ export function createCmuxActivityReporter(
   };
 }
 
+// OSC 7501 Program Status Protocol reporter.
+// Spec: https://www.superlogical.com/rex/docs/build/program-status
+// TODO #747: retire Herdr/cmux reporters once consumers read OSC 7501.
+// See #748 for Pi native OSC 7501 root-record ownership; the tlh wrapper sets
+// PI_PROGRAM_STATUS=0 to suppress Pi's built-in emitter — do not consult that
+// variable here.
+
+/**
+ * Maps a UIPromptKind to the appropriate blocked ProgramStatusState variant.
+ * confirm → "blocked:permission"; select/input/editor/custom → "blocked:question";
+ * missing/unknown → "blocked" (no kind segment).
+ * Encoding kind in the state string ensures the queued-reporter deduplication
+ * correctly detects kind changes within a blocked sequence.
+ */
+function resolveBlockedProgramStatusState(
+  kind: string | undefined,
+): "blocked" | "blocked:permission" | "blocked:question" {
+  if (kind === "confirm") return "blocked:permission";
+  if (kind === "select" || kind === "input" || kind === "editor" || kind === "custom")
+    return "blocked:question";
+  return "blocked";
+}
+
+function formatProgramStatusSequence(state: ProgramStatusState | "clear"): string {
+  if (state === "clear") {
+    return "\x1b]7501;state=clear\x1b\\";
+  }
+  if (state === "blocked:permission") {
+    return "\x1b]7501;state=blocked:app=tlh:kind=permission\x1b\\";
+  }
+  if (state === "blocked:question") {
+    return "\x1b]7501;state=blocked:app=tlh:kind=question\x1b\\";
+  }
+  return `\x1b]7501;state=${state}:app=tlh\x1b\\`;
+}
+
+export function createProgramStatusActivityReporter(
+  options: ProgramStatusActivityReporterOptions = {},
+): TlhActivityReporter {
+  const env = options.env ?? process.env;
+  if (env.TLH_PROGRAM_STATUS === "0") {
+    return createNoopReporter();
+  }
+  const output: ProgramStatusOutputWriter = options.output ?? process.stdout;
+  if (!output.isTTY) {
+    return createNoopReporter();
+  }
+
+  let rootSession = false;
+
+  const resolveState = (snapshot: TlhEffectiveActivitySnapshot): ProgramStatusState => {
+    // waitingForUser takes precedence over inProgress so that a blocking UI
+    // prompt raised during a tool run reports "blocked" rather than "working".
+    if (snapshot.waitingForUser) {
+      return resolveBlockedProgramStatusState(snapshot.waitingForUserKind);
+    }
+    // runActive keeps the reporter in "working" across the gap between agent_end
+    // and agent_settled (e.g. Pi retry delay), preventing a false "error" emission
+    // before a retry completes. Retry grace additionally keeps inProgress true
+    // for Herdr/cmux compatibility; either flag is sufficient here.
+    if (snapshot.inProgress || snapshot.runActive) return "working";
+    // Quiescent: derive state from the last run outcome.
+    // lastRunOutcome is committed only at agent_settled, so this branch is only
+    // reached once the run has fully settled (no pending retries or continuations).
+    if (snapshot.lastRunOutcome === "aborted") return "idle";
+    if (snapshot.lastRunOutcome === "error") return "error";
+    if (snapshot.lastRunOutcome === "completed") return "done";
+    return "idle"; // undefined = no run has settled yet this session
+  };
+
+  const sendState: StateSender<ProgramStatusState> = async (state) => {
+    try {
+      output.write(formatProgramStatusSequence(state));
+    } catch {
+      // Write failures must never crash TLH.
+    }
+  };
+
+  const sendClear = async (): Promise<void> => {
+    try {
+      output.write(formatProgramStatusSequence("clear"));
+    } catch {
+      // Write failures must never crash TLH.
+    }
+  };
+
+  const queuedReporter = createQueuedStateReporter(sendState, resolveState, options);
+
+  return {
+    handleSessionStart(ctx) {
+      if (ctx.mode !== "tui") {
+        rootSession = false;
+        return;
+      }
+      rootSession = true;
+    },
+    handleSnapshot(snapshot) {
+      if (!rootSession) return;
+      queuedReporter.handleSnapshot(snapshot);
+    },
+    handleSessionShutdown() {
+      if (!rootSession) return;
+      rootSession = false;
+      queuedReporter.handleSessionShutdown();
+      queuedReporter.enqueueAfterDrain(sendClear);
+    },
+    dispose() {
+      if (rootSession) {
+        rootSession = false;
+        queuedReporter.handleSessionShutdown();
+        queuedReporter.enqueueAfterDrain(sendClear);
+      }
+      queuedReporter.dispose();
+    },
+  };
+}
+
 export function registerTlhActivityReporters(
   pi: Pick<ExtensionAPI, "on">,
   tracker: TlhEffectiveActivityTracker,
   options: {
     herdr?: HerdrActivityReporterOptions;
     cmux?: CmuxActivityReporterOptions;
+    programStatus?: ProgramStatusActivityReporterOptions;
   } = {},
 ): void {
   const reporters = [
     createHerdrActivityReporter(options.herdr),
     createCmuxActivityReporter(options.cmux),
+    createProgramStatusActivityReporter(options.programStatus),
   ];
   const unsubscribe = tracker.subscribe((snapshot) => {
     for (const reporter of reporters) {
@@ -698,6 +884,11 @@ export function registerTlhActivityReporters(
     const snapshot = tracker.getSnapshot();
     for (const reporter of reporters) {
       reporter.handleSnapshot(snapshot);
+    }
+  });
+  pi.on("session_info_changed", (_event, ctx) => {
+    for (const reporter of reporters) {
+      reporter.handleSessionInfoChanged?.(ctx);
     }
   });
   pi.on("session_shutdown", () => {

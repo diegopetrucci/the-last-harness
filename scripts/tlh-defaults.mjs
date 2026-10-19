@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
@@ -96,9 +96,6 @@ function ensureMutableSettings(settings) {
 function settingsPackages(settings) {
     return settings.packages ?? [];
 }
-function isLegacyRtkDisabledId(id) {
-    return id === "rtk" || id === "pi-rtk";
-}
 function orderedDisabledIds(ids, defaultExtensions) {
     const knownIds = new Set(defaultExtensions.map((extension) => extension.id));
     const ordered = [];
@@ -106,9 +103,7 @@ function orderedDisabledIds(ids, defaultExtensions) {
         if (ids.has(extension.id))
             ordered.push(extension.id);
     }
-    const unknown = [...ids]
-        .filter((id) => !knownIds.has(id) && !isLegacyRtkDisabledId(id))
-        .sort((a, b) => a.localeCompare(b));
+    const unknown = [...ids].filter((id) => !knownIds.has(id)).sort((a, b) => a.localeCompare(b));
     return [...ordered, ...unknown];
 }
 function setDisabledIds(settings, ids, defaultExtensions) {
@@ -276,10 +271,6 @@ function assertNotNormalPiSettings(settingsPath) {
 }
 function scrubRetiredTlhSettings(settings) {
     let changed = false;
-    if (isPlainObject(settings.tlh) && Object.hasOwn(settings.tlh, "rtk")) {
-        delete settings.tlh.rtk;
-        changed = true;
-    }
     if (isPlainObject(settings.subagents) && isPlainObject(settings.subagents.agentOverrides)) {
         for (const value of Object.values(settings.subagents.agentOverrides)) {
             if (!isPlainObject(value) || !Object.hasOwn(value, "toolBudget"))
@@ -291,7 +282,6 @@ function scrubRetiredTlhSettings(settings) {
     return changed;
 }
 function writeSettings(settingsPath, value, previousRaw) {
-    scrubRetiredTlhSettings(value);
     const formatted = `${JSON.stringify(value, null, 2)}\n`;
     if (formatted === previousRaw)
         return undefined;
@@ -437,7 +427,6 @@ function commandEnable(settings, defaultExtensions, id) {
     disabledIds.delete(extension.id);
     setDisabledIds(settings, disabledIds, defaultExtensions);
     enablePackage(settings, extension);
-    repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
     if (extension.id === MCPORTER_EXTENSION_ID) {
         applyBuiltinMcpExclusionOnEnable(settings);
     }
@@ -483,6 +472,7 @@ function main() {
         return;
     }
     ensureMutableSettings(settings);
+    scrubRetiredTlhSettings(settings);
     if (args.command === "disable") {
         const id = args.commandArgs[0];
         if (!id || args.commandArgs.length !== 1)
@@ -490,8 +480,7 @@ function main() {
         const before = JSON.stringify(settings);
         const warningChanged = commandDisable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
-        const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-        const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+        const changed = before !== JSON.stringify(settings);
         const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
         console.log(`${id} is disabled for the tlh profile.`);
         if (warningChanged)
@@ -509,8 +498,7 @@ function main() {
         const before = JSON.stringify(settings);
         const warningChanged = commandEnable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
-        const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-        const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+        const changed = before !== JSON.stringify(settings);
         const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
         console.log(`${id} is enabled for the tlh profile.`);
         if (warningChanged)

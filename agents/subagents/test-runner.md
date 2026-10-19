@@ -7,7 +7,7 @@ tlhModelDefaults:
     models: [gpt-5.6-luna]
     effort: low
   - provider: anthropic
-    models: [claude-haiku-4-5]
+    models: [claude-haiku-5-5]
     effort: low
   - provider: xai
     models: [grok-4.3]

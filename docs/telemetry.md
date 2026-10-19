@@ -25,8 +25,6 @@ Custom dimensions sent on this event:
 - `Tlh.Device.osName`
 - `Tlh.Device.osVersion`
 - `Tlh.Device.osArch`
-- `Tlh.Experimental.delta-follow-up-reviews`
-- `Tlh.Experimental.ci-failure-investigation`
 - `Tlh.Subagent.code-reviewer.modelEffort`
 - `Tlh.Subagent.contrarian.modelEffort`
 - `Tlh.Subagent.developer.modelEffort`
@@ -37,7 +35,7 @@ Custom dimensions sent on this event:
 - `Tlh.Subagent.test-runner.modelEffort`
 - `Tlh.Subagent.web-scout.modelEffort`
 
-Experimental feature dimensions are always reported for registered TLH features as `on` or `off`. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values are ignored and never sent.
+Telemetry-enabled experimental feature dimensions are reported for registered TLH features as `on` or `off`. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values are ignored and never sent.
 
 ## Provider and value semantics
 

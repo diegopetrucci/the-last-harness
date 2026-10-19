@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getArtifactPaths } from "../../shared/artifacts.js";
-import { readStatus } from "../../shared/utils.js";
+import { readStatus, resolveChildCwd } from "../../shared/utils.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { isActiveLifecycleState, isCompletedLifecycleStepState, isLifecycleTransitionContentionError, isTerminalLifecycleState, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
@@ -86,7 +86,6 @@ export function createBackgroundRunStatusOwner(input) {
             status: "pending",
             ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
             ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
-            ...(task.cwd && path.resolve(task.cwd) !== path.resolve(cwd) ? { cwd: task.cwd } : {}),
             ...(terminalResult ? { terminalResult } : {}),
             ...(transcriptPath ? { transcriptPath } : {}),
             skills: task.skills,
@@ -107,6 +106,7 @@ export function createBackgroundRunStatusOwner(input) {
                     ? [task.model]
                     : undefined,
             ...(task.childLocation ? { childLocation: task.childLocation } : {}),
+            cwd: resolveChildCwd(cwd, task.cwd),
             recentTools: [],
             recentOutput: [],
         };

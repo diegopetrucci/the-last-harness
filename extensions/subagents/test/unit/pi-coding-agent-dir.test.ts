@@ -17,7 +17,6 @@ import { cleanupAllArtifactDirs, resolveArtifactConfig } from "../../src/shared/
 import {
   getConfigDirName,
   getProjectConfigDir,
-  resolveConfigDirName,
   resolveRuntimeConfigDirName,
 } from "../../src/shared/config-dir.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
@@ -182,15 +181,10 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
       resolveInstalledPackageRoot: () => importResolvedRoot,
     };
     assert.equal(resolveRuntimeConfigDirName(deps), ".runtime-root");
-    assert.equal(resolveConfigDirName(undefined, deps), ".runtime-root");
   });
 
   it("resolves project config dirs from the runtime config-dir name", () => {
     const runtimeConfigDirName = readInstalledRuntimeConfigDirName();
-    assert.equal(resolveConfigDirName({ CONFIG_DIR_NAME: ".tlh" }), ".tlh");
-    assert.equal(resolveConfigDirName({ piConfig: { configDir: ".tlh" } }), ".tlh");
-    assert.equal(resolveConfigDirName({ CONFIG_DIR_NAME: "" }), ".pi");
-    assert.equal(resolveConfigDirName({}), ".pi");
     assert.equal(getConfigDirName(), runtimeConfigDirName);
     assert.equal(getProjectConfigDir(cwd), path.join(cwd, runtimeConfigDirName));
   });

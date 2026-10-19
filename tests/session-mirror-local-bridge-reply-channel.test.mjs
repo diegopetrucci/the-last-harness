@@ -501,3 +501,87 @@ test("reply channel rejects a mismatched ready source epoch without affecting th
   assert.equal(channel.getState(), "closed");
   assert.equal(closed, 1);
 });
+
+test("reply channel close-frame write failure does not produce an unhandledRejection", async (t) => {
+  const unhandledRejections = [];
+  const onUnhandledRejection = (reason) => unhandledRejections.push(reason);
+  process.on("unhandledRejection", onUnhandledRejection);
+  t.after(() => process.off("unhandledRejection", onUnhandledRejection));
+
+  const directory = createBridgeDirectory(t);
+  let peerSocket;
+  let writeCallCount = 0;
+
+  peerSocket = new SyntheticSocket((bytes, sock) => {
+    // First write is the hello frame — push the ready frame to complete handshake
+    sock.push(readyFrameBytes());
+  });
+
+  // Intercept writes: make the second write (close frame) call back with an error,
+  // simulating a peer disconnect while the close frame is in flight.
+  const originalWrite = peerSocket.write.bind(peerSocket);
+  peerSocket.write = function (data, callback) {
+    writeCallCount += 1;
+    if (writeCallCount === 2) {
+      // Close frame — report a write failure without destroying the socket first
+      this.writes.push(Buffer.from(data));
+      callback?.(new Error("peer disconnected during close"));
+      return true;
+    }
+    return originalWrite(data, callback);
+  };
+
+  let closedCount = 0;
+  let resolveClosed;
+  const closedPromise = new Promise((resolve) => {
+    resolveClosed = resolve;
+  });
+
+  const channel = createSessionMirrorReplyChannel({
+    bridgeDirectory: directory,
+    sessionId: SESSION_ID,
+    sourceInstanceId: SOURCE_INSTANCE_ID,
+    sourceEpoch: 4,
+    generation: 3,
+    deadlineMs: 1_000,
+    controls: {
+      createConnection: () => peerSocket,
+      fileSystem: {
+        lstat: (path) =>
+          path.endsWith(`/${SOCKET_NAME}`)
+            ? { mode: 0o140600, uid: process.getuid() }
+            : lstatSync(path),
+      },
+    },
+    onRequest: () => "accepted",
+    onClosed: () => {
+      closedCount += 1;
+      resolveClosed();
+    },
+  });
+
+  assert.equal(await channel.open(), true);
+  assert.equal(channel.getState(), "open");
+
+  channel.close("producer-disconnect");
+  await closedPromise;
+
+  // Allow unhandledRejection events to propagate through the event loop
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(
+    unhandledRejections.length,
+    0,
+    "close-frame write failure must not escape as an unhandledRejection",
+  );
+  assert.equal(channel.getState(), "closed");
+  assert.equal(peerSocket.destroyed, true);
+  assert.equal(closedCount, 1, "onClosed must be called exactly once");
+
+  // Repeated close() calls must be harmless no-ops
+  channel.close();
+  channel.close("listener-stop");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closedCount, 1, "onClosed must not be called again on repeated close()");
+});

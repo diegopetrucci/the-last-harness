@@ -30,7 +30,6 @@ const RUN_HISTORY_FILENAME = "run-history.jsonl";
 // ---------------------------------------------------------------------------
 // CLI parsing
 // ---------------------------------------------------------------------------
-// Fix 3: correct the usage string — this is contributor tooling, not a tlh subcommand.
 function usage() {
     return `Usage: tlh sessions [options]
 
@@ -103,7 +102,7 @@ function parseArgs(argv) {
 /**
  * Recursively enumerate all .jsonl files under `dir`, excluding
  * run-history.jsonl at every level.  Returns absolute paths and a count of
- * directories that could not be read (Fix 5).
+ * directories that could not be read.
  */
 function findSessionFiles(dir) {
     const files = [];
@@ -145,7 +144,7 @@ function computeLatencyStats(latencies) {
     if (latencies.length === 0) {
         return { median: null, min: null, max: null, p95: null };
     }
-    // Fix 6: use iteration instead of spread to avoid argument-limit on large corpora.
+    // Iterate instead of spreading so large corpora stay under the argument limit.
     let min = latencies[0];
     let max = latencies[0];
     for (let i = 1; i < latencies.length; i++) {
@@ -179,7 +178,7 @@ function projectLabelFromPath(filePath, sessionsDir) {
     return firstSegment ?? null;
 }
 async function buildSessionRecord(scanResult, coverage, sessionsDir, includePaths, publicCorrelationId) {
-    // Fix 4: use observedToolCallCount so truncated sessions are not under-reported.
+    // Use observedToolCallCount so truncated sessions are not under-reported.
     const latencies = scanResult.toolPairs.map((p) => p.observedLatencyMs);
     const record = {
         sessionId: scanResult.sessionHeader?.id ?? null,
@@ -208,7 +207,6 @@ async function buildSessionRecord(scanResult, coverage, sessionsDir, includePath
         else if (scanResult.sessionHeader?.cwd) {
             record.projectLabel = basename(scanResult.sessionHeader.cwd);
         }
-        // Fix 2: pass sessionsDir so child paths are validated against the boundary.
         record.subagentCorrelationCount = correlations.length;
         record.subagentCorrelations = correlations.map((c) => ({
             // Aliases apply only to correlation fields; the established raw top-level
@@ -326,7 +324,6 @@ async function main() {
         process.stdout.write(usage());
         return;
     }
-    // Fix 8: track the real source of the agent dir for accurate provenance.
     let profileSource;
     if (args.agentDir) {
         profileSource = "flag";
@@ -342,7 +339,6 @@ async function main() {
     }
     const agentDir = resolve(resolveTlhAgentDir(args.agentDir));
     const sessionsDir = join(agentDir, "sessions");
-    // Fix 5: track discovery counts alongside scan failures.
     const discovery = findSessionFiles(sessionsDir);
     const sessionFiles = discovery.files;
     const extraCoverage = {
@@ -357,7 +353,6 @@ async function main() {
             scanResults.push(result);
         }
         catch {
-            // Fix 5: count files that could not be read or parsed.
             extraCoverage.failedScans = (extraCoverage.failedScans ?? 0) + 1;
         }
     }

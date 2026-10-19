@@ -634,6 +634,21 @@ export function buildSkillInjection(skills) {
 function escapeXmlText(value) {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+export function discoverAvailableSkills(cwd) {
+    const skills = getCachedSkills(cwd);
+    return (skills
+        .filter((s) => s.name !== SUBAGENT_ORCHESTRATION_SKILL)
+        .map((s) => ({
+        name: s.name,
+        source: s.source,
+        description: s.description,
+    }))
+        .sort((a, b) => a.name.localeCompare(b.name)));
+}
+export function clearSkillCache() {
+    skillCache.clear();
+    loadSkillsCache = null;
+}
 export function normalizeSkillInput(input) {
     if (input === false)
         return false;
@@ -659,19 +674,4 @@ export function normalizeSkillInput(input) {
             .map((s) => s.trim())
             .filter((s) => s.length > 0)),
     ];
-}
-export function discoverAvailableSkills(cwd) {
-    const skills = getCachedSkills(cwd);
-    return (skills
-        .filter((s) => s.name !== SUBAGENT_ORCHESTRATION_SKILL)
-        .map((s) => ({
-        name: s.name,
-        source: s.source,
-        description: s.description,
-    }))
-        .sort((a, b) => a.name.localeCompare(b.name)));
-}
-export function clearSkillCache() {
-    skillCache.clear();
-    loadSkillsCache = null;
 }

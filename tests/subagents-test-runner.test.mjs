@@ -84,14 +84,14 @@ test("subagents runner rejects missing and zero-file suites before spawning Node
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   assert.throws(
-    () => discoverSuiteFiles("unit", { directory: join(root, "missing"), minimumFiles: 93 }),
+    () => discoverSuiteFiles("unit", { directory: join(root, "missing") }),
     /Could not read unit test directory/,
   );
   const emptyDir = join(root, "empty");
   mkdirSync(emptyDir);
   assert.throws(
-    () => discoverSuiteFiles("unit", { directory: emptyDir, minimumFiles: 93 }),
-    /unit suite found 0 test files; expected at least 93/,
+    () => discoverSuiteFiles("unit", { directory: emptyDir }),
+    /unit suite found no \.test\.ts files/,
   );
 });
 

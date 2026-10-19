@@ -85,13 +85,7 @@ export type ChildLocationSnapshot = {
    * (same git-common-dir, but a different toplevel).
    */
   linkedWorktree?: true;
-  /**
-   * True when the child cwd is outside any git repository while the parent is
-   * inside one. Only set on positive evidence: git ran successfully and
-   * reported that the directory is not in a repository. A process-level
-   * failure (binary missing, timeout, bad cwd) is indeterminate and does NOT
-   * set this flag.
-   */
+  /** Set only when git confirms the child is outside a repository. */
   notAGitRepo?: true;
 };
 
@@ -134,22 +128,7 @@ export function parsePersistedChildLocationSnapshot(
   return snapshot;
 }
 
-/**
- * Injectable git-runner seam.
- *
- * Receives the absolute normalized cwd to inspect. Returns the raw multi-line
- * stdout from `git rev-parse --show-toplevel --git-common-dir HEAD
- * --abbrev-ref HEAD` (LC_ALL=C), a `processError` flag, the git exit status,
- * and the raw stderr.
- *
- * - `processError`: true ONLY for OS-level failures: binary missing (ENOENT),
- *   timeout, invalid cwd argument (e.g. NUL byte in path), or similar. A
- *   nonzero exit from git itself (not a repo, unborn HEAD, etc.) is NOT a
- *   process error — git ran and gave its own answer.
- * - `exitStatus`: git's numeric exit code, or `null` when `processError` is
- *   true (the process never started or was killed).
- * - `stderr`: git's stderr, always in `LC_ALL=C` locale for stable matching.
- */
+/** Injectable `git rev-parse` seam. `processError` is an OS-level failure, not a git exit. */
 export type GitRunner = (normalizedCwd: string) => {
   stdout: string;
   processError: boolean;
@@ -210,20 +189,7 @@ function parseGitRevParseOutput(stdout: string): GitInfo {
   return { toplevel, commonDir, abbrevRef, shortSha };
 }
 
-/**
- * Pure classifier: maps a raw spawnSync result to the shape returned by
- * {@link GitRunner}.
- *
- * Exported for unit testing only. Do not call from production code outside
- * this module; use the module-private `productionGitRunner` instead.
- *
- * A process error is detected when:
- *   - `error` is set (binary not found, ETIMEDOUT, etc.)
- *   - `signal` is non-null (OS killed the process, e.g. SIGKILL on timeout)
- *   - `status` is not a number (defensive; cannot occur without one of the above)
- *
- * A nonzero numeric `status` is git's own exit code and is NOT a process error.
- */
+/** Maps a raw spawnSync result onto {@link GitRunner}. Exported for unit tests. */
 export function classifySpawnSyncResult(result: {
   status: number | null;
   signal: string | null;
@@ -241,24 +207,12 @@ export function classifySpawnSyncResult(result: {
   };
 }
 
-/**
- * Production runner: wraps spawnSync in a try-catch so a hostile cwd (e.g. a
- * path containing a NUL byte that triggers ERR_INVALID_ARG_VALUE) degrades to
- * "no information" rather than propagating an exception into the dispatch path.
- *
- * `processError` is true only for OS-level failures; a nonzero git exit code
- * (e.g. "not a git repository") sets processError=false so the caller can
- * distinguish "git ran but found no repo" from "git could not run at all".
- */
 const productionGitRunner: GitRunner = (normalizedCwd) => {
   let result: ReturnType<typeof spawnSync>;
   try {
     result = spawnSync(
       "git",
-      // Argument order is load-bearing: HEAD before --abbrev-ref HEAD ensures
-      // git emits the full 40-char SHA on line 3, and the branch/detached marker
-      // on line 4. Reversing them causes --abbrev-ref to be "sticky" and makes
-      // both lines emit the abbreviated ref (i.e. "HEAD" in detached state).
+      // HEAD before --abbrev-ref so line 3 stays a full SHA. See parseGitRevParseOutput.
       ["rev-parse", "--show-toplevel", "--git-common-dir", "HEAD", "--abbrev-ref", "HEAD"],
       {
         cwd: normalizedCwd,
@@ -281,14 +235,6 @@ const productionGitRunner: GitRunner = (normalizedCwd) => {
 // Git invocation helper (no cache — see module docstring)
 // ---------------------------------------------------------------------------
 
-/**
- * Run git for the given normalized cwd and return the parsed info plus whether
- * the invocation was a process-level error.
- *
- * We intentionally do NOT cache. A process-lifetime cache would silently hide
- * branch changes if the parent session switches branches mid-session between
- * consecutive dispatches.
- */
 function runGitForCwd(
   normalizedCwd: string,
   runner: GitRunner,
@@ -326,33 +272,11 @@ function buildDisplayPath(normalizedChild: string, normalizedParent: string): st
 // Public API
 // ---------------------------------------------------------------------------
 
-/**
- * Pre-captured git facts for the parent cwd, valid for one dispatch window.
- *
- * Obtain via {@link makeParentGitFactsAccessor} — the lazy accessor is the
- * required entry point. It defers the git invocation until a child is known
- * to differ from the parent cwd, preserving the zero-git guarantee on the
- * synchronous dispatch path. Do not call the private `captureParentGitFacts`
- * function directly; it exists only to serve the accessor.
- *
- * The `_rawInfo` field is implementation-internal; callers must treat it as
- * opaque and must not construct instances of this type manually.
- */
+/** Parent git facts for one dispatch. Obtain via {@link makeParentGitFactsAccessor}. */
 export type ParentGitFacts = {
   readonly _rawInfo: ReturnType<typeof runGitForCwd>;
 };
 
-/**
- * Capture git facts for the parent cwd once per dispatch.
- *
- * Returns a {@link ParentGitFacts} value that can be passed to multiple
- * {@link captureChildLocationSnapshot} calls within the same dispatch, ensuring
- * git is invoked for the parent cwd exactly once regardless of how many child
- * tasks are dispatched in parallel.
- *
- * @param parentCwd - The parent session's working directory.
- * @param gitRunner - Optional injectable seam for tests.
- */
 function captureParentGitFacts(
   parentCwd: string,
   gitRunner: GitRunner = productionGitRunner,
@@ -361,31 +285,10 @@ function captureParentGitFacts(
   return { _rawInfo: runGitForCwd(normalizedParent, gitRunner) };
 }
 
-/**
- * A memoizing accessor that computes parent git facts on first call and caches
- * the result. Obtain via {@link makeParentGitFactsAccessor}.
- *
- * Callers must treat this as an opaque callable and must not inspect its
- * closure state directly.
- */
+/** Memoizing parent-git accessor. The git call runs on first use. */
 export type ParentGitFactsAccessor = () => ParentGitFacts;
 
-/**
- * Returns a lazy, memoizing accessor for parent git facts.
- *
- * The underlying git invocation is deferred until the accessor is first called.
- * Pass the accessor to {@link captureChildLocationSnapshot} — git for the
- * parent cwd is only invoked AFTER the child-cwd equality check, so in the
- * common case (all parallel tasks share the parent cwd) the accessor is never
- * called and zero git processes are spawned.
- *
- * A single accessor shared across all tasks in a dispatch ensures the parent
- * cwd is resolved at most once, regardless of how many tasks have a differing
- * cwd.
- *
- * @param parentCwd - The parent session's working directory.
- * @param gitRunner - Optional injectable seam for tests.
- */
+/** Defers the parent git lookup until a child cwd is known to differ. */
 export function makeParentGitFactsAccessor(
   parentCwd: string,
   gitRunner: GitRunner = productionGitRunner,
@@ -400,23 +303,8 @@ export function makeParentGitFactsAccessor(
 }
 
 /**
- * Capture a dispatch-time snapshot of the facts needed to explain that a
- * subagent child is working somewhere other than the parent session.
- *
- * @param parentCwd           - The parent session's working directory (trusted source).
- * @param childCwd            - The already-resolved absolute child working directory.
- * @param gitRunner           - Optional injectable seam for tests; defaults to the
- *                              production spawnSync-based runner.
- * @param parentFactsAccessor - Optional lazy, memoizing accessor obtained from
- *                              {@link makeParentGitFactsAccessor}. When provided,
- *                              the parent git lookup is deferred until this child's
- *                              cwd is confirmed to differ from the parent, and
- *                              the cached result is reused across all tasks in
- *                              the same parallel dispatch. Pass the SAME accessor
- *                              to every call in a dispatch to guarantee at-most-one
- *                              parent invocation.
- * @returns `undefined` when the normalized cwds match (the common case, zero
- *          git work); otherwise a {@link ChildLocationSnapshot}.
+ * Dispatch-time child-location snapshot.
+ * Returns undefined when the normalized cwds match.
  */
 export function captureChildLocationSnapshot(
   parentCwd: string,
@@ -443,10 +331,7 @@ export function captureChildLocationSnapshot(
     return snapshot;
   }
 
-  // Invoke the parent accessor now that we know the cwds differ. When an
-  // accessor is provided it is memoized, so across a parallel dispatch the
-  // parent git process is started at most once (and never when all children
-  // share the parent cwd). Without an accessor we resolve the parent inline.
+  // Parent lookup is shared when an accessor is provided; otherwise resolve inline.
   const parentGit =
     parentFactsAccessor !== undefined
       ? parentFactsAccessor()._rawInfo

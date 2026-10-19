@@ -6,15 +6,11 @@ import {
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 
-import { formatHomePath } from "./common.js";
-import { DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
+import { formatHomePath, isPlainObject } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import type { TlhSettings } from "./types.js";
 
-// Re-exported alias so callers can reference the cap value without coupling to
-// the "dumb zone" label used in footer rendering. Both names point to the same
-// compile-time constant; 200_000 is defined exactly once in constants.ts.
-const DEFAULT_CONTEXT_CAP_TOKENS = DUMB_ZONE_THRESHOLD_TOKENS;
+const DEFAULT_CONTEXT_CAP_TOKENS = 300_000;
 const CANONICAL_DEVELOPER_CONTEXT_CAP_TOKENS = 272_000;
 const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
@@ -924,12 +920,27 @@ type ContextCapToggleResult = {
   backupPath?: string;
 };
 
+function assertContextCapSettings(settings: unknown): asserts settings is TlhSettings {
+  if (!isPlainObject(settings)) {
+    throw new Error("settings.json must contain a JSON object");
+  }
+  const tlh = settings.tlh;
+  if (tlh !== undefined && !isPlainObject(tlh)) {
+    throw new Error("settings field 'tlh' must be an object if present");
+  }
+  const contextCap = isPlainObject(tlh) ? tlh.contextCap : undefined;
+  if (contextCap !== undefined && !isPlainObject(contextCap)) {
+    throw new Error("settings field 'tlh.contextCap' must be an object if present");
+  }
+}
+
 function toggleContextCapSetting(cwd: string): ContextCapToggleResult {
   return withLockedTlhSettingsWrite(
     cwd,
     "Refusing to write context-cap settings outside the isolated TLH profile.",
     (current) => {
-      const settings: TlhSettings = current ? (JSON.parse(current) as TlhSettings) : {};
+      const settings = current ? (JSON.parse(current) as unknown) : {};
+      assertContextCapSettings(settings);
       const currentlyDisabled = settings.tlh?.contextCap?.disabled === true;
       const nowDisabled = !currentlyDisabled;
       settings.tlh ??= {};
@@ -976,7 +987,7 @@ export function registerContextCap(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("toggle-context-cap", {
-    description: "Toggle the 200k effective context-window cap for auto-compaction",
+    description: "Toggle the 300k effective context-window cap for auto-compaction",
     handler: async (args, ctx) => {
       if (args.trim()) {
         ctx.ui.notify(TOGGLE_CONTEXT_CAP_COMMAND_HELP, "error");

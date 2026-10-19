@@ -277,6 +277,35 @@ test("production bundled agents use the approved OpenAI Codex defaults", () => {
   }
 });
 
+test("production bundled subagents use the verified Anthropic Haiku 5.5 defaults", () => {
+  const expectedDefaults = new Map([
+    ["diff-summarizer", { model: "claude-haiku-5-5", effort: "medium" }],
+    ["librarian", { model: "claude-haiku-5-5", effort: "medium" }],
+    ["repo-scout", { model: "claude-haiku-5-5", effort: "medium" }],
+    ["web-scout", { model: "claude-haiku-5-5", effort: "medium" }],
+    ["test-runner", { model: "claude-haiku-5-5", effort: "low" }],
+  ]);
+  const agents = loadSubagentMetadata();
+
+  assert.equal(
+    agents.filter((agent) => expectedDefaults.has(agent.name)).length,
+    expectedDefaults.size,
+    "all targeted subagents need an Anthropic default",
+  );
+  for (const [name, expected] of expectedDefaults) {
+    const agent = agents.find((candidate) => candidate.name === name);
+    assert.ok(agent, `production loader must return ${name}`);
+    const entries = loadedModelEntries(agent).filter(({ model }) => model.provider === "anthropic");
+    assert.equal(entries.length, 1, `${name} must declare exactly one Anthropic default`);
+    const [{ model, entry }] = entries;
+    assert.deepEqual(
+      { model: model.id, effort: entry.effort },
+      expected,
+      `${name} Anthropic default`,
+    );
+  }
+});
+
 test("loaded primaries preserve preferred selection relationships", () => {
   const primaryAgents = [...loadPrimaryAgents().values()];
   assert.ok(primaryAgents.length > 0, "production loader must return primary agents");

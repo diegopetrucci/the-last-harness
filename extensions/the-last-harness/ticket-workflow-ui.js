@@ -1,20 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
-import { isRecord } from "./common.js";
+import { getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
 const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_TITLE_RESOLUTION_BUDGET_MS = TK_COMMAND_TIMEOUT_MS;
-function getTlhGlobalSettings(cwd) {
-    try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
-        return isRecord(settings) ? settings : {};
-    }
-    catch {
-        return {};
-    }
-}
 function firstOutputLine(result) {
     return `${result.stdout || ""}\n${result.stderr || ""}`
         .split(/\r?\n/)

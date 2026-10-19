@@ -72,6 +72,7 @@ function resultStep(step, message) {
     const complete = isCompletedLifecycleStepState(step.status);
     return {
         agent: step.agent,
+        ...(typeof step.cwd === "string" && step.cwd.length > 0 ? { cwd: step.cwd } : {}),
         output: "",
         success: complete,
         ...(complete ? {} : { error: message }),

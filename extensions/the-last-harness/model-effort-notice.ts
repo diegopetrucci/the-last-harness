@@ -1,17 +1,16 @@
 // Startup notice for model/effort override drift from TLH packaged defaults.
 // Fires at most once per launch when packaged defaults changed for an overridden role.
 // Display alone must NOT acknowledge the snapshot; that is /reconcile's job.
-import {
-  SettingsManager,
-  getAgentDir,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import {
   backfillMissingBaselines,
   computeModelEffortDrift,
+  hasMeaningfulSubagentOverride,
   isKnownProvider,
+  isMeaningfulPrimaryOverride,
   readReconcileState,
 } from "./model-effort-reconcile.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
@@ -24,39 +23,19 @@ import type { TlhSettings } from "./types.js";
 let notifiedThisProcess = false;
 
 // ---------------------------------------------------------------------------
-// Settings helper
-// ---------------------------------------------------------------------------
-
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-    return isRecord(settings) ? (settings as TlhSettings) : {};
-  } catch {
-    return {};
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Cheap override existence check
 // ---------------------------------------------------------------------------
 
 /**
  * True when settings contain at least one override that `computeModelEffortDrift`
- * would turn into a drift entry.
- *
- * This deliberately mirrors that function's per-entry acceptance predicates. When
- * neither pool has an accepted entry it returns an empty list regardless of the
- * packaged agent maps, so the launch path can skip loading them entirely. Keeping
- * the predicates in sync matters: a stricter check here would silently suppress a
- * real notice. A looser one only costs an avoidable load, so err loose if unsure.
- *
- * Settings-only, no filesystem reads beyond the already-read settings object.
+ * would turn into a drift entry. Settings-only, so the launch path can skip
+ * loading packaged agents when nothing is overridden.
  */
 export function hasAnyModelEffortOverride(settings: TlhSettings): boolean {
   const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
   if (isRecord(primaryModelOverrides)) {
     for (const overrideValue of Object.values(primaryModelOverrides)) {
-      if (typeof overrideValue === "string" && overrideValue) {
+      if (isMeaningfulPrimaryOverride(overrideValue)) {
         return true;
       }
     }
@@ -65,18 +44,7 @@ export function hasAnyModelEffortOverride(settings: TlhSettings): boolean {
   const subagentOverrides = settings.subagents?.agentOverrides;
   if (isRecord(subagentOverrides)) {
     for (const rawOverride of Object.values(subagentOverrides)) {
-      if (!isRecord(rawOverride)) {
-        continue;
-      }
-      // Mirror computeModelEffortDrift's per-entry acceptance predicate:
-      // model and thinking must be string, false, or undefined to count as
-      // a meaningful override. Other types (null, number, object, …) are
-      // treated as absent so this predicate stays in sync with drift output.
-      const rawModel = rawOverride.model;
-      const rawThinking = rawOverride.thinking;
-      const hasModel = typeof rawModel === "string" || rawModel === false;
-      const hasThinking = typeof rawThinking === "string" || rawThinking === false;
-      if (hasModel || hasThinking) {
+      if (hasMeaningfulSubagentOverride(rawOverride)) {
         return true;
       }
     }
@@ -166,7 +134,7 @@ export function maybeNotifyModelEffortDrift(ctx: ExtensionContext): void {
     }
     // With no known provider (undefined or empty string), drift comparison cannot
     // be scoped to any provider; defer all comparison, baseline write, and notice
-    // until a provider is known (ts-7w6o applied consistently).
+    // until a provider is known.
     if (!isKnownProvider(ctx.model?.provider)) {
       return;
     }
@@ -187,7 +155,7 @@ export function maybeNotifyModelEffortDrift(ctx: ExtensionContext): void {
     // Silently backfill any (role, provider) pair that has an active override but
     // no prior baseline.  Returns the snapshot to use for this notification pass:
     // includes newly established baselines in-memory so a backfilled role cannot
-    // also produce a notice this pass (ts-8kfb).
+    // also produce a notice this pass.
     const activeSnapshot = backfillMissingBaselines(
       primaryAgents,
       subagentMetadata,

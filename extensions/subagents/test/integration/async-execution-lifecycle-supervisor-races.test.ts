@@ -53,12 +53,43 @@ import {
 import {
   getAsyncConfigPath,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
+  SUBAGENT_ASYNC_STARTED_EVENT,
   type ResolvedControlConfig,
 } from "../../src/shared/types.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { appendSubagentTelemetryContinuation } from "../../src/shared/telemetry.ts";
 
-describe("async execution utilities", () => {
+function recordStartedPid(pids: Set<number>, payload: unknown): void {
+  if (typeof payload !== "object" || payload === null) return;
+  const pid = "pid" in payload ? payload.pid : undefined;
+  if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) pids.add(pid);
+}
+
+function readPersistedPid(asyncDir: string): number | undefined {
+  try {
+    const status: unknown = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    );
+    if (typeof status !== "object" || status === null || Array.isArray(status)) return undefined;
+    const pid = "pid" in status ? status.pid : undefined;
+    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function killPids(pids: readonly (number | undefined)[]): void {
+  for (const pid of pids) {
+    if (typeof pid !== "number" || pid <= 0 || pid === process.pid) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The process may already have exited before failure cleanup reached it.
+    }
+  }
+}
+
+describe("async execution lifecycle supervisor races", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -165,19 +196,6 @@ describe("async execution utilities", () => {
     },
   );
 
-  // ── Regression test for tlhm-8typ: post-pause source-runner write race ───────
-  //
-  // When a source runner writes status after a paused checkpoint (e.g. after an
-  // interrupted child settles), it must not clobber a continuation reservation
-  // that a concurrent resume actor committed between the paused checkpoint and
-  // the post-child write. The test exercises the REAL background runner and
-  // coordinates via marker files — no wall-clock sleeps, no hardcoded counts.
-  //
-  // Proof of non-vacuousness: revert the `if (interrupted)` routing in
-  // writeStatusPayload (using bare writeNormalizedLifecycleStatus instead of
-  // mergeAndWriteSourceRunnerStatus) and this test FAILS with:
-  //   "reservation must survive the post-child source-runner status write".
-  // Restoring the routing makes it PASS.
   it(
     "post-pause source-runner status write preserves a concurrent continuation reservation (tlhm-8typ)",
     {
@@ -224,9 +242,6 @@ describe("async execution utilities", () => {
 
       const asyncDir = path.join(ASYNC_DIR, id);
 
-      // ── Step 1: wait for the child to signal it is blocking (no sleep) ──────
-      // Safety deadline scales with TLH_TEST_TIMEOUT_SCALE so CI (3x) gets the
-      // same headroom as spawn-heavy helper defaults.
       {
         const deadline = Date.now() + scaleTestTimeout(20_000);
         while (!fs.existsSync(readyMarker)) {
@@ -235,15 +250,8 @@ describe("async execution utilities", () => {
         }
       }
 
-      // ── Step 2: interrupt the source runner so it pauses ─────────────────────
-      // requestAsyncInterrupt uses the control-channel file so it works across
-      // platforms without sending OS signals to the test process.
       requestAsyncInterrupt(asyncDir, { source: "tlhm-8typ-test" });
 
-      // ── Step 3: wait for the first paused checkpoint ─────────────────────────
-      // This is the disk state the source runner holds in in-memory; any write
-      // after this point that does not go through mergeAndWriteSourceRunnerStatus
-      // would clobber a concurrent reservation.
       await waitForAsyncState(asyncDir, "paused");
 
       const pausedStatusRaw = JSON.parse(
@@ -253,7 +261,6 @@ describe("async execution utilities", () => {
         pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0],
       );
 
-      // ── Step 4: inject a continuation reservation (simulates resume actor) ───
       const reservedClaimToken = "tlhm8typ-test-claim";
       const reservedRunId = "tlhm8typ-test-continuation";
       transitionLifecycleStatus({
@@ -281,16 +288,10 @@ describe("async execution utilities", () => {
         "sanity: reservation must be on disk before releasing the child",
       );
 
-      // ── Step 5: release the blocking child ───────────────────────────────────
-      // The child exits normally. The source runner will call writeStatusPayload()
-      // after the child settles (with interrupted=true), which is the write path
-      // that used to clobber the reservation before the fix.
       fs.writeFileSync(releaseMarker, "", "utf-8");
 
-      // ── Step 6: wait for the result artifact ─────────────────────────────────
       const resultPath = await waitForAsyncResultFile(id);
 
-      // ── Assertions ───────────────────────────────────────────────────────────
       const finalStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
@@ -318,21 +319,6 @@ describe("async execution utilities", () => {
     },
   );
 
-  // ── Regression test for tlhm-8typ round 5 FIX 10 + FIX 11: ordinary-interrupt
-  // terminal-override path ────────────────────────────────────────────────────
-  //
-  // When a source runner with NO supervisorPauseRequest (ordinary interrupt) goes
-  // through writeStatusPayload and the merge finds a concurrent terminal winner on
-  // disk, adoptConcurrentTerminalStatus must be called in-memory immediately.
-  // Before the fix the stale-generation trick only helped inside the
-  // supervisorPauseRequest CAS block, which is skipped for ordinary interrupts, so
-  // resultState fell through to `interrupted ? "paused" : ...` and the artifact
-  // incorrectly said `state: "paused"` — contradicting the persisted terminal winner.
-  //
-  // Proof of non-vacuousness: revert the FIX 10 branch in writeStatusPayload to
-  // the round-4 `if (!TERMINAL_RUN_STATES.has(merged.state) || merged.state ===
-  // statusPayload.state)` form (which skips adoption) and this test FAILS with:
-  //   "result artifact must reflect the adopted cancelled state, not stale paused".
   it(
     "ordinary-interrupt terminal override: artifact reflects the concurrent terminal winner (tlhm-8typ r5)",
     {
@@ -380,7 +366,6 @@ describe("async execution utilities", () => {
 
       const asyncDir = path.join(ASYNC_DIR, id);
 
-      // ── Step 1: wait for the child to signal it is blocking ──────────────────
       {
         const deadline = Date.now() + scaleTestTimeout(20_000);
         while (!fs.existsSync(readyMarker)) {
@@ -389,10 +374,8 @@ describe("async execution utilities", () => {
         }
       }
 
-      // ── Step 2: ordinary interrupt (no supervisorPauseRequest) ───────────────
       requestAsyncInterrupt(asyncDir, { source: "tlhm-8typ-r5-test" });
 
-      // ── Step 3: wait for the first paused checkpoint ─────────────────────────
       await waitForAsyncState(asyncDir, "paused");
 
       const pausedStatusRaw = JSON.parse(
@@ -402,10 +385,6 @@ describe("async execution utilities", () => {
         pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0],
       );
 
-      // ── Step 4: inject a concurrent cancelled terminal state via CAS ─────────
-      // Simulates an external cancel action (e.g. from a cancel tool call) that
-      // commits the terminal state after the paused checkpoint but before the
-      // source runner's post-child write.
       const cancelledAt = Date.now();
       transitionLifecycleStatus({
         asyncDir,
@@ -438,23 +417,12 @@ describe("async execution utilities", () => {
         "sanity: cancelled state must be on disk before releasing the child",
       );
 
-      // ── Step 5: release the blocking child ───────────────────────────────────
-      // The child exits. The source runner calls writeStatusPayload() (with
-      // interrupted=true, no supervisorPauseRequest), which is the write path that
-      // must now adopt the terminal winner in-memory via FIX 10.
       fs.writeFileSync(releaseMarker, "", "utf-8");
 
-      // ── Step 6: wait for the result artifact ─────────────────────────────────
       const resultPath = await waitForAsyncResultFile(id);
 
-      // ── Assertions ───────────────────────────────────────────────────────────
       const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 
-      // FIX 10: adoption must happen in-memory at the writeStatusPayload call,
-      // not deferred to a CAS block that only runs when supervisorPauseRequest
-      // is set. Without the fix resultState falls through to `interrupted ? "paused"`
-      // and the artifact says `state: "paused"`.
-      // flag in resultState precedence (concurrentTerminalStatusAdopted wins).
       assert.equal(
         resultPayload.state,
         "cancelled",
@@ -476,9 +444,21 @@ describe("async execution utilities", () => {
       fs.mkdirSync(markerDir, { recursive: true });
       const readyMarker = path.join(markerDir, "source-ready");
       const releaseMarker = path.join(markerDir, "source-release");
+      const continuationReadyMarker = path.join(markerDir, "continuation-ready");
+      const continuationReleaseMarker = path.join(markerDir, "continuation-release");
       const sourceRunId = `async-telemetry-adoption-${Date.now().toString(36)}`;
       const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
       const sourceSessionFile = path.join(tempDir, "source-session.jsonl");
+      const sourceRunnerPids = new Set<number>();
+      const continuationRunnerPids = new Set<number>();
+      const sourceEvents = createEventBus();
+      sourceEvents.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => {
+        recordStartedPid(sourceRunnerPids, payload);
+      });
+      const continuationEvents = createEventBus();
+      continuationEvents.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => {
+        recordStartedPid(continuationRunnerPids, payload);
+      });
       const provenance = {
         tlhVersion: "race-tlh",
         piVersion: "race-pi",
@@ -501,16 +481,25 @@ describe("async execution utilities", () => {
         steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
         output: "source work complete",
       });
-      mockPi.onCall({ output: "continuation work complete" });
+      mockPi.onCall({
+        steps: [
+          { writeMarker: continuationReadyMarker },
+          {
+            waitForMarker: continuationReleaseMarker,
+            jsonl: [events.assistantMessage("continuation work complete")],
+          },
+        ],
+      });
 
       let continuationRunId: string | undefined;
+      let cleanupFailure: Error | undefined;
       try {
         const sourceStart = executeAsyncSingle!(sourceRunId, {
           agent: "worker",
           task: "Source work for the telemetry race.",
           agentConfig: makeAgent("worker"),
           ctx: {
-            pi: { events: { emit() {} } },
+            pi: { events: sourceEvents },
             cwd: tempDir,
             currentSessionId: "session-123",
           },
@@ -670,19 +659,92 @@ describe("async execution utilities", () => {
           "completion notification telemetry outcome must be 'continued'",
         );
       } finally {
-        // Release first so an assertion failure cannot strand the blocking mock
-        // child. The normal path has already consumed both result artifacts.
+        // Release both deterministic gates before cleanup so an assertion failure
+        // cannot strand either mock child. The normal path has observed both
+        // result artifacts before deleting any run-owned files.
         fs.writeFileSync(releaseMarker, "", "utf-8");
-        fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
-        if (continuationRunId) {
-          fs.rmSync(path.join(ASYNC_DIR, continuationRunId), { recursive: true, force: true });
-        }
-        fs.rmSync(path.join(RESULTS_DIR, `${sourceRunId}.json`), { force: true });
-        if (continuationRunId) {
-          fs.rmSync(path.join(RESULTS_DIR, `${continuationRunId}.json`), { force: true });
-          fs.rmSync(getAsyncConfigPath(continuationRunId), { force: true });
+        fs.writeFileSync(continuationReleaseMarker, "", "utf-8");
+
+        const cleanupRunIds = [sourceRunId, continuationRunId].filter(
+          (id): id is string => typeof id === "string",
+        );
+        const cleanupAsyncDirs = [
+          sourceAsyncDir,
+          ...(continuationRunId ? [path.join(ASYNC_DIR, continuationRunId)] : []),
+        ];
+        const cleanupTimeout = scaleTestTimeout(5_000);
+        await Promise.all(
+          cleanupRunIds.map((id) =>
+            waitForAsyncResultFile(id, cleanupTimeout).catch(() => undefined),
+          ),
+        );
+
+        const collectOwnedPids = (): number[] => {
+          const pids = new Set<number>([
+            ...sourceRunnerPids,
+            ...continuationRunnerPids,
+            ...startedMockPiPids(mockPi),
+          ]);
+          for (const asyncDir of cleanupAsyncDirs) {
+            const pid = readPersistedPid(asyncDir);
+            if (pid !== undefined) pids.add(pid);
+          }
+          return [...pids];
+        };
+
+        const requestOwnedStops = (): void => {
+          for (const asyncDir of cleanupAsyncDirs) {
+            if (!fs.existsSync(asyncDir)) continue;
+            try {
+              requestAsyncInterrupt(asyncDir, {
+                source: "async-telemetry-adoption-test-cleanup",
+              });
+            } catch {
+              // The run may have already exited or removed its control files.
+            }
+          }
+        };
+        const reapOwnedPids = async (): Promise<boolean> => {
+          let ownedPids = collectOwnedPids();
+          try {
+            await waitForPidsToExit(ownedPids, "async telemetry adoption cleanup", cleanupTimeout);
+            return true;
+          } catch {
+            // A failed fixture may still own a writer; stop it before considering removal.
+          }
+          requestOwnedStops();
+          ownedPids = collectOwnedPids();
+          killPids(ownedPids);
+          try {
+            await waitForPidsToExit(
+              ownedPids,
+              "async telemetry adoption forced cleanup",
+              cleanupTimeout,
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        };
+
+        const reaped = await reapOwnedPids();
+        if (!reaped) {
+          cleanupFailure = new Error(
+            "Async telemetry adoption cleanup could not reap every owned process; run files were left in place.",
+          );
+        } else {
+          fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+          if (continuationRunId) {
+            fs.rmSync(path.join(ASYNC_DIR, continuationRunId), { recursive: true, force: true });
+          }
+          fs.rmSync(path.join(RESULTS_DIR, `${sourceRunId}.json`), { force: true });
+          if (continuationRunId) {
+            fs.rmSync(path.join(RESULTS_DIR, `${continuationRunId}.json`), { force: true });
+            fs.rmSync(getAsyncConfigPath(continuationRunId), { force: true });
+          }
         }
       }
+      if (cleanupFailure) throw cleanupFailure;
     },
   );
 
@@ -932,28 +994,6 @@ describe("async execution utilities", () => {
     },
   );
 
-  // ── Finding 1 parallel-batch pin: concurrent terminal adoption must prevent a
-  // queued parallel task from starting ─────────────────────────────────────────
-  //
-  // This test pins the PARALLEL CALLBACK GUARD in subagent-runner.ts — the early
-  // return inside mapConcurrent's callback that checks
-  // `interrupted || concurrentTerminalStatusAdopted`. With concurrency:1, task 2
-  // is queued while task 1 runs. After task 1 releases, the callback for task 2
-  // must observe concurrentTerminalStatusAdopted=true and return early without
-  // launching a child process.
-  //
-  // The single-run Finding 1 test above does NOT reach this guard because it
-  // stops before entering the parallel batch. This test exercises the callback guard
-  // independently.
-  //
-  // Proof of non-vacuousness (pins the parallel callback guard):
-  //   Revert ONLY the parallel callback guard —
-  //   `if (interrupted || concurrentTerminalStatusAdopted) return pausedStepResult(task);`
-  //   inside mapConcurrent — leaving the outer loop guard intact.
-  //   With that guard removed this test FAILS with:
-  //     "parallel task 2 must not start after concurrent terminal adoption"
-  //     expected: 1   actual: 2   operator: strictEqual
-  //   (verified against current code; see PR #503 review, Finding 1).
   it(
     "concurrent terminal adoption: queued parallel task does not start after non-paused terminal is adopted (parallel callback guard)",
     {
@@ -1007,7 +1047,6 @@ describe("async execution utilities", () => {
 
       const asyncDir2 = path.join(ASYNC_DIR, id);
 
-      // ── Step 1: wait for task 1 to signal it is blocking ─────────────────────
       {
         const deadline = Date.now() + scaleTestTimeout(20_000);
         while (!fs.existsSync(task1ReadyMarker)) {
@@ -1017,7 +1056,6 @@ describe("async execution utilities", () => {
         }
       }
 
-      // ── Step 2: ordinary interrupt so the source runner pauses ─────────────────
       requestAsyncInterrupt(asyncDir2, { source: "finding1-parallel-test" });
       await waitForAsyncState(asyncDir2, "paused");
 
@@ -1028,11 +1066,6 @@ describe("async execution utilities", () => {
         pausedStatusRaw2 as Parameters<typeof lifecycleGeneration>[0],
       );
 
-      // ── Step 3: inject concurrent CANCELLED state on top of the paused checkpoint
-      // With concurrency:1, task 2 is queued in mapConcurrent but has not started.
-      // When we release task 1 below, mapConcurrent will pick up task 2 next.
-      // The parallel callback guard must observe concurrentTerminalStatusAdopted=true
-      // and return early before launching a child process for task 2.
       const cancelledAt2 = Date.now();
       transitionLifecycleStatus({
         asyncDir: asyncDir2,
@@ -1067,17 +1100,10 @@ describe("async execution utilities", () => {
         "sanity: cancelled state must be on disk before releasing task 1 (parallel)",
       );
 
-      // ── Step 4: release task 1 ────────────────────────────────────────────────
-      // Task 1 exits. mapConcurrent processes task 2's callback next (concurrency:1).
-      // Pre-fix (parallel guard removed): task 2 would launch a child process.
-      // Post-fix: the callback guard checks concurrentTerminalStatusAdopted=true and
-      // returns pausedStepResult without starting a child.
       fs.writeFileSync(task1ReleaseMarker, "", "utf-8");
 
-      // ── Step 5: wait for the result artifact ────────────────────────────────
       const resultPath2 = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
 
-      // ── Assertions ────────────────────────────────────────────────────────────
       const resultPayload2 = JSON.parse(
         fs.readFileSync(resultPath2, "utf-8"),
       ) as AsyncResultPayload;
@@ -1097,30 +1123,6 @@ describe("async execution utilities", () => {
     },
   );
 
-  // ── INVARIANT PIN (not a bug reproduction) ────────────────────────────────
-  //
-  // Invariant: pause + a concurrent cancel committed through the lock/CAS path ⇒
-  // the persisted status still reports `cancelled` with its cancel metadata intact,
-  // and no step is left reporting `paused`, no matter how many post-adoption
-  // child-settle writeStatusPayload calls occur.
-  //
-  // HONESTY NOTE — read before treating this as a regression repro:
-  // This test PASSES both before and after the writeStatusPayload merge-routing
-  // change. It is deliberately NOT claimed to be non-vacuous. An earlier review
-  // hypothesis held that a post-adoption bare write could clobber the persisted
-  // `cancelled` record here; that hypothesis was investigated and found to be
-  // WRONG for the current code, because three independent mechanisms already
-  // prevent the clobber:
-  //   1. the finalization block is gated on `!concurrentTerminalStatusAdopted`, so
-  //      its state mutation and status write are both skipped after adoption;
-  //   2. both step handlers re-set `interrupted = true` via
-  //      `if (childInterrupted) interrupted = true;` before their settle write,
-  //      which pushed the write back onto the locked-merge path; and
-  //   3. `pausedCheckpointCommitted` happened to still be true.
-  // The merge-routing change exists to make the invariant hold BY CONSTRUCTION
-  // instead of by that coincidence, and to keep late settlement fields merged
-  // rather than dropped. This test pins the observable invariant so a future
-  // refactor of any of those three mechanisms cannot silently regress it.
   it(
     "invariant pin: pause + concurrent cancel keeps the persisted cancelled record intact",
     {
@@ -1180,7 +1182,6 @@ describe("async execution utilities", () => {
 
       const asyncDir = path.join(ASYNC_DIR, id);
 
-      // ── Step 1: wait for both children to signal they are blocking ────────────
       {
         const deadline = Date.now() + scaleTestTimeout(20_000);
         while (!fs.existsSync(child0ReadyMarker) || !fs.existsSync(child1ReadyMarker)) {
@@ -1190,7 +1191,6 @@ describe("async execution utilities", () => {
         }
       }
 
-      // ── Step 2: ordinary interrupt → paused checkpoint ────────────────────────
       requestAsyncInterrupt(asyncDir, { source: "invariant-pin-test" });
       await waitForAsyncState(asyncDir, "paused");
 
@@ -1201,9 +1201,6 @@ describe("async execution utilities", () => {
         pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0],
       );
 
-      // ── Step 3: commit `cancelled` on top of the paused checkpoint via CAS ────
-      // Simulates a cancel actor committing a terminal state AFTER the paused
-      // checkpoint but BEFORE the source runner's post-child writes.
       const cancelledAt = Date.now();
       transitionLifecycleStatus({
         asyncDir,
@@ -1236,21 +1233,10 @@ describe("async execution utilities", () => {
         "sanity: cancelled must be on disk before releasing children",
       );
 
-      // ── Step 4: release both children simultaneously ──────────────────────────
-      // When both children exit, their task handlers each call writeStatusPayload().
-      // The first call takes the locked-merge path, detects the cancelled terminal
-      // winner, and calls adoptConcurrentTerminalStatus — setting interrupted=false
-      // and concurrentTerminalStatusAdopted=true while pausedCheckpointCommitted
-      // stays true. The second child's settle write then also runs post-adoption.
-      // With merge routing keyed on concurrentTerminalStatusAdopted, that second
-      // write is merged against disk (persisted terminal wins) instead of being able
-      // to fall through to a bare write.
       fs.writeFileSync(releaseMarker, "", "utf-8");
 
-      // ── Step 5: wait for the result artifact ─────────────────────────────────
       const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
 
-      // ── Assertions ───────────────────────────────────────────────────────────
       const status = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
@@ -1288,20 +1274,6 @@ describe("async execution utilities", () => {
     },
   );
 
-  // ── Regression test for tlhm-c7so: continuation launch gate writes result artifact
-  //
-  // When runSubagent rejects a continuation at the launch gate, it previously took
-  // an early return that skipped the terminal result writer at the bottom of the
-  // function. Any waiter blocking on RESULTS_DIR/${id}.json would hang until its
-  // own timeout (~20% of CI runs failed this way for four days).
-  //
-  // Fix: write a terminal failure result artifact to resultPath before the early
-  // return (option b — explicit inline payload with documented consumer contract).
-  //
-  // Proof of non-vacuousness: remove the writeAtomicJson call from the gate-rejection
-  // block in subagent-runner.ts and this test FAILS with:
-  //   "Timed out waiting for async result file: .../<id>.json"
-  // Restoring the write makes it PASS.
   it("continuation launch gate writes a terminal failure result artifact (tlhm-c7so)", async () => {
     // Set up a source asyncDir. Writing a paused lifecycle status + reservation
     // makes the gate scenario realistic: the continuation runner starts with a
