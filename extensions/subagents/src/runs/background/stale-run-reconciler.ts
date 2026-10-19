@@ -1,20 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  RESULTS_DIR,
-  type AsyncResultArtifact,
-  type AsyncStatus,
-  type NestedRunSummary,
-} from "../../shared/types.ts";
+import { RESULTS_DIR, type AsyncResultArtifact, type AsyncStatus } from "../../shared/types.ts";
 import { readStatus, type AsyncStatusReadOptions } from "../../shared/utils.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import {
-  nestedSummaryFromAsyncStatus,
-  projectNestedEvents,
-  resolveNestedAsyncDir,
-  writeNestedEvent,
-  type NestedRoute,
-} from "../shared/nested-events.ts";
 import {
   checkPidLiveness,
   isCompletedLifecycleStepState,
@@ -63,7 +51,7 @@ type StaleRunRepairEvent = {
 const STALE_MESSAGE_PREFIX = "Async runner process";
 
 const STALE_MESSAGE_SUFFIX =
-  "exited before writing a result. Marked run failed by stale-run reconciliation.";
+  "exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.";
 
 const DEFAULT_STALE_ALIVE_PID_MS = 24 * 60 * 60 * 1000;
 const STALE_REPAIR_GUARD_FAILED = Symbol("stale-repair-guard-failed");
@@ -252,60 +240,6 @@ function commitStaleFailure(
     message,
     protectedLifecycle: protectedLifecycle(observed),
   };
-}
-
-function* nestedRuns(children: NestedRunSummary[] | undefined): Generator<NestedRunSummary> {
-  for (const child of children ?? []) {
-    yield child;
-    yield* nestedRuns(child.children);
-    yield* nestedRuns(child.steps?.flatMap((step) => step.children ?? []));
-  }
-}
-
-export function reconcileNestedAsyncDescendants(
-  route: NestedRoute,
-  options: ReconcileAsyncRunOptions = {},
-): void {
-  const registry = projectNestedEvents(route);
-
-  for (const run of nestedRuns(registry.children)) {
-    if (isTerminalLifecycleState(run.state)) continue;
-    const asyncDir = resolveNestedAsyncDir(route.rootRunId, run);
-    if (!asyncDir) continue;
-    let result: ReturnType<typeof reconcileAsyncRun>;
-    try {
-      result = reconcileAsyncRun(asyncDir, {
-        ...options,
-        resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
-      });
-    } catch (error) {
-      // Non-regular status artifacts (FIFO, symlink, directory) are skipped;
-      // other read errors propagate so callers can observe unexpected failures.
-      if (isAsyncStatusReadError(error) && error.failure === "non_regular") continue;
-      throw error;
-    }
-    if (!result.status || (!result.repaired && !isTerminalLifecycleState(result.status.state)))
-      continue;
-
-    const ts = options.now?.() ?? Date.now();
-    writeNestedEvent(route, {
-      type: isTerminalLifecycleState(result.status.state)
-        ? "subagent.nested.completed"
-        : "subagent.nested.updated",
-      ts,
-      parentRunId: run.parentRunId,
-      parentStepIndex: run.parentStepIndex,
-      child: nestedSummaryFromAsyncStatus(result.status, asyncDir, {
-        id: run.id,
-        parentRunId: run.parentRunId,
-        parentStepIndex: run.parentStepIndex,
-        depth: run.depth,
-        path: run.path,
-        mode: run.mode,
-        ts,
-      }),
-    });
-  }
 }
 
 export { checkPidLiveness };

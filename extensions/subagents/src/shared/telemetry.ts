@@ -1137,7 +1137,9 @@ export function telemetryFromSingleResults(input: {
           interrupted: result.interrupted,
           timedOut: result.timedOut,
           terminationReason: result.terminationReason,
-          acceptanceStatus: result.acceptance?.status,
+          acceptanceStatus: result.acceptance?.status as
+            | import("./types.ts").AcceptanceLedgerStatus
+            | undefined,
         }),
       };
     }),

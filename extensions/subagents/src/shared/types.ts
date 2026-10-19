@@ -167,8 +167,6 @@ export interface ControlEvent {
   /** Lifecycle generation that owns this attention episode. */
   generation?: number;
   runId: string;
-  nestedRunId?: string;
-  nestingPath?: NestedRunAddress["path"];
   message: string;
   /** Context-pressure diagnostics are carried through every control channel. */
   contextPressureSeverity?: ContextPressureSeverity;
@@ -303,74 +301,10 @@ interface AsyncLifecycleMetadata {
   resumeBlockedReason?: "supervisor_lifecycle_failure";
 }
 
-type PublicNestedStepSummary = Pick<
-  NestedStepSummary,
-  | "agent"
-  | "status"
-  | "sessionFile"
-  | "transcriptPath"
-  | "transcriptError"
-  | "activityState"
-  | "lastActivityAt"
-  | "currentTool"
-  | "currentToolStartedAt"
-  | "currentPath"
-  | "turnCount"
-  | "toolCount"
-  | "startedAt"
-  | "endedAt"
-  | "error"
-  | "timedOut"
-  | "terminationReason"
-  | "contextUsage"
-  | "contextPressure"
-  | "contextPressureCrossedThresholds"
-> & {
-  children?: PublicNestedRunSummary[];
-};
-
 export type CostSummary = {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
-};
-
-export type PublicNestedRunSummary = Pick<
-  NestedRunSummary,
-  | "id"
-  | "parentRunId"
-  | "parentStepIndex"
-  | "parentAgent"
-  | "depth"
-  | "path"
-  | "asyncDir"
-  | "sessionId"
-  | "sessionFile"
-  | "ownerState"
-  | "mode"
-  | "state"
-  | "agent"
-  | "agents"
-  | "currentStep"
-  | "activityState"
-  | "lastActivityAt"
-  | "currentTool"
-  | "currentToolStartedAt"
-  | "currentPath"
-  | "turnCount"
-  | "toolCount"
-  | "totalTokens"
-  | "totalCost"
-  | "startedAt"
-  | "endedAt"
-  | "lastUpdate"
-  | "error"
-  | "timeoutMs"
-  | "deadlineAt"
-  | "timedOut"
-> & {
-  steps?: PublicNestedStepSummary[];
-  children?: PublicNestedRunSummary[];
 };
 
 export interface SubagentResultChild {
@@ -382,7 +316,6 @@ export interface SubagentResultChild {
   sessionPath?: string;
   /** Per-child terminal state and evidence-only facts, when persisted. */
   terminalResult?: SubagentTerminalResult;
-  children?: PublicNestedRunSummary[];
 }
 
 // ============================================================================
@@ -527,7 +460,6 @@ export interface SingleResult {
    * absent (undefined) for same-cwd runs. Never mutated after initial set.
    */
   childLocation?: ChildLocationSnapshot;
-  children?: NestedRunSummary[];
   /** Active runtime tracking for telemetry; optional, not accumulated cumulatively. */
   activeRuntimeMs?: number;
   /** Acceptance ledger snapshot, when available from acceptance-aware callers. */
@@ -615,90 +547,6 @@ interface ExtensionArtifactConfig {
 // Async Execution
 // ============================================================================
 
-export type NestedRunState = "queued" | "running" | "complete" | "failed" | "paused";
-type NestedOwnerState = "live" | "gone" | "unknown";
-
-interface NestedRunAddress {
-  id: string;
-  parentRunId: string;
-  parentStepIndex?: number;
-  parentAgent?: string;
-  depth: number;
-  path: Array<{ runId: string; stepIndex?: number; agent?: string }>;
-}
-
-export interface NestedStepSummary {
-  agent: string;
-  projectAgent?: ProjectAgentIdentity;
-  /** Deny-only signal retained when a persisted project-agent marker is malformed. */
-  projectAgentMarker?: true;
-  status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
-  terminationReason?: SubagentTerminationReason;
-  sessionFile?: string;
-  transcriptPath?: string;
-  transcriptError?: string;
-  activityState?: ActivityState;
-  lastActivityAt?: number;
-  currentTool?: string;
-  currentToolStartedAt?: number;
-  currentPath?: string;
-  turnCount?: number;
-  toolCount?: number;
-  startedAt?: number;
-  endedAt?: number;
-  error?: string;
-  timedOut?: boolean;
-  contextUsage?: ContextUsageDiagnostics;
-  contextPressure?: ContextPressureProjection;
-  contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  children?: NestedRunSummary[];
-}
-
-export interface NestedRunSummary extends NestedRunAddress {
-  projectAgent?: ProjectAgentIdentity;
-  /** Deny-only signal retained when a persisted project-agent marker is malformed. */
-  projectAgentMarker?: true;
-  /** Persisted execution cwd used to validate a process-starting revival. */
-  cwd?: string;
-  asyncDir?: string;
-  pid?: number;
-  sessionId?: string;
-  sessionFile?: string;
-  ownerState?: NestedOwnerState;
-  controlInbox?: string;
-  capabilityToken?: string;
-  mode?: SubagentRunMode;
-  state: NestedRunState;
-  agent?: string;
-  agents?: string[];
-  currentStep?: number;
-  steps?: NestedStepSummary[];
-  children?: NestedRunSummary[];
-  activityState?: ActivityState;
-  lastActivityAt?: number;
-  currentTool?: string;
-  currentToolStartedAt?: number;
-  currentPath?: string;
-  turnCount?: number;
-  toolCount?: number;
-  totalTokens?: TokenUsage;
-  totalCost?: CostSummary;
-  startedAt?: number;
-  endedAt?: number;
-  lastUpdate?: number;
-  timeoutMs?: number;
-  deadlineAt?: number;
-  timedOut?: boolean;
-  error?: string;
-}
-
-export interface NestedRouteInfo {
-  rootRunId: string;
-  eventSink: string;
-  controlInbox: string;
-  capabilityToken: string;
-}
-
 /** Canonical provider/model/thinking identity persisted with resumable children. */
 /** A tk ticket ID + sanitized title, persisted and displayed alongside async jobs. */
 export interface TkTicketMetadata {
@@ -734,7 +582,6 @@ export interface AsyncStartedEvent {
   agents?: string[];
   timeoutMs?: number;
   deadlineAt?: number;
-  nestedRoute?: NestedRouteInfo;
 }
 
 export interface AsyncStatus {
@@ -788,7 +635,6 @@ export interface AsyncStatus {
       | "paused"
       | "continued"
       | "cancelled";
-    children?: NestedRunSummary[];
     sessionFile?: string;
     /** Child working directory when it differs from the run-level cwd. */
     cwd?: string;
@@ -1020,8 +866,6 @@ export interface AsyncJobState {
   controlEventSkippingOversizedLine?: boolean;
   /** Device/inode identity of the events file at the cursor. */
   controlEventFileIdentity?: string;
-  nestedRoute?: NestedRouteInfo;
-  nestedChildren?: NestedRunSummary[];
   /** Safe per-child captures retained for the run lifecycle. */
   projectAgents?: ProjectAgentIdentity[];
 }

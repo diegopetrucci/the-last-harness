@@ -109,7 +109,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
@@ -145,7 +144,6 @@ describe("real child process protocol hardening", () => {
         }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: compactArtifactConfig(),
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
@@ -200,7 +198,6 @@ describe("real child process protocol hardening", () => {
         agentConfig: makeAgent("worker", { fallbackModels: ["mock/fallback"] }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: compactArtifactConfig(),
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
@@ -263,7 +260,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
@@ -305,7 +301,6 @@ describe("real child process protocol hardening", () => {
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: compactArtifactConfig(),
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
@@ -352,7 +347,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
@@ -378,7 +372,6 @@ describe("real child process protocol hardening", () => {
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       // Use debug mode so includeChildEventProjections is true.
       artifactConfig: resolveArtifactConfig({ mode: "debug" }),
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
@@ -407,7 +400,6 @@ describe("real child process protocol hardening", () => {
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       // compact mode: includeChildEventProjections is false
       artifactConfig: compactArtifactConfig(),
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
@@ -441,7 +433,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);

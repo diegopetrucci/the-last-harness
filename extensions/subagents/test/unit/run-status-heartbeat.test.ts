@@ -40,7 +40,6 @@ function makeStatusOwner(asyncDir: string, runId = "heartbeat-test") {
       },
     },
     overallStartTime: startedAt,
-    shareEnabled: false,
     artifactConfig: {
       mode: "compact",
       enabled: false,

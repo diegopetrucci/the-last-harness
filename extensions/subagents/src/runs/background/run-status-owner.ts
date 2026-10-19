@@ -4,13 +4,11 @@ import type { ProjectAgentIdentity } from "../../agents/project-agent-loader.ts"
 import { getArtifactPaths } from "../../shared/artifacts.ts";
 import type {
   AsyncStatus,
-  NestedRouteInfo,
   ResolvedArtifactConfig,
   SubagentAttemptFacts,
   SubagentTerminalResult,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.ts";
 import {
   boundChildError,
   claimChildTerminalReason,
@@ -53,13 +51,6 @@ type StatusTask = Pick<
   "agent" | "model" | "modelIdentity" | "modelResolution" | "projectAgent" | "ticketId"
 >;
 
-type NestedSelf = {
-  parentRunId: string;
-  parentStepIndex?: number;
-  depth: number;
-  path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
-};
-
 interface BackgroundStatusOwnerInput {
   id: string;
   awaited?: boolean;
@@ -67,7 +58,6 @@ interface BackgroundStatusOwnerInput {
   cwd: string;
   plan: SubagentRunPlan;
   overallStartTime: number;
-  shareEnabled: boolean;
   artifactConfig: ResolvedArtifactConfig;
   artifactsDir?: string;
   sessionDir?: string;
@@ -75,8 +65,6 @@ interface BackgroundStatusOwnerInput {
   deadlineAt?: number;
   projectAgents?: ProjectAgentIdentity[];
   telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
-  nestedRoute?: NestedRouteInfo;
-  nestedSelf?: NestedSelf;
   timeoutMessage?: string;
   appendEvent: (line: string) => void;
   appendDiagnosticEvent?: (line: string, droppedEventType?: string) => void;
@@ -84,8 +72,6 @@ interface BackgroundStatusOwnerInput {
 
 interface BackgroundStatusControlHooks {
   clearActivityState: () => void;
-  interruptNestedDescendants: () => void;
-  timeoutNestedDescendants: () => void;
   interruptActiveChildren: () => void;
   timeoutActiveChildren: () => void;
   abortInterrupt: () => void;
@@ -118,7 +104,7 @@ export interface BackgroundRunStatusOwner {
     sessionFile?: string,
   ): void;
   refreshTrackedSessionFile(index: number, fallback?: string): string | undefined;
-  writeStatusPayload(options?: { projectNested?: boolean; lifecycleLocked?: boolean }): void;
+  writeStatusPayload(options?: { lifecycleLocked?: boolean }): void;
   recordAttemptFacts(index: number, facts: SubagentAttemptFacts): void;
   recordStepTimeout(flatIndex: number, message?: string): void;
   onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void;
@@ -133,7 +119,6 @@ export interface BackgroundRunStatusOwner {
   ownedPauseProcessesConfirmedStopped(): boolean;
   isPersistedAwaitingSupervisorPause(status: RunnerStatusPayload | undefined): boolean;
   applyPausedStepMetadata(index: number, endedAt: number): void;
-  emitNestedSelfEvent(type: "subagent.nested.updated" | "subagent.nested.completed"): void;
   /**
    * Start a periodic heartbeat that persists `lastUpdate` while the run is in
    * the `running` state.  The heartbeat is independent of controlConfig and
@@ -286,7 +271,6 @@ export function createBackgroundRunStatusOwner(
     cwd,
     plan,
     overallStartTime,
-    shareEnabled,
     artifactConfig,
     artifactsDir,
     sessionDir,
@@ -294,8 +278,6 @@ export function createBackgroundRunStatusOwner(
     deadlineAt,
     projectAgents,
     telemetry,
-    nestedRoute,
-    nestedSelf,
     timeoutMessage,
     appendEvent,
     appendDiagnosticEvent,
@@ -346,8 +328,7 @@ export function createBackgroundRunStatusOwner(
     };
   });
 
-  const sessionEnabled =
-    Boolean(sessionDir) || shareEnabled || flatSteps.some((step) => Boolean(step.sessionFile));
+  const sessionEnabled = Boolean(sessionDir) || flatSteps.some((step) => Boolean(step.sessionFile));
   const statusPayload: RunnerStatusPayload = {
     lifecycleArtifactVersion: 1,
     ...(input.awaited ? { awaited: true } : {}),
@@ -384,8 +365,6 @@ export function createBackgroundRunStatusOwner(
   );
   const hooks: BackgroundStatusControlHooks = {
     clearActivityState: () => undefined,
-    interruptNestedDescendants: () => undefined,
-    timeoutNestedDescendants: () => undefined,
     interruptActiveChildren: () => undefined,
     timeoutActiveChildren: () => undefined,
     abortInterrupt: () => undefined,
@@ -401,46 +380,6 @@ export function createBackgroundRunStatusOwner(
         .map((name) => path.resolve(dir, name));
     } catch {
       return [];
-    }
-  }
-
-  let lastEmittedNestedTerminalState: "complete" | "failed" | "paused" | undefined;
-
-  function emitNestedSelfEvent(
-    type: "subagent.nested.updated" | "subagent.nested.completed",
-  ): void {
-    if (!nestedRoute || !nestedSelf) return;
-    try {
-      const child = nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-        id,
-        parentRunId: nestedSelf.parentRunId,
-        parentStepIndex: nestedSelf.parentStepIndex,
-        depth: nestedSelf.depth,
-        path: nestedSelf.path,
-        mode: statusPayload.mode,
-        ts: Date.now(),
-      });
-      // Status writes can happen more than once while a child drains, and a
-      // concurrent terminal adoption can make the final persistence path revisit
-      // the same lifecycle state. Nested completion is a terminal projection
-      // edge, so suppress only repeats of the same parent-visible state; a later
-      // paused -> continued/cancelled adoption must replace the parent snapshot.
-      const terminalState =
-        type === "subagent.nested.completed" &&
-        (child.state === "complete" || child.state === "failed" || child.state === "paused")
-          ? child.state
-          : undefined;
-      if (terminalState !== undefined && terminalState === lastEmittedNestedTerminalState) return;
-      writeNestedEvent(nestedRoute, {
-        type,
-        ts: Date.now(),
-        parentRunId: nestedSelf.parentRunId,
-        parentStepIndex: nestedSelf.parentStepIndex,
-        child,
-      });
-      if (terminalState !== undefined) lastEmittedNestedTerminalState = terminalState;
-    } catch {
-      /* Nested projection is advisory. */
     }
   }
 
@@ -507,14 +446,11 @@ export function createBackgroundRunStatusOwner(
     owner.interrupted = adopted.state === "paused";
     if (adopted.state === "paused") owner.durablePausingCheckpointPersisted = true;
     clearHeartbeatTimer();
-    hooks.interruptNestedDescendants();
     hooks.interruptActiveChildren();
     return statusPayload;
   }
 
-  function writeStatusPayload(
-    options: { projectNested?: boolean; lifecycleLocked?: boolean } = {},
-  ): void {
+  function writeStatusPayload(_options: { lifecycleLocked?: boolean } = {}): void {
     if (statusPayload.currentStep !== undefined)
       refreshTrackedSessionFile(statusPayload.currentStep);
 
@@ -529,12 +465,6 @@ export function createBackgroundRunStatusOwner(
 
     if (isTerminalLifecycleState(merged.state) && merged.state !== previousState)
       adoptConcurrentTerminalStatus();
-    if (options.projectNested !== false)
-      emitNestedSelfEvent(
-        isActiveLifecycleState(statusPayload.state)
-          ? "subagent.nested.updated"
-          : "subagent.nested.completed",
-      );
   }
 
   function transition(
@@ -604,7 +534,7 @@ export function createBackgroundRunStatusOwner(
     }
     statusPayload.lastUpdate = Date.now();
     try {
-      writeStatusPayload({ projectNested: false });
+      writeStatusPayload();
     } catch {
       // Heartbeat write failures are non-fatal; the next tick will retry.
     }
@@ -812,7 +742,6 @@ export function createBackgroundRunStatusOwner(
       }),
     );
 
-    hooks.interruptNestedDescendants();
     hooks.abortInterrupt();
     hooks.interruptActiveChildren();
   }
@@ -852,7 +781,6 @@ export function createBackgroundRunStatusOwner(
     hooks.clearActivityState();
     hooks.abortInterrupt();
     hooks.abortTimeout();
-    hooks.interruptNestedDescendants();
     hooks.interruptActiveChildren();
     appendEvent(
       JSON.stringify({
@@ -884,7 +812,6 @@ export function createBackgroundRunStatusOwner(
     owner.interrupted = true;
     clearHeartbeatTimer();
     hooks.clearActivityState();
-    hooks.interruptNestedDescendants();
     hooks.abortInterrupt();
     hooks.interruptActiveChildren();
     appendEvent(JSON.stringify({ type: "subagent.run.paused", ts: now, runId: id }));
@@ -919,7 +846,6 @@ export function createBackgroundRunStatusOwner(
     clearHeartbeatTimer();
     hooks.clearActivityState();
     hooks.abortTimeout();
-    hooks.timeoutNestedDescendants();
     hooks.timeoutActiveChildren();
     appendEvent(
       JSON.stringify({ type: "subagent.run.timed_out", ts: now, runId: id, deadlineAt, message }),
@@ -1043,7 +969,6 @@ export function createBackgroundRunStatusOwner(
     ownedPauseProcessesConfirmedStopped,
     isPersistedAwaitingSupervisorPause,
     applyPausedStepMetadata,
-    emitNestedSelfEvent,
     startHeartbeat,
     stopHeartbeat,
   };

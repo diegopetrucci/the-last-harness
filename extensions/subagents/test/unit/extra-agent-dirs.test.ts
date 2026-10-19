@@ -3,17 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import {
-  discoverAgents,
-  discoverAgentsAll,
-  EXTRA_AGENT_DIRS_ENV,
-} from "../../src/agents/agents.ts";
+import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
 
 let tempDir = "";
 let agentDir = "";
 let cwd = "";
 const saved: Record<string, string | undefined> = {};
-const MANAGED_ENV = ["PI_CODING_AGENT_DIR", "HOME", "USERPROFILE", EXTRA_AGENT_DIRS_ENV];
+const MANAGED_ENV = ["PI_CODING_AGENT_DIR", "HOME", "USERPROFILE", "PI_SUBAGENT_EXTRA_AGENT_DIRS"];
 
 function writeAgent(dir: string, name: string): string {
   const filePath = path.join(dir, `${name}.md`);
@@ -44,7 +40,7 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.HOME = homeDir;
     process.env.USERPROFILE = homeDir;
-    delete process.env[EXTRA_AGENT_DIRS_ENV];
+    delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
   });
 
   afterEach(() => {
@@ -58,7 +54,7 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
   it("ignores env-provided generic agents while retaining canonical packaged TLH roles", () => {
     const bundledDir = path.join(tempDir, "store", "agents");
     writeAgent(bundledDir, "bundled-reviewer");
-    process.env[EXTRA_AGENT_DIRS_ENV] = bundledDir;
+    process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = bundledDir;
     const canonical = writeAgent(path.join(agentDir, "tlh", "agents", "subagents"), "developer");
 
     const scoped = discoverAgents(cwd, "user");
@@ -78,12 +74,22 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
     assert.ok(all.user.find((agent) => agent.name === "developer"));
   });
 
+  it("retains canonical inventory order without generic source merging", () => {
+    writeAgent(path.join(agentDir, "tlh", "agents", "subagents"), "developer");
+    writeAgent(path.join(agentDir, "tlh", "agents", "subagents"), "code-reviewer");
+
+    assert.deepEqual(
+      discoverAgents(cwd, "both").agents.map((agent) => agent.name),
+      ["code-reviewer", "developer"],
+    );
+  });
+
   it("ignores every directory listed in the legacy extra-agent PATH", () => {
     const dirA = path.join(tempDir, "store-a");
     const dirB = path.join(tempDir, "store-b");
     writeAgent(dirA, "agent-a");
     writeAgent(dirB, "agent-b");
-    process.env[EXTRA_AGENT_DIRS_ENV] = [dirA, dirB].join(path.delimiter);
+    process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = [dirA, dirB].join(path.delimiter);
 
     const all = discoverAgentsAll(cwd);
     assert.equal(
@@ -109,7 +115,7 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
         agentDirs: ["configured/agents"],
       },
     });
-    process.env[EXTRA_AGENT_DIRS_ENV] = bundledDir;
+    process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = bundledDir;
 
     const scoped = discoverAgents(cwd, "user");
     assert.equal(
@@ -141,7 +147,7 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
   });
 
   it("ignores the env var when unset or empty", () => {
-    process.env[EXTRA_AGENT_DIRS_ENV] = "";
+    process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = "";
     const all = discoverAgentsAll(cwd);
     assert.deepEqual(all.user, []);
   });

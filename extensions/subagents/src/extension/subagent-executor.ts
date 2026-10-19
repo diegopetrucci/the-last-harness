@@ -11,7 +11,6 @@ import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { handleManagementAction } from "../agents/agent-management.ts";
 import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "./doctor.ts";
 import {
-  authorizeNestedProjectAgentControl,
   authorizeProjectInterruptTarget,
   authorizeProjectSteerTarget,
   buildManagementActionParams,
@@ -22,12 +21,9 @@ import {
   interruptAsyncRun,
   readModelRegistrySnapshot,
   requestInterruptAllRunningSubagentRuns,
-  interruptNestedRun,
   resolveSingleRunOutputBaseDir,
   selectInterruptTarget,
   steerAsyncRun,
-  steerNestedRun,
-  trustedSessionRootsForStatus,
   unknownAgentMessage,
   providerFallbackModelsForTarget,
   resumeAsyncRun,
@@ -35,10 +31,8 @@ import {
   unsupportedSavedChainInputResult,
 } from "../runs/shared/run-control.ts";
 import {
-  hasMalformedProjectAgentControlMarker,
   isRecordValue,
   normalizeProjectAgentAccess,
-  projectRunAuthorizationError,
   resolveProjectAgentExecution,
 } from "../runs/shared/project-agent-control.ts";
 export {
@@ -57,7 +51,7 @@ import {
 } from "../runs/background/async-execution.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { resolveControlConfig } from "../runs/shared/subagent-control.ts";
-import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
+
 import { normalizeSingleOutputOverride } from "../runs/shared/single-output.ts";
 import { readStatus, resolveChildCwd } from "../shared/utils.ts";
 import {
@@ -66,7 +60,6 @@ import {
   ticketLookupKey,
 } from "../runs/shared/ticket-context.ts";
 
-import { resolveInheritedNestedRouteFromEnv } from "../runs/shared/nested-events.ts";
 import {
   resolveSubagentRunId,
   type ResolvedSubagentRunId,
@@ -78,12 +71,9 @@ import {
   type AsyncStatus,
   type Details,
   type SubagentToolResult,
-  type NestedRouteInfo,
   type ResolvedArtifactConfig,
   type ResolvedControlConfig,
   type SubagentRunMode,
-  ASYNC_DIR,
-  RESULTS_DIR,
   SUBAGENT_ACTIONS,
   checkSubagentDepth,
   resolveTopLevelParallelConcurrency,
@@ -136,7 +126,6 @@ interface ExecutionContextData {
   artifactConfig: ResolvedArtifactConfig;
   artifactsDir: string;
   controlConfig: ResolvedControlConfig;
-  nestedRoute?: NestedRouteInfo;
   timeoutMs?: number;
   deadlineAt?: number;
   modelScope?: ModelScopeConfig;
@@ -406,7 +395,6 @@ async function runAsyncPath(
     artifactsDir,
     awaited,
     controlConfig,
-    nestedRoute,
     ticketBodies,
   } = data;
   const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -492,7 +480,6 @@ async function runAsyncPath(
       ),
       maxSubagentDepth: currentMaxSubagentDepth,
       controlConfig,
-      nestedRoute,
       timeoutMs: data.timeoutMs,
       projectAgentIdentities: data.projectAgentIdentities,
       ticketBodies,
@@ -556,7 +543,6 @@ async function runAsyncPath(
       modelFallbackNotice: params.modelFallbackNotice,
       maxSubagentDepth,
       controlConfig,
-      nestedRoute,
       timeoutMs: data.timeoutMs,
       projectAgent: data.projectAgentIdentities?.find(
         (identity) => `embedded.${identity.slug}` === params.agent,
@@ -634,11 +620,9 @@ async function executeDoctorAction(
           cwd: requestCwd,
           config: deps.config,
           state: deps.state,
-          requestedSessionDir: params.sessionDir,
           currentSessionFile,
           currentSessionId,
           sessionError,
-          expandTilde: deps.expandTilde,
           projectAgentTrust,
         }),
       },
@@ -661,10 +645,8 @@ function executeStatusAction(
       details: { mode: "single", results: [] },
     };
   }
-  const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
   return inspectSubagentStatus(buildRunStatusParams(params) as never, {
     state: deps.state,
-    sessionRoots,
   });
 }
 
@@ -703,26 +685,9 @@ async function executeSteerAction(
     return projectManagementError("action='steer' requires message.");
   }
   if (params.dir) {
-    try {
-      const location = resolveAsyncRunLocation(params, ASYNC_DIR, RESULTS_DIR);
-      const runId =
-        location.resolvedId ?? params.id ?? path.basename(location.asyncDir ?? params.dir);
-      await authorizeProjectSteerTarget({
-        params: { ...params, id: runId, dir: location.asyncDir ?? params.dir },
-        ctx,
-        deps,
-      });
-      return steerAsyncRun({
-        state: deps.state,
-        runId,
-        message,
-        index: params.index,
-        kill: deps.kill,
-        location,
-      }) as SubagentToolResult<Details>;
-    } catch (error) {
-      return projectManagementErrorFrom(error);
-    }
+    return projectManagementError(
+      "dir is no longer supported. Run directories are resolved internally; public dir selectors are no longer supported.",
+    );
   }
   if (!params.id) {
     return projectManagementError("action='steer' requires id or dir.");
@@ -732,24 +697,6 @@ async function executeSteerAction(
     resolved = resolveSubagentRunId(params.id, { state: deps.state });
   } catch (error) {
     return projectManagementError(error instanceof Error ? error.message : String(error));
-  }
-  if (resolved?.kind === "nested") {
-    try {
-      await authorizeNestedProjectAgentControl({
-        target: resolved,
-        ctx,
-        deps,
-        action: "steer",
-        index: params.index,
-      });
-    } catch (error) {
-      return projectManagementErrorFrom(error);
-    }
-    try {
-      return steerNestedRun({ target: resolved, message, index: params.index });
-    } catch (error) {
-      return projectManagementErrorFrom(error);
-    }
   }
   if (resolved?.kind !== "async") {
     return projectManagementError(`No async run found for '${params.id}'.`);
@@ -798,31 +745,6 @@ async function executeInterruptAction(
     selectedParams = selected.params;
   } catch (error) {
     return projectManagementError(error instanceof Error ? error.message : String(error));
-  }
-  if (resolved?.kind === "nested") {
-    if (hasMalformedProjectAgentControlMarker(resolved.match.run)) {
-      return projectManagementError(
-        projectRunAuthorizationError(
-          "the nested target carries a malformed project-agent marker; refusing nested interrupt fallback.",
-        ).message,
-      );
-    }
-    try {
-      await authorizeNestedProjectAgentControl({
-        target: resolved,
-        ctx,
-        deps,
-        action: "interrupt",
-        index: params.index,
-      });
-    } catch (error) {
-      return projectManagementErrorFrom(error);
-    }
-    try {
-      return interruptNestedRun(resolved);
-    } catch (error) {
-      return projectManagementErrorFrom(error);
-    }
   }
   const asyncInterruptTarget = resolved?.kind === "async" ? resolved : undefined;
   if (!asyncInterruptTarget) {
@@ -996,8 +918,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const modelScope = discovered.modelScope;
     const agents = discoveredAgents;
     const runId = randomUUID().slice(0, 8);
-    const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
-    const nestedRoute = inheritedNestedRoute;
     const shareEnabled = effectiveParams.share === true;
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
@@ -1069,7 +989,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       artifactConfig,
       artifactsDir,
       controlConfig,
-      nestedRoute,
       timeoutMs: runTimeoutMs,
       modelScope,
       ticketBodies,

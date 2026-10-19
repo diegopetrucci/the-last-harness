@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
   buildSubagentRunTelemetry,
-  type SubagentRunTelemetry,
   type SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
 import {
@@ -16,14 +15,8 @@ import {
   createBackgroundRunStatusOwner,
   type RunnerStatusPayload,
 } from "../../src/runs/background/run-status-owner.ts";
-import { createNestedRoute, projectNestedEvents } from "../../src/runs/shared/nested-events.ts";
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
-import type {
-  ResolvedControlConfig,
-  CostSummary,
-  TokenUsage,
-  AsyncStatus,
-} from "../../src/shared/types.ts";
+import type { ResolvedControlConfig, CostSummary, TokenUsage } from "../../src/shared/types.ts";
 
 const controls: ResolvedControlConfig = {
   enabled: true,
@@ -42,7 +35,6 @@ const provenance: SubagentTelemetryProvenance = {
 const cost: CostSummary = { inputTokens: 2, outputTokens: 3, costUsd: 0.5 };
 const tokens: TokenUsage = { input: 2, output: 3, total: 5 };
 const tempDirs: string[] = [];
-const nestedRouteRoots: string[] = [];
 
 const terminalPlan = {
   kind: "single" as const,
@@ -65,132 +57,23 @@ const terminalArtifactConfig = {
   cleanupDays: 7,
 };
 
-function nestedEventTypes(eventSink: string): string[] {
-  return fs
-    .readdirSync(eventSink)
-    .filter((name) => name.endsWith(".json"))
-    .sort()
-    .map((name) => {
-      const event = JSON.parse(fs.readFileSync(path.join(eventSink, name), "utf8")) as {
-        type?: string;
-      };
-      return event.type ?? "";
-    });
-}
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 
-function createNestedTerminalFixture(telemetry?: SubagentRunTelemetry): {
-  owner: ReturnType<typeof createBackgroundRunStatusOwner>;
-  route: ReturnType<typeof createNestedRoute>;
-  asyncDir: string;
-  resultPath: string;
-  plan: typeof terminalPlan;
-  telemetry?: SubagentRunTelemetry;
-} {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-nested-terminal-persistence-"));
-  tempDirs.push(root);
-  const route = createNestedRoute("nested-terminal-parent");
-  nestedRouteRoots.push(path.dirname(route.eventSink));
+function createDirectStatusOwner(root: string, id: string) {
   const asyncDir = path.join(root, "async");
-  const resultPath = path.join(root, "result.json");
   const owner = createBackgroundRunStatusOwner({
-    id: "nested-terminal-child",
+    id,
     asyncDir,
     cwd: root,
     plan: terminalPlan,
     overallStartTime: 100,
-    shareEnabled: false,
     artifactConfig: terminalArtifactConfig,
-    ...(telemetry ? { telemetry } : {}),
-    nestedRoute: route,
-    nestedSelf: {
-      parentRunId: route.rootRunId,
-      parentStepIndex: 0,
-      depth: 1,
-      path: [{ runId: route.rootRunId, stepIndex: 0 }],
-    },
     appendEvent: () => undefined,
   });
-  return { owner, route, asyncDir, resultPath, plan: terminalPlan, telemetry };
+  return { owner, asyncDir };
 }
-
-function markNestedTerminalFixturePaused(
-  fixture: ReturnType<typeof createNestedTerminalFixture>,
-): AsyncStatus["pause"] {
-  const pause: AsyncStatus["pause"] = {
-    kind: "awaiting_supervisor",
-    summary: "waiting for supervisor",
-    requestedAt: 110,
-    pausedAt: 120,
-    ownerPid: undefined,
-  };
-  const { owner, asyncDir } = fixture;
-  owner.interrupted = true;
-  owner.statusPayload.state = "paused";
-  owner.statusPayload.pid = undefined;
-  owner.statusPayload.pause = pause;
-  owner.statusPayload.endedAt = 120;
-  owner.statusPayload.lastUpdate = 120;
-  owner.statusPayload.steps = owner.statusPayload.steps.map((step) => ({
-    ...step,
-    status: "paused",
-    endedAt: 120,
-    pause,
-  }));
-  writeNormalizedLifecycleStatus(asyncDir, owner.statusPayload);
-  return pause;
-}
-
-function persistNestedTerminalFixture(
-  fixture: ReturnType<typeof createNestedTerminalFixture>,
-  options: {
-    pausedAwaitingSupervisor?: AsyncStatus["pause"];
-  } = {},
-): void {
-  const { owner, asyncDir, resultPath, plan } = fixture;
-  const statusPayload = owner.statusPayload;
-  const result: RunnerStepResult = {
-    agent: "worker",
-    output: "child output",
-    success: true,
-    exitCode: 0,
-  };
-  persistRunnerTerminalRun({
-    config: {
-      id: statusPayload.runId,
-      ...(fixture.telemetry ? { telemetry: fixture.telemetry } : {}),
-      plan,
-      resultPath,
-      cwd: statusPayload.cwd,
-      artifactConfig: terminalArtifactConfig,
-      asyncDir,
-    },
-    plan,
-    statusOwner: owner,
-    statusPayload,
-    results: [result],
-    controlConfig: controls,
-    overallStartTime: 100,
-    runEndedAt: 125,
-    summary: "terminal summary",
-    truncated: false,
-    agentName: "worker",
-    resultPath,
-    cwd: statusPayload.cwd,
-    asyncDir,
-    ...(options.pausedAwaitingSupervisor
-      ? { pausedAwaitingSupervisor: options.pausedAwaitingSupervisor }
-      : {}),
-    skipFinalStatusWrite: false,
-    pausedOutputForIndex: () => "paused source output",
-    appendEvent: () => undefined,
-    writeRunLog: () => undefined,
-  });
-}
-
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-  for (const dir of nestedRouteRoots.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-});
 
 describe("terminal persistence", () => {
   it("recomputes result, event, and log from a post-pause adopted status", () => {
@@ -259,7 +142,6 @@ describe("terminal persistence", () => {
             telemetry: canonicalTelemetry,
           });
         },
-        emitNestedSelfEvent: () => undefined,
       },
     );
     const events: Array<Record<string, unknown>> = [];
@@ -374,6 +256,75 @@ describe("terminal persistence", () => {
     assert.deepEqual(artifact.telemetry, canonicalTelemetry);
   });
 
+  it("preserves direct status timestamps across locked and unlocked writes", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-direct-status-clock-"));
+    tempDirs.push(root);
+    const { owner, asyncDir } = createDirectStatusOwner(root, "direct-clock");
+
+    writeNormalizedLifecycleStatus(asyncDir, {
+      ...owner.statusPayload,
+      lastUpdate: 120,
+    });
+    owner.writeStatusPayload({ lifecycleLocked: true });
+    assert.equal(owner.statusPayload.lastUpdate, 120);
+
+    owner.writeStatusPayload();
+    const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")) as {
+      lastUpdate?: number;
+    };
+    assert.equal(persisted.lastUpdate, 120);
+  });
+
+  it("preserves the paused timestamp floor when adopting continued or cancelled status", () => {
+    for (const adoptedState of ["continued", "cancelled"] as const) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `tlh-direct-adoption-${adoptedState}-`));
+      tempDirs.push(root);
+      const { owner, asyncDir } = createDirectStatusOwner(root, `direct-${adoptedState}`);
+      owner.statusPayload.state = "paused";
+      owner.statusPayload.endedAt = 120;
+      owner.statusPayload.lastUpdate = 120;
+      owner.statusPayload.pause = { kind: "awaiting_supervisor", pausedAt: 120 };
+      owner.statusPayload.steps = owner.statusPayload.steps.map((step) => ({
+        ...step,
+        status: "paused",
+        endedAt: 120,
+        pause: { kind: "awaiting_supervisor", pausedAt: 120 },
+      }));
+      writeNormalizedLifecycleStatus(asyncDir, owner.statusPayload);
+
+      const adoptedStatus: RunnerStatusPayload = {
+        ...owner.statusPayload,
+        state: adoptedState,
+        endedAt: 110,
+        lastUpdate: 110,
+        pause: undefined,
+        cancel:
+          adoptedState === "cancelled"
+            ? { summary: "cancelled by test", cancelledAt: 110 }
+            : undefined,
+        steps: owner.statusPayload.steps.map((step) => ({
+          ...step,
+          status: adoptedState,
+          endedAt: 110,
+          pause: undefined,
+        })),
+      };
+      writeNormalizedLifecycleStatus(asyncDir, adoptedStatus);
+
+      owner.writeStatusPayload({ lifecycleLocked: true });
+      const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")) as {
+        state: string;
+        lastUpdate?: number;
+      };
+      // The branch normalizes "continued" → "complete" on disk; "cancelled" is
+      // preserved as-is. Both cases must preserve the paused timestamp floor.
+      const expectedState = adoptedState === "continued" ? "complete" : adoptedState;
+      assert.equal(persisted.state, expectedState);
+      assert.equal(persisted.lastUpdate, 120);
+      assert.equal(owner.statusPayload.lastUpdate, 120);
+    }
+  });
+
   it("prefers a later timed-out step over an earlier failed sibling", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-terminal-persistence-timeout-"));
     tempDirs.push(root);
@@ -418,7 +369,6 @@ describe("terminal persistence", () => {
       cwd: root,
       plan,
       overallStartTime: 100,
-      shareEnabled: false,
       artifactConfig: terminalArtifactConfig,
       telemetry: launchTelemetry,
       timeoutMessage: timeoutError,
@@ -521,319 +471,5 @@ describe("terminal persistence", () => {
       state: "failed",
       terminationReason: "timed_out",
     });
-  });
-
-  it("emits one paused nested completion and keeps the parent projection stable on repeats", () => {
-    const fixture = createNestedTerminalFixture();
-    const pause = markNestedTerminalFixturePaused(fixture);
-
-    persistNestedTerminalFixture(fixture, { pausedAwaitingSupervisor: pause });
-    fixture.owner.emitNestedSelfEvent("subagent.nested.completed");
-
-    assert.deepEqual(nestedEventTypes(fixture.route.eventSink), ["subagent.nested.completed"]);
-    const projection = projectNestedEvents(fixture.route).children.find(
-      (child) => child.id === fixture.owner.statusPayload.runId,
-    );
-    assert.equal(projection?.state, "paused");
-    const artifact = JSON.parse(fs.readFileSync(fixture.resultPath, "utf8")) as {
-      state: string;
-      telemetry?: unknown;
-    };
-    assert.equal(artifact.state, "paused");
-    assert.equal(artifact.telemetry, undefined);
-  });
-
-  it("does not duplicate nested completion when telemetry-enabled pause persistence writes status", () => {
-    const telemetry = buildSubagentRunTelemetry({
-      runId: "nested-terminal-child",
-      execution: "async",
-      mode: "single",
-      provenance,
-      controls,
-      startedAt: 100,
-      outcome: { state: "running" },
-      steps: [{ index: 0, agent: "worker", outcome: { state: "queued" } }],
-    });
-    const fixture = createNestedTerminalFixture(telemetry);
-    const pause = markNestedTerminalFixturePaused(fixture);
-
-    persistNestedTerminalFixture(fixture, { pausedAwaitingSupervisor: pause });
-
-    assert.deepEqual(nestedEventTypes(fixture.route.eventSink), ["subagent.nested.completed"]);
-    const artifact = JSON.parse(fs.readFileSync(fixture.resultPath, "utf8")) as {
-      telemetry?: unknown;
-    };
-    assert.ok(artifact.telemetry);
-  });
-
-  it("emits nested completion once after concurrent terminal adoption", () => {
-    const fixture = createNestedTerminalFixture();
-    const { owner, asyncDir } = fixture;
-    // Keep stale step timeout evidence in the adopted terminal envelope. It must
-    // not reclassify a concurrent continuation as a top-level timeout.
-    owner.statusPayload.steps[0]!.timedOut = true;
-    const canonicalStatus: RunnerStatusPayload = {
-      ...owner.statusPayload,
-      state: "continued",
-      pid: undefined,
-      pause: undefined,
-      endedAt: 200,
-      lastUpdate: 200,
-      steps: owner.statusPayload.steps.map((step) => ({
-        ...step,
-        status: "continued",
-        endedAt: 200,
-        pause: undefined,
-      })),
-    };
-    writeNormalizedLifecycleStatus(asyncDir, canonicalStatus);
-
-    // The branch normalizes "continued" to "complete" in the lifecycle state.
-    assert.equal(owner.adoptConcurrentTerminalStatus()?.state, "complete");
-    persistNestedTerminalFixture(fixture);
-    owner.emitNestedSelfEvent("subagent.nested.completed");
-
-    assert.deepEqual(nestedEventTypes(fixture.route.eventSink), ["subagent.nested.completed"]);
-    const artifact = JSON.parse(fs.readFileSync(fixture.resultPath, "utf8")) as {
-      state: string;
-      timedOut?: boolean;
-    };
-    assert.equal(artifact.state, "complete");
-  });
-
-  it("replaces a paused parent projection through the locked source-runner merge", () => {
-    // The branch normalizes "continued" to "complete"; use that canonical form.
-    const cases = [
-      {
-        state: "continued" as const,
-        persistedState: "complete" as const,
-        projectedState: "complete" as const,
-      },
-      {
-        state: "cancelled" as const,
-        persistedState: "cancelled" as const,
-        projectedState: "failed" as const,
-      },
-    ];
-
-    for (const testCase of cases) {
-      const fixture = createNestedTerminalFixture();
-      markNestedTerminalFixturePaused(fixture);
-      fixture.owner.emitNestedSelfEvent("subagent.nested.completed");
-      const initialEventNames = fs
-        .readdirSync(fixture.route.eventSink)
-        .filter((name) => name.endsWith(".json"));
-      assert.equal(initialEventNames.length, 1);
-      const initialEvent = JSON.parse(
-        fs.readFileSync(path.join(fixture.route.eventSink, initialEventNames[0]!), "utf8"),
-      ) as { child: { state?: string } };
-      assert.equal(initialEvent.child.state, "paused");
-
-      // The concurrent owner may persist an adoption timestamp older than the
-      // paused checkpoint. The locked merge must retain the paused timestamp as
-      // the monotonic floor while still adopting the terminal state.
-      const adoptedAt = 110;
-      const adoptedStatus: RunnerStatusPayload = {
-        ...fixture.owner.statusPayload,
-        state: testCase.state,
-        pid: undefined,
-        pause: undefined,
-        ...(testCase.state === "cancelled"
-          ? { cancel: { summary: "cancelled by parent", cancelledAt: adoptedAt } }
-          : { cancel: undefined }),
-        endedAt: adoptedAt,
-        lastUpdate: adoptedAt,
-        steps: fixture.owner.statusPayload.steps.map((step) => ({
-          ...step,
-          status: testCase.state,
-          endedAt: adoptedAt,
-          pause: undefined,
-          ...(testCase.state === "cancelled"
-            ? { cancel: { summary: "cancelled by parent", cancelledAt: adoptedAt } }
-            : { cancel: undefined }),
-        })),
-      };
-      // Model the concurrent continuation/cancellation writer, then exercise
-      // the production source-runner write path instead of adopting directly.
-      writeNormalizedLifecycleStatus(fixture.asyncDir, adoptedStatus);
-      fixture.owner.writeStatusPayload({ lifecycleLocked: true });
-
-      const persisted = JSON.parse(
-        fs.readFileSync(path.join(fixture.asyncDir, "status.json"), "utf8"),
-      ) as RunnerStatusPayload;
-      assert.equal(persisted.state, testCase.persistedState);
-      assert.equal(persisted.lastUpdate, 120);
-      assert.equal(fixture.owner.statusPayload.lastUpdate, 120);
-
-      const eventNames = fs
-        .readdirSync(fixture.route.eventSink)
-        .filter((name) => name.endsWith(".json"));
-      assert.equal(eventNames.length, 2);
-      const replacementName = eventNames.find((name) => !initialEventNames.includes(name));
-      assert.ok(replacementName, "locked source-runner write must emit a replacement event");
-      const replacementEvent = JSON.parse(
-        fs.readFileSync(path.join(fixture.route.eventSink, replacementName!), "utf8"),
-      ) as { child: { state?: string } };
-      assert.deepEqual(
-        [initialEvent.child.state, replacementEvent.child.state],
-        ["paused", testCase.projectedState],
-      );
-
-      // Re-emitting the adopted terminal state remains deduplicated.
-      fixture.owner.emitNestedSelfEvent("subagent.nested.completed");
-      assert.equal(
-        fs.readdirSync(fixture.route.eventSink).filter((name) => name.endsWith(".json")).length,
-        2,
-      );
-      const projection = projectNestedEvents(fixture.route).children.find(
-        (child) => child.id === fixture.owner.statusPayload.runId,
-      );
-      assert.equal(projection?.state, testCase.projectedState);
-      assert.equal(projection?.steps?.[0]?.status, testCase.projectedState);
-    }
-  });
-
-  it("synchronizes the owner clock after a locked nonterminal merge", () => {
-    const fixture = createNestedTerminalFixture();
-    const statusPath = path.join(fixture.asyncDir, "status.json");
-
-    // A concurrent writer advances the same running lifecycle state while the
-    // owner still holds its older in-memory timestamp.
-    writeNormalizedLifecycleStatus(fixture.asyncDir, {
-      ...fixture.owner.statusPayload,
-      lastUpdate: 120,
-    });
-    const persistedBeforeMerge = JSON.parse(fs.readFileSync(statusPath, "utf8")) as {
-      state: string;
-      lastUpdate: number;
-    };
-    assert.equal(persistedBeforeMerge.state, "running");
-    assert.equal(persistedBeforeMerge.lastUpdate, 120);
-
-    fixture.owner.writeStatusPayload({ lifecycleLocked: true, projectNested: false });
-
-    // The next lockless source-runner write must use the merged timestamp,
-    // rather than reintroducing the owner's stale value.
-    assert.equal(fixture.owner.statusPayload.lastUpdate, 120);
-    const merged = JSON.parse(fs.readFileSync(statusPath, "utf8")) as { lastUpdate: number };
-    assert.equal(merged.lastUpdate, 120);
-
-    fixture.owner.writeStatusPayload({ projectNested: false });
-    const persistedAfterLocklessWrite = JSON.parse(fs.readFileSync(statusPath, "utf8")) as {
-      lastUpdate: number;
-    };
-    assert.equal(persistedAfterLocklessWrite.lastUpdate, 120);
-  });
-
-  it("writes exitCode 1 and preserves cancel metadata for cancelled result artifacts", () => {
-    // Regression test for P2: resultItems() was missing the step-level cancel field
-    // and the top-level exitCode was 0 instead of 1 for cancelled runs.
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-terminal-persistence-cancel-"));
-    tempDirs.push(root);
-    const id = "terminal-cancel-exitcode";
-    const resultPath = path.join(root, "result.json");
-    const asyncDir = path.join(root, "async");
-    const cancel: import("../../src/shared/types.ts").AsyncCancellationMetadata = {
-      summary: "Cancelled by parent abort.",
-      cancelledAt: 150,
-    };
-    const statusPayload: RunnerStatusPayload = {
-      runId: id,
-      mode: "single",
-      state: "cancelled",
-      startedAt: 100,
-      endedAt: 150,
-      lastUpdate: 150,
-      cancel,
-      error: cancel.summary,
-      cwd: root,
-      currentStep: 0,
-      steps: [
-        {
-          agent: "worker",
-          status: "cancelled",
-          startedAt: 100,
-          endedAt: 150,
-          cancel,
-          terminationReason: "cancelled",
-          exitCode: 1,
-        },
-      ],
-    };
-    const statusOwner = Object.assign(
-      {} as Parameters<typeof persistRunnerTerminalRun>[0]["statusOwner"],
-      {
-        terminalReason: {},
-        interrupted: false,
-        timedOut: false,
-        supervisorPauseTransitionFailed: false,
-        concurrentTerminalStatusAdopted: false,
-        supervisorPauseRequest: undefined,
-        writeStatusPayload: () => {},
-        emitNestedSelfEvent: () => undefined,
-      },
-    );
-    const result: import("../../src/runs/background/terminal-persistence.ts").RunnerStepResult = {
-      agent: "worker",
-      output: "cancelled output",
-      success: false,
-      exitCode: 1,
-      cancel,
-      terminationReason: "cancelled",
-    };
-    const events: Array<Record<string, unknown>> = [];
-    persistRunnerTerminalRun({
-      config: {
-        id,
-        plan: terminalPlan,
-        resultPath,
-        cwd: root,
-        artifactConfig: terminalArtifactConfig,
-        asyncDir,
-      },
-      plan: terminalPlan,
-      statusOwner,
-      statusPayload,
-      results: [result],
-      controlConfig: controls,
-      overallStartTime: 100,
-      runEndedAt: 150,
-      summary: "Cancelled by parent abort.",
-      truncated: false,
-      agentName: "worker",
-      resultPath,
-      cwd: root,
-      asyncDir,
-      skipFinalStatusWrite: true,
-      pausedOutputForIndex: () => "",
-      appendEvent: (line) => events.push(JSON.parse(line) as Record<string, unknown>),
-      writeRunLog: () => {},
-    });
-
-    assert.ok(fs.existsSync(resultPath), "result artifact must be written");
-    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf8")) as {
-      state: string;
-      exitCode: number;
-      results: Array<{
-        agent: string;
-        exitCode?: number;
-        cancel?: { summary: string; cancelledAt: number };
-      }>;
-    };
-    assert.equal(artifact.state, "cancelled");
-    // P2 fix: cancelled result artifacts must carry exitCode 1, not 0.
-    assert.equal(artifact.exitCode, 1, "cancelled artifact top-level exitCode must be 1");
-    // P2 fix: step-level cancel metadata must be preserved.
-    assert.equal(
-      artifact.results[0]?.cancel?.summary,
-      cancel.summary,
-      "step cancel.summary must be propagated into the result artifact",
-    );
-    assert.equal(
-      artifact.results[0]?.cancel?.cancelledAt,
-      cancel.cancelledAt,
-      "step cancel.cancelledAt must be propagated into the result artifact",
-    );
-    assert.equal(artifact.results[0]?.exitCode, 1, "step exitCode must be 1 for cancelled step");
   });
 });

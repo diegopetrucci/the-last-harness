@@ -1,7 +1,5 @@
 import {
   type Details,
-  type NestedRunSummary,
-  type PublicNestedRunSummary,
   type SubagentResultChild,
   type SubagentResultStatus,
   type SingleResult,
@@ -56,136 +54,17 @@ function resolveGroupedStatus(children: SubagentResultChild[]): SubagentResultSt
   return "failed";
 }
 
-function compactNestedRun(
-  run: NestedRunSummary | PublicNestedRunSummary,
-  depth = 0,
-): PublicNestedRunSummary {
-  return {
-    id: run.id,
-    parentRunId: run.parentRunId,
-    ...(run.parentStepIndex !== undefined ? { parentStepIndex: run.parentStepIndex } : {}),
-    ...(run.parentAgent ? { parentAgent: run.parentAgent } : {}),
-    depth: run.depth,
-    path: run.path.slice(0, 4).map((part) => ({
-      runId: part.runId,
-      ...(part.stepIndex !== undefined ? { stepIndex: part.stepIndex } : {}),
-      ...(part.agent ? { agent: part.agent } : {}),
-    })),
-    ...(run.asyncDir ? { asyncDir: run.asyncDir } : {}),
-    ...(run.sessionId ? { sessionId: run.sessionId } : {}),
-    ...(run.sessionFile ? { sessionFile: run.sessionFile } : {}),
-    ...(run.ownerState ? { ownerState: run.ownerState } : {}),
-    ...(run.mode ? { mode: run.mode } : {}),
-    state: run.state,
-    ...(run.agent ? { agent: run.agent } : {}),
-    ...(run.agents?.length ? { agents: run.agents.slice(0, 12) } : {}),
-    ...(run.currentStep !== undefined ? { currentStep: run.currentStep } : {}),
-    ...(run.activityState ? { activityState: run.activityState } : {}),
-    ...(run.lastActivityAt !== undefined ? { lastActivityAt: run.lastActivityAt } : {}),
-    ...(run.currentTool ? { currentTool: run.currentTool } : {}),
-    ...(run.currentToolStartedAt !== undefined
-      ? { currentToolStartedAt: run.currentToolStartedAt }
-      : {}),
-    ...(run.currentPath ? { currentPath: run.currentPath } : {}),
-    ...(run.turnCount !== undefined ? { turnCount: run.turnCount } : {}),
-    ...(run.toolCount !== undefined ? { toolCount: run.toolCount } : {}),
-    ...(run.totalTokens ? { totalTokens: run.totalTokens } : {}),
-    ...(run.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
-    ...(run.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
-    ...(run.lastUpdate !== undefined ? { lastUpdate: run.lastUpdate } : {}),
-    ...(run.error ? { error: run.error } : {}),
-    ...(run.steps?.length
-      ? {
-          steps: run.steps.slice(0, 12).map((step) => ({
-            agent: step.agent,
-            status: step.status,
-            ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-            ...(step.activityState ? { activityState: step.activityState } : {}),
-            ...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
-            ...(step.currentTool ? { currentTool: step.currentTool } : {}),
-            ...(step.currentToolStartedAt !== undefined
-              ? { currentToolStartedAt: step.currentToolStartedAt }
-              : {}),
-            ...(step.currentPath ? { currentPath: step.currentPath } : {}),
-            ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
-            ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
-            ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
-            ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
-            ...(step.error ? { error: step.error } : {}),
-            ...(depth < 2 && step.children?.length
-              ? {
-                  children: step.children
-                    .slice(0, 8)
-                    .map((child) => compactNestedRun(child, depth + 1)),
-                }
-              : {}),
-          })),
-        }
-      : {}),
-    ...(depth < 2 && run.children?.length
-      ? { children: run.children.slice(0, 8).map((child) => compactNestedRun(child, depth + 1)) }
-      : {}),
-  };
-}
-
-export function compactNestedResultChildren(
-  children: Array<NestedRunSummary | PublicNestedRunSummary> | undefined,
-): PublicNestedRunSummary[] | undefined {
-  if (!children?.length) return undefined;
-  return children.slice(0, 16).map((child) => compactNestedRun(child));
-}
-
-export function attachNestedChildrenToResultChildren<T extends SubagentResultChild>(
-  runId: string,
-  children: T[],
-  nestedChildren: NestedRunSummary[] | undefined,
-): T[] {
-  const compact = compactNestedResultChildren(nestedChildren);
-  if (!compact?.length)
-    return children.map((child) => ({
-      ...child,
-      children: compactNestedResultChildren(child.children),
-    }));
-  return children.map((child, index) => {
-    const childIndex = child.index ?? index;
-    const alreadyAttachedIds = new Set(child.children?.map((nested) => nested.id) ?? []);
-    const attached = compact.filter(
-      (nested) =>
-        nested.parentRunId === runId &&
-        nested.parentStepIndex === childIndex &&
-        !alreadyAttachedIds.has(nested.id),
-    );
-    const fallbackAttached =
-      children.length === 1
-        ? compact.filter(
-            (nested) =>
-              nested.parentRunId === runId &&
-              nested.parentStepIndex === undefined &&
-              !alreadyAttachedIds.has(nested.id),
-          )
-        : [];
-    const merged = compactNestedResultChildren([
-      ...(child.children ?? []),
-      ...attached,
-      ...fallbackAttached,
-    ]);
-    return merged?.length ? { ...child, children: merged } : { ...child, children: undefined };
-  });
-}
-
-const MAX_NATIVE_AWAITED_CHARS = 8_000;
-const MAX_NATIVE_AWAITED_CHILDREN = 8;
-const MAX_NATIVE_AWAITED_SUMMARY_CHARS = 1_200;
-const MAX_NATIVE_AWAITED_LABEL_CHARS = 160;
-const MAX_NATIVE_AWAITED_REFERENCE_CHARS = 500;
-const MAX_NATIVE_AWAITED_ERROR_CHARS = 1_200;
-const MAX_NATIVE_AWAITED_NESTED_ENTRIES = 8;
-const MAX_NATIVE_AWAITED_NESTED_DEPTH = 2;
+const MAX_NATIVE_FOREGROUND_CHARS = 8_000;
+const MAX_NATIVE_FOREGROUND_CHILDREN = 8;
+const MAX_NATIVE_FOREGROUND_SUMMARY_CHARS = 1_200;
+const MAX_NATIVE_FOREGROUND_LABEL_CHARS = 160;
+const MAX_NATIVE_FOREGROUND_REFERENCE_CHARS = 500;
+const MAX_NATIVE_FOREGROUND_ERROR_CHARS = 1_200;
 
 function boundedNativeAwaitedLabel(value: string): string {
   return truncateWithMarker(
     safeTerminalText(value),
-    MAX_NATIVE_AWAITED_LABEL_CHARS,
+    MAX_NATIVE_FOREGROUND_LABEL_CHARS,
     "… [label truncated]",
   );
 }
@@ -193,7 +72,7 @@ function boundedNativeAwaitedLabel(value: string): string {
 function boundedNativeAwaitedReference(value: string): string {
   return truncateWithMarker(
     safeTerminalText(value),
-    MAX_NATIVE_AWAITED_REFERENCE_CHARS,
+    MAX_NATIVE_FOREGROUND_REFERENCE_CHARS,
     "… [reference truncated]",
   );
 }
@@ -201,7 +80,7 @@ function boundedNativeAwaitedReference(value: string): string {
 function boundedNativeAwaitedError(value: string): string {
   return truncateWithMarker(
     safeTerminalText(value),
-    MAX_NATIVE_AWAITED_ERROR_CHARS,
+    MAX_NATIVE_FOREGROUND_ERROR_CHARS,
     "… [error truncated; full text is unavailable]",
   );
 }
@@ -248,6 +127,7 @@ interface NativeAwaitedChild extends SubagentResultChild {
   displayIndex?: number;
   displayTotal?: number;
   nativeAwaitedPriority?: number;
+  terminalResult?: import("./types.ts").SubagentTerminalResult;
 }
 
 function prioritizedNativeAwaitedChildren(
@@ -269,7 +149,7 @@ function prioritizedNativeAwaitedChildren(
       if (statusDelta !== 0) return statusDelta;
       return a.inputOrder - b.inputOrder;
     })
-    .slice(0, MAX_NATIVE_AWAITED_CHILDREN)
+    .slice(0, MAX_NATIVE_FOREGROUND_CHILDREN)
     .map(({ child, originalIndex }) => ({ child, originalIndex }));
 }
 
@@ -283,8 +163,8 @@ function joinedLineCost(lines: string[]): number {
 
 /**
  * Divides the space remaining after all fixed scaffolding costs are reserved among the
- * displayed children for summary text. Reserving fixed scaffolding (labels, reference
- * lines, nested entries) before the division ensures summary text receives only the
+ * displayed children for summary text. Reserving fixed scaffolding (labels and reference
+ * lines) before the division ensures summary text receives only the
  * space that remains after every recovery pointer is guaranteed.
  */
 function resolveNativeAwaitedPerChildSummaryBudget(
@@ -294,48 +174,10 @@ function resolveNativeAwaitedPerChildSummaryBudget(
 ): number {
   const effectiveCount = Math.max(count, 1);
   const available = Math.max(ceiling - fixedCost, 0);
-  return Math.min(MAX_NATIVE_AWAITED_SUMMARY_CHARS, Math.floor(available / effectiveCount));
+  return Math.min(MAX_NATIVE_FOREGROUND_SUMMARY_CHARS, Math.floor(available / effectiveCount));
 }
 
-function formatNativeAwaitedNestedLines(children: PublicNestedRunSummary[] | undefined): string[] {
-  if (!children?.length) return [];
-  const lines = ["Nested subagents:"];
-  let remaining = MAX_NATIVE_AWAITED_NESTED_ENTRIES;
-  const append = (
-    runs: PublicNestedRunSummary[] | undefined,
-    indent: string,
-    depth: number,
-  ): void => {
-    if (!runs?.length) return;
-    if (depth >= MAX_NATIVE_AWAITED_NESTED_DEPTH) {
-      lines.push(`${indent}… [nested depth limit reached; full tree is unavailable]`);
-      return;
-    }
-    for (const run of runs) {
-      if (remaining <= 0) {
-        lines.push(`${indent}… [additional nested entries omitted; full tree is unavailable]`);
-        return;
-      }
-      remaining--;
-      const label = boundedNativeAwaitedLabel(run.agent ?? run.agents?.join("+") ?? run.id);
-      const state = boundedNativeAwaitedLabel(run.state);
-      const runId = boundedNativeAwaitedReference(run.id);
-      lines.push(`${indent}↳ ${label} — ${state} [${runId}]`);
-      if (run.sessionFile)
-        lines.push(`${indent}  Session: ${boundedNativeAwaitedReference(run.sessionFile)}`);
-      append(run.children, `${indent}  `, depth + 1);
-      for (const step of run.steps ?? []) append(step.children, `${indent}    `, depth + 1);
-    }
-  };
-  append(children, "", 0);
-  // Guard: never emit a bare heading with no content beneath it. The append loop
-  // always adds at least one content line for non-empty children, but this guard
-  // is a forward-looking safety net — a future change that emits the heading and
-  // then drops entries without a marker would produce exactly the defect this catches.
-  return lines.length > 1 ? lines : [];
-}
-
-function formatAwaitedNativeSubagentText(input: {
+function formatForegroundNativeSubagentText(input: {
   runId: string;
   mode: SubagentRunMode;
   status: SubagentResultStatus;
@@ -357,7 +199,7 @@ function formatAwaitedNativeSubagentText(input: {
     outerLines.push("", "Error:", boundedNativeAwaitedError(input.errorSummary));
   }
 
-  // Apply priority ordering and cap at MAX_NATIVE_AWAITED_CHILDREN.
+  // Apply priority ordering and cap at MAX_NATIVE_FOREGROUND_CHILDREN.
   const displayedChildren = prioritizedNativeAwaitedChildren(input.children);
 
   // Top-level omission (children beyond the priority cap).
@@ -375,7 +217,6 @@ function formatAwaitedNativeSubagentText(input: {
     originalIndex: number;
     labelLine: string;
     refLines: string[];
-    nestedLines: string[];
     fixedCost: number;
   }
 
@@ -390,13 +231,12 @@ function formatAwaitedNativeSubagentText(input: {
     if (factsLine) refLines.push(factsLine);
     if (child.sessionPath)
       refLines.push(`Session: ${boundedNativeAwaitedReference(child.sessionPath)}`);
-    const nestedLines = formatNativeAwaitedNestedLines(child.children);
-    // Fixed cost: blank separator + label + "Summary:" header + ref lines + nested lines.
+    // Fixed cost: blank separator + label + "Summary:" header + reference lines.
     // The summary body itself is NOT included here — it is conditional on the per-child
     // budget and must not be pre-counted, or the fit decision will drop children one char
     // early when the budget is tight.
-    const fixedCost = joinedLineCost(["", labelLine, "Summary:", ...refLines, ...nestedLines]);
-    return { child, originalIndex, labelLine, refLines, nestedLines, fixedCost };
+    const fixedCost = joinedLineCost(["", labelLine, "Summary:", ...refLines]);
+    return { child, originalIndex, labelLine, refLines, fixedCost };
   });
 
   // Dynamic reduction: drop trailing displayed children when their scaffolding alone
@@ -421,7 +261,7 @@ function formatAwaitedNativeSubagentText(input: {
             `… [${budgetOmittedHere} additional child results omitted; their output is not reachable from this envelope]`,
           ])
         : 0;
-    if (outerCost + partialFixedCost + budgetOmissionCostHere <= MAX_NATIVE_AWAITED_CHARS) break;
+    if (outerCost + partialFixedCost + budgetOmissionCostHere <= MAX_NATIVE_FOREGROUND_CHARS) break;
     effectiveCount--;
   }
 
@@ -450,7 +290,7 @@ function formatAwaitedNativeSubagentText(input: {
   const perChildSummaryBudget = resolveNativeAwaitedPerChildSummaryBudget(
     effectiveCount,
     totalFixedCost + effectiveCount,
-    MAX_NATIVE_AWAITED_CHARS,
+    MAX_NATIVE_FOREGROUND_CHARS,
   );
 
   // Render.
@@ -458,14 +298,14 @@ function formatAwaitedNativeSubagentText(input: {
   if (priorityOmissionLine) lines.push("", priorityOmissionLine);
   if (budgetOmissionLine) lines.push("", budgetOmissionLine);
 
-  for (const { child, labelLine, refLines, nestedLines } of effectiveChildData) {
+  for (const { child, labelLine, refLines } of effectiveChildData) {
     lines.push("", labelLine);
     // Emit summary text with per-child budget. Suppress the 'Summary:' heading
     // entirely when the budget cannot hold a well-formed truncation marker — an
     // orphaned heading with nothing beneath it is worse than no heading at all.
     const summaryText = boundedNativeAwaitedSummary(child, perChildSummaryBudget);
     if (summaryText) lines.push("Summary:", summaryText);
-    lines.push(...refLines, ...nestedLines);
+    lines.push(...refLines);
   }
 
   return lines.join("\n");
@@ -493,7 +333,7 @@ export function formatAwaitedNativeSubagentResult(input: GroupedNativeAwaitedMes
   return {
     status,
     summary,
-    text: formatAwaitedNativeSubagentText({
+    text: formatForegroundNativeSubagentText({
       runId: input.runId,
       mode: normalizeSubagentRunMode(input.mode),
       status,
@@ -570,7 +410,6 @@ export function buildAwaitedNativeResult(input: {
   runId: string;
   mode: SubagentRunMode;
   details: Details;
-  nestedChildren?: NestedRunSummary[];
   displayOutputs?: string[];
   statusOverride?: SubagentResultStatus;
   errorSummary?: string;
@@ -594,7 +433,7 @@ export function buildAwaitedNativeResult(input: {
   const grouped = formatAwaitedNativeSubagentResult({
     runId: input.runId,
     mode: input.mode,
-    children: attachNestedChildrenToResultChildren(input.runId, children, input.nestedChildren),
+    children,
     ...(input.statusOverride ? { statusOverride: input.statusOverride } : {}),
     ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
   });

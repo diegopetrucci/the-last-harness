@@ -519,6 +519,9 @@ function mergeStatus(current, memory, changed) {
     if (changed) {
         const merged = { ...current };
         appendMissing(merged, recordOf(memory), immutableTerminal(current.state) ? SAFE_ROOT_FACTS : SAFE_NONTERMINAL_ROOT_FACTS);
+        const mergedLastUpdate = maxNumber(current.lastUpdate, memory.lastUpdate);
+        if (mergedLastUpdate !== undefined)
+            merged.lastUpdate = mergedLastUpdate;
         if (current.steps)
             merged.steps = current.steps
                 .map((step, index) => mergeStep(step, memory.steps?.[index], true))
@@ -827,4 +830,14 @@ export function recoverStoppedLifecycleOwnership(status, options = {}) {
         lastUpdate: now,
     };
     return { status: repaired, repaired: true, pidLiveness };
+}
+export function normalizeActiveRuntimeMs(value) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(value))
+        : undefined;
+}
+export function normalizeActiveRuntimeCheckpointAt(value) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+        : undefined;
 }

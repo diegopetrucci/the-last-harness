@@ -49,32 +49,4 @@ describe("sumResultsCost", () => {
       { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     );
   });
-
-  it("includes attached nested subagent costs", () => {
-    const parent = resultWithUsage({
-      input: 10,
-      output: 5,
-      cacheRead: 0,
-      cacheWrite: 0,
-      cost: 0.01,
-      turns: 1,
-    });
-    parent.children = [
-      {
-        id: "nested-run",
-        parentRunId: "parent-run",
-        parentStepIndex: 0,
-        depth: 1,
-        path: [{ runId: "parent-run", stepIndex: 0 }],
-        state: "complete",
-        totalCost: { inputTokens: 20, outputTokens: 7, costUsd: 0.03 },
-      },
-    ];
-
-    assert.deepEqual(sumResultsCost([parent]), {
-      inputTokens: 30,
-      outputTokens: 12,
-      costUsd: 0.04,
-    });
-  });
 });

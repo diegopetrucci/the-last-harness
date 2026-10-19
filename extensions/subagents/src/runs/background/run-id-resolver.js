@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
 import { findAsyncRunPrefixMatches } from "./async-resume.js";
-import { assertSafeNestedId, findNestedRunMatchesById, } from "../shared/nested-events.js";
+import { assertSafeNestedId } from "../shared/nested-events.js";
 function exactAsyncLocation(id, asyncDirRoot, resultsDir) {
     const asyncDir = path.join(asyncDirRoot, id);
     const resultPath = path.join(resultsDir, `${id}.json`);
@@ -14,46 +14,16 @@ function exactAsyncLocation(id, asyncDirRoot, resultsDir) {
         resolvedId: id,
     };
 }
-function nestedScopeFromState(state) {
-    if (!state)
-        return undefined;
-    const routes = [];
-    const seen = new Set();
-    const add = (route) => {
-        if (!route)
-            return;
-        const key = `${route.rootRunId}:${route.eventSink}:${route.controlInbox}`;
-        if (seen.has(key))
-            return;
-        seen.add(key);
-        routes.push(route);
-    };
-    for (const job of state.asyncJobs.values())
-        add(job.nestedRoute);
-    return { routes };
-}
-function asyncPrefixMatches(prefix, asyncDirRoot, resultsDir) {
-    return findAsyncRunPrefixMatches(prefix, asyncDirRoot, resultsDir);
-}
 export function resolveSubagentRunId(id, deps = {}) {
     assertSafeNestedId("id", id);
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
     const resultsDir = deps.resultsDir ?? RESULTS_DIR;
-    const nestedScope = deps.nested ?? nestedScopeFromState(deps.state);
     const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
     if (exactAsync)
         return { kind: "async", id, location: exactAsync };
-    const exactNested = findNestedRunMatchesById(id, nestedScope ? { scope: nestedScope } : {});
-    if (exactNested.length > 1)
-        throw new Error(`Nested run id '${id}' is ambiguous across authorized registries. Provide the full id after stale registries are cleaned up.`);
-    if (exactNested[0])
-        return { kind: "nested", id, match: exactNested[0] };
     const matches = [];
-    for (const match of asyncPrefixMatches(id, asyncDirRoot, resultsDir)) {
+    for (const match of findAsyncRunPrefixMatches(id, asyncDirRoot, resultsDir)) {
         matches.push({ kind: "async", id: match.id, location: match.location });
-    }
-    for (const match of findNestedRunMatchesById(id, nestedScope ? { prefix: true, scope: nestedScope } : { prefix: true })) {
-        matches.push({ kind: "nested", id: match.run.id, match });
     }
     const unique = new Map(matches.map((match) => [`${match.kind}:${match.id}`, match]));
     const values = [...unique.values()];

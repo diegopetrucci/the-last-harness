@@ -6,11 +6,11 @@ import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { readStatus } from "../../shared/utils.js";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
-import { projectRunAuthorizationError, authorizePersistedProjectAgentRun, } from "../shared/project-agent-control.js";
-import { NESTED_ASYNC_RUNS_DIR } from "./nested-control.js";
+import { projectRunAuthorizationError, authorizePersistedProjectAgentRun, } from "./project-agent-control.js";
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.js";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.js";
+export { registerForegroundMessageInbox, clearForegroundMessageInbox, } from "./foreground-message-inbox.js";
 export function trustedSessionRootsForStatus(ctx, deps) {
     let currentSessionId;
     let parentSessionFile;
@@ -27,7 +27,6 @@ export function trustedSessionRootsForStatus(ctx, deps) {
         return [];
     return [deps.getSubagentSessionRoot(parentSessionFile)];
 }
-export { authorizeNestedProjectAgentControl, interruptNestedRun, steerNestedRun, } from "./nested-control.js";
 export { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "./run-support.js";
 function isAsyncInterruptFailure(result) {
     return !result.ok;
@@ -127,16 +126,6 @@ function resolvedAsyncInterruptTarget(target) {
 }
 export function selectInterruptTarget(params, state) {
     const requestedId = params.id?.trim();
-    if (params.dir) {
-        const location = resolveAsyncRunLocation(params, ASYNC_DIR, RESULTS_DIR);
-        const runId = location.resolvedId ?? path.basename(path.resolve(params.dir));
-        if (!runId)
-            return { target: undefined, params };
-        return {
-            target: { kind: "async", id: runId, location },
-            params: { ...params, id: runId },
-        };
-    }
     if (requestedId) {
         const resolved = resolveSubagentRunId(requestedId, { state });
         if (resolved)
@@ -160,18 +149,8 @@ export function selectInterruptTarget(params, state) {
         params: { ...params, id: target.id, dir: asyncTarget.asyncDir },
     };
 }
-function resolveAsyncResultsDir(asyncDir) {
-    const relative = path.relative(NESTED_ASYNC_RUNS_DIR, path.resolve(asyncDir));
-    if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
-        return undefined;
-    const [rootRunId, runId] = relative.split(path.sep).filter(Boolean);
-    if (!rootRunId || !runId)
-        return undefined;
-    return path.join(RESULTS_DIR, "nested", rootRunId);
-}
 function requestAsyncInterruptForTarget(state, target, kill) {
-    const resultsDir = resolveAsyncResultsDir(target.asyncDir);
-    const status = reconcileAsyncRun(target.asyncDir, resultsDir ? { kill, resultsDir } : { kill }).status;
+    const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
     if (!status || status.state !== "running" || typeof status.pid !== "number") {
         return { ok: false, kind: "not_running" };
     }
@@ -231,33 +210,6 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
             };
         }
     }
-    try {
-        for (const rootEntry of fs.readdirSync(NESTED_ASYNC_RUNS_DIR, { withFileTypes: true })) {
-            if (!rootEntry.isDirectory())
-                continue;
-            const rootDir = path.join(NESTED_ASYNC_RUNS_DIR, rootEntry.name);
-            try {
-                for (const runEntry of fs.readdirSync(rootDir, { withFileTypes: true })) {
-                    if (!runEntry.isDirectory())
-                        continue;
-                    candidates.push({
-                        asyncDir: path.join(rootDir, runEntry.name),
-                        fallbackId: runEntry.name,
-                    });
-                }
-            }
-            catch (error) {
-                if (isNotFoundError(error))
-                    continue;
-                errors.push(`Failed to list nested async runs in '${rootDir}': ${error instanceof Error ? error.message : String(error)}`);
-            }
-        }
-    }
-    catch (error) {
-        if (!isNotFoundError(error)) {
-            errors.push(`Failed to list nested async runs in '${NESTED_ASYNC_RUNS_DIR}': ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
     for (const candidate of candidates) {
         if (knownAsyncDirs.has(candidate.asyncDir))
             continue;
@@ -267,8 +219,7 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
                 rawStatus.state !== "running" ||
                 diskOnlyAsyncStatusBelongsElsewhere(state, rawStatus))
                 continue;
-            const resultsDir = resolveAsyncResultsDir(candidate.asyncDir);
-            const status = reconcileAsyncRun(candidate.asyncDir, resultsDir ? { resultsDir } : {}).status;
+            const status = reconcileAsyncRun(candidate.asyncDir).status;
             if (status?.state === "running") {
                 targets.push({
                     asyncId: typeof status.runId === "string" && status.runId ? status.runId : candidate.fallbackId,

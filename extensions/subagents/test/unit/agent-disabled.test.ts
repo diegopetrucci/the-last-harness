@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { discoverAgents, EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { handleList } from "../../src/agents/agent-management.ts";
 
@@ -13,7 +13,7 @@ let tempProject = "";
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-const originalExtraAgentDirs = process.env[EXTRA_AGENT_DIRS_ENV];
+const originalExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
 
 function writeJson(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -61,7 +61,7 @@ describe("builtin agent disabling", () => {
     process.env.HOME = tempHome;
     process.env.USERPROFILE = tempHome;
     delete process.env.PI_CODING_AGENT_DIR;
-    delete process.env[EXTRA_AGENT_DIRS_ENV];
+    delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
   });
 
   afterEach(() => {
@@ -71,8 +71,8 @@ describe("builtin agent disabling", () => {
     else process.env.USERPROFILE = originalUserProfile;
     if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
-    if (originalExtraAgentDirs === undefined) delete process.env[EXTRA_AGENT_DIRS_ENV];
-    else process.env[EXTRA_AGENT_DIRS_ENV] = originalExtraAgentDirs;
+    if (originalExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+    else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = originalExtraAgentDirs;
     fs.rmSync(tempHome, { recursive: true, force: true });
     fs.rmSync(tempProject, { recursive: true, force: true });
   });
@@ -140,7 +140,7 @@ describe("builtin agent disabling", () => {
 
   it("ignores generic extra, user, and project agent directories after the hard cutover while retaining packaged TLH roles", () => {
     const tlhDir = path.join(tempProject, "tlh-agents");
-    process.env[EXTRA_AGENT_DIRS_ENV] = tlhDir;
+    process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = tlhDir;
     writeAgent(tlhDir, "tlh-helper", "TLH helper");
     writeAgent(path.join(tempHome, ".pi", "agent", "agents"), "user-helper", "User helper");
     writeAgent(path.join(tempProject, ".pi", "agents"), "project-helper", "Project helper");

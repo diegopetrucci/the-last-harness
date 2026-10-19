@@ -105,7 +105,10 @@ describe("skills filesystem fallback", () => {
     const { resolved, missing } = resolveSkills(["issue-262-nested-skill"], tempDir);
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
-    assert.match(resolved[0]?.content ?? "", /Use nested project skill\./);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, ".pi", "skills", "shell", "issue-262-nested-skill", "SKILL.md"),
+    );
   });
 
   it("stops recursive project skill discovery at the first SKILL.md anchor", () => {
@@ -162,7 +165,7 @@ describe("skills filesystem fallback", () => {
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.source, "project-settings");
-    assert.match(resolved[0]?.content ?? "", /Use direct markdown skill\./);
+    assert.equal(resolved[0]?.path, path.join(groupedRoot, "issue-262-direct.md"));
   });
 
   it("keeps nested skills from higher-priority explicit settings roots after parent recursion", () => {
@@ -186,7 +189,10 @@ describe("skills filesystem fallback", () => {
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.source, "project-settings");
-    assert.match(resolved[0]?.content ?? "", /Use settings nested skill\./);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, "skills", "group", "issue-262-settings-nested", "SKILL.md"),
+    );
   });
 
   it("keeps nested skills from higher-priority explicit settings roots when the root path is duplicated", () => {
@@ -210,10 +216,13 @@ describe("skills filesystem fallback", () => {
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.source, "project-settings");
-    assert.match(resolved[0]?.content ?? "", /Use settings same root skill\./);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, "skills", "group", "issue-262-settings-same-root", "SKILL.md"),
+    );
   });
 
-  it("resolves and reads skill content via filesystem fallback", () => {
+  it("resolves skill metadata and verifies the file is readable", () => {
     makeProjectSkill(tempDir, "resolve-skill", "Run local fallback checks.");
 
     const { resolved, missing } = resolveSkills(["resolve-skill"], tempDir);
@@ -221,7 +230,43 @@ describe("skills filesystem fallback", () => {
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.name, "resolve-skill");
     assert.equal(resolved[0]?.source, "project");
-    assert.match(resolved[0]?.content ?? "", /Run local fallback checks\./);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, ".pi", "skills", "resolve-skill", "SKILL.md"),
+    );
+    assert.equal(resolved[0]?.description, "Test description");
+    assert.equal("content" in (resolved[0] ?? {}), false);
+  });
+
+  it("does not resolve a discovered skill whose SKILL.md is not readable", () => {
+    fs.mkdirSync(path.join(tempDir, ".pi", "skills", "unreadable-skill", "SKILL.md"), {
+      recursive: true,
+    });
+
+    const { resolved, missing } = resolveSkills(["unreadable-skill"], tempDir);
+    assert.deepEqual(resolved, []);
+    assert.deepEqual(missing, ["unreadable-skill"]);
+  });
+
+  it("invalidates cached skill metadata when the file changes", () => {
+    makeProjectSkill(tempDir, "cache-skill", "First body", "First description");
+    const skillPath = path.join(tempDir, ".pi", "skills", "cache-skill", "SKILL.md");
+
+    const initial = resolveSkills(["cache-skill"], tempDir);
+    assert.equal(initial.resolved[0]?.description, "First description");
+
+    fs.writeFileSync(
+      skillPath,
+      "---\ndescription: Second description\n---\n\nSecond body\n",
+      "utf-8",
+    );
+    const changedTime = new Date(Date.now() + 2000);
+    fs.utimesSync(skillPath, changedTime, changedTime);
+
+    const updated = resolveSkills(["cache-skill"], tempDir);
+    assert.equal(updated.resolved[0]?.description, "Second description");
+    assert.match(buildSkillInjection(updated.resolved), /Second description/);
+    assert.equal("content" in (updated.resolved[0] ?? {}), false);
   });
 
   it("builds lazy skill references instead of inlining full skill bodies", () => {
@@ -284,7 +329,10 @@ describe("skills filesystem fallback", () => {
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.source, "project");
-    assert.match(resolved[0]?.content ?? "", /Project version/);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, ".pi", "skills", "shared-skill", "SKILL.md"),
+    );
   });
 
   it("discovers skills from project settings packages", () => {
@@ -533,7 +581,10 @@ describe("skills filesystem fallback", () => {
     const { resolved, missing } = resolveSkills(["claude-only-skill"], tempDir);
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
-    assert.match(resolved[0]?.content ?? "", /Use the claude-only skill\./);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, ".claude", "skills", "claude-only-skill", "SKILL.md"),
+    );
   });
 
   it("prefers .pi/skills over .claude/skills when the same skill name exists in both", () => {
@@ -549,7 +600,10 @@ describe("skills filesystem fallback", () => {
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.source, "project");
-    assert.match(resolved[0]?.content ?? "", /Pi copy/);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, ".pi", "skills", "collision-skill", "SKILL.md"),
+    );
   });
 
   it("prefers .agents/skills over .claude/skills when the same skill name exists in both", () => {
@@ -568,7 +622,10 @@ describe("skills filesystem fallback", () => {
     assert.deepEqual(missing, []);
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.source, "project");
-    assert.match(resolved[0]?.content ?? "", /Agents copy/);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, ".agents", "skills", "agents-collision-skill", "SKILL.md"),
+    );
   });
 
   it(".claude/skills root is exempt from the dot-directory skip rule", () => {
@@ -589,7 +646,10 @@ describe("skills filesystem fallback", () => {
       ".claude/skills root must be reachable as an explicit search root",
     );
     assert.equal(resolved.length, 1);
-    assert.match(resolved[0]?.content ?? "", /Reachable via explicit root\./);
+    assert.equal(
+      resolved[0]?.path,
+      path.join(tempDir, ".claude", "skills", "dot-root-skill", "SKILL.md"),
+    );
   });
 
   it("suppresses .claude/skills when tlh.claudeSkills.disabled is true in user settings", async () => {
@@ -692,7 +752,10 @@ describe("skills filesystem fallback", () => {
         "user",
         "agentDir/skills (user) must beat .claude/skills (project-claude)",
       );
-      assert.match(resolved[0]?.content ?? "", /User agentDir copy/);
+      assert.equal(
+        resolved[0]?.path,
+        path.join(userAgentDir, "skills", "cross-scope-skill", "SKILL.md"),
+      );
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -743,7 +806,10 @@ describe("skills filesystem fallback", () => {
       assert.deepEqual(missing, []);
       assert.equal(resolved.length, 1);
       assert.equal(resolved[0]?.source, "user-package", "user-package must beat user-claude");
-      assert.match(resolved[0]?.content ?? "", /Package copy/);
+      assert.equal(
+        resolved[0]?.path,
+        path.join(userPackageRoot, "skills", "pkg-vs-claude-skill", "SKILL.md"),
+      );
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

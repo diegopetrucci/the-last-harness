@@ -4,7 +4,6 @@ import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from 
 import { formatActivityLabel } from "../../shared/status-format.js";
 import {} from "../../shared/types.js";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
-import { readStatus } from "../../shared/utils.js";
 const DEFAULT_TRANSCRIPT_LINES = 80;
 export const MAX_TRANSCRIPT_LINES = 500;
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
@@ -373,37 +372,6 @@ export function formatAsyncRunTranscript(status, asyncDir, options = {}) {
             lines.push(`  ${safeTerminalText(warning)}`);
     }
     appendTranscriptBody(lines, transcriptSource, transcriptLines, truncated);
-    return safeTerminalDocument(lines.join("\n"));
-}
-export function formatNestedRunTranscript(run, options = {}) {
-    if (run.asyncDir) {
-        const status = readStatus(run.asyncDir);
-        if (status)
-            return formatAsyncRunTranscript(status, run.asyncDir, options);
-    }
-    const lineLimit = transcriptLineLimit(options.lines);
-    const lines = [
-        `Nested run: ${safeTerminalText(run.id)}`,
-        `State: ${safeTerminalText(run.state)}`,
-        run.mode ? `Mode: ${safeTerminalText(run.mode)}` : undefined,
-        run.agent
-            ? `Agent: ${safeTerminalText(run.agent)}`
-            : run.agents?.length
-                ? `Agents: ${safeTerminalText(run.agents.join(", "))}`
-                : undefined,
-    ].filter((line) => Boolean(line));
-    appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
-    if (!run.sessionFile) {
-        appendTranscriptBody(lines, "Status transcript tail (retained output/session; not _transcript.jsonl)", [], false);
-        return safeTerminalDocument(lines.join("\n"));
-    }
-    const sessionTail = readSessionTranscriptTail(run.sessionFile, lineLimit, options.sessionRoots ?? []);
-    if (sessionTail.warnings.length) {
-        lines.push("Warnings:");
-        for (const warning of sessionTail.warnings)
-            lines.push(`  ${safeTerminalText(warning)}`);
-    }
-    appendTranscriptBody(lines, `Canonical session tail from ${run.sessionFile} (status transcript view)`, sessionTail.lines, false);
     return safeTerminalDocument(lines.join("\n"));
 }
 export function formatAsyncResultTranscript(data, resultPath, options = {}) {

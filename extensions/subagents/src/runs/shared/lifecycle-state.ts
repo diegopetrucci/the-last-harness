@@ -687,6 +687,12 @@ function mergeStatus(current: AsyncStatus, memory: AsyncStatus, changed: boolean
       recordOf(memory),
       immutableTerminal(current.state) ? SAFE_ROOT_FACTS : SAFE_NONTERMINAL_ROOT_FACTS,
     );
+    // Preserve the monotonically advancing lastUpdate even when the disk wins;
+    // the in-memory paused timestamp floor must not be discarded by a terminal
+    // adoption with an earlier lastUpdate (e.g. a resumed/cancelled transition
+    // that happened before the paused checkpoint write completed).
+    const mergedLastUpdate = maxNumber(current.lastUpdate, memory.lastUpdate);
+    if (mergedLastUpdate !== undefined) merged.lastUpdate = mergedLastUpdate;
     if (current.steps)
       merged.steps = current.steps
         .map((step, index) => mergeStep(step, memory.steps?.[index], true))
@@ -1096,4 +1102,16 @@ export function recoverStoppedLifecycleOwnership(
     lastUpdate: now,
   };
   return { status: repaired, repaired: true, pidLiveness };
+}
+
+export function normalizeActiveRuntimeMs(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(value))
+    : undefined;
+}
+
+export function normalizeActiveRuntimeCheckpointAt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+    : undefined;
 }

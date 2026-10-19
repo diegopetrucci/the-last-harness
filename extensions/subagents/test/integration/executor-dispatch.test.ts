@@ -5,19 +5,7 @@ import * as path from "node:path";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import type { discoverAgents } from "../../src/agents/agents.ts";
-import {
-  createNestedRoute,
-  hasLiveNestedDescendants,
-  projectNestedEvents,
-} from "../../src/runs/shared/nested-events.ts";
-import {
-  SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
-  SUBAGENT_PARENT_CHILD_INDEX_ENV,
-  SUBAGENT_PARENT_CONTROL_INBOX_ENV,
-  SUBAGENT_PARENT_EVENT_SINK_ENV,
-  SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
-  SUBAGENT_PARENT_RUN_ID_ENV,
-} from "../../src/runs/shared/pi-args.ts";
+
 import type { ExtensionConfig } from "../../src/shared/types.ts";
 import {
   createEventBus,
@@ -601,68 +589,6 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     assert.equal(status.state, "cancelled");
   });
 
-  it("keeps nested routing and awaited ownership for child-of-child dispatch", async () => {
-    mockPi.reset();
-    mockPi.onCall({ output: "nested child complete" });
-    const route = createNestedRoute(`executor-nested-${Date.now().toString(36)}`);
-    const routeEnv = {
-      [SUBAGENT_PARENT_EVENT_SINK_ENV]: process.env[SUBAGENT_PARENT_EVENT_SINK_ENV],
-      [SUBAGENT_PARENT_CONTROL_INBOX_ENV]: process.env[SUBAGENT_PARENT_CONTROL_INBOX_ENV],
-      [SUBAGENT_PARENT_ROOT_RUN_ID_ENV]: process.env[SUBAGENT_PARENT_ROOT_RUN_ID_ENV],
-      [SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV]: process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV],
-      [SUBAGENT_PARENT_RUN_ID_ENV]: process.env[SUBAGENT_PARENT_RUN_ID_ENV],
-      [SUBAGENT_PARENT_CHILD_INDEX_ENV]: process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV],
-    };
-    process.env[SUBAGENT_PARENT_EVENT_SINK_ENV] = route.eventSink;
-    process.env[SUBAGENT_PARENT_CONTROL_INBOX_ENV] = route.controlInbox;
-    process.env[SUBAGENT_PARENT_ROOT_RUN_ID_ENV] = route.rootRunId;
-    process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV] = route.capabilityToken;
-    process.env[SUBAGENT_PARENT_RUN_ID_ENV] = route.rootRunId;
-    process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV] = "2";
-
-    try {
-      const result = await makeExecutor().execute(
-        "awaited-nested",
-        { agent: "echo", task: "Run as a nested child" },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-
-      assert.equal(result.isError, undefined);
-      assert.ok(
-        result.details?.asyncDir?.includes(path.join("nested-subagent-runs", route.rootRunId)),
-      );
-      const status = JSON.parse(
-        fs.readFileSync(path.join(result.details!.asyncDir!, "status.json"), "utf-8"),
-      ) as { awaited?: boolean };
-      assert.equal(status.awaited, true);
-      await waitForCondition(
-        () => projectNestedEvents(route).children.some((child) => child.state === "complete"),
-        "nested completion event",
-      );
-      const registry = projectNestedEvents(route);
-      assert.equal(registry.children.length, 1, "awaited nested dispatch has one lifecycle child");
-      assert.equal(registry.children[0]?.id, result.details?.asyncId);
-      assert.equal(
-        hasLiveNestedDescendants(registry.children),
-        false,
-        "completed nested dispatch leaves no cleanup blocker",
-      );
-      const completedChild = registry.children[0];
-      assert.ok(completedChild, "expected nested completion record");
-      assert.equal(completedChild.state, "complete");
-      assert.equal(completedChild.parentRunId, route.rootRunId);
-      assert.equal(completedChild.parentStepIndex, 2);
-    } finally {
-      for (const [key, value] of Object.entries(routeEnv)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-      fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
-    }
-  });
-
   it("preserves mixed embedded/user agents while enforcing trusted cwd containment", async () => {
     const projectRoot = fs.realpathSync(createTempDir("pi-subagent-mixed-project-"));
     const profileDir = path.join(projectRoot, "profile");
@@ -989,6 +915,8 @@ process.stdout.write(ticket.body);
         params: { agent: "echo", task: "task one", includeProgress: true },
         guidance: /includeProgress is no longer supported.*tracked automatically/,
       },
+      // Note: maxOutput is intentionally not retired in the branch; it is used
+      // internally by native awaited runs (native-result-lifecycle-grouping tests).
     ];
 
     for (const testCase of cases) {

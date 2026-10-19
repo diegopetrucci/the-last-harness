@@ -73,14 +73,8 @@ import type { ResolvedExecutionPolicy } from "../../agents/execution-ceiling.ts"
 import type { AuthorizedProjectAgentRun } from "../shared/project-agent-control.ts";
 import { authorizePersistedProjectAgentRun } from "../shared/project-agent-control.ts";
 import type { ExecutorDeps, SubagentParamsLike } from "../shared/executor-types.ts";
-import {
-  resolveNestedResumeTarget,
-  resumeLiveNestedRun,
-  type NestedResumeSourceTarget,
-} from "../shared/nested-control.ts";
-
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
-type ResumeSourceTarget = AsyncResumeSourceTarget | NestedResumeSourceTarget;
+type ResumeSourceTarget = AsyncResumeSourceTarget;
 
 /** Persist telemetry continuation metadata into the source run's status before launching.
  * Holds the lifecycle lock while reading + writing so a concurrent settle cannot race between them.
@@ -222,8 +216,8 @@ function claimPausedAwaitingSupervisorTarget(
 ): ContinuationClaimDecision {
   if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir) return undefined;
   const asyncDir = target.asyncDir;
-  // A result-only or nested target can retain a historical async-dir path even
-  // after that lifecycle directory has been removed. Do not recreate it merely
+  // A result-only target can retain a historical async-dir path even after
+  // that lifecycle directory has been removed. Do not recreate it merely
   // to discover that there is no persisted lifecycle state. A paused target is
   // still fail-closed when its lifecycle directory is absent.
   if (!fs.existsSync(asyncDir)) {
@@ -556,15 +550,7 @@ async function resolveResumeActionTarget(input: {
     const resolved: ResolvedSubagentRunId | undefined = input.requestedId
       ? resolveSubagentRunId(input.requestedId, { state: input.deps.state })
       : undefined;
-    if (resolved?.kind === "nested") {
-      if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
-        return resumeLiveNestedRun(resolved);
-      }
-      const trustedSessionRoots = input.parentSessionFile
-        ? [input.deps.getSubagentSessionRoot(input.parentSessionFile)]
-        : [];
-      target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
-    } else if (resolved?.kind === "async" || input.params.dir) {
+    if (resolved?.kind === "async" || input.params.dir) {
       const preResolutionDir =
         resolved?.kind === "async"
           ? resolved.location.asyncDir
@@ -906,7 +892,11 @@ export async function resumeAsyncRun(input: {
   const continuationTelemetryLineage: SubagentTelemetryLineage | undefined =
     continuationTelemetry.lineage;
   persistContinuationTelemetry(target, runId);
-  let result: ReturnType<typeof executeAsyncSingle>;
+  let result: {
+    content: Array<{ type: "text"; text: string }>;
+    details: Details;
+    isError?: boolean;
+  };
   try {
     result = (input.deps.executeAsyncSingle ?? executeAsyncSingle)(runId, {
       agent: target.agent,
@@ -946,17 +936,15 @@ export async function resumeAsyncRun(input: {
         modelScope,
       },
       cwd: effectiveCwd,
-      maxOutput: input.params.maxOutput,
       artifactsDir,
       artifactConfig: input.artifactConfig,
-      shareEnabled: input.params.share === true,
       sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
       sessionFile: target.sessionFile,
       ...priorTerminalResultForResume(target),
       timeoutMs: runTimeoutMs,
       outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
       maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
-      controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
+      controlConfig: resolveControlConfig(input.deps.config.control),
       availableModels,
       providerFallbackModels: providerFallbackModelsForTarget(input.params),
       modelFallbackNotice: input.params.modelFallbackNotice,
@@ -964,7 +952,7 @@ export async function resumeAsyncRun(input: {
         ? { telemetryProvenance: continuationTelemetryProvenance }
         : {}),
       ...(continuationTelemetryLineage ? { telemetryLineage: continuationTelemetryLineage } : {}),
-    });
+    }) as typeof result;
   } catch (error) {
     claimedPause?.rollbackReserved();
     throw error;

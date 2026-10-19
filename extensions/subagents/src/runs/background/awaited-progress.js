@@ -1,4 +1,3 @@
-import { sanitizeSummary } from "../shared/nested-events.js";
 import { canonicalLifecycleStepState } from "./async-status-boundary.js";
 function progressStatusForStep(status) {
     switch (canonicalLifecycleStepState(status)) {
@@ -38,14 +37,6 @@ function progressTokensForStep(step) {
 }
 function emptyProgressUsage() {
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-}
-function nestedChildren(value) {
-    if (!Array.isArray(value))
-        return undefined;
-    const children = value
-        .map((child) => sanitizeSummary(child))
-        .filter((child) => Boolean(child));
-    return children.length > 0 ? children : undefined;
 }
 function plannedStepsForPlan(plan) {
     return plan.kind === "single" ? [plan.task] : plan.tasks;
@@ -132,8 +123,6 @@ function applyProgressLifecycle(result, status, flags, step, planned) {
         result.projectAgent = step?.projectAgent ?? planned?.projectAgent;
     if (step?.childLocation ?? planned?.childLocation)
         result.childLocation = step?.childLocation ?? planned?.childLocation;
-    if (step?.children?.length)
-        result.children = nestedChildren(step.children);
     if (status === "cancelled" && !result.terminationReason)
         result.terminationReason = "cancelled";
 }

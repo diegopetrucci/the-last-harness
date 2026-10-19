@@ -1,8 +1,8 @@
 import type {
   MaxOutputConfig,
   ResolvedArtifactConfig,
-  NestedRouteInfo,
   ResolvedControlConfig,
+  TkTicketMetadata,
 } from "../../shared/types.ts";
 import type { ProjectAgentIdentity } from "../../agents/project-agent-loader.ts";
 import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
@@ -97,7 +97,6 @@ export interface SubagentRunConfig {
   artifactsDir?: string;
   /** Resolved once before persistence; historical readers resolve missing values at the boundary. */
   artifactConfig: ResolvedArtifactConfig;
-  share?: boolean;
   sessionDir?: string;
   asyncDir: string;
   continuationSource?: {
@@ -111,13 +110,7 @@ export interface SubagentRunConfig {
   piPackageRoot?: string;
   piArgv1?: string;
   controlConfig?: ResolvedControlConfig;
-  nestedRoute?: NestedRouteInfo;
-  nestedSelf?: {
-    parentRunId: string;
-    parentStepIndex?: number;
-    depth: number;
-    path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
-  };
+  tkTicket?: TkTicketMetadata;
   /** Safe per-child captures mirrored from the direct plan for artifact inspection. */
   projectAgents?: ProjectAgentIdentity[];
   deadlineAt?: number;

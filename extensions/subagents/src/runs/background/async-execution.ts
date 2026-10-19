@@ -10,7 +10,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import type { ProjectAgentIdentity } from "../../agents/project-agent-loader.ts";
 import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, validatePiToolPolicy } from "../shared/pi-args.ts";
+import {
+  applyThinkingSuffix,
+  validatePiToolPolicy,
+  retiredNestedLaunchError,
+} from "../shared/pi-args.ts";
 import {
   injectOutputPathSystemPrompt,
   injectSingleOutputInstruction,
@@ -53,12 +57,10 @@ import {
   type ContextUsageDiagnostics,
   type Details,
   type MaxOutputConfig,
-  type NestedRouteInfo,
   type ResolvedControlConfig,
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
-  type SubagentTerminalResult,
   ASYNC_DIR,
   RESULTS_DIR,
   SUBAGENT_ASYNC_STARTED_EVENT,
@@ -73,12 +75,6 @@ import {
   type SubagentTelemetryLineage,
   type SubagentTelemetryProvenance,
 } from "../../shared/telemetry.ts";
-import {
-  nestedResultsPath,
-  resolveInheritedNestedRouteFromEnv,
-  resolveNestedParentAddressFromEnv,
-  writeNestedEvent,
-} from "../shared/nested-events.ts";
 import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
@@ -140,7 +136,6 @@ interface AsyncSingleParams {
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
   artifactConfig: ResolvedArtifactConfig;
-  shareEnabled: boolean;
   sessionRoot?: string;
   sessionFile?: string;
   skills?: string[];
@@ -161,9 +156,10 @@ interface AsyncSingleParams {
   availableModels?: ModelInfo[];
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
-  nestedRoute?: NestedRouteInfo;
-  /** Prior persisted facts retained when this invocation revives a child. */
-  priorTerminalResult?: SubagentTerminalResult;
+  acceptance?: unknown;
+  continuationAcceptance?: unknown;
+  activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
 }
 
@@ -203,13 +199,11 @@ interface AsyncParallelParams {
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
   artifactConfig: ResolvedArtifactConfig;
-  shareEnabled: boolean;
   sessionRoot?: string;
   sessionFilesByFlatIndex?: (string | undefined)[];
   progressDir?: string;
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
-  nestedRoute?: NestedRouteInfo;
   timeoutMs?: number;
   /** Exact approved project-agent captures for detached runner tasks. */
   projectAgentIdentities?: readonly ProjectAgentIdentity[];
@@ -442,13 +436,9 @@ interface AsyncRunnerPlanBuildResult {
   runnerCwd: string;
 }
 
-type AsyncParallelPlanParams = Omit<
-  AsyncParallelParams,
-  "artifactConfig" | "shareEnabled" | "timeoutMs"
-> & {
+type AsyncParallelPlanParams = Omit<AsyncParallelParams, "artifactConfig" | "timeoutMs"> & {
   /** New plans always carry the trusted parent's fully resolved artifact policy. */
   artifactConfig: ResolvedArtifactConfig;
-  shareEnabled?: boolean;
 };
 
 /**
@@ -735,14 +725,9 @@ function initialAsyncTelemetry(input: {
 /**
  * Execute a direct parallel batch asynchronously.
  */
-export function executeAsyncParallel(
+export function executeAsyncParallel<T extends AsyncParallelParams>(
   id: string,
-  params: AsyncParallelParams & { awaited: true },
-): Promise<AwaitedRunResult>;
-export function executeAsyncParallel(id: string, params: AsyncParallelParams): AsyncExecutionResult;
-export function executeAsyncParallel(
-  id: string,
-  params: AsyncParallelParams,
+  params: T,
 ): AsyncExecutionResult | Promise<AwaitedRunResult> {
   const {
     tasks,
@@ -752,24 +737,19 @@ export function executeAsyncParallel(
     maxOutput,
     artifactsDir,
     artifactConfig,
-    shareEnabled,
     sessionRoot,
     sessionFilesByFlatIndex,
     maxSubagentDepth,
     controlConfig,
-    nestedRoute,
-    ticketBodies,
   } = params;
+  const retiredNestedError = retiredNestedLaunchError(params);
+  if (retiredNestedError) return formatAsyncStartError("parallel", retiredNestedError);
   const runStartedAt = Date.now();
   const runDeadlineAt =
     params.timeoutMs !== undefined
       ? saturatingAsyncDeadlineAt(runStartedAt, params.timeoutMs)
       : undefined;
-  const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
-  const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
-  const asyncDir = inheritedNestedRoute
-    ? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
-    : path.join(ASYNC_DIR, id);
+  const asyncDir = path.join(ASYNC_DIR, id);
   try {
     fs.mkdirSync(asyncDir, { recursive: true });
   } catch (error) {
@@ -794,14 +774,13 @@ export function executeAsyncParallel(
       cwd,
       artifactsDir,
       artifactConfig,
-      shareEnabled,
       sessionFilesByFlatIndex,
       progressDir:
         params.progressDir ??
         (artifactsDir ? path.join(artifactsDir, "progress", id) : path.join(asyncDir, "progress")),
       maxSubagentDepth,
       projectAgentIdentities: params.projectAgentIdentities,
-      ticketBodies,
+      ticketBodies: params.ticketBodies,
     });
   } catch (error) {
     try {
@@ -844,9 +823,7 @@ export function executeAsyncParallel(
   ];
   const flatAgents = plan.kind === "parallel" ? plan.tasks.map((task) => task.agent) : [];
   const firstTask = plan.kind === "parallel" ? plan.tasks[0] : undefined;
-  const resultPath = inheritedNestedRoute
-    ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
-    : path.join(RESULTS_DIR, `${id}.json`);
+  const resultPath = path.join(RESULTS_DIR, `${id}.json`);
   const awaitedOwner =
     params.awaited === true
       ? createAwaitedRunOwner({
@@ -879,12 +856,11 @@ export function executeAsyncParallel(
         ...(params.awaited === true ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         plan,
-        resultPath,
+        resultPath: path.join(RESULTS_DIR, `${id}.json`),
         cwd: runnerCwd,
         maxOutput,
         artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
         artifactConfig,
-        share: shareEnabled,
         sessionDir: sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined,
         asyncDir,
         sessionId: ctx.currentSessionId,
@@ -892,17 +868,7 @@ export function executeAsyncParallel(
         piArgv1: process.argv[1],
         controlConfig,
         deadlineAt,
-        nestedRoute: nestedRoute ?? inheritedNestedRoute,
         ...(projectAgents.length > 0 ? { projectAgents } : {}),
-        nestedSelf:
-          inheritedNestedRoute && nestedAddress
-            ? {
-                parentRunId: nestedAddress.parentRunId,
-                parentStepIndex: nestedAddress.parentStepIndex,
-                depth: nestedAddress.depth,
-                path: nestedAddress.path,
-              }
-            : undefined,
       },
       id,
       runnerCwd,
@@ -921,37 +887,6 @@ export function executeAsyncParallel(
 
   if (spawnResult.pid) {
     awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
-    if (inheritedNestedRoute && nestedAddress) {
-      const now = Date.now();
-      try {
-        writeNestedEvent(inheritedNestedRoute, {
-          type: "subagent.nested.started",
-          ts: now,
-          parentRunId: nestedAddress.parentRunId,
-          parentStepIndex: nestedAddress.parentStepIndex,
-          child: {
-            id,
-            parentRunId: nestedAddress.parentRunId,
-            parentStepIndex: nestedAddress.parentStepIndex,
-            depth: nestedAddress.depth,
-            path: nestedAddress.path,
-            cwd: runnerCwd,
-            asyncDir,
-            pid: spawnResult.pid,
-            ownerState: "live",
-            mode: "parallel",
-            state: "running",
-            agent: firstTask?.agent,
-            agents: flatAgents,
-            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
-            startedAt: now,
-            lastUpdate: now,
-          },
-        });
-      } catch (error) {
-        console.error("Failed to emit nested async start event:", error);
-      }
-    }
     ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id,
@@ -966,7 +901,6 @@ export function executeAsyncParallel(
       asyncDir,
       ...(projectAgents.length > 0 ? { projectAgents } : {}),
       ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
-      nestedRoute,
     });
   }
 
@@ -1034,7 +968,6 @@ function buildAsyncSingleRunnerPlan(
     contextUsage,
     contextPressure,
     contextPressureCrossedThresholds,
-    priorTerminalResult,
     timeoutMs,
     projectAgent,
     sessionFile,
@@ -1177,7 +1110,6 @@ function buildAsyncSingleRunnerPlan(
         ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
         ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(childLocation ? { childLocation } : {}),
-        ...(priorTerminalResult ? { terminalResult: priorTerminalResult } : {}),
       },
     }),
     effectiveTimeoutMs,
@@ -1188,14 +1120,9 @@ function buildAsyncSingleRunnerPlan(
 /**
  * Execute a single agent asynchronously
  */
-export function executeAsyncSingle(
+export function executeAsyncSingle<T extends AsyncSingleParams>(
   id: string,
-  params: AsyncSingleParams & { awaited: true },
-): Promise<AwaitedRunResult>;
-export function executeAsyncSingle(id: string, params: AsyncSingleParams): AsyncExecutionResult;
-export function executeAsyncSingle(
-  id: string,
-  params: AsyncSingleParams,
+  params: T,
 ): AsyncExecutionResult | Promise<AwaitedRunResult> {
   const {
     agent,
@@ -1205,11 +1132,11 @@ export function executeAsyncSingle(
     maxOutput,
     artifactsDir,
     artifactConfig,
-    shareEnabled,
     sessionRoot,
     controlConfig,
-    nestedRoute,
   } = params;
+  const retiredNestedError = retiredNestedLaunchError(params);
+  if (retiredNestedError) return formatAsyncStartError("single", retiredNestedError);
   const runStartedAt = Date.now();
   const runDeadlineAt =
     params.timeoutMs !== undefined
@@ -1237,11 +1164,7 @@ export function executeAsyncSingle(
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
   }
 
-  const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
-  const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
-  const asyncDir = inheritedNestedRoute
-    ? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
-    : path.join(ASYNC_DIR, id);
+  const asyncDir = path.join(ASYNC_DIR, id);
   try {
     fs.mkdirSync(asyncDir, { recursive: true });
   } catch (error) {
@@ -1305,9 +1228,7 @@ export function executeAsyncSingle(
     startedAt: runStartedAt,
     lineage: params.telemetryLineage,
   });
-  const resultPath = inheritedNestedRoute
-    ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
-    : path.join(RESULTS_DIR, `${id}.json`);
+  const resultPath = path.join(RESULTS_DIR, `${id}.json`);
   const awaitedOwner =
     params.awaited === true
       ? createAwaitedRunOwner({
@@ -1340,12 +1261,11 @@ export function executeAsyncSingle(
         ...(params.awaited === true ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         plan,
-        resultPath,
+        resultPath: path.join(RESULTS_DIR, `${id}.json`),
         cwd: runnerCwd,
         maxOutput,
         artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
         artifactConfig,
-        share: shareEnabled,
         sessionDir: sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined,
         asyncDir,
         sessionId: ctx.currentSessionId,
@@ -1357,16 +1277,6 @@ export function executeAsyncSingle(
         deadlineAt: runDeadlineAt,
         ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
         ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
-        nestedRoute: nestedRoute ?? inheritedNestedRoute,
-        nestedSelf:
-          inheritedNestedRoute && nestedAddress
-            ? {
-                parentRunId: nestedAddress.parentRunId,
-                parentStepIndex: nestedAddress.parentStepIndex,
-                depth: nestedAddress.depth,
-                path: nestedAddress.path,
-              }
-            : undefined,
       },
       id,
       runnerCwd,
@@ -1385,39 +1295,6 @@ export function executeAsyncSingle(
 
   if (spawnResult.pid) {
     awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
-    if (inheritedNestedRoute && nestedAddress) {
-      const now = Date.now();
-      try {
-        writeNestedEvent(inheritedNestedRoute, {
-          type: "subagent.nested.started",
-          ts: now,
-          parentRunId: nestedAddress.parentRunId,
-          parentStepIndex: nestedAddress.parentStepIndex,
-          child: {
-            id,
-            parentRunId: nestedAddress.parentRunId,
-            parentStepIndex: nestedAddress.parentStepIndex,
-            depth: nestedAddress.depth,
-            path: nestedAddress.path,
-            cwd: runnerCwd,
-            asyncDir,
-            pid: spawnResult.pid,
-            ownerState: "live",
-            mode: "single",
-            state: "running",
-            agent,
-            agents: [agent],
-            ...(effectiveTimeoutMs !== undefined
-              ? { timeoutMs: effectiveTimeoutMs, deadlineAt: effectiveDeadlineAt }
-              : {}),
-            startedAt: now,
-            lastUpdate: now,
-          },
-        });
-      } catch (error) {
-        console.error("Failed to emit nested async start event:", error);
-      }
-    }
     ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id,
@@ -1433,7 +1310,6 @@ export function executeAsyncSingle(
       ...(effectiveTimeoutMs !== undefined
         ? { timeoutMs: effectiveTimeoutMs, deadlineAt: effectiveDeadlineAt }
         : {}),
-      nestedRoute,
     });
   }
 

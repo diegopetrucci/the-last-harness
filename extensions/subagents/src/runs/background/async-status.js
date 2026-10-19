@@ -6,9 +6,7 @@ import { parsePersistedChildLocationSnapshot, } from "../../shared/child-locatio
 import { normalizeSubagentRunMode, } from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
-import { attachRootChildrenToSteps, buildNestedRouteIndex, projectNestedEvents, } from "../shared/nested-events.js";
-import { formatNestedRunStatusLines } from "../shared/nested-render.js";
-import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
+import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { formatUnreadableStatus, isAsyncStatusReadError, MAX_UNREADABLE_STATUS_REPORTS, } from "./async-status-boundary.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.js";
@@ -127,19 +125,10 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
     }
 }
-function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
+function statusToSummary(asyncDir, status) {
     const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
     const interruptRequestedAt = status.state === "running" ? readInterruptRequest(asyncDir)?.ts : undefined;
     const steps = status.steps ?? [];
-    let nestedChildren = [];
-    if (nestedWarnings.length === 0 && nestedRoute) {
-        try {
-            nestedChildren = projectNestedEvents(nestedRoute)?.children ?? [];
-        }
-        catch (error) {
-            nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
-        }
-    }
     const summarizedSteps = steps.map((step, index) => {
         const stepActivityState = step.activityState;
         const stepLastActivityAt = latestTimestamp(step.startedAt, step.lastActivityAt);
@@ -187,11 +176,10 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
             ...(step.error ? { error: step.error } : {}),
             ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
-            ...(step.children?.length ? { children: step.children } : {}),
             ...(step.childLocation ? { childLocation: step.childLocation } : {}),
         };
     });
-    attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
+    const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
     const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     return {
         id: status.runId || path.basename(asyncDir),
@@ -223,8 +211,6 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         currentStep: status.currentStep,
         ...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
         steps: summarizedSteps,
-        ...(nestedChildren.length ? { nestedChildren } : {}),
-        ...(nestedWarnings.length ? { nestedWarnings } : {}),
         ...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
         ...(status.outputFile ? { outputFile: status.outputFile } : {}),
         ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
@@ -233,9 +219,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         ...(status.pause ? { pause: status.pause } : {}),
         ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
         ...(telemetry ? { telemetry } : {}),
-        ...(normalizeTkTicketMetadata(status.tkTicket) !== undefined
-            ? { tkTicket: normalizeTkTicketMetadata(status.tkTicket) }
-            : {}),
+        ...(normalizedTkTicket !== undefined ? { tkTicket: normalizedTkTicket } : {}),
     };
 }
 function sortRuns(runs) {
@@ -279,15 +263,9 @@ function listAsyncRunEntries(asyncDirRoot) {
         });
     }
 }
-function buildRunCollector(asyncDirRoot, options = {}) {
+function buildRunCollector(asyncDirRoot, options = {}, validationOrder = "strict") {
     const allowedStates = options.states ? new Set(options.states) : undefined;
     const runs = [];
-    let nestedRouteIndex;
-    const resolveNestedRoute = (rootRunId) => {
-        if (!nestedRouteIndex)
-            nestedRouteIndex = buildNestedRouteIndex();
-        return nestedRouteIndex.get(rootRunId);
-    };
     const reportUnreadable = (entry, error) => {
         const issue = Object.freeze({
             entry,
@@ -307,30 +285,18 @@ function buildRunCollector(asyncDirRoot, options = {}) {
                     now: options.now,
                     statusRead: options.statusRead,
                 });
-            const persistedStatus = options.reconcile === false ? readStatus(asyncDir, options.statusRead) : undefined;
-            const status = (reconciliation?.status ?? persistedStatus);
+            const status = (reconciliation?.status ?? readStatus(asyncDir, options.statusRead));
             if (!status)
                 return;
+            if (validationOrder === "restore_scan")
+                validatePersistedAsyncStatus(asyncDir, status);
             if (allowedStates && !allowedStates.has(status.state))
                 return;
             if (options.sessionId && status.sessionId !== options.sessionId)
                 return;
-            const nestedWarnings = [];
-            let nestedRoute;
-            try {
-                nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-                if (options.reconcile !== false && nestedRoute)
-                    reconcileNestedAsyncDescendants(nestedRoute, {
-                        resultsDir: options.resultsDir,
-                        kill: options.kill,
-                        now: options.now,
-                        statusRead: options.statusRead,
-                    });
-            }
-            catch (error) {
-                nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
-            }
-            runs.push(statusToSummary(asyncDir, status, nestedWarnings, nestedRoute));
+            if (validationOrder === "strict")
+                validatePersistedAsyncStatus(asyncDir, status);
+            runs.push(statusToSummary(asyncDir, status));
         }
         catch (error) {
             if (!isAsyncStatusReadError(error))
@@ -463,23 +429,9 @@ export function formatAsyncRunList(runs, heading = "Active async runs", unreadab
         lines.push(`- ${formatRunHeader(run)}`);
         for (const step of run.steps) {
             lines.push(`  ${formatStepLine(step, privacySafe)}`);
-            lines.push(...formatNestedRunStatusLines(step.children, {
-                indent: "    ",
-                maxLines: 12,
-                redactSensitiveDetails: privacySafe,
-            }));
         }
-        const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
-        const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-        lines.push(...formatNestedRunStatusLines(unattached, {
-            indent: "  ",
-            maxLines: 12,
-            redactSensitiveDetails: privacySafe,
-        }));
         if (run.error)
             lines.push(`  Error: ${privacySafe ? protectedLifecycleText("error") : safeTerminalText(run.error)}`);
-        for (const warning of run.nestedWarnings ?? [])
-            lines.push(`  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : safeTerminalText(warning)}`);
         const outputPath = formatAsyncRunOutputPath(run);
         if (!privacySafe && outputPath)
             lines.push(`  output: ${safeTerminalText(shortenPath(outputPath))}`);

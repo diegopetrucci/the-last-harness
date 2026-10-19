@@ -1,8 +1,7 @@
 import * as fs from "node:fs";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT, } from "../../shared/types.js";
-import { attachNestedChildrenToResultChildren, resolveSubagentResultStatus, } from "../../shared/result-formatting.js";
-import { buildAwaitedNativeResult, resultSummaryForNativeAwaited, } from "../../shared/result-formatting.js";
-import { sanitizeSummary } from "../shared/nested-events.js";
+import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
+import { buildAwaitedNativeResult } from "../../shared/result-formatting.js";
 import { parseSubagentTerminationReason } from "../../shared/context-diagnostics.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { readStatus } from "../../shared/utils.js";
@@ -165,14 +164,6 @@ function artifactPaths(value) {
         transcriptPath: value.transcriptPath,
         metadataPath: value.metadataPath,
     };
-}
-function nestedChildren(value) {
-    if (!Array.isArray(value))
-        return undefined;
-    const children = value
-        .map((child) => sanitizeSummary(child))
-        .filter((child) => Boolean(child));
-    return children.length > 0 ? children : undefined;
 }
 function boundedDiagnostic(value) {
     if (value.length <= OWNER_CLEANUP_DIAGNOSTIC_MAX_CHARS)
@@ -481,27 +472,8 @@ function resultFromRawChild(input, artifact, child, index, ownerCleanup, persist
                 : typeof child.finalOutput === "string"
                     ? child.finalOutput
                     : output,
-        ...(Array.isArray(child.children) ? { children: nestedChildren(child.children) } : {}),
     };
     return childResult;
-}
-function resultChildrenForFormatting(input, artifact, results) {
-    const rootNested = nestedChildren(artifact.nestedChildren);
-    const children = results.map((result, index) => ({
-        agent: result.agent,
-        status: resolveSubagentResultStatus({
-            exitCode: result.exitCode,
-            interrupted: result.interrupted,
-            success: result.exitCode === 0,
-        }),
-        summary: resultSummaryForNativeAwaited(result),
-        index,
-        artifactPath: result.artifactPaths?.outputPath,
-        sessionPath: result.sessionFile,
-        terminalResult: result.terminalResult,
-        children: result.children,
-    }));
-    return attachNestedChildrenToResultChildren(input.id, children, rootNested);
 }
 function buildAwaitedResult(input, artifact, ownerCleanup) {
     const rawResultChildren = rawChildren(artifact);
@@ -546,14 +518,11 @@ function buildAwaitedResult(input, artifact, ownerCleanup) {
             truncation: { text: artifact.summary, truncated: true },
         };
     }
-    const rootNested = nestedChildren(artifact.nestedChildren);
-    const resultWithNested = resultChildrenForFormatting(input, artifact, results);
     const details = {
         mode: input.mode,
         runId: input.id,
-        results: results.map((result, index) => ({
+        results: results.map((result) => ({
             ...result,
-            ...(resultWithNested[index]?.children ? { children: resultWithNested[index].children } : {}),
         })),
         asyncId: input.id,
         asyncDir: input.asyncDir,
@@ -590,7 +559,6 @@ function buildAwaitedResult(input, artifact, ownerCleanup) {
         runId: input.id,
         mode: input.mode,
         details,
-        ...(rootNested?.length ? { nestedChildren: rootNested } : {}),
         statusOverride,
         ...(errorSummary ? { errorSummary } : {}),
     });

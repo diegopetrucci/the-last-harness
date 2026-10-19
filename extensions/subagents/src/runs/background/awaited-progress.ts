@@ -2,13 +2,11 @@
 
 import type { AwaitedRunOwnerOptions, AwaitedRunResult } from "./awaited-run-owner.ts";
 import type { RunnerSubagentStep, SubagentRunPlan } from "../shared/parallel-utils.ts";
-import { sanitizeSummary } from "../shared/nested-events.ts";
 import { canonicalLifecycleStepState } from "./async-status-boundary.ts";
 import type {
   AgentProgress,
   AsyncStatus,
   Details,
-  NestedRunSummary,
   SingleResult,
   Usage,
 } from "../../shared/types.ts";
@@ -77,14 +75,6 @@ function progressTokensForStep(step: AsyncStatusStep | undefined): number {
 
 function emptyProgressUsage(): Usage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-}
-
-function nestedChildren(value: unknown): NestedRunSummary[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const children = value
-    .map((child) => sanitizeSummary(child))
-    .filter((child): child is NestedRunSummary => Boolean(child));
-  return children.length > 0 ? children : undefined;
 }
 
 function plannedStepsForPlan(plan: SubagentRunPlan): RunnerSubagentStep[] {
@@ -191,7 +181,6 @@ function applyProgressLifecycle(
     result.projectAgent = step?.projectAgent ?? planned?.projectAgent;
   if (step?.childLocation ?? planned?.childLocation)
     result.childLocation = step?.childLocation ?? planned?.childLocation;
-  if (step?.children?.length) result.children = nestedChildren(step.children);
   if (status === "cancelled" && !result.terminationReason) result.terminationReason = "cancelled";
 }
 

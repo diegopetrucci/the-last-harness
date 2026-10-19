@@ -4,23 +4,17 @@ import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   type SubagentEventBus,
-  type NestedRunSummary,
   type SubagentResultChild,
   type SubagentState,
   type SubagentTerminalResult,
 } from "../../shared/types.ts";
-import {
-  attachNestedChildrenToResultChildren,
-  compactNestedResultChildren,
-  resolveSubagentResultStatus,
-} from "../../shared/result-formatting.ts";
+import { resolveSubagentResultStatus } from "../../shared/result-formatting.ts";
 import {
   isCompletedLifecycleState,
   isCompletedLifecycleStepState,
   lifecycleContinuationForIndex,
   withLifecycleStatusLock,
 } from "../shared/lifecycle-state.ts";
-import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
 import {
@@ -61,7 +55,6 @@ type ResultFileChild = {
   sessionFile?: string;
   artifactPaths?: { outputPath?: string };
   terminalResult?: SubagentTerminalResult;
-  children?: unknown;
 };
 
 type ResultFileData = {
@@ -73,7 +66,6 @@ type ResultFileData = {
   mode?: string;
   summary?: string;
   results?: ResultFileChild[];
-  nestedChildren?: unknown;
   sessionId?: string;
   cwd?: string;
   sessionFile?: string;
@@ -91,29 +83,6 @@ type ResultRetryState = {
   error?: unknown;
   timer?: ReturnType<ResultWatcherTimers["setTimeout"]>;
 };
-
-function sanitizeNestedResultChildren(
-  value: unknown,
-  resultPath: string,
-  label: string,
-): NestedRunSummary[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    console.error(
-      `Ignoring invalid nested children in subagent result file '${resultPath}' at ${label}: expected an array.`,
-    );
-    return undefined;
-  }
-  const children = value
-    .map((child) => sanitizeSummary(child))
-    .filter((child): child is NestedRunSummary => Boolean(child));
-  if (children.length !== value.length) {
-    console.error(
-      `Ignoring ${value.length - children.length} invalid nested child record(s) in subagent result file '${resultPath}' at ${label}.`,
-    );
-  }
-  return children.length ? children : undefined;
-}
 
 function sanitizeResultChildren(value: unknown, resultPath: string): ResultFileChild[] {
   if (!Array.isArray(value)) return [];
@@ -418,20 +387,6 @@ export function createResultWatcher(
         }
 
         const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
-        const hasExplicitNestedChildren = data.nestedChildren !== undefined;
-        let nestedChildren = compactNestedResultChildren(
-          sanitizeNestedResultChildren(data.nestedChildren, resultPath, "nestedChildren"),
-        );
-        if (!nestedChildren?.length && !hasExplicitNestedChildren) {
-          try {
-            nestedChildren = compactNestedResultChildren(
-              projectNestedRegistryForRoot(runId)?.children,
-            );
-          } catch (error) {
-            diagnoseAndRetry(file, "enrich", error);
-            return;
-          }
-        }
         const pausedDecision = resolvePausedArtifactDecision(data);
         if (pausedDecision === "retry") {
           diagnoseAndRetry(file, "wait for lifecycle decision", undefined);
@@ -466,9 +421,8 @@ export function createResultWatcher(
                 success: data.success,
               },
             ];
-        const normalizedChildren = attachNestedChildrenToResultChildren(
-          runId,
-          resultChildren.map((result = {}, arrayIndex): SubagentResultChild => {
+        const normalizedChildren = resultChildren.map(
+          (result = {}, arrayIndex): SubagentResultChild => {
             const baseOutput = result.output ?? data.summary;
             const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
             const output = hasRealOutput ? baseOutput : "(no output)";
@@ -478,11 +432,6 @@ export function createResultWatcher(
                 : output;
             const sessionPath =
               result.sessionFile ?? (resultChildren.length === 1 ? data.sessionFile : undefined);
-            const childNestedChildren = sanitizeNestedResultChildren(
-              result.children,
-              resultPath,
-              `results[${arrayIndex}].children`,
-            );
             const terminalResult = parseSubagentTerminalResult(result.terminalResult);
             return {
               agent: result.agent ?? data.agent ?? `step-${arrayIndex + 1}`,
@@ -494,16 +443,13 @@ export function createResultWatcher(
                 ? { sessionPath }
                 : {}),
               ...(terminalResult ? { terminalResult } : {}),
-              ...(childNestedChildren ? { children: childNestedChildren } : {}),
             };
-          }),
-          nestedChildren,
+          },
         );
 
         const completionEvent = {
           ...data,
           runId,
-          ...(nestedChildren?.length ? { nestedChildren } : {}),
           ...(Array.isArray(data.results)
             ? {
                 results: hasResultChildren
@@ -516,7 +462,6 @@ export function createResultWatcher(
                       artifactPath: child.artifactPath,
                       sessionPath: child.sessionPath,
                       terminalResult: child.terminalResult,
-                      children: child.children,
                     }))
                   : [],
               }

@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getArtifactPaths } from "../../shared/artifacts.js";
 import { readStatus } from "../../shared/utils.js";
-import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { isActiveLifecycleState, isCompletedLifecycleStepState, isLifecycleTransitionContentionError, isTerminalLifecycleState, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
@@ -67,7 +66,7 @@ function normalizeAttemptResult(result) {
 }
 const statusStepIsTerminal = (status) => isCompletedLifecycleStepState(status) || status === "failed" || status === "cancelled";
 export function createBackgroundRunStatusOwner(input) {
-    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, projectAgents, telemetry, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
+    const { id, asyncDir, cwd, plan, overallStartTime, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, projectAgents, telemetry, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
     const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
     const initialStatusSteps = flatSteps.map((task, index) => {
         const terminalResult = normalizeAttemptResult(task.terminalResult);
@@ -112,7 +111,7 @@ export function createBackgroundRunStatusOwner(input) {
             recentOutput: [],
         };
     });
-    const sessionEnabled = Boolean(sessionDir) || shareEnabled || flatSteps.some((step) => Boolean(step.sessionFile));
+    const sessionEnabled = Boolean(sessionDir) || flatSteps.some((step) => Boolean(step.sessionFile));
     const statusPayload = {
         lifecycleArtifactVersion: 1,
         ...(input.awaited ? { awaited: true } : {}),
@@ -146,8 +145,6 @@ export function createBackgroundRunStatusOwner(input) {
         : undefined);
     const hooks = {
         clearActivityState: () => undefined,
-        interruptNestedDescendants: () => undefined,
-        timeoutNestedDescendants: () => undefined,
         interruptActiveChildren: () => undefined,
         timeoutActiveChildren: () => undefined,
         abortInterrupt: () => undefined,
@@ -165,39 +162,6 @@ export function createBackgroundRunStatusOwner(input) {
         }
         catch {
             return [];
-        }
-    }
-    let lastEmittedNestedTerminalState;
-    function emitNestedSelfEvent(type) {
-        if (!nestedRoute || !nestedSelf)
-            return;
-        try {
-            const child = nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-                id,
-                parentRunId: nestedSelf.parentRunId,
-                parentStepIndex: nestedSelf.parentStepIndex,
-                depth: nestedSelf.depth,
-                path: nestedSelf.path,
-                mode: statusPayload.mode,
-                ts: Date.now(),
-            });
-            const terminalState = type === "subagent.nested.completed" &&
-                (child.state === "complete" || child.state === "failed" || child.state === "paused")
-                ? child.state
-                : undefined;
-            if (terminalState !== undefined && terminalState === lastEmittedNestedTerminalState)
-                return;
-            writeNestedEvent(nestedRoute, {
-                type,
-                ts: Date.now(),
-                parentRunId: nestedSelf.parentRunId,
-                parentStepIndex: nestedSelf.parentStepIndex,
-                child,
-            });
-            if (terminalState !== undefined)
-                lastEmittedNestedTerminalState = terminalState;
-        }
-        catch {
         }
     }
     function beginTrackedSessionStep(index, dir, file) {
@@ -268,11 +232,10 @@ export function createBackgroundRunStatusOwner(input) {
         if (adopted.state === "paused")
             owner.durablePausingCheckpointPersisted = true;
         clearHeartbeatTimer();
-        hooks.interruptNestedDescendants();
         hooks.interruptActiveChildren();
         return statusPayload;
     }
-    function writeStatusPayload(options = {}) {
+    function writeStatusPayload(_options = {}) {
         if (statusPayload.currentStep !== undefined)
             refreshTrackedSessionFile(statusPayload.currentStep);
         statusPayload.activityState =
@@ -285,10 +248,6 @@ export function createBackgroundRunStatusOwner(input) {
         Object.assign(statusPayload, merged);
         if (isTerminalLifecycleState(merged.state) && merged.state !== previousState)
             adoptConcurrentTerminalStatus();
-        if (options.projectNested !== false)
-            emitNestedSelfEvent(isActiveLifecycleState(statusPayload.state)
-                ? "subagent.nested.updated"
-                : "subagent.nested.completed");
     }
     function transition(phase, mutate) {
         try {
@@ -335,7 +294,7 @@ export function createBackgroundRunStatusOwner(input) {
         }
         statusPayload.lastUpdate = Date.now();
         try {
-            writeStatusPayload({ projectNested: false });
+            writeStatusPayload();
         }
         catch {
         }
@@ -495,7 +454,6 @@ export function createBackgroundRunStatusOwner(input) {
             stepIndex: index,
             pause: { kind: pause.kind, summary: pause.summary, request: pause.request },
         }));
-        hooks.interruptNestedDescendants();
         hooks.abortInterrupt();
         hooks.interruptActiveChildren();
     }
@@ -532,7 +490,6 @@ export function createBackgroundRunStatusOwner(input) {
         hooks.clearActivityState();
         hooks.abortInterrupt();
         hooks.abortTimeout();
-        hooks.interruptNestedDescendants();
         hooks.interruptActiveChildren();
         appendEvent(JSON.stringify({
             type: "subagent.run.cancelled",
@@ -557,7 +514,6 @@ export function createBackgroundRunStatusOwner(input) {
         owner.interrupted = true;
         clearHeartbeatTimer();
         hooks.clearActivityState();
-        hooks.interruptNestedDescendants();
         hooks.abortInterrupt();
         hooks.interruptActiveChildren();
         appendEvent(JSON.stringify({ type: "subagent.run.paused", ts: now, runId: id }));
@@ -587,7 +543,6 @@ export function createBackgroundRunStatusOwner(input) {
         clearHeartbeatTimer();
         hooks.clearActivityState();
         hooks.abortTimeout();
-        hooks.timeoutNestedDescendants();
         hooks.timeoutActiveChildren();
         appendEvent(JSON.stringify({ type: "subagent.run.timed_out", ts: now, runId: id, deadlineAt, message }));
     }
@@ -700,7 +655,6 @@ export function createBackgroundRunStatusOwner(input) {
         ownedPauseProcessesConfirmedStopped,
         isPersistedAwaitingSupervisorPause,
         applyPausedStepMetadata,
-        emitNestedSelfEvent,
         startHeartbeat,
         stopHeartbeat,
     };

@@ -18,23 +18,7 @@ export const SOURCE_PRIORITY = {
     "user-package": 200,
     "project-claude": 180,
     "user-claude": 170,
-    extension: 150,
-    builtin: 100,
-    unknown: 0,
 };
-function stripSkillFrontmatter(content) {
-    const normalized = content.replace(/\r\n/g, "\n");
-    if (!normalized.startsWith("---"))
-        return normalized;
-    const endIndex = normalized.indexOf("\n---", 3);
-    if (endIndex === -1)
-        return normalized;
-    return normalized.slice(endIndex + 4).trim();
-}
-function isWithinPath(filePath, dir) {
-    const relative = path.relative(dir, filePath);
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
 function isJsonValue(value) {
     if (value === null)
         return true;
@@ -364,46 +348,6 @@ function buildSkillPaths(cwd, agentDir) {
     }
     return [...deduped.values()];
 }
-function inferSkillSource(filePath, cwd, agentDir, sourceHint) {
-    if (sourceHint)
-        return sourceHint;
-    const projectConfigRoot = path.resolve(getProjectConfigDir(cwd));
-    const projectSkillsRoot = path.resolve(projectConfigRoot, "skills");
-    const projectPackagesRoot = path.resolve(projectConfigRoot, "npm", "node_modules");
-    const rawProjectAgentsRoot = path.resolve(cwd, ".agents");
-    const projectAgentsRoot = hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot)
-        ? undefined
-        : rawProjectAgentsRoot;
-    const projectClaudeSkillsRoot = path.resolve(cwd, ".claude", "skills");
-    const userSkillsRoot = path.resolve(agentDir, "skills");
-    const userPackagesRoot = path.resolve(agentDir, "npm", "node_modules");
-    const userAgentRoot = path.resolve(agentDir);
-    const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
-    const userAgentsRoot = legacyGlobalAgentsDir ? path.resolve(legacyGlobalAgentsDir) : undefined;
-    const userClaudeSkillsRoot = path.resolve(os.homedir(), ".claude", "skills");
-    if (isWithinPath(filePath, projectPackagesRoot))
-        return "project-package";
-    if (isWithinPath(filePath, projectClaudeSkillsRoot))
-        return "project-claude";
-    if (isWithinPath(filePath, projectSkillsRoot) ||
-        (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot)))
-        return "project";
-    if (isWithinPath(filePath, projectConfigRoot))
-        return "project-settings";
-    if (isWithinPath(filePath, userPackagesRoot))
-        return "user-package";
-    if (isWithinPath(filePath, userClaudeSkillsRoot))
-        return "user-claude";
-    if (isWithinPath(filePath, userSkillsRoot) ||
-        (userAgentsRoot && isWithinPath(filePath, userAgentsRoot)))
-        return "user";
-    if (isWithinPath(filePath, userAgentRoot))
-        return "user-settings";
-    const globalRoot = getGlobalNpmRoot();
-    if (globalRoot && isWithinPath(filePath, globalRoot))
-        return "user-package";
-    return "unknown";
-}
 function chooseHigherPrioritySkill(existing, candidate) {
     if (!existing)
         return candidate;
@@ -415,35 +359,36 @@ function chooseHigherPrioritySkill(existing, candidate) {
         return existing;
     return candidate.order < existing.order ? candidate : existing;
 }
+function parseSkillDescription(content) {
+    const normalized = content.replace(/\r\n/g, "\n");
+    if (!normalized.startsWith("---"))
+        return undefined;
+    const endIndex = normalized.indexOf("\n---", 3);
+    if (endIndex === -1)
+        return undefined;
+    const frontmatter = normalized.slice(3, endIndex).trim();
+    const match = frontmatter.match(/^description:\s*(.+)$/m);
+    if (!match)
+        return undefined;
+    return match[1]?.trim().replace(/^['"]|['"]$/g, "");
+}
 function maybeReadSkillDescription(filePath) {
     try {
-        const content = fs.readFileSync(filePath, "utf-8");
-        const normalized = content.replace(/\r\n/g, "\n");
-        if (!normalized.startsWith("---"))
-            return undefined;
-        const endIndex = normalized.indexOf("\n---", 3);
-        if (endIndex === -1)
-            return undefined;
-        const frontmatter = normalized.slice(3, endIndex).trim();
-        const match = frontmatter.match(/^description:\s*(.+)$/m);
-        if (!match)
-            return undefined;
-        return match[1]?.trim().replace(/^['"]|['"]$/g, "");
+        return parseSkillDescription(fs.readFileSync(filePath, "utf-8"));
     }
     catch {
         return undefined;
     }
 }
-function collectFilesystemSkills(cwd, agentDir, skillPaths) {
+function collectFilesystemSkills(skillPaths) {
     const entries = [];
     const seen = new Map();
     const visitedDirectories = new Map();
     let order = 0;
-    const pushEntry = (name, filePath, sourceHint) => {
+    const pushEntry = (name, filePath, source) => {
         const resolvedFile = path.resolve(filePath);
         if (!fs.existsSync(resolvedFile))
             return;
-        const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
         const existingIndex = seen.get(resolvedFile);
         if (existingIndex !== undefined) {
             const existing = entries[existingIndex];
@@ -467,7 +412,7 @@ function collectFilesystemSkills(cwd, agentDir, skillPaths) {
         });
     };
     const shouldSkipDirectory = (name) => name.startsWith(".") || name === "node_modules";
-    const markDirectoryVisited = (dirPath, sourceHint) => {
+    const markDirectoryVisited = (dirPath, source) => {
         let resolvedDir;
         try {
             resolvedDir = fs.realpathSync(dirPath);
@@ -475,19 +420,19 @@ function collectFilesystemSkills(cwd, agentDir, skillPaths) {
         catch {
             resolvedDir = path.resolve(dirPath);
         }
-        const priority = sourceHint ? (SOURCE_PRIORITY[sourceHint] ?? 0) : SOURCE_PRIORITY.unknown;
+        const priority = SOURCE_PRIORITY[source] ?? 0;
         const previousPriority = visitedDirectories.get(resolvedDir);
         if (previousPriority !== undefined && previousPriority >= priority)
             return false;
         visitedDirectories.set(resolvedDir, priority);
         return true;
     };
-    const walkSkillDirectories = (dirPath, sourceHint) => {
-        if (!markDirectoryVisited(dirPath, sourceHint))
+    const walkSkillDirectories = (dirPath, source) => {
+        if (!markDirectoryVisited(dirPath, source))
             return;
         const skillFile = path.join(dirPath, "SKILL.md");
         if (fs.existsSync(skillFile)) {
-            pushEntry(path.basename(dirPath), skillFile, sourceHint);
+            pushEntry(path.basename(dirPath), skillFile, source);
             return;
         }
         let entriesInDir;
@@ -511,7 +456,7 @@ function collectFilesystemSkills(cwd, agentDir, skillPaths) {
                 continue;
             }
             if (stat.isDirectory()) {
-                walkSkillDirectories(entryPath, sourceHint);
+                walkSkillDirectories(entryPath, source);
             }
         }
     };
@@ -585,7 +530,7 @@ function getCachedSkills(cwd) {
         return loadSkillsCache.skills;
     }
     const skillPaths = buildSkillPaths(cwd, agentDir);
-    const loaded = collectFilesystemSkills(cwd, agentDir, skillPaths);
+    const loaded = collectFilesystemSkills(skillPaths);
     const dedupedByName = new Map();
     for (const entry of loaded) {
         const current = dedupedByName.get(entry.name);
@@ -610,13 +555,10 @@ function readSkill(skillName, skillPath, source) {
             return cached.skill;
         }
         const raw = fs.readFileSync(skillPath, "utf-8");
-        const content = stripSkillFrontmatter(raw);
-        const description = maybeReadSkillDescription(skillPath);
         const skill = {
             name: skillName,
             path: skillPath,
-            content,
-            description,
+            description: parseSkillDescription(raw),
             source,
         };
         skillCache.set(skillPath, { mtime: stat.mtimeMs, skill });

@@ -4,8 +4,7 @@ import { renderWidget, widgetPhraseSlotKey, widgetRenderKey } from "../../tui/re
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.js";
 import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
-import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
-import { hasLiveNestedDescendants, updateAsyncJobNestedProjection, } from "../shared/nested-events.js";
+import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { scanAsyncRunsForRestore } from "./async-status.js";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.js";
 import { isAwaitedRun } from "./awaited-run-registry.js";
@@ -109,7 +108,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     controlEventSkippingOversizedLine: restoredCursor.skippingOversizedLine,
                 };
             })(),
-            nestedChildren: run.nestedChildren,
             projectAgents: run.projectAgents,
             ...(run.tkTicket ? { tkTicket: run.tkTicket } : {}),
         };
@@ -293,35 +291,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             const phraseSlotNow = nowMs();
             for (const job of state.asyncJobs.values()) {
                 const widgetStateBefore = widgetRenderKey(job);
-                let nestedRefreshFailed = false;
-                const refreshNestedProjection = () => {
-                    try {
-                        updateAsyncJobNestedProjection(job);
-                    }
-                    catch (error) {
-                        nestedRefreshFailed = true;
-                        console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
-                    }
-                };
-                const reconcileNestedDescendants = () => {
-                    try {
-                        if (job.nestedRoute)
-                            reconcileNestedAsyncDescendants(job.nestedRoute, {
-                                resultsDir,
-                                kill: options.kill,
-                                now: options.now,
-                                statusRead: options.statusRead,
-                            });
-                    }
-                    catch (error) {
-                        nestedRefreshFailed = true;
-                        console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
-                    }
-                    refreshNestedProjection();
-                };
                 try {
                     emitNewControlEvents(job);
-                    reconcileNestedDescendants();
                     const reconciliation = reconcileAsyncRun(job.asyncDir, {
                         resultsDir,
                         kill: options.kill,
@@ -358,7 +329,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             }));
                             job.agents = visibleSteps.map((step) => step.agent);
                             job.steps = visibleSteps;
-                            refreshNestedProjection();
                             job.stepsTotal = visibleSteps.length;
                             job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
                             job.completedSteps = visibleSteps.filter((step) => isCompletedLifecycleStepState(step.status)).length;
@@ -374,12 +344,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             job.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
                         if (status.projectAgents !== undefined)
                             job.projectAgents = status.projectAgents;
-                        const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
-                        if (liveNestedDescendants)
-                            cancelCleanup(job.asyncId);
                         if (COMPLETION_RETENTION_STATES.has(job.status) &&
-                            !nestedRefreshFailed &&
-                            !liveNestedDescendants &&
                             (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
                             scheduleCleanup(job.asyncId);
                         }
@@ -387,11 +352,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             widgetChanged = true;
                         continue;
                     }
-                    const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
-                    if (liveNestedDescendants) {
-                        cancelCleanup(job.asyncId);
-                    }
-                    else if (COMPLETION_RETENTION_STATES.has(job.status) &&
+                    if (COMPLETION_RETENTION_STATES.has(job.status) &&
                         !state.cleanupTimers.has(job.asyncId)) {
                         scheduleCleanup(job.asyncId);
                     }
@@ -406,10 +367,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         job.status = "failed";
                         job.updatedAt = Date.now();
                     }
-                    if (hasLiveNestedDescendants(job.nestedChildren)) {
-                        cancelCleanup(job.asyncId);
-                    }
-                    else if (!state.cleanupTimers.has(job.asyncId)) {
+                    if (!state.cleanupTimers.has(job.asyncId)) {
                         scheduleCleanup(job.asyncId);
                     }
                 }
@@ -441,7 +399,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
             mode: normalizeSubagentRunMode(info.mode),
             agents,
-            nestedRoute: info.nestedRoute,
             stepsTotal: agents?.length,
             startedAt: now,
             updatedAt: now,
@@ -468,7 +425,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
         if (job && telemetry)
             job.telemetry = telemetry;
-        let nestedRefreshFailed = false;
         if (job) {
             if (result.awaited)
                 job.awaited = true;
@@ -482,23 +438,11 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             job.updatedAt = Date.now();
             if (result.asyncDir)
                 job.asyncDir = result.asyncDir;
-            try {
-                updateAsyncJobNestedProjection(job);
-            }
-            catch (error) {
-                nestedRefreshFailed = true;
-                console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
-            }
         }
         if (state.lastUiContext) {
             rerenderWidget(state.lastUiContext);
         }
-        if (hasLiveNestedDescendants(job?.nestedChildren)) {
-            cancelCleanup(asyncId);
-        }
-        else if (!nestedRefreshFailed) {
-            scheduleCleanup(asyncId);
-        }
+        scheduleCleanup(asyncId);
     };
     const resetJobs = (ctx) => {
         for (const timer of state.cleanupTimers.values()) {

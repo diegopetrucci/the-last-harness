@@ -188,9 +188,7 @@ When a run starts, the runtime walks the following locations and collects all sk
 | 100      | `builtin`          | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹        |
 | 0        | `unknown`          | Anything that does not match a known root                                                                     |
 
-¹ `extension` and `builtin` are defined in `SOURCE_PRIORITY` and appear in the doctor's per-source breakdown, but `buildSkillPaths` never emits them and `inferSkillSource` never infers them. No current runtime caller passes either as a `sourceHint`; they are reserved for future use.
-
-² Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where extension-provided paths are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
+¹ Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where these lower-priority roots are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
 
 Deduplication is per resolved absolute path: if the same physical directory appears via two routes, the one with the higher source priority wins.
 
@@ -214,7 +212,7 @@ Skills not found after the first pass are retried against the runtime cwd in the
 
 ### What injection looks like
 
-For each resolved skill, the runtime reads the `SKILL.md` file (stripping any YAML frontmatter) and appends an `<available_skills>` block to the child's system prompt via `buildSkillInjection`:
+For each resolved skill, the runtime appends an `<available_skills>` block containing its name, description, and `SKILL.md` location to the child's system prompt via `buildSkillInjection`. The child reads the full file on demand with the read tool:
 
 ```text
 The following configured skills are available to this subagent.
@@ -388,7 +386,9 @@ Compact completion and awaited result text also exposes a one-line `Facts:` summ
 
 ### Migration caveat
 
-Existing historical run, session, and saved-chain artifacts are not rewritten or deleted; their status/history may remain readable. However, an older paused run whose persisted configuration depends on retired `steps`, fork/context inheritance, the removed external pi-intercom detach request/result/control integration, turn-budget behavior, or a retired execution timeout at an async-runner envelope/config root or plan root cannot be resumed under the reduced runtime. Remove only that retired envelope/plan-root timeout field and start a new direct single or parallel run instead. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Normal direct-plan durable pause/resume remains supported when the plan uses the current contract.
+Existing historical run, session, and saved-chain artifacts are not rewritten or deleted; their status/history may remain readable. However, an older paused run whose persisted configuration depends on retired nested routing, retired `steps`, fork/context inheritance, the removed external pi-intercom detach request/result/control integration, turn-budget behavior, or a retired execution timeout at an async-runner envelope/config root or plan root cannot be resumed under the reduced runtime. Remove only that retired envelope/plan-root timeout field and start a new direct single or parallel run instead. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Normal direct-plan durable pause/resume remains supported when the plan uses the current contract.
+
+If compatibility with the retired nested readers, runner behavior, or publishing path is required, return to a TLH release from before this cleanup. This rollback changes the release rather than migrating artifacts or rewriting settings; it does not restore generic agent sources that were already unsupported before this cleanup.
 
 ### Context diagnostics are not inheritance
 

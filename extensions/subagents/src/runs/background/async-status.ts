@@ -19,7 +19,6 @@ import {
   type ContextPressureProjection,
   type ContextPressureThreshold,
   type ContextUsageDiagnostics,
-  type NestedRunSummary,
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
@@ -29,14 +28,7 @@ import {
 } from "../../shared/types.ts";
 import { readInterruptRequest } from "./control-channel.ts";
 import { readStatus } from "../../shared/utils.ts";
-import {
-  attachRootChildrenToSteps,
-  buildNestedRouteIndex,
-  type NestedRoute,
-  projectNestedEvents,
-} from "../shared/nested-events.ts";
-import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
-import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import {
   formatUnreadableStatus,
   isAsyncStatusReadError,
@@ -139,15 +131,14 @@ interface AsyncRunStepSummary {
   attemptedModels?: string[];
   error?: string;
   timedOut?: boolean;
-  children?: NestedRunSummary[];
   projectAgent?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity;
-  ticketId?: string;
   /**
    * Dispatch-time snapshot of child location facts. Carried verbatim from the
    * persisted step so the tracker's restore path exposes it on AsyncJobState
    * steps before the first poll.
    */
   childLocation?: ChildLocationSnapshot;
+  ticketId?: string;
 }
 
 export interface AsyncRunSummary {
@@ -186,11 +177,9 @@ export interface AsyncRunSummary {
   totalCost?: CostSummary;
   sessionFile?: string;
   pause?: AsyncStatus["pause"];
-  nestedChildren?: NestedRunSummary[];
-  nestedWarnings?: string[];
+  tkTicket?: TkTicketMetadata;
   projectAgents?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity[];
   telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
-  tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
 }
 
 export interface AsyncRunUnreadableStatusIssue {
@@ -310,23 +299,11 @@ export function validatePersistedAsyncStatus(
 function statusToSummary(
   asyncDir: string,
   status: AsyncStatus & { cwd?: string },
-  nestedWarnings: string[] = [],
-  nestedRoute?: NestedRoute,
 ): AsyncRunSummary {
   const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
   const interruptRequestedAt =
     status.state === "running" ? readInterruptRequest(asyncDir)?.ts : undefined;
   const steps = status.steps ?? [];
-  let nestedChildren: NestedRunSummary[] = [];
-  if (nestedWarnings.length === 0 && nestedRoute) {
-    try {
-      // The route is resolved by the caller via buildNestedRouteIndex, so this
-      // avoids a fresh scan of the nested-events directory per run.
-      nestedChildren = projectNestedEvents(nestedRoute)?.children ?? [];
-    } catch (error) {
-      nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
-    }
-  }
   const summarizedSteps = steps.map((step, index) => {
     const stepActivityState = step.activityState;
     const stepLastActivityAt = latestTimestamp(step.startedAt, step.lastActivityAt);
@@ -374,15 +351,10 @@ function statusToSummary(
       ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
       ...(step.error ? { error: step.error } : {}),
       ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
-      ...(step.children?.length ? { children: step.children } : {}),
       ...(step.childLocation ? { childLocation: step.childLocation } : {}),
     };
   });
-  attachRootChildrenToSteps(
-    status.runId || path.basename(asyncDir),
-    summarizedSteps,
-    nestedChildren,
-  );
+  const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
   const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   return {
     id: status.runId || path.basename(asyncDir),
@@ -414,8 +386,6 @@ function statusToSummary(
     currentStep: status.currentStep,
     ...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
     steps: summarizedSteps,
-    ...(nestedChildren.length ? { nestedChildren } : {}),
-    ...(nestedWarnings.length ? { nestedWarnings } : {}),
     ...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
     ...(status.outputFile ? { outputFile: status.outputFile } : {}),
     ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
@@ -424,9 +394,7 @@ function statusToSummary(
     ...(status.pause ? { pause: status.pause } : {}),
     ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
     ...(telemetry ? { telemetry } : {}),
-    ...(normalizeTkTicketMetadata(status.tkTicket) !== undefined
-      ? { tkTicket: normalizeTkTicketMetadata(status.tkTicket) }
-      : {}),
+    ...(normalizedTkTicket !== undefined ? { tkTicket: normalizedTkTicket } : {}),
   };
 }
 
@@ -470,14 +438,13 @@ function listAsyncRunEntries(asyncDirRoot: string): string[] {
   }
 }
 
-function buildRunCollector(asyncDirRoot: string, options: AsyncRunListOptions = {}) {
+function buildRunCollector(
+  asyncDirRoot: string,
+  options: AsyncRunListOptions = {},
+  validationOrder: "strict" | "restore_scan" = "strict",
+) {
   const allowedStates = options.states ? new Set(options.states) : undefined;
   const runs: AsyncRunSummary[] = [];
-  let nestedRouteIndex: Map<string, NestedRoute> | undefined;
-  const resolveNestedRoute = (rootRunId: string): NestedRoute | undefined => {
-    if (!nestedRouteIndex) nestedRouteIndex = buildNestedRouteIndex();
-    return nestedRouteIndex.get(rootRunId);
-  };
   const reportUnreadable = (entry: string, error: AsyncStatusReadError): void => {
     const issue = Object.freeze({
       entry,
@@ -498,34 +465,17 @@ function buildRunCollector(asyncDirRoot: string, options: AsyncRunListOptions = 
               now: options.now,
               statusRead: options.statusRead,
             });
-      const persistedStatus =
-        options.reconcile === false ? readStatus(asyncDir, options.statusRead) : undefined;
-      const status = (reconciliation?.status ?? persistedStatus) as
+      const status = (reconciliation?.status ?? readStatus(asyncDir, options.statusRead)) as
         | (AsyncStatus & { cwd?: string })
         | null;
       if (!status) return;
+      if (validationOrder === "restore_scan") validatePersistedAsyncStatus(asyncDir, status);
       if (allowedStates && !allowedStates.has(status.state)) return;
       if (options.sessionId && status.sessionId !== options.sessionId) return;
-      const nestedWarnings: string[] = [];
-      let nestedRoute: NestedRoute | undefined;
-      try {
-        nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-        if (options.reconcile !== false && nestedRoute)
-          reconcileNestedAsyncDescendants(nestedRoute, {
-            resultsDir: options.resultsDir,
-            kill: options.kill,
-            now: options.now,
-            statusRead: options.statusRead,
-          });
-      } catch (error) {
-        nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
-      }
-      runs.push(statusToSummary(asyncDir, status, nestedWarnings, nestedRoute));
+      if (validationOrder === "strict") validatePersistedAsyncStatus(asyncDir, status);
+      runs.push(statusToSummary(asyncDir, status));
     } catch (error) {
       if (!isAsyncStatusReadError(error)) throw error;
-      // Non-regular artifacts (FIFO, symlink, directory) are routed to the
-      // unsafe callback AND to the unreadable callback so the status path is
-      // visible in the unreadable-status report (P2-a: no suppression).
       if (error.failure === "non_regular") {
         options.onUnsafe?.(Object.freeze({ entry }));
       }
@@ -681,32 +631,10 @@ export function formatAsyncRunList(
     lines.push(`- ${formatRunHeader(run)}`);
     for (const step of run.steps) {
       lines.push(`  ${formatStepLine(step, privacySafe)}`);
-      lines.push(
-        ...formatNestedRunStatusLines(step.children, {
-          indent: "    ",
-          maxLines: 12,
-          redactSensitiveDetails: privacySafe,
-        }),
-      );
     }
-    const attached = new Set(
-      run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []),
-    );
-    const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-    lines.push(
-      ...formatNestedRunStatusLines(unattached, {
-        indent: "  ",
-        maxLines: 12,
-        redactSensitiveDetails: privacySafe,
-      }),
-    );
     if (run.error)
       lines.push(
         `  Error: ${privacySafe ? protectedLifecycleText("error") : safeTerminalText(run.error)}`,
-      );
-    for (const warning of run.nestedWarnings ?? [])
-      lines.push(
-        `  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : safeTerminalText(warning)}`,
       );
     const outputPath = formatAsyncRunOutputPath(run);
     if (!privacySafe && outputPath)

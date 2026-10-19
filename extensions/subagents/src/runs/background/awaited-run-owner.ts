@@ -16,7 +16,6 @@ import {
   type AsyncStatus,
   type ChildProcessCleanupResult,
   type Details,
-  type NestedRunSummary,
   type SingleResult,
   type SubagentEventBus,
   type SubagentRunMode,
@@ -26,15 +25,8 @@ import {
   type SubagentTerminalResult,
 } from "../../shared/types.ts";
 import type { RunnerSubagentStep, SubagentRunPlan } from "../shared/parallel-utils.ts";
-import {
-  attachNestedChildrenToResultChildren,
-  resolveSubagentResultStatus,
-} from "../../shared/result-formatting.ts";
-import {
-  buildAwaitedNativeResult,
-  resultSummaryForNativeAwaited,
-} from "../../shared/result-formatting.ts";
-import { sanitizeSummary } from "../shared/nested-events.ts";
+import { resolveSubagentResultStatus } from "../../shared/result-formatting.ts";
+import { buildAwaitedNativeResult } from "../../shared/result-formatting.ts";
 import { parseSubagentTerminationReason } from "../../shared/context-diagnostics.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { readStatus } from "../../shared/utils.ts";
@@ -314,14 +306,6 @@ function artifactPaths(value: unknown): SingleResult["artifactPaths"] {
     transcriptPath: value.transcriptPath as string,
     metadataPath: value.metadataPath as string,
   };
-}
-
-function nestedChildren(value: unknown): NestedRunSummary[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const children = value
-    .map((child) => sanitizeSummary(child))
-    .filter((child): child is NestedRunSummary => Boolean(child));
-  return children.length > 0 ? children : undefined;
 }
 
 function boundedDiagnostic(value: string): string {
@@ -680,32 +664,8 @@ function resultFromRawChild(
           : typeof child.finalOutput === "string"
             ? child.finalOutput
             : output,
-    ...(Array.isArray(child.children) ? { children: nestedChildren(child.children) } : {}),
   };
   return childResult;
-}
-
-function resultChildrenForFormatting(
-  input: AwaitedRunOwnerOptions,
-  artifact: AwaitedArtifact,
-  results: SingleResult[],
-): ReturnType<typeof attachNestedChildrenToResultChildren> {
-  const rootNested = nestedChildren(artifact.nestedChildren);
-  const children = results.map((result, index) => ({
-    agent: result.agent,
-    status: resolveSubagentResultStatus({
-      exitCode: result.exitCode,
-      interrupted: result.interrupted,
-      success: result.exitCode === 0,
-    }),
-    summary: resultSummaryForNativeAwaited(result),
-    index,
-    artifactPath: result.artifactPaths?.outputPath,
-    sessionPath: result.sessionFile,
-    terminalResult: result.terminalResult,
-    children: result.children,
-  }));
-  return attachNestedChildrenToResultChildren(input.id, children, rootNested);
 }
 
 function buildAwaitedResult(
@@ -759,14 +719,11 @@ function buildAwaitedResult(
       truncation: { text: artifact.summary, truncated: true },
     };
   }
-  const rootNested = nestedChildren(artifact.nestedChildren);
-  const resultWithNested = resultChildrenForFormatting(input, artifact, results);
   const details: Details = {
     mode: input.mode,
     runId: input.id,
-    results: results.map((result, index) => ({
+    results: results.map((result) => ({
       ...result,
-      ...(resultWithNested[index]?.children ? { children: resultWithNested[index].children } : {}),
     })),
     asyncId: input.id,
     asyncDir: input.asyncDir,
@@ -807,7 +764,6 @@ function buildAwaitedResult(
     runId: input.id,
     mode: input.mode,
     details,
-    ...(rootNested?.length ? { nestedChildren: rootNested } : {}),
     statusOverride,
     ...(errorSummary ? { errorSummary } : {}),
   });

@@ -21,7 +21,6 @@ import { isAsyncStatusReadError } from "./async-status-boundary.js";
 import { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "../shared/run-support.js";
 import { RESULTS_DIR, } from "../../shared/types.js";
 import { authorizePersistedProjectAgentRun } from "../shared/project-agent-control.js";
-import { resolveNestedResumeTarget, resumeLiveNestedRun, } from "../shared/nested-control.js";
 export function persistContinuationTelemetry(target, continuationRunId) {
     try {
         const sourceTelemetry = target.source === "async" && "telemetry" in target ? target.telemetry : undefined;
@@ -386,16 +385,7 @@ async function resolveResumeActionTarget(input) {
         const resolved = input.requestedId
             ? resolveSubagentRunId(input.requestedId, { state: input.deps.state })
             : undefined;
-        if (resolved?.kind === "nested") {
-            if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
-                return resumeLiveNestedRun(resolved);
-            }
-            const trustedSessionRoots = input.parentSessionFile
-                ? [input.deps.getSubagentSessionRoot(input.parentSessionFile)]
-                : [];
-            target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
-        }
-        else if (resolved?.kind === "async" || input.params.dir) {
+        if (resolved?.kind === "async" || input.params.dir) {
             const preResolutionDir = resolved?.kind === "async"
                 ? resolved.location.asyncDir
                 : input.params.dir
@@ -707,17 +697,15 @@ export async function resumeAsyncRun(input) {
                 modelScope,
             },
             cwd: effectiveCwd,
-            maxOutput: input.params.maxOutput,
             artifactsDir,
             artifactConfig: input.artifactConfig,
-            shareEnabled: input.params.share === true,
             sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
             sessionFile: target.sessionFile,
             ...priorTerminalResultForResume(target),
             timeoutMs: runTimeoutMs,
             outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
             maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
-            controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
+            controlConfig: resolveControlConfig(input.deps.config.control),
             availableModels,
             providerFallbackModels: providerFallbackModelsForTarget(input.params),
             modelFallbackNotice: input.params.modelFallbackNotice,

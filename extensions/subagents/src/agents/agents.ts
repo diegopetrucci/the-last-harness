@@ -7,7 +7,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
-import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
@@ -50,6 +49,7 @@ const KNOWN_FIELDS = new Set([
   "output",
   "defaultReads",
   "defaultProgress",
+  // Accepted as a retired definition field but deliberately not stored or executed.
   "interactive",
   "maxSubagentDepth",
   "maxExecutionTimeMs",
@@ -127,7 +127,6 @@ export interface AgentConfig {
   output?: string;
   defaultReads?: string[];
   defaultProgress?: boolean;
-  interactive?: boolean;
   maxSubagentDepth?: number;
   /** When false, omit generic native supervisor guidance and contact_supervisor runtime support. */
   supervisorBridge?: boolean;
@@ -803,7 +802,6 @@ export function parseAgentDefinition(
     output: frontmatter.output,
     defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
     defaultProgress: frontmatter.defaultProgress === "true",
-    interactive: frontmatter.interactive === "true",
     maxSubagentDepth:
       Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
         ? parsedMaxSubagentDepth
@@ -862,12 +860,6 @@ function resolveNearestProjectAgentDirs(cwd: string): { preferredDir: string | n
 
   return { preferredDir: path.join(getProjectConfigDir(projectRoot), "agents") };
 }
-
-/**
- * @deprecated Retained only for callers that clear the retired generic source.
- * TLH does not read this environment variable for agent discovery.
- */
-export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
 
 /**
  * The installer-managed TLH role files are the only supported user/extra
@@ -938,9 +930,9 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     projectSettingsPath,
   );
 
-  const agents = mergeAgentsForScope(scope, [], [], canonicalAgents, []).filter(
-    (agent) => agent.disabled !== true,
-  );
+  // Canonical definitions are already loaded in deterministic inventory order. Scope
+  // controls settings precedence above; it must not reintroduce generic source merging.
+  const agents = canonicalAgents.filter((agent) => agent.disabled !== true);
 
   return {
     agents,

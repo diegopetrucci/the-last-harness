@@ -126,7 +126,6 @@ function makeOwner(options: { enabled: boolean } = { enabled: true }): {
       return false;
     },
     applyPausedStepMetadata() {},
-    emitNestedSelfEvent() {},
     startHeartbeat() {},
     stopHeartbeat() {},
   };
@@ -173,7 +172,6 @@ function makeProductionOwner(): {
       },
     },
     overallStartTime: startedAt,
-    shareEnabled: false,
     artifactConfig: {
       mode: "compact",
       enabled: false,
