@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Launch and model-list lookups are faster: context-cap policy no longer rescans its tracked models once per model.
 - Fresh installs again batch-install pinned npm default extensions before the critical quiet-tools install, so they no longer install one-by-one on first launch.
 - Uninstall now accepts installer-compatible symlinked HOME/ancestor aliases while retaining canonical path and profile safety guards.
 - Normal Pi path guards now recognize existing case aliases on case-insensitive filesystems without folding distinct case-sensitive paths.
@@ -54,6 +55,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- `check:startup-performance` now times TLH's own header/footer frame (not Pi's first frame) and its PTY bridge sets a window size and answers terminal startup queries.
 - Corrected current context-cap guidance to the implemented 350k primary cap and role-specific child windows.
 - Fixed a flaky `tlh doctor ignores RTK executables on PATH` test that matched random temp-path suffixes.
 - Generated `.js` twins now carry a generated-file header pointing at their TypeScript source.

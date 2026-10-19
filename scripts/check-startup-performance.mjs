@@ -24,7 +24,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   hasFooterMarker,
   hasHeaderMarker,
-  stripTerminalNoise,
+  appendReadinessOutput,
+  createReadinessObserver,
 } from "./lib/tlh-startup-readiness.mjs";
 import { renderShellWords } from "./lib/tlh-install-utils.mjs";
 import { renderWrapper } from "./tlh-wrapper.mjs";
@@ -54,12 +55,16 @@ const PROFILE_BACKUP_ARTIFACT_PATTERN = /\.(?:bak|backup)(?:[-.]|$)/u;
 let interruptSignal;
 const PYTHON_PTY_BRIDGE = String.raw`
 import errno
+import fcntl
 import os
 import pty
+import re
 import select
 import signal
+import struct
 import subprocess
 import sys
+import termios
 import time
 
 READ_TIMEOUT_SECONDS = 0.05
@@ -67,12 +72,26 @@ POLL_INTERVAL_SECONDS = 0.05
 INTERRUPT_GRACE_SECONDS = 0.4
 TERM_GRACE_SECONDS = 0.6
 KILL_GRACE_SECONDS = 0.2
+WINDOW_ROWS = 50
+WINDOW_COLS = 160
+QUERY_TAIL_BYTES = 16
+# Startup queries Pi sends; answered like a typical terminal so Pi does not wait
+# out its terminal-colour query timeout.
+QUERY_PATTERN = re.compile(
+    rb"\x1b\[\?u|\x1b\[0?c|\x1b\[16t"
+    rb"|\x1b\](?:(?:10|11);|4;(\d+);)\?(?:\x07|\x1b\\)"
+)
 
 if len(sys.argv) < 2:
     print("error: missing command", file=sys.stderr)
     raise SystemExit(2)
 
 master_fd, slave_fd = pty.openpty()
+try:
+    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", WINDOW_ROWS, WINDOW_COLS, 0, 0))
+except OSError:
+    pass
+query_buffer = b""
 child = None
 child_process_group = None
 termination_signal = None
@@ -175,6 +194,37 @@ def bridge_exit_status(returncode):
     return returncode
 
 
+def query_reply(match):
+    text = match.group(0)
+    if text.startswith(b"\x1b[?u"):
+        return b"\x1b[?0u"
+    if text.endswith(b"c"):
+        return b"\x1b[?62;22c"
+    if text.endswith(b"16t"):
+        return b"\x1b[6;20;10t"
+    if match.group(1) is not None:
+        return b"\x1b]4;" + match.group(1) + b";rgb:8080/8080/8080\x1b\\"
+    if text.startswith(b"\x1b]10;"):
+        return b"\x1b]10;rgb:dddd/dddd/dddd\x1b\\"
+    return b"\x1b]11;rgb:1111/1111/1111\x1b\\"
+
+
+def answer_queries(data):
+    # Scan a small rolling tail so queries split across reads are still seen,
+    # while matches ending inside the already-scanned tail are not answered twice.
+    global query_buffer
+    scanned = len(query_buffer)
+    buffer = query_buffer + data
+    for match in QUERY_PATTERN.finditer(buffer):
+        if match.end() <= scanned:
+            continue
+        try:
+            os.write(master_fd, query_reply(match))
+        except OSError:
+            break
+    query_buffer = buffer[-QUERY_TAIL_BYTES:]
+
+
 def forward_output(data):
     pending = memoryview(data)
     while pending:
@@ -237,6 +287,7 @@ try:
             # synchronously clean up the fixture group without finalizer noise.
             if not forward_output(data):
                 break
+            answer_queries(data)
 
         if stdin_fd in ready:
             incoming = os.read(stdin_fd, 1024)
@@ -867,7 +918,7 @@ async function measureRun(options, workspace, launchPlan, runNumber, interruptCl
   let firstOutputMs;
   let firstHeaderMs;
   let firstFooterMs;
-  let plainText = "";
+  const readiness = createReadinessObserver();
   let settled = false;
   let timeoutHandle;
 
@@ -897,11 +948,11 @@ async function measureRun(options, workspace, launchPlan, runNumber, interruptCl
       if (firstOutputMs === undefined) {
         firstOutputMs = now;
       }
-      plainText += stripTerminalNoise(rawText);
-      if (firstHeaderMs === undefined && hasHeaderMarker(plainText)) {
+      appendReadinessOutput(readiness, rawText);
+      if (firstHeaderMs === undefined && hasHeaderMarker(readiness.normalizedOutput)) {
         firstHeaderMs = now;
       }
-      if (firstFooterMs === undefined && hasFooterMarker(plainText)) {
+      if (firstFooterMs === undefined && hasFooterMarker(readiness.normalizedOutput)) {
         firstFooterMs = now;
       }
       if (firstHeaderMs !== undefined && firstFooterMs !== undefined) {
@@ -919,7 +970,7 @@ async function measureRun(options, workspace, launchPlan, runNumber, interruptCl
         settle(resolvePromise, undefined);
         return;
       }
-      const preview = excerptOutput(plainText);
+      const preview = excerptOutput(readiness.normalizedOutput);
       settle(
         rejectPromise,
         new Error(
@@ -934,7 +985,7 @@ async function measureRun(options, workspace, launchPlan, runNumber, interruptCl
       ]
         .filter(Boolean)
         .join(" and ");
-      const preview = excerptOutput(plainText);
+      const preview = excerptOutput(readiness.normalizedOutput);
       settle(
         rejectPromise,
         new Error(`run ${runNumber} timed out waiting for ${missing}\n${preview}`),

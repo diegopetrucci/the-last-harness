@@ -233,7 +233,7 @@ function setModelContextWindowPolicy(
     modelRef,
   };
   ownedModelPolicies.set(model, ownership);
-  pruneOwnedModelReferences(policyState);
+  // Dead refs are pruned once per batch (applyContextWindowPolicyToModels), not per model.
   policyState.ownedModels.add(modelRef);
 }
 
@@ -470,6 +470,7 @@ function applyContextWindowPolicyToModels(
   authoritativeGeneration?: number,
 ): number {
   let changed = 0;
+  pruneOwnedModelReferences(policyState);
   for (const model of models ?? []) {
     if (applyContextWindowPolicy(model, policyState, policy, authoritativeGeneration)) changed++;
   }
