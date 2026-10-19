@@ -44,6 +44,7 @@ import {
   type SubagentTerminalResult,
   type SubagentTerminalState,
 } from "../../shared/types.ts";
+import { boundedActiveRuntimeMs } from "../shared/active-runtime.ts";
 import { type RunnerSubagentStep as SubagentStep } from "../shared/parallel-utils.ts";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -205,6 +206,8 @@ type SingleStepResultValue = {
   transcriptError?: string;
   interrupted?: boolean;
   timedOut?: boolean;
+  /** Cumulative active runtime of this child's lineage, including this segment. */
+  activeRuntimeMs?: number;
   sessionFile?: string;
   skills?: string[];
   skillsWarning?: string;
@@ -244,6 +247,8 @@ interface SingleStepExecutionState {
   attemptFacts: SubagentAttemptFacts[];
   /** Tool-call IDs are globally deduplicated across appended/resumed session data. */
   seenToolCallIds: Set<string>;
+  /** Active child runtime consumed by this lineage, including earlier resumes. */
+  activeRuntimeMs: number;
 }
 
 interface SingleStepSetup {
@@ -378,6 +383,7 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
         ? boundSubagentAttemptFacts(step.terminalResult.facts.attempts)
         : [],
       seenToolCallIds: new Set(),
+      activeRuntimeMs: boundedActiveRuntimeMs(step.activeRuntimeMs),
     },
   };
 }
@@ -417,9 +423,16 @@ function prepareSingleStepAttempt(input: {
   const sessionBaseline = attemptSessionPath ? snapshotSessionFiles(attemptSessionPath) : undefined;
   const startedAt = Date.now();
   const monotonicStartedAt = performance.now();
-  const roleTimeoutMs = step.timeoutOwner !== "run" ? step.timeoutMs : undefined;
+  // The role budget is per instance and measured in active child runtime: this
+  // attempt may only spend what earlier attempts and resumes left over.
+  const roleRemainingMs =
+    step.timeoutOwner !== "run" && step.timeoutMs !== undefined
+      ? Math.max(0, step.timeoutMs - state.activeRuntimeMs)
+      : undefined;
   const attemptDeadlineAt =
-    roleTimeoutMs !== undefined ? saturatingStepDeadlineAt(startedAt, roleTimeoutMs) : undefined;
+    roleRemainingMs !== undefined
+      ? saturatingStepDeadlineAt(startedAt, roleRemainingMs)
+      : undefined;
   const childDeadlineAt =
     ctx.deadlineAt === undefined
       ? attemptDeadlineAt
@@ -924,6 +937,7 @@ function buildSingleStepResult(input: {
     transcriptError: setup.transcriptWriter?.getError(),
     interrupted: outcome.timedOut ? false : outcome.effectiveInterrupted,
     timedOut: outcome.timedOut ? true : finalResult?.timedOut,
+    activeRuntimeMs: state.activeRuntimeMs,
     terminalResult: terminalResultForState(state, terminalStateForOutcome(outcome)),
   };
 }
@@ -1154,6 +1168,11 @@ export async function runSingleStep(
         effectiveExitSignal: run.exitSignal,
       });
     } finally {
+      state.activeRuntimeMs = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        state.activeRuntimeMs +
+          Math.ceil(Math.max(0, performance.now() - attempt.monotonicStartedAt)),
+      );
       attemptTimeoutTimer?.cancel();
       if (attemptTempDir) {
         activeTempDirs.delete(attemptTempDir);

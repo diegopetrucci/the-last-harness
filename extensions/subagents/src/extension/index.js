@@ -26,7 +26,7 @@ import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } 
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
-import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
+import { warnRetiredExecutionPolicy } from "../agents/execution-ceiling.js";
 import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
@@ -383,8 +383,8 @@ export default function registerSubagentExtension(pi) {
     scheduleDetachedRuntimeCleanup();
     const telemetryProvenance = captureSubagentTelemetryProvenance();
     const config = loadConfig();
+    warnRetiredExecutionPolicy(config.execution);
     const artifactConfig = resolveArtifactConfig(config.artifacts);
-    const executionPolicy = resolveExecutionPolicy(config.execution);
     const tempArtifactsDir = getArtifactsDir(null);
     cleanupAllArtifactDirs(artifactConfig.cleanupDays);
     const liveDetailController = createSubagentLiveDetailController();
@@ -455,7 +455,6 @@ export default function registerSubagentExtension(pi) {
         state,
         config,
         artifactConfig,
-        executionPolicy,
         tempArtifactsDir,
         getSubagentSessionRoot,
         expandTilde,
@@ -529,19 +528,19 @@ export default function registerSubagentExtension(pi) {
             ? trimmedPreview.split("\n").filter((line) => line.trim())
             : [trimmedPreview.split("\n", 1)[0] ?? ""].filter((line) => line.trim());
         for (const line of previewLines.length > 0 ? previewLines : ["(no output)"]) {
-            text += `\n  ${theme.fg("dim", `   ${line}`)}`;
+            text += `\n    ${theme.fg("dim", line)}`;
         }
         if (options.expanded) {
             for (const line of referenceLines) {
-                text += `\n  ${theme.fg("muted", line)}`;
+                text += `\n    ${theme.fg("muted", line)}`;
             }
         }
         else if (trimmedPreview.includes("\n") || referenceLines.length > 0) {
             const expandKey = keyText("app.tools.expand");
-            text += `\n  ${theme.fg("dim", `${expandKey} full notification`)}`;
+            text += `\n    ${theme.fg("dim", `${expandKey} full notification`)}`;
         }
         if (details.sessionLabel && details.sessionValue) {
-            text += `\n  ${theme.fg("muted", `${details.sessionLabel}: ${shortenPath(details.sessionValue)}`)}`;
+            text += `\n    ${theme.fg("muted", `${details.sessionLabel}: ${shortenPath(details.sessionValue)}`)}`;
         }
         return new Text(text, 0, 0);
     });

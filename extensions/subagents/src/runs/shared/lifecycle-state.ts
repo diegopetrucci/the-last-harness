@@ -19,6 +19,7 @@ import {
   canonicalLifecycleState,
   canonicalLifecycleStepState,
 } from "../background/async-status-boundary.ts";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./active-runtime.ts";
 import { normalizeIdleEpisodeId } from "./subagent-control.ts";
 import {
   appendSubagentTelemetryContinuation,
@@ -258,15 +259,22 @@ export function withLifecycleContinuation(
   return next;
 }
 
-const RETIRED_FIELDS = [
-  "activeRuntimeMs",
-  "activeRuntimeCheckpointAt",
-  "durableAttentionReasons",
-] as const;
+const RETIRED_FIELDS = ["durableAttentionReasons"] as const;
 
 function normalizeRecord(raw: AnyRecord, fields: readonly string[]): AnyRecord {
   const result = { ...raw };
   for (const field of [...RETIRED_FIELDS, ...fields]) delete result[field];
+  // Per-instance role budgets persist consumed active runtime; corrupt values
+  // are dropped so they can never widen a continuation budget.
+  const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    raw.activeRuntimeCheckpointAt,
+  );
+  if (activeRuntimeMs !== undefined) result.activeRuntimeMs = activeRuntimeMs;
+  else delete result.activeRuntimeMs;
+  if (activeRuntimeCheckpointAt !== undefined)
+    result.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
+  else delete result.activeRuntimeCheckpointAt;
   if (raw.activityState === "needs_attention") result.activityState = raw.activityState;
   const terminalResult = parseSubagentTerminalResult(raw.terminalResult);
   if (terminalResult) result.terminalResult = terminalResult;

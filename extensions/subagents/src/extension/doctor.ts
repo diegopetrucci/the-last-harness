@@ -7,7 +7,6 @@ import {
   type ProjectAgentTrustOptions,
   type ProjectAgentTrustResult,
 } from "../agents/project-agent-loader.ts";
-import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { discoverAvailableSkills, SOURCE_PRIORITY, type SkillSource } from "../agents/skills.ts";
 import {
@@ -139,16 +138,6 @@ function formatSessionLines(input: DoctorReportInput): string[] {
   return lines;
 }
 
-function formatExecutionSection(input: DoctorReportInput): string[] {
-  const policy = resolveExecutionPolicy(input.config.execution);
-  const runCeiling = policy.maxRunTimeMs === false ? "disabled" : `${policy.maxRunTimeMs}ms`;
-  return [
-    `- shared run ceiling: ${runCeiling}`,
-    "- role ceilings: fresh wall-clock deadline per child spawn (fallback/resume restart the clock)",
-    ...(policy.diagnostic ? [`- execution policy: warning — ${policy.diagnostic}`] : []),
-  ];
-}
-
 function formatRuntimeDirCounts(paths: DoctorPaths): string {
   const counts = inspectRuntimeDirs({
     asyncDir: paths.asyncDir,
@@ -277,9 +266,6 @@ export function buildDoctorReport(input: DoctorReportInput): string {
       () => `- async support: ${deps.isAsyncAvailable() ? "available" : "unavailable"}`,
     ),
     ...formatSessionLines(input),
-    "",
-    "Execution",
-    ...formatExecutionSection(input),
     "",
     "Filesystem",
     formatExistingDirectory("temp root", paths.tempRootDir),

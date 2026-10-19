@@ -6,6 +6,7 @@ import { contextWindowForModel, emptyUsage, runPiStreaming, } from "./pi-streami
 import { getArtifactPaths, writeArtifactWithFloor } from "../../shared/artifacts.js";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
 import {} from "../../shared/types.js";
+import { boundedActiveRuntimeMs } from "../shared/active-runtime.js";
 import {} from "../shared/parallel-utils.js";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
@@ -162,6 +163,7 @@ function prepareSingleStepSetup(step, ctx) {
                 ? boundSubagentAttemptFacts(step.terminalResult.facts.attempts)
                 : [],
             seenToolCallIds: new Set(),
+            activeRuntimeMs: boundedActiveRuntimeMs(step.activeRuntimeMs),
         },
     };
 }
@@ -173,8 +175,12 @@ function prepareSingleStepAttempt(input) {
     const sessionBaseline = attemptSessionPath ? snapshotSessionFiles(attemptSessionPath) : undefined;
     const startedAt = Date.now();
     const monotonicStartedAt = performance.now();
-    const roleTimeoutMs = step.timeoutOwner !== "run" ? step.timeoutMs : undefined;
-    const attemptDeadlineAt = roleTimeoutMs !== undefined ? saturatingStepDeadlineAt(startedAt, roleTimeoutMs) : undefined;
+    const roleRemainingMs = step.timeoutOwner !== "run" && step.timeoutMs !== undefined
+        ? Math.max(0, step.timeoutMs - state.activeRuntimeMs)
+        : undefined;
+    const attemptDeadlineAt = roleRemainingMs !== undefined
+        ? saturatingStepDeadlineAt(startedAt, roleRemainingMs)
+        : undefined;
     const childDeadlineAt = ctx.deadlineAt === undefined
         ? attemptDeadlineAt
         : attemptDeadlineAt === undefined
@@ -566,6 +572,7 @@ function buildSingleStepResult(input) {
         transcriptError: setup.transcriptWriter?.getError(),
         interrupted: outcome.timedOut ? false : outcome.effectiveInterrupted,
         timedOut: outcome.timedOut ? true : finalResult?.timedOut,
+        activeRuntimeMs: state.activeRuntimeMs,
         terminalResult: terminalResultForState(state, terminalStateForOutcome(outcome)),
     };
 }
@@ -747,6 +754,8 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
             });
         }
         finally {
+            state.activeRuntimeMs = Math.min(Number.MAX_SAFE_INTEGER, state.activeRuntimeMs +
+                Math.ceil(Math.max(0, performance.now() - attempt.monotonicStartedAt)));
             attemptTimeoutTimer?.cancel();
             if (attemptTempDir) {
                 activeTempDirs.delete(attemptTempDir);

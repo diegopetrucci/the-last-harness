@@ -4,6 +4,7 @@ import { getArtifactPaths } from "../../shared/artifacts.js";
 import { readStatus, resolveChildCwd } from "../../shared/utils.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { isActiveLifecycleState, isCompletedLifecycleStepState, isLifecycleTransitionContentionError, isTerminalLifecycleState, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
 import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
 import { persistedTicketId } from "../shared/ticket-context.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
@@ -85,6 +86,15 @@ export function createBackgroundRunStatusOwner(input) {
             ...(ticketId ? { ticketId } : {}),
             status: "pending",
             ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
+            ...(task.timeoutOwner ? { timeoutOwner: task.timeoutOwner } : {}),
+            ...(normalizeActiveRuntimeMs(task.activeRuntimeMs) !== undefined
+                ? { activeRuntimeMs: normalizeActiveRuntimeMs(task.activeRuntimeMs) }
+                : {}),
+            ...(normalizeActiveRuntimeCheckpointAt(task.activeRuntimeCheckpointAt) !== undefined
+                ? {
+                    activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(task.activeRuntimeCheckpointAt),
+                }
+                : {}),
             ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
             ...(terminalResult ? { terminalResult } : {}),
             ...(transcriptPath ? { transcriptPath } : {}),

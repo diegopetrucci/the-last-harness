@@ -11,6 +11,8 @@ import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.js";
+import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
 import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "failed", "paused"]);
 const RESUME_TERMINAL_RUN_STATES = new Set([
@@ -120,6 +122,18 @@ function validateResultFile(value, resultPath) {
             const interrupted = child.interrupted;
             if (interrupted !== undefined && typeof interrupted !== "boolean")
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`);
+            const timedOut = child.timedOut;
+            if (timedOut !== undefined && typeof timedOut !== "boolean")
+                throw new Error(`Invalid async result file '${resultPath}': results[${index}].timedOut must be a boolean.`);
+            const timeoutOwner = normalizeExecutionTimeoutOwner(child.timeoutOwner);
+            const activeRuntimeMs = child.activeRuntimeMs;
+            if (activeRuntimeMs !== undefined &&
+                (typeof activeRuntimeMs !== "number" ||
+                    !Number.isFinite(activeRuntimeMs) ||
+                    activeRuntimeMs < 0)) {
+                throw new Error(`Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`);
+            }
+            const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(child.activeRuntimeCheckpointAt);
             const projectAgent = parseProjectAgentCapture(child.projectAgent, resultPath, `results[${index}].projectAgent`);
             return {
                 agent,
@@ -127,6 +141,10 @@ function validateResultFile(value, resultPath) {
                 ...(stepCwd ? { cwd: stepCwd } : {}),
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
+                ...(typeof timedOut === "boolean" ? { timedOut } : {}),
+                ...(timeoutOwner ? { timeoutOwner } : {}),
+                ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+                ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
                 ...(model ? { model } : {}),
                 ...(ticketId ? { ticketId } : {}),
                 ...(thinking ? { thinking } : {}),
@@ -573,8 +591,18 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         ...(context.telemetry !== undefined ? { telemetry: context.telemetry } : {}),
     };
     const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
+    const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
+    const statusTimeoutOwner = normalizeExecutionTimeoutOwner(selectedStatusStep?.timeoutOwner);
+    const resultTimeoutOwner = normalizeExecutionTimeoutOwner(context.resultSteps[index]?.timeoutOwner);
+    const timeoutOwner = statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
+        ? "role"
+        : (statusTimeoutOwner ?? resultTimeoutOwner);
+    const timedOut = selectedStatusStep?.timedOut === true || context.resultSteps[index]?.timedOut === true;
     return {
         ...targetWithModelMetadata,
+        ...runtimeMetadata,
+        ...(timedOut ? { timedOut: true } : {}),
+        ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
         ...(diagnosticMetadata.contextPressure
             ? { contextPressure: diagnosticMetadata.contextPressure }
@@ -585,6 +613,22 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         ...(diagnosticMetadata.terminationReason
             ? { terminationReason: diagnosticMetadata.terminationReason }
             : {}),
+    };
+}
+function resolveSelectedChildRuntimeMetadata(context, index) {
+    const statusStep = context.statusSteps[index];
+    const resultStep = context.resultSteps[index];
+    const consumed = [
+        normalizeActiveRuntimeMs(statusStep?.activeRuntimeMs),
+        normalizeActiveRuntimeMs(resultStep?.activeRuntimeMs),
+    ].filter((value) => value !== undefined);
+    const checkpoints = [
+        normalizeActiveRuntimeCheckpointAt(statusStep?.activeRuntimeCheckpointAt),
+        normalizeActiveRuntimeCheckpointAt(resultStep?.activeRuntimeCheckpointAt),
+    ].filter((value) => value !== undefined);
+    return {
+        ...(consumed.length > 0 ? { activeRuntimeMs: Math.max(...consumed) } : {}),
+        ...(checkpoints.length > 0 ? { activeRuntimeCheckpointAt: Math.max(...checkpoints) } : {}),
     };
 }
 function resolveTerminalAsyncResumeTarget(context) {

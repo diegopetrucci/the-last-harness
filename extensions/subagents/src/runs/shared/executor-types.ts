@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentDiscoveryDiagnostic, AgentScope } from "../../agents/agents.ts";
-import type { ResolvedExecutionPolicy } from "../../agents/execution-ceiling.ts";
 import type {
   ProjectAgentIdentity,
   ProjectAgentTrustStore,
@@ -85,8 +84,6 @@ export interface ExecutorDeps {
   config: ExtensionConfig;
   /** Resolved once by the trusted parent; optional for direct test/legacy callers. */
   artifactConfig?: ResolvedArtifactConfig;
-  /** Resolved once by the trusted parent; optional for direct test/legacy callers. */
-  executionPolicy?: ResolvedExecutionPolicy;
   tempArtifactsDir: string;
   getSubagentSessionRoot: (parentSessionFile: string | null) => string;
   expandTilde: (p: string) => string;

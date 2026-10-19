@@ -149,13 +149,13 @@ describe("real child process protocol hardening", () => {
       assert.equal(start.isError, undefined);
       await waitForMockPiCall(mockPi, 0);
       const asyncDir = path.join(ASYNC_DIR, id);
-      // Gate on step-level timeout evidence while the child is still alive
-      // (pid present), not on the top-level timedOut flag which is written
-      // only after teardown and would race with the release marker write.
+      // Gate on step-level timeout evidence. The role-derived root deadline may
+      // publish the terminal timeout (clearing pid) before the child exits, so
+      // the child's liveness is not part of the gate.
       const timedOutStatus = await waitForAsyncStatusPredicate(
         asyncDir,
-        (status) => status.steps?.[0]?.timedOut === true && status.pid != null,
-        "async step timeout with child alive",
+        (status) => status.steps?.[0]?.timedOut === true,
+        "async step timeout",
       );
       assert.equal(timedOutStatus.steps?.[0]?.terminationReason, "timed_out");
       fs.writeFileSync(releaseMarker, "", "utf-8");

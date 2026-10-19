@@ -86,6 +86,12 @@ export const VALIDATION_CHECKS = Object.freeze(
       lane: "pkg",
       order: 11,
     },
+    {
+      id: "check-release-notes",
+      argv: ["npm", "run", "check:release-notes"],
+      lane: "pkg",
+      order: 12,
+    },
   ].map((check) => Object.freeze({ ...check, argv: Object.freeze([...check.argv]) })),
 );
 

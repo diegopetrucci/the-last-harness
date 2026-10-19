@@ -39,7 +39,7 @@ Through 2026-09-29, compatibility was retained only for locally saved pre-v0.27 
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.43.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.44.0/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -62,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.43.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; after the background GitHub comparison succeeds, it may append `1 commit behind origin/main` or `N commits behind origin/main`. Older main-track state without that metadata continues to show `TLH main`, and current, divergent, failed, or unavailable comparisons show no behind suffix.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.44.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; after the background GitHub comparison succeeds, it may append `1 commit behind origin/main` or `N commits behind origin/main`. Older main-track state without that metadata continues to show `TLH main`, and current, divergent, failed, or unavailable comparisons show no behind suffix.
 
 ## Installer options
 
@@ -87,7 +87,7 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.43.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.44.0/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update
@@ -145,6 +145,8 @@ Release builds with TelemetryDeck identifiers configured send pseudonymous telem
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
 Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while any remaining TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. The first-party subagent runtime is refreshed with the TLH package itself rather than through this default-extension update path.
+
+`pi-quiet-tools` is a mandatory, always-on, renderer-only TLH default pinned to `npm:@diegopetrucci/pi-quiet-tools@0.1.14`. Historical `quiet-tools` and `compact-bash` opt-outs do not apply: install/update removes those invalid opt-out IDs, migrates recognized old sources, and enforces the verified source and extension loading while preserving unrelated settings and package metadata. There is no supported `tlh defaults disable` or off recommendation for this default. Its `/quiet-tools` command is read-only status for the installer-managed source only; Ctrl+O and per-row expansion still show native full output, and separately loaded third-party extensions are outside this renderer guarantee.
 
 ## Fullscreen TUI
 
@@ -290,23 +292,15 @@ A changed valid existing config is backed up to `config.json.backup-*` before wr
 
 ### Execution limits and migration
 
-Execution deadlines are human-owned, not model- or caller-owned. Set the shared run policy in the same isolated config file:
+Execution time is bounded per child instance and owned by its role definition, not by the model or caller. The former shared `execution.maxRunTimeMs` key in `<agent-dir>/extensions/subagent/config.json` is retired. If an existing config still contains that key, TLH checks only its presence, emits a warning, ignores its value, and leaves the user-owned file untouched; install and update do not rewrite or remove it. A legacy role override of `maxExecutionTimeMs: false` is likewise ignored and retains the bounded role fallback.
 
-```json
-{
-  "execution": {
-    "maxRunTimeMs": 14400000
-  }
-}
-```
+Canonical minor roles have code-owned `maxExecutionTimeMs` ceilings. TLH selects one `subagents.agentOverrides.<role>` object: the selected project's entry in `.pi/settings.json` when present, otherwise the profile entry in `<agent-dir>/settings.json`. The two objects are not merged field-by-field. Therefore, a project entry that omits `maxExecutionTimeMs` does not retain a profile value; absent an authoritative frontmatter value, the code-owned role default remains. A selected human override accepts only a positive safe integer. A custom project agent owns its positive-safe-integer `maxExecutionTimeMs` in frontmatter; omission uses the **14400000 ms (4h)** custom fallback, and profile/project settings do not override that definition. See [subagents.md](subagents.md#timeout-ownership-and-execution-ceilings) for the exact nine-role values and precedence details.
 
-An absent `execution.maxRunTimeMs` is the bounded **14400000 ms (4h)** default. The only valid values are a positive safe integer or explicit `false`; invalid values warn and use the bounded default. `false` removes only the shared run-level ceiling, so a canonical role ceiling, custom definition ceiling, provider/network or control limit, or external supervisor can still stop work. Install/update preserve this human-owned block and its surrounding keys.
+There is no new shared deadline: each child in a single or parallel dispatch consumes its own role budget, and that budget is not divided among siblings. Models/callers must not send model-facing root `timeoutMs` or public `tasks[].timeoutMs`. Separately, an executable async-runner envelope/config with its own root `timeoutMs`, or a persisted plan with plan-root `timeoutMs`, fails closed before child launch with migration guidance: remove only that retired envelope/plan-root field and restart as a new direct single or parallel run. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Existing historical records remain readable and are not rewritten. Older in-flight artifacts may retain trusted run-owned `deadlineAt` metadata, which remains compatible for that existing job but does not establish new policy or permanently exhaust a role instance.
 
-Canonical minor roles have code-owned `maxExecutionTimeMs` ceilings. TLH selects one `subagents.agentOverrides.<role>` object: the selected project's entry in `.pi/settings.json` when present, otherwise the profile entry in `<agent-dir>/settings.json`. The two objects are not merged field-by-field. Therefore, a project entry that omits `maxExecutionTimeMs` does not retain a profile value; absent an authoritative frontmatter value, the code-owned role default remains. A selected human override accepts a positive safe integer or `false`. A custom project agent instead owns its positive-safe-integer `maxExecutionTimeMs` in frontmatter; omission uses the **14400000 ms (4h)** custom fallback, and profile/project settings do not override that definition. See [subagents.md](subagents.md#timeout-ownership-and-execution-ceilings) for the exact nine-role values and precedence details.
+A recoverable pause resumes the same child lineage and context with its remaining active-time budget; paused wall time does not consume it. When a role budget expires, that instance is permanently poisoned. The architect must inspect partial output, artifacts, and files, then decide whether to narrow/split the remaining scope or make a fresh dispatch. TLH does not automatically replace, roll back, or mechanically redispatch the unchanged task. Exhausted output, notifications, and status omit resume hints; ordinary recoverable pauses retain valid same-lineage hints.
 
-A direct single run has one shared deadline. A parallel batch has one shared deadline covering queue/concurrency wait, child startup, fallback/retry work, and the rest of the batch in both awaited and async modes; it is not a per-task pool. Models/callers must not send model-facing root `timeoutMs` or public `tasks[].timeoutMs`. Separately, an executable async-runner envelope/config with its own root `timeoutMs`, or a persisted plan with plan-root `timeoutMs`, fails closed before child launch with migration guidance: remove only that retired envelope/plan-root field and restart as a new direct single or parallel run. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Existing historical records remain readable and are not rewritten. The former six-minute scout exception tracked by issue #420 is retired and is not current behavior.
-
-To undo a persistent change, remove `execution.maxRunTimeMs` and reload/restart to restore the bounded default, or replace `false` with a positive value. Remove a canonical role's settings override to restore its code-owned ceiling, and remove a custom agent's frontmatter field to restore its 4-hour fallback. Preserve a backup and unknown keys, and never edit normal `~/.pi/agent` configuration. There is no compatibility switch for retired caller timeouts; rolling back the package version is the only way to restore that old public behavior. Other timeout fields—such as provider/network/control timeouts and historical status/reader metadata—remain separate and are not migrated into this policy.
+There is no compatibility switch for retired caller timeouts. If older timeout behavior is required, roll back the TLH package version; this changes the runtime release without changing user configuration or rewriting historical artifacts. To restore a canonical role's code-owned ceiling, remove its positive settings override; a legacy `false` already falls back to that ceiling. Removing a custom agent's frontmatter field restores its 4-hour fallback. Preserve backups and unknown keys, and never edit normal `~/.pi/agent` configuration. Other timeout fields—such as provider/network/control timeouts, and historical status/reader metadata—remain separate.
 
 ## gh CLI prerequisite (for librarian)
 

@@ -39,6 +39,11 @@ import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.ts";
+import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.ts";
+import {
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
+} from "../shared/active-runtime.ts";
 import {
   mergeSubagentRunTelemetry,
   normalizeSubagentRunTelemetry,
@@ -88,6 +93,11 @@ type AsyncResumeTarget = {
   terminalResult?: SubagentTerminalResult;
   projectAgent?: ProjectAgentIdentity /** Present only when the persisted run carried a run-level project inventory. */;
   projectAgents?: ProjectAgentIdentity[];
+  /** Cumulative active runtime of the selected child's lineage. */
+  activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
+  timedOut?: boolean;
+  timeoutOwner?: "role" | "run";
   /** Validated source-run telemetry used to seed continuation lineage. */
   telemetry?: SubagentRunTelemetry;
 };
@@ -345,6 +355,26 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         throw new Error(
           `Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`,
         );
+      const timedOut = child.timedOut;
+      if (timedOut !== undefined && typeof timedOut !== "boolean")
+        throw new Error(
+          `Invalid async result file '${resultPath}': results[${index}].timedOut must be a boolean.`,
+        );
+      const timeoutOwner = normalizeExecutionTimeoutOwner(child.timeoutOwner);
+      const activeRuntimeMs = child.activeRuntimeMs;
+      if (
+        activeRuntimeMs !== undefined &&
+        (typeof activeRuntimeMs !== "number" ||
+          !Number.isFinite(activeRuntimeMs) ||
+          activeRuntimeMs < 0)
+      ) {
+        throw new Error(
+          `Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`,
+        );
+      }
+      const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+        child.activeRuntimeCheckpointAt,
+      );
       const projectAgent = parseProjectAgentCapture(
         child.projectAgent,
         resultPath,
@@ -356,6 +386,10 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(stepCwd ? { cwd: stepCwd } : {}),
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
+        ...(typeof timedOut === "boolean" ? { timedOut } : {}),
+        ...(timeoutOwner ? { timeoutOwner } : {}),
+        ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(model ? { model } : {}),
         ...(ticketId ? { ticketId } : {}),
         ...(thinking ? { thinking } : {}),
@@ -963,8 +997,27 @@ function buildTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
+  // Normalize each source independently so a malformed status owner (e.g.
+  // "ROLE") cannot mask a valid result-side "role" owner via nullish coalescing.
+  // Either source carrying "role" evidence must fail closed.
+  const statusTimeoutOwner = normalizeExecutionTimeoutOwner(selectedStatusStep?.timeoutOwner);
+  const resultTimeoutOwner = normalizeExecutionTimeoutOwner(
+    context.resultSteps[index]?.timeoutOwner,
+  );
+  const timeoutOwner =
+    statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
+      ? ("role" as const)
+      : (statusTimeoutOwner ?? resultTimeoutOwner);
+  // Similarly normalize timedOut from each source so a truthy non-boolean in
+  // the status cannot suppress a legitimate true in the result.
+  const timedOut =
+    selectedStatusStep?.timedOut === true || context.resultSteps[index]?.timedOut === true;
   return {
     ...targetWithModelMetadata,
+    ...runtimeMetadata,
+    ...(timedOut ? { timedOut: true } : {}),
+    ...(timeoutOwner ? { timeoutOwner } : {}),
     ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
     ...(diagnosticMetadata.contextPressure
       ? { contextPressure: diagnosticMetadata.contextPressure }
@@ -975,6 +1028,31 @@ function buildTerminalAsyncResumeTarget(
     ...(diagnosticMetadata.terminationReason
       ? { terminationReason: diagnosticMetadata.terminationReason }
       : {}),
+  };
+}
+
+/**
+ * Resume preserves consumed active runtime. Status and result evidence can
+ * disagree after a crash, so the larger value wins: undercounting would widen
+ * the instance's role budget.
+ */
+function resolveSelectedChildRuntimeMetadata(
+  context: AsyncResumeResolutionContext,
+  index: number,
+): Pick<AsyncResumeTarget, "activeRuntimeMs" | "activeRuntimeCheckpointAt"> {
+  const statusStep = context.statusSteps[index];
+  const resultStep = context.resultSteps[index];
+  const consumed = [
+    normalizeActiveRuntimeMs(statusStep?.activeRuntimeMs),
+    normalizeActiveRuntimeMs(resultStep?.activeRuntimeMs),
+  ].filter((value): value is number => value !== undefined);
+  const checkpoints = [
+    normalizeActiveRuntimeCheckpointAt(statusStep?.activeRuntimeCheckpointAt),
+    normalizeActiveRuntimeCheckpointAt(resultStep?.activeRuntimeCheckpointAt),
+  ].filter((value): value is number => value !== undefined);
+  return {
+    ...(consumed.length > 0 ? { activeRuntimeMs: Math.max(...consumed) } : {}),
+    ...(checkpoints.length > 0 ? { activeRuntimeCheckpointAt: Math.max(...checkpoints) } : {}),
   };
 }
 

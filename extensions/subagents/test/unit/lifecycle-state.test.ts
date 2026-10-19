@@ -162,17 +162,12 @@ describe("lifecycle state helpers", () => {
       assert.equal(status?.steps?.[0]?.activityState, undefined);
       assert.equal(Object.hasOwn(status, "durableAttentionReasons"), false);
       assert.equal(Object.hasOwn(status?.steps?.[0] ?? {}, "durableAttentionReasons"), false);
-      assert.equal(Object.hasOwn(status, "activeRuntimeMs"), false);
-      assert.equal(Object.hasOwn(status, "activeRuntimeCheckpointAt"), false);
+      // Per-instance role budgets persist consumed active runtime.
+      assert.equal(status?.activeRuntimeMs, 999999);
+      assert.equal(status?.activeRuntimeCheckpointAt, 123456);
       const normalizedStep = status.steps?.[0];
-      assert.equal(
-        normalizedStep ? Object.hasOwn(normalizedStep, "activeRuntimeMs") : false,
-        false,
-      );
-      assert.equal(
-        normalizedStep ? Object.hasOwn(normalizedStep, "activeRuntimeCheckpointAt") : false,
-        false,
-      );
+      assert.equal(normalizedStep?.activeRuntimeMs, 888888);
+      assert.equal(normalizedStep?.activeRuntimeCheckpointAt, 654321);
       assert.equal(status?.pause?.kind, "awaiting_supervisor");
       assert.equal(status?.pause?.summary, "need help");
       assert.equal(status?.pause?.ownerPid, undefined);

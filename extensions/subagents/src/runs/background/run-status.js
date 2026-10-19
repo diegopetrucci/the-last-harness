@@ -18,27 +18,40 @@ function statusErrorMessage(error) {
         return formatUnreadableStatus(error.statusPath);
     return error instanceof Error ? error.message : String(error);
 }
+const BUDGET_EXHAUSTION_GUIDANCE = "Budget exhausted: this child instance is permanently expired. Inspect partial output, artifacts, and files before deciding on a fresh dispatch; do not resume or mechanically redispatch the unchanged task.";
+function isRoleBudgetExhausted(value) {
+    return (value.timeoutOwner === "role" &&
+        (value.timedOut === true || value.terminationReason === "timed_out"));
+}
 function hasExistingSessionFile(value) {
     return typeof value === "string" && fs.existsSync(value);
 }
-function formatResumeGuidance(runId, children, fallbackSessionFile) {
+function formatResumeGuidance(runId, children, fallbackSessionFile, runExhausted = false) {
+    const exhaustedChildren = children.filter(isRoleBudgetExhausted);
     const knownChildren = children
         .map((child, index) => ({ child, index }))
-        .filter(({ child }) => typeof child.agent === "string");
+        .filter(({ child }) => typeof child.agent === "string" && !isRoleBudgetExhausted(child));
+    const exhausted = runExhausted || exhaustedChildren.length > 0;
     if (!runId || knownChildren.length === 0)
-        return "Resume: unavailable; no child session file was persisted.";
+        return exhausted
+            ? `Resume: unavailable; ${BUDGET_EXHAUSTION_GUIDANCE}`
+            : "Resume: unavailable; no child session file was persisted.";
     const safeRunId = safeTerminalText(runId);
     const singleSessionFile = knownChildren[0]?.child.sessionFile ?? fallbackSessionFile;
     if (children.length === 1 &&
         knownChildren.length === 1 &&
         hasExistingSessionFile(singleSessionFile)) {
+        if (runExhausted)
+            return `Resume: unavailable; ${BUDGET_EXHAUSTION_GUIDANCE}`;
         return `Revive: subagent({ action: "resume", id: "${safeRunId}", message: "..." })`;
     }
     const childWithSession = knownChildren.find(({ child }) => hasExistingSessionFile(child.sessionFile));
     if (childWithSession) {
         return `Revive child: subagent({ action: "resume", id: "${safeRunId}", index: ${childWithSession.index}, message: "..." })`;
     }
-    return "Resume: unavailable; no child session file was persisted.";
+    return exhausted
+        ? `Resume: unavailable; ${BUDGET_EXHAUSTION_GUIDANCE}`
+        : "Resume: unavailable; no child session file was persisted.";
 }
 function isPausedAwaitingSupervisorStatus(status) {
     return status.state === "paused" && status.pause?.kind === "awaiting_supervisor";
@@ -83,7 +96,10 @@ function formatAsyncStepStatusLines(status, step, index, asyncDir, outputPath, p
     lines.push(`${stepLineLabel(status, index)}: ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${modelText}${stepActivityText ? `, ${safeTerminalText(stepActivityText)}` : ""}${steeringSuffix}${errorText}`);
     const stepContinuation = lifecycleContinuationForIndex(status, index);
     const stepClaimed = typeof stepContinuation?.claimToken === "string" && stepContinuation.claimToken.length > 0;
-    if (isPausedAwaitingSupervisorStep(status, step)) {
+    if (isRoleBudgetExhausted(step)) {
+        lines.push(`  ${BUDGET_EXHAUSTION_GUIDANCE}`);
+    }
+    else if (isPausedAwaitingSupervisorStep(status, step)) {
         lines.push(`  Pause: awaiting supervisor${step.pause?.summary ? ` (${safeTerminalText(step.pause.summary)})` : ""}`);
         lines.push("  No child process is running.");
         if (stepClaimed) {
@@ -221,7 +237,7 @@ function formatDetailedAsyncStatus(status, asyncDir, outputPath, reconciliation,
         lines.push("Resume: unavailable; this paused supervisor run already launched its continuation.");
     }
     else if (status.state !== "running" && status.state !== "pausing") {
-        lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile));
+        lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, isRoleBudgetExhausted(status)));
     }
     if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(logPath))
         lines.push(`Log: ${safeTerminalText(logPath)}`);
@@ -256,9 +272,17 @@ function inspectAsyncResultFile(resultPath, params, resolvedId) {
         const children = Array.isArray(data.results)
             ? data.results
             : data.agent
-                ? [{ agent: data.agent, sessionFile: data.sessionFile }]
+                ? [
+                    {
+                        agent: data.agent,
+                        sessionFile: data.sessionFile,
+                        timedOut: data.timedOut,
+                        timeoutOwner: data.timeoutOwner,
+                        terminationReason: data.terminationReason,
+                    },
+                ]
                 : [];
-        lines.push(formatResumeGuidance(runId, children, data.sessionFile));
+        lines.push(formatResumeGuidance(runId, children, data.sessionFile, isRoleBudgetExhausted(data)));
         if (data.summary)
             lines.push("", privacySafeResult ? "Paused awaiting supervisor." : _safeTerminalDocumentLeaf(data.summary));
         return {

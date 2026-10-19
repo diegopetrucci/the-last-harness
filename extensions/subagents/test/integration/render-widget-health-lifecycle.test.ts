@@ -1013,9 +1013,9 @@ describe("subagent async widget rendering", () => {
     const lastActivityAt = now - 180_000; // 3m gap: avoids the "now ago" strings owned by tlhmf-6y0z
     for (const [activityState, expected] of [["needs_attention", /no activity for 3m/] as const]) {
       for (const [label, mode, steps, expectedHeight, expectedPrefix] of [
-        ["single mode with steps", "single", 1, 5, "       "],
+        ["single mode with steps", "single", 1, 5, "      "],
         ["single mode without steps", "single", 0, 3, "     "],
-        ["parallel mode with steps", "parallel", 3, 7, "     "],
+        ["parallel mode with steps", "parallel", 3, 10, "     "],
         ["parallel mode without steps", "parallel", 0, 3, "     "],
       ] as const) {
         resetWidgetLayout();
@@ -1125,7 +1125,7 @@ describe("subagent async widget rendering", () => {
       const healthLine = lines.find((l) => /no activity for 3m/.test(l));
       assert.match(
         healthLine ?? "",
-        /^ {7}no activity for 3m$/,
+        /^ {6}no activity for 3m$/,
         "single-agent health line must use exactly 7 spaces",
       );
       assert.doesNotMatch(lines.join("\n"), /⎿/);
@@ -1182,7 +1182,7 @@ describe("subagent async widget rendering", () => {
       // text column left by removing the glyph.
       assert.match(
         healthLine ?? "",
-        /^ {7}no activity for 3m$/,
+        /^ {6}no activity for 3m$/,
         "single-agent health line must use exactly 7 spaces",
       );
       assert.doesNotMatch(lines.join("\n"), /⎿/);

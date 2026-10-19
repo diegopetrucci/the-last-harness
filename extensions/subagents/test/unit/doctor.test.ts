@@ -129,8 +129,7 @@ describe("buildDoctorReport", () => {
       assert.match(report, /- async support: available/);
       assert.doesNotMatch(report, /configured session dir/);
       assert.match(report, /- current session file: .*parent\.jsonl/);
-      assert.match(report, /Execution\n- shared run ceiling: 14400000ms/);
-      assert.match(report, /- role ceilings: fresh wall-clock deadline per child spawn/);
+      assert.doesNotMatch(report, /shared run ceiling|maxRunTimeMs/);
       assert.match(report, /- temp root: ok /);
       assert.match(
         report,

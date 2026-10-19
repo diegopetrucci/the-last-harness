@@ -51,10 +51,13 @@ export interface RunnerSubagentStep {
   outputMode?: "inline" | "file-only";
   sessionFile?: string;
   maxSubagentDepth?: number;
-  /** Trusted per-spawn execution ceiling for this child. */
+  /** Trusted per-instance active-time role budget for this child. */
   timeoutMs?: number;
-  /** Trusted internal owner of a folded async-single deadline. */
+  /** Trusted internal owner of the budget. */
   timeoutOwner?: "role" | "run";
+  /** Active time already consumed by this child's lineage (carried across resumes). */
+  activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   /** Persisted terminal facts from an earlier fallback/resume segment. */
   terminalResult?: import("../../shared/types.ts").SubagentTerminalResult;
   /**

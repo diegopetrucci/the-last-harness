@@ -5,6 +5,7 @@ import { waitSync, writeAtomicJson } from "../../shared/atomic-json.js";
 import { invalidateStatusCache, readStatus } from "../../shared/utils.js";
 import { boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
 import { canonicalLifecycleState, canonicalLifecycleStepState, } from "../background/async-status-boundary.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./active-runtime.js";
 import { normalizeIdleEpisodeId } from "./subagent-control.js";
 import { appendSubagentTelemetryContinuation, mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, transitionSubagentRunTelemetryLifecycle, } from "../../shared/telemetry.js";
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
@@ -167,15 +168,21 @@ export function withLifecycleContinuation(status, index, continuation) {
         delete next.continuationsByIndex;
     return next;
 }
-const RETIRED_FIELDS = [
-    "activeRuntimeMs",
-    "activeRuntimeCheckpointAt",
-    "durableAttentionReasons",
-];
+const RETIRED_FIELDS = ["durableAttentionReasons"];
 function normalizeRecord(raw, fields) {
     const result = { ...raw };
     for (const field of [...RETIRED_FIELDS, ...fields])
         delete result[field];
+    const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
+    if (activeRuntimeMs !== undefined)
+        result.activeRuntimeMs = activeRuntimeMs;
+    else
+        delete result.activeRuntimeMs;
+    if (activeRuntimeCheckpointAt !== undefined)
+        result.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
+    else
+        delete result.activeRuntimeCheckpointAt;
     if (raw.activityState === "needs_attention")
         result.activityState = raw.activityState;
     const terminalResult = parseSubagentTerminalResult(raw.terminalResult);

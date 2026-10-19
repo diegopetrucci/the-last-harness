@@ -409,6 +409,8 @@ export interface SingleResult {
   exitSignal?: NodeJS.Signals;
   interrupted?: boolean;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
@@ -614,6 +616,8 @@ export interface AsyncStatus {
   timedOut?: boolean;
   /** Run-level cleanup evidence retained when the owner stops the runner. */
   processCleanup?: ChildProcessCleanupResult;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   pid?: number;
   cwd?: string;
   currentStep?: number;
@@ -651,6 +655,10 @@ export interface AsyncStatus {
     startedAt?: number;
     endedAt?: number;
     durationMs?: number;
+    /** Consumed active runtime for this child instance's role budget. */
+    activeRuntimeMs?: number;
+    /** Timestamp of the last authoritative active-runtime checkpoint. */
+    activeRuntimeCheckpointAt?: number;
     /** Normalized ticket ID, when assigned. */
     ticketId?: string;
     /** Per-child terminal state and evidence-only facts, when persisted. */
@@ -660,6 +668,8 @@ export interface AsyncStatus {
     exitCode?: number | null;
     exitSignal?: NodeJS.Signals;
     timedOut?: boolean;
+    /** Internal timeout boundary that owns a timed-out child, when known. */
+    timeoutOwner?: "role" | "run";
     contextUsage?: ContextUsageDiagnostics;
     contextPressure?: ContextPressureProjection;
     contextPressureCrossedThresholds?: ContextPressureThreshold[];
@@ -737,6 +747,8 @@ export interface AsyncResultArtifactResultItem {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];

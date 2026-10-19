@@ -46,7 +46,15 @@ import {
 } from "./render-primitives.ts";
 import { PHRASE_HOLD_MS } from "./whimsical-phrases.ts";
 
-const WIDGET_ACTIVITY_PREFIX = "       ";
+// Detail column = agent-name column + 2 (6 spaces under a "  <glyph> <agent>" header).
+const WIDGET_ACTIVITY_PREFIX = "      ";
+const WIDGET_DETAIL_INDENT = WIDGET_ACTIVITY_PREFIX;
+
+function widgetHasRunningStep(job: AsyncJobState): boolean {
+  return (
+    job.steps?.some((step) => projectContinuedWidgetStep(job, step).status === "running") ?? false
+  );
+}
 
 export function widgetRenderKey(job: AsyncJobState): string {
   return JSON.stringify({
@@ -662,25 +670,26 @@ function awaitedStyleWidgetStepLines(
   // step header) so it survives budget-pressure truncation. fitWidgetLineBudget
   // drops from the END, so activity — which is transient and regenerates every
   // tick — absorbs the cut rather than the rare, static location line.
-  const childLocLine = childLocationLine(step.childLocation, theme, "    ");
+  const childLocLine = childLocationLine(step.childLocation, theme, WIDGET_DETAIL_INDENT);
   if (childLocLine) lines.push(childLocLine);
   for (const activity of activityLines) {
     lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
   }
-  if (resolvedDisplayStatus === "running") {
-    if (!expanded) lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
-    if (expanded) {
-      const output = widgetOutputPath(job, step);
-      if (output)
-        lines.push(`    ${theme.fg("dim", `output: ${safeTerminalText(shortenPath(output))}`)}`);
-      for (const tool of step.recentTools?.slice(-3) ?? []) {
-        const toolName = safeTerminalText(tool.tool);
-        const toolArgs = safeTerminalText(tool.args);
-        lines.push(`      ${theme.fg("dim", `${toolName}${toolArgs ? `: ${toolArgs}` : ""}`)}`);
-      }
-      for (const line of step.recentOutput?.slice(-5) ?? []) {
-        lines.push(`      ${theme.fg("dim", safeTerminalText(line))}`);
-      }
+  if (resolvedDisplayStatus === "running" && expanded) {
+    const output = widgetOutputPath(job, step);
+    if (output)
+      lines.push(
+        `${WIDGET_DETAIL_INDENT}${theme.fg("dim", `output: ${safeTerminalText(shortenPath(output))}`)}`,
+      );
+    for (const tool of step.recentTools?.slice(-3) ?? []) {
+      const toolName = safeTerminalText(tool.tool);
+      const toolArgs = safeTerminalText(tool.args);
+      lines.push(
+        `${WIDGET_DETAIL_INDENT}  ${theme.fg("dim", `${toolName}${toolArgs ? `: ${toolArgs}` : ""}`)}`,
+      );
+    }
+    for (const line of step.recentOutput?.slice(-5) ?? []) {
+      lines.push(`${WIDGET_DETAIL_INDENT}  ${theme.fg("dim", safeTerminalText(line))}`);
     }
   }
   return lines;
@@ -713,6 +722,9 @@ function awaitedStyleWidgetDetails(
       ),
     );
   }
+  // One live-detail hint per job block, after the last step.
+  if (!expanded && widgetHasRunningStep(job))
+    lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
   return lines;
 }
 
@@ -737,6 +749,8 @@ function singleWidgetAgentDetails(
       singleWidgetStepDisplayStatus(job, step),
       phraseNow,
     );
+    if (!expanded && singleWidgetStepDisplayStatus(job, step) === "running")
+      return [...stepLines, `${WIDGET_DETAIL_INDENT}${theme.fg("dim", liveDetailHintText())}`];
     return stepLines;
   }
 
@@ -866,7 +880,7 @@ function singleModeHealthWarningLines(
     );
     if (stepActivityLines.includes(warning)) return [];
   }
-  return [`    ${theme.fg("dim", `   ${warning}`)}`];
+  return [`${WIDGET_DETAIL_INDENT}${theme.fg("dim", warning)}`];
 }
 
 function buildSingleWidgetLines(
@@ -997,11 +1011,10 @@ function compactSingleWidgetLines(
     // fitWidgetLineBudget pressure (which drops from the tail). In the compact
     // view activity is folded into the row, so there is no before/after-activity
     // distinction — we just place it on its own line right after.
-    const compactChildLocLine = childLocationLine(step.childLocation, theme, "    ");
+    const compactChildLocLine = childLocationLine(step.childLocation, theme, WIDGET_DETAIL_INDENT);
     if (compactChildLocLine) lines.push(compactChildLocLine);
   }
-  if (job.steps.some((step) => projectContinuedWidgetStep(job, step).status === "running"))
-    lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
+  if (widgetHasRunningStep(job)) lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
   return wrapDisplayLines(lines, contentWidth);
 }
 
@@ -1367,6 +1380,7 @@ function fitAdaptiveWidgetLines(
   width: number,
   expanded: boolean,
   phraseNow?: number,
+  footerLines: string[] = [],
 ): string[] {
   if (expanded) {
     resetWidgetLayoutSession();
@@ -1405,9 +1419,16 @@ function fitAdaptiveWidgetLines(
     return rendered.lines;
   }
 
+  // Tier selection ignores the optional footer (live-detail hint) so it can never
+  // tip a list that fits exactly into the progressive tier; it is shown only when
+  // a row is spare in the full tier.
   if (lines.length <= availableRows) {
     widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
-    return fitWidgetLineBudget(lines, theme, width, false);
+    const withFooter =
+      footerLines.length > 0 && lines.length + footerLines.length <= availableRows
+        ? [...lines, ...footerLines]
+        : lines;
+    return fitWidgetLineBudget(withFooter, theme, width, false);
   }
 
   if (availableRows <= 2) {
@@ -1449,13 +1470,21 @@ export function buildWidgetComponent(
     const phraseNow = now ?? Date.now();
     const width = getTermWidth();
     const expanded = liveDetailExpanded(controller);
-    const lines = expanded
-      ? buildWidgetLines(jobs, theme, width, true, phraseNow)
-      : jobs.length === 1
-        ? compactSingleWidgetLines(jobs[0]!, theme, width, phraseNow)
-        : buildWidgetLines(jobs, theme, width, false, phraseNow);
+    let footerLines: string[] = [];
+    let lines: string[];
+    if (expanded) lines = buildWidgetLines(jobs, theme, width, true, phraseNow);
+    else if (jobs.length === 1) lines = compactSingleWidgetLines(jobs[0]!, theme, width, phraseNow);
+    else ({ lines, footerLines } = buildWidgetListParts(jobs, theme, width, false, phraseNow));
     const container = new Container();
-    for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow))
+    for (const line of fitAdaptiveWidgetLines(
+      jobs,
+      lines,
+      theme,
+      width,
+      expanded,
+      phraseNow,
+      footerLines,
+    ))
       container.addChild(new Text(line, 1, 0));
     return container;
   };
@@ -1468,10 +1497,24 @@ export function buildWidgetLines(
   expanded = false,
   phraseNow?: number,
 ): string[] {
-  if (jobs.length === 0) return [];
+  const { lines, footerLines } = buildWidgetListParts(jobs, theme, width, expanded, phraseNow);
+  return [...lines, ...footerLines];
+}
+
+function buildWidgetListParts(
+  jobs: AsyncJobState[],
+  theme: Theme,
+  width: number,
+  expanded: boolean,
+  phraseNow?: number,
+): { lines: string[]; footerLines: string[] } {
+  if (jobs.length === 0) return { lines: [], footerLines: [] };
   const contentWidth = Math.max(1, width - 2);
   if (jobs.length === 1)
-    return buildSingleWidgetLines(jobs[0]!, theme, contentWidth, expanded, phraseNow);
+    return {
+      lines: buildSingleWidgetLines(jobs[0]!, theme, contentWidth, expanded, phraseNow),
+      footerLines: [],
+    };
   const running = jobs.filter((job) => job.status === "running");
   const queued = jobs.filter((job) => job.status === "queued");
   const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
@@ -1492,6 +1535,7 @@ export function buildWidgetLines(
   let hiddenFinished = 0;
   let queuedSummaryShown = false;
   let slots = MAX_WIDGET_JOBS;
+  let listHasRunningStep = false;
 
   for (const job of running) {
     if (slots <= 0) {
@@ -1510,6 +1554,7 @@ export function buildWidgetLines(
       ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
       ...widgetParallelAgentDetails(job, theme, expanded, width, phraseNow),
     ]);
+    if (widgetHasRunningStep(job)) listHasRunningStep = true;
     slots--;
   }
 
@@ -1561,7 +1606,15 @@ export function buildWidgetLines(
     }
   }
 
-  return lines;
+  // One live-detail hint for the whole list, after the last job block. It is
+  // returned separately so tier selection ignores it; fitAdaptiveWidgetLines adds
+  // it back only when a row is spare in the full tier.
+  const footerLines =
+    !expanded && listHasRunningStep
+      ? wrapDisplayLine(`    ${theme.fg("dim", `  ${liveDetailHintText()}`)}`, contentWidth)
+      : [];
+
+  return { lines, footerLines };
 }
 
 /**

@@ -7,7 +7,8 @@ import { getDisplayItems, getSingleResultOutput } from "../shared/utils.js";
 import { extractSingleOutputInstructionTarget } from "../runs/shared/single-output.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../shared/display-text.js";
 import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, fitCompactToolStatus, formatCurrentToolLines, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, progressRunningSeed, runningGlyph, runningSeed, snapshotNowForProgress, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
-const WIDGET_ACTIVITY_PREFIX = "       ";
+const AWAITED_DETAIL_INDENT = "    ";
+const MULTI_DETAIL_INDENT = "      ";
 export function clearLegacyResultAnimationTimer(context) {
     const timer = context.state.subagentResultAnimationTimer;
     if (!timer)
@@ -163,8 +164,8 @@ function resultGlyph(result, output, theme, running = result.progress?.status ==
         return theme.fg("warning", "✓");
     return theme.fg("success", "✓");
 }
-const AWAITED_ACTIVITY_PREFIX = "     ";
-const AWAITED_ACTIVITY_CONTINUATION_PREFIX = "     ";
+const AWAITED_ACTIVITY_PREFIX = AWAITED_DETAIL_INDENT;
+const AWAITED_ACTIVITY_CONTINUATION_PREFIX = AWAITED_DETAIL_INDENT;
 function compactProgressActivityLines(progress, width, firstPrefix, continuationPrefix, now) {
     const snapshotNow = snapshotNowForProgress(progress);
     const toolLines = formatCurrentToolLines(progress, width - visibleWidth(firstPrefix), width - visibleWidth(continuationPrefix), false, snapshotNow);
@@ -270,7 +271,7 @@ function renderSingleCompact(d, r, theme, frame, now) {
     const width = getTermWidth() - 4;
     const modelDisplay = modelThinkingBadge(theme, r.model);
     lines.push(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${modelDisplay}`);
-    const childLocLine = childLocationLine(r.childLocation, theme);
+    const childLocLine = childLocationLine(r.childLocation, theme, AWAITED_DETAIL_INDENT);
     if (childLocLine)
         lines.push(childLocLine);
     if (isRunning && r.progress) {
@@ -278,16 +279,16 @@ function renderSingleCompact(d, r, theme, frame, now) {
             const prefix = activityIndex === 0 ? AWAITED_ACTIVITY_PREFIX : AWAITED_ACTIVITY_CONTINUATION_PREFIX;
             lines.push(theme.fg("dim", `${prefix}${activity}`));
         }
-        lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
+        lines.push(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${liveDetailHintText()}`));
         return collapsedAwaitedComponent(lines, theme);
     }
     const preview = compactOutputPreview(rawOutput);
-    lines.push(theme.fg("dim", `     ${resultStatusLine(r, preview)}`));
+    lines.push(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${resultStatusLine(r, preview)}`));
     if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
-        lines.push(theme.fg("dim", `     ${preview}`));
+        lines.push(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${preview}`));
     }
     if (r.sessionFile)
-        lines.push(theme.fg("dim", `  session: ${safeTerminalText(shortenPath(r.sessionFile))}`));
+        lines.push(theme.fg("dim", `${AWAITED_DETAIL_INDENT}session: ${safeTerminalText(shortenPath(r.sessionFile))}`));
     return collapsedAwaitedComponent(lines, theme);
 }
 function renderMultiCompact(d, entries, theme, frame, now) {
@@ -352,24 +353,24 @@ function renderMultiCompact(d, entries, theme, frame, now) {
         const stepLabel = resultRowLabel(multiLabel, stepNumber);
         const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${pendingLabel}`;
         lines.push(`  ${line}`);
-        const childLocLineMulti = childLocationLine(r.childLocation, theme, "    ");
+        const childLocLineMulti = childLocationLine(r.childLocation, theme, MULTI_DETAIL_INDENT);
         if (childLocLineMulti)
             lines.push(childLocLineMulti);
         if (rRunning && liveProgress) {
             hasRunningResult = true;
-            for (const activity of compactProgressActivityLines(liveProgress, width, WIDGET_ACTIVITY_PREFIX, WIDGET_ACTIVITY_PREFIX, now)) {
-                lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
+            for (const activity of compactProgressActivityLines(liveProgress, width, MULTI_DETAIL_INDENT, MULTI_DETAIL_INDENT, now)) {
+                lines.push(theme.fg("dim", `${MULTI_DETAIL_INDENT}${activity}`));
             }
         }
         else if (!rPending &&
             (rFailed || rPaused || hasEmptyTextOutputWithoutOutputTarget(r.task, output))) {
-            lines.push(theme.fg(rFailed ? "error" : "dim", `       ${resultStatusLine(r, rawOutput)}`));
+            lines.push(theme.fg(rFailed ? "error" : "dim", `${MULTI_DETAIL_INDENT}${resultStatusLine(r, rawOutput)}`));
         }
     }
     if (d.artifacts)
         lines.push(theme.fg("dim", `  artifacts: ${safeTerminalText(shortenPath(d.artifacts.dir))}`));
     if (hasRunningResult)
-        lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
+        lines.push(theme.fg("dim", `${MULTI_DETAIL_INDENT}${liveDetailHintText()}`));
     return collapsedAwaitedComponent(lines, theme);
 }
 function renderZeroResult(result, d, options, theme) {
@@ -414,7 +415,7 @@ function renderExpandedSingleResult(d, r, theme, mdTheme, frame) {
     const toolCallLines = getToolCallLines(r);
     const c = new Container();
     c.addChild(new Text(`${icon} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${progressInfo}`, 0, 0));
-    const childLocLineSingle = childLocationLine(r.childLocation, theme);
+    const childLocLineSingle = childLocationLine(r.childLocation, theme, AWAITED_DETAIL_INDENT);
     if (childLocLineSingle)
         c.addChild(new Text(childLocLineSingle, 0, 0));
     c.addChild(new Spacer(1));
@@ -426,26 +427,26 @@ function renderExpandedSingleResult(d, r, theme, mdTheme, frame) {
     }
     if (isRunning && r.progress) {
         const progressSnapshotNow = snapshotNowForProgress(r.progress);
-        const toolLines = formatCurrentToolLines(r.progress, w - visibleWidth("> "), w - visibleWidth("  "), true, progressSnapshotNow);
+        const toolLines = formatCurrentToolLines(r.progress, w - visibleWidth(`${AWAITED_DETAIL_INDENT}> `), w - visibleWidth(`${AWAITED_DETAIL_INDENT}  `), true, progressSnapshotNow);
         for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
-            const prefix = toolLineIndex === 0 ? "> " : "  ";
+            const prefix = toolLineIndex === 0 ? `${AWAITED_DETAIL_INDENT}> ` : `${AWAITED_DETAIL_INDENT}  `;
             c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
         }
         const liveStatusLine = buildLiveStatusLine(r.progress, progressSnapshotNow);
         if (liveStatusLine) {
-            c.addChild(new Text(theme.fg("accent", liveStatusLine), 0, 0));
+            c.addChild(new Text(theme.fg("accent", `${AWAITED_DETAIL_INDENT}${liveStatusLine}`), 0, 0));
         }
-        c.addChild(new Text(theme.fg("dim", liveDetailHintText()), 0, 0));
+        c.addChild(new Text(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${liveDetailHintText()}`), 0, 0));
         if (r.artifactPaths) {
             c.addChild(new Text(theme.fg("dim", `Artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`), 0, 0));
         }
         if (r.progress.recentTools?.length) {
             for (const t of r.progress.recentTools.slice(-3)) {
-                c.addChild(new Text(theme.fg("dim", `${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`), 0, 0));
+                c.addChild(new Text(theme.fg("dim", `${AWAITED_DETAIL_INDENT}  ${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`), 0, 0));
             }
         }
         for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
-            c.addChild(new Text(theme.fg("dim", `  ${safeTerminalText(line)}`), 0, 0));
+            c.addChild(new Text(theme.fg("dim", `${AWAITED_DETAIL_INDENT}  ${safeTerminalText(line)}`), 0, 0));
         }
         if (toolLines?.length ||
             liveStatusLine ||
@@ -536,6 +537,7 @@ function renderExpandedMultiResult(d, entries, theme, frame) {
     const c = new Container();
     c.addChild(new Text(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))} · ${multiLabel.headerLabel}${summaryStr}`, 0, 0));
     c.addChild(new Spacer(1));
+    let hintShown = false;
     for (const { index: resultIndex, result: r } of entries) {
         const progressFromArray = d.progress?.find((p) => p.index === resultIndex) ||
             d.progress?.find((p) => p.agent === r.agent && p.status === "running");
@@ -566,7 +568,7 @@ function renderExpandedMultiResult(d, entries, theme, frame) {
             : `${statusIcon} ${stepLabel}: ${theme.bold(safeTerminalText(r.agent))}${modelDisplay}${stats}`;
         const toolCallLines = getToolCallLines(r);
         c.addChild(new Text(stepHeader, 0, 0));
-        const childLocLineExpanded = childLocationLine(r.childLocation, theme, "    ");
+        const childLocLineExpanded = childLocationLine(r.childLocation, theme, AWAITED_DETAIL_INDENT);
         if (childLocLineExpanded)
             c.addChild(new Text(childLocLineExpanded, 0, 0));
         c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalDocumentLeaf(r.task)}`), 0, 0));
@@ -597,7 +599,10 @@ function renderExpandedMultiResult(d, entries, theme, frame) {
             if (liveStatusLine) {
                 c.addChild(new Text(theme.fg("accent", `    ${liveStatusLine}`), 0, 0));
             }
-            c.addChild(new Text(theme.fg("dim", `    ${liveDetailHintText()}`), 0, 0));
+            if (!hintShown) {
+                hintShown = true;
+                c.addChild(new Text(theme.fg("dim", `    ${liveDetailHintText()}`), 0, 0));
+            }
             if (r.artifactPaths) {
                 c.addChild(new Text(theme.fg("dim", `    artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`), 0, 0));
             }

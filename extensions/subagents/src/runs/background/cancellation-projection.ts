@@ -37,6 +37,9 @@ export interface StepResult {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
+  timeoutOwner?: "role" | "run";
+  /** Cumulative active runtime of this child's lineage, including this segment. */
+  activeRuntimeMs?: number;
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];

@@ -8,7 +8,8 @@ import { buildExecutionInstructions, resolveStepBehavior, suppressProgressForRea
 import {} from "../shared/parallel-utils.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
-import { roleExecutionTimeoutMs } from "../../agents/execution-ceiling.js";
+import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
 import { buildFallbackModelList, buildModelCandidatePlan, canonicalSubagentModelIdentity, deduplicateModelCandidates, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { contextWindowsForChildModels, resolveEffectiveThinking, } from "../../shared/model-info.js";
@@ -149,31 +150,35 @@ function formatAsyncStartError(mode, message) {
         details: { mode, results: [] },
     };
 }
-function resolveEffectiveSingleTimeout(callerTimeoutMs, agentTimeoutCeilingMs) {
-    if (callerTimeoutMs === undefined)
-        return agentTimeoutCeilingMs;
-    if (agentTimeoutCeilingMs === undefined)
-        return callerTimeoutMs;
-    return Math.min(callerTimeoutMs, agentTimeoutCeilingMs);
-}
-function resolveAsyncSingleRuntimePolicy(params, runDeadlineAt) {
-    const roleTimeoutMs = roleExecutionTimeoutMs(params.agentConfig.maxExecutionTimeMs);
-    const effectiveTimeoutMs = resolveEffectiveSingleTimeout(params.timeoutMs, roleTimeoutMs);
-    const timeoutOwner = roleTimeoutMs !== undefined &&
-        (params.timeoutMs === undefined || roleTimeoutMs <= params.timeoutMs)
-        ? "role"
-        : params.timeoutMs !== undefined
-            ? "run"
-            : undefined;
-    const roleDeadlineAt = roleTimeoutMs !== undefined ? saturatingAsyncDeadlineAt(Date.now(), roleTimeoutMs) : undefined;
-    const effectiveDeadlineAt = runDeadlineAt === undefined
-        ? roleDeadlineAt
-        : roleDeadlineAt === undefined
-            ? runDeadlineAt
-            : Math.min(runDeadlineAt, roleDeadlineAt);
+function resolveAsyncSingleRuntimePolicy(agent, params) {
+    const normalizedActiveRuntimeMs = normalizeActiveRuntimeMs(params.activeRuntimeMs);
+    if (params.activeRuntimeMs !== undefined && normalizedActiveRuntimeMs === undefined) {
+        return { error: "Invalid active runtime evidence; continuation cannot start." };
+    }
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(params.activeRuntimeCheckpointAt);
+    if (params.activeRuntimeCheckpointAt !== undefined && activeRuntimeCheckpointAt === undefined) {
+        return { error: "Invalid active runtime checkpoint; continuation cannot start." };
+    }
+    const activeRuntimeMs = normalizedActiveRuntimeMs ?? 0;
+    const remainingAgentTimeMs = remainingExecutionTimeMs(params.agentConfig.maxExecutionTimeMs, activeRuntimeMs);
+    if (remainingAgentTimeMs === 0) {
+        return {
+            error: `Agent '${agent}' has exhausted its maxExecutionTimeMs budget after ${activeRuntimeMs}ms of active runtime.`,
+        };
+    }
+    const effectiveDeadlineAt = remainingAgentTimeMs !== undefined
+        ? saturatingAsyncDeadlineAt(Date.now(), remainingAgentTimeMs)
+        : undefined;
     return {
-        effectiveTimeoutMs,
-        ...(timeoutOwner ? { timeoutOwner } : {}),
+        activeRuntimeMs,
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+        ...(remainingAgentTimeMs !== undefined
+            ? {
+                effectiveTimeoutMs: remainingAgentTimeMs,
+                roleBudgetMs: params.agentConfig.maxExecutionTimeMs,
+                timeoutOwner: "role",
+            }
+            : {}),
         ...(effectiveDeadlineAt !== undefined ? { effectiveDeadlineAt } : {}),
     };
 }
@@ -316,7 +321,9 @@ export function buildAsyncRunnerPlan(id, params) {
             outputMode: behavior.outputMode,
             sessionFile,
             maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agent.maxSubagentDepth),
-            ...(agent.maxExecutionTimeMs !== undefined ? { timeoutMs: agent.maxExecutionTimeMs } : {}),
+            ...(agent.maxExecutionTimeMs !== undefined
+                ? { timeoutMs: agent.maxExecutionTimeMs, timeoutOwner: "role" }
+                : {}),
             ...(childLocation ? { childLocation } : {}),
         };
     };
@@ -382,9 +389,6 @@ export function executeAsyncParallel(id, params) {
     if (retiredNestedError)
         return formatAsyncStartError("parallel", retiredNestedError);
     const runStartedAt = Date.now();
-    const runDeadlineAt = params.timeoutMs !== undefined
-        ? saturatingAsyncDeadlineAt(runStartedAt, params.timeoutMs)
-        : undefined;
     const asyncDir = path.join(ASYNC_DIR, id);
     try {
         fs.mkdirSync(asyncDir, { recursive: true });
@@ -445,7 +449,6 @@ export function executeAsyncParallel(id, params) {
         startedAt: runStartedAt,
         lineage: params.telemetryLineage,
     });
-    const deadlineAt = runDeadlineAt;
     const projectAgents = [
         ...new Map(params.projectAgentIdentities?.map((identity) => [
             `${identity.slug}\0${identity.root}\0${identity.cwd}`,
@@ -465,8 +468,6 @@ export function executeAsyncParallel(id, params) {
             events: ctx.pi.events,
             sessionId: ctx.currentSessionId,
             cwd: runnerCwd,
-            timeoutMs: params.timeoutMs,
-            deadlineAt,
             expectedGeneration: 0,
             signal: params.signal,
             onUpdate: params.onUpdate,
@@ -494,7 +495,6 @@ export function executeAsyncParallel(id, params) {
             piPackageRoot,
             piArgv1: process.argv[1],
             controlConfig,
-            deadlineAt,
             ...(projectAgents.length > 0 ? { projectAgents } : {}),
         }, id, runnerCwd);
     }
@@ -523,7 +523,6 @@ export function executeAsyncParallel(id, params) {
             cwd: runnerCwd,
             asyncDir,
             ...(projectAgents.length > 0 ? { projectAgents } : {}),
-            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
         });
     }
     if (awaitedOwner)
@@ -542,13 +541,12 @@ export function executeAsyncParallel(id, params) {
             ...(telemetry ? { telemetry } : {}),
             asyncId: id,
             asyncDir,
-            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
         },
     };
 }
 export function buildAsyncSingleRunnerPlan(params, inputs) {
-    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, priorTerminalResult, timeoutMs, projectAgent, sessionFile, maxSubagentDepth, } = params;
-    const { taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, skillsWarning, outputPath, outputMode, runDeadlineAt, childLocation, } = inputs;
+    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, priorTerminalResult, activeRuntimeMs, activeRuntimeCheckpointAt, projectAgent, sessionFile, maxSubagentDepth, } = params;
+    const { taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, skillsWarning, outputPath, outputMode, childLocation, } = inputs;
     const durableResume = persistedModelResolution !== undefined || restoredModelIdentity !== undefined;
     const explicitResumeModel = durableResume && typeof modelOverride === "string" && modelOverride.trim() !== ""
         ? modelOverride.trim() !== "inherit"
@@ -604,7 +602,14 @@ export function buildAsyncSingleRunnerPlan(params, inputs) {
     if (ticket?.error)
         return { error: ticket.error };
     const ticketId = ticket?.ticketId ?? normalizedTicketId.ticketId;
-    const { effectiveTimeoutMs, timeoutOwner, effectiveDeadlineAt } = resolveAsyncSingleRuntimePolicy({ timeoutMs, agentConfig }, runDeadlineAt);
+    const runtimePolicy = resolveAsyncSingleRuntimePolicy(agent, {
+        activeRuntimeMs,
+        activeRuntimeCheckpointAt,
+        agentConfig,
+    });
+    if ("error" in runtimePolicy)
+        return { error: runtimePolicy.error };
+    const { activeRuntimeMs: resolvedActiveRuntimeMs, activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt, effectiveTimeoutMs, roleBudgetMs, timeoutOwner, effectiveDeadlineAt, } = runtimePolicy;
     return {
         buildPlan: () => ({
             kind: "single",
@@ -651,8 +656,12 @@ export function buildAsyncSingleRunnerPlan(params, inputs) {
                     }
                     : {}),
                 maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
-                ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
+                ...(roleBudgetMs !== undefined ? { timeoutMs: roleBudgetMs } : {}),
                 ...(timeoutOwner ? { timeoutOwner } : {}),
+                ...(resolvedActiveRuntimeMs > 0 ? { activeRuntimeMs: resolvedActiveRuntimeMs } : {}),
+                ...(resolvedActiveRuntimeCheckpointAt !== undefined
+                    ? { activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt }
+                    : {}),
                 ...(childLocation ? { childLocation } : {}),
                 ...(priorTerminalResult ? { terminalResult: priorTerminalResult } : {}),
             },
@@ -667,9 +676,6 @@ export function executeAsyncSingle(id, params) {
     if (retiredNestedError)
         return formatAsyncStartError("single", retiredNestedError);
     const runStartedAt = Date.now();
-    const runDeadlineAt = params.timeoutMs !== undefined
-        ? saturatingAsyncDeadlineAt(runStartedAt, params.timeoutMs)
-        : undefined;
     const task = params.task ?? "";
     const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
     const childLocation = captureChildLocationSnapshot(ctx.cwd, runnerCwd);
@@ -721,7 +727,6 @@ export function executeAsyncSingle(id, params) {
             : {}),
         outputPath,
         outputMode,
-        runDeadlineAt,
         ...(childLocation ? { childLocation } : {}),
     });
     if ("error" in launchPlan) {
@@ -755,8 +760,6 @@ export function executeAsyncSingle(id, params) {
             events: ctx.pi.events,
             sessionId: ctx.currentSessionId,
             cwd: runnerCwd,
-            timeoutMs: params.timeoutMs,
-            deadlineAt: runDeadlineAt,
             expectedGeneration: 0,
             signal: params.signal,
             onUpdate: params.onUpdate,
@@ -784,7 +787,7 @@ export function executeAsyncSingle(id, params) {
             piPackageRoot,
             piArgv1: process.argv[1],
             controlConfig,
-            deadlineAt: runDeadlineAt,
+            ...(effectiveDeadlineAt !== undefined ? { deadlineAt: effectiveDeadlineAt } : {}),
             ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
         }, id, runnerCwd);

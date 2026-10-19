@@ -26,6 +26,10 @@ import {
   transitionLifecycleStatus,
   writeNormalizedLifecycleStatus,
 } from "../shared/lifecycle-state.ts";
+import {
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
+} from "../shared/active-runtime.ts";
 import type { RunnerSubagentStep, SubagentRunPlan } from "../shared/parallel-utils.ts";
 import type { runSingleStep } from "./single-step-execution.ts";
 import {
@@ -301,6 +305,17 @@ export function createBackgroundRunStatusOwner(
       ...(ticketId ? { ticketId } : {}),
       status: "pending",
       ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
+      ...(task.timeoutOwner ? { timeoutOwner: task.timeoutOwner } : {}),
+      ...(normalizeActiveRuntimeMs(task.activeRuntimeMs) !== undefined
+        ? { activeRuntimeMs: normalizeActiveRuntimeMs(task.activeRuntimeMs) }
+        : {}),
+      ...(normalizeActiveRuntimeCheckpointAt(task.activeRuntimeCheckpointAt) !== undefined
+        ? {
+            activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+              task.activeRuntimeCheckpointAt,
+            ),
+          }
+        : {}),
       ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
       ...(terminalResult ? { terminalResult } : {}),
       ...(transcriptPath ? { transcriptPath } : {}),

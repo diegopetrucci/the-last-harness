@@ -5,37 +5,21 @@ import { PACKAGED_MINOR_AGENT_ROLES } from "../../../shared/project-agent-guidan
 import {
   CANONICAL_AGENT_MAX_EXECUTION_TIME_MS,
   DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS,
-  DEFAULT_SUBAGENT_MAX_RUN_TIME_MS,
   canonicalAgentMaxExecutionTimeMs,
+  remainingExecutionTimeMs,
   resolveCustomAgentMaxExecutionTimeMs,
-  resolveExecutionPolicy,
-  roleExecutionTimeoutMs,
 } from "../../src/agents/execution-ceiling.ts";
 
-describe("human-owned execution policy", () => {
-  it("uses the bounded default and accepts an explicit false", () => {
-    assert.deepEqual(resolveExecutionPolicy(undefined), {
-      maxRunTimeMs: DEFAULT_SUBAGENT_MAX_RUN_TIME_MS,
-    });
-    assert.deepEqual(resolveExecutionPolicy({ maxRunTimeMs: false }), { maxRunTimeMs: false });
-    assert.deepEqual(
-      resolveExecutionPolicy({ maxRunTimeMs: 1_000, execution: { maxRunTimeMs: 12_345 } }),
-      { maxRunTimeMs: 1_000 },
-    );
-  });
-
-  it("falls back safely with one bounded actionable warning for invalid values", () => {
-    // Run this assertion in a fresh process so the once-per-process warning
-    // contract is deterministic regardless of test-file loading order.
+describe("role execution ceilings", () => {
+  it("warns once for a retired shared setting without disclosing its value", () => {
     const script = `
       const warnings = [];
       console.warn = (message) => warnings.push(String(message));
-      const { resolveExecutionPolicy } = await import(${JSON.stringify(
+      const { warnRetiredExecutionPolicy } = await import(${JSON.stringify(
         new URL("../../src/agents/execution-ceiling.ts", import.meta.url).href,
       )});
-      const first = resolveExecutionPolicy({ maxRunTimeMs: 0 });
-      const second = resolveExecutionPolicy({ maxRunTimeMs: Number.MAX_SAFE_INTEGER + 1 });
-      process.stdout.write(JSON.stringify({ first, second, warnings }));
+      warnRetiredExecutionPolicy({ maxRunTimeMs: false });
+      process.stdout.write(JSON.stringify({ warnings }));
     `;
     const child = spawnSync(
       process.execPath,
@@ -44,22 +28,13 @@ describe("human-owned execution policy", () => {
     );
     assert.equal(child.status, 0, child.stderr);
     assert.equal(child.error, undefined);
-    const output = JSON.parse(child.stdout) as {
-      first: ReturnType<typeof resolveExecutionPolicy>;
-      second: ReturnType<typeof resolveExecutionPolicy>;
-      warnings: string[];
-    };
-
-    assert.equal(output.first.maxRunTimeMs, DEFAULT_SUBAGENT_MAX_RUN_TIME_MS);
-    assert.equal(output.second.maxRunTimeMs, DEFAULT_SUBAGENT_MAX_RUN_TIME_MS);
-    assert.equal(output.first.diagnostic, output.warnings[0]);
+    const output = JSON.parse(child.stdout) as { warnings: string[] };
     assert.equal(output.warnings.length, 1);
-    assert.ok(output.warnings[0]?.includes("execution.maxRunTimeMs"));
-    assert.ok(output.warnings[0]?.includes("positive safe integer or false"));
-    assert.ok(output.warnings[0]!.length < 300);
+    assert.match(output.warnings[0] ?? "", /retired execution\.maxRunTimeMs/);
+    assert.doesNotMatch(output.warnings[0] ?? "", /1234|false/);
   });
 
-  it("keeps the one-hour developer ceiling separate from other policy ceilings", () => {
+  it("keeps all canonical role ceilings and the independent custom fallback", () => {
     assert.equal(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS.developer, 3_600_000);
     assert.deepEqual(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS, {
       developer: 3_600_000,
@@ -72,19 +47,8 @@ describe("human-owned execution policy", () => {
       "web-scout": 300_000,
       "diff-summarizer": 300_000,
     });
-    assert.equal(DEFAULT_SUBAGENT_MAX_RUN_TIME_MS, 14_400_000);
-  });
+    assert.equal(DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS, 14_400_000);
 
-  it("resolves a full role timeout without consulting historical runtime", () => {
-    assert.equal(roleExecutionTimeoutMs(5_000), 5_000);
-    assert.equal(roleExecutionTimeoutMs(undefined), undefined);
-    assert.equal(roleExecutionTimeoutMs(0), 0);
-    assert.equal(roleExecutionTimeoutMs(Number.MAX_SAFE_INTEGER + 1), 0);
-  });
-
-  it("consumes only own maxRunTimeMs and keeps custom fallback centralized", () => {
-    const inherited = Object.create({ maxRunTimeMs: 1 });
-    assert.equal(resolveExecutionPolicy(inherited).maxRunTimeMs, DEFAULT_SUBAGENT_MAX_RUN_TIME_MS);
     assert.equal(
       resolveCustomAgentMaxExecutionTimeMs(undefined),
       DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS,
@@ -96,5 +60,17 @@ describe("human-owned execution policy", () => {
     );
     assert.equal(canonicalAgentMaxExecutionTimeMs("toString"), undefined);
     assert.equal(canonicalAgentMaxExecutionTimeMs("constructor"), undefined);
+  });
+
+  it("derives the remaining per-instance budget from consumed active runtime only", () => {
+    assert.equal(remainingExecutionTimeMs(undefined, 10), undefined);
+    assert.equal(remainingExecutionTimeMs(5_000), 5_000);
+    assert.equal(remainingExecutionTimeMs(5_000, 1_200.2), 3_799);
+    assert.equal(remainingExecutionTimeMs(5_000, 5_000), 0);
+    assert.equal(remainingExecutionTimeMs(5_000, 9_000), 0);
+    // Corrupt consumption evidence can never widen a continuation budget.
+    assert.equal(remainingExecutionTimeMs(5_000, -1), 0);
+    assert.equal(remainingExecutionTimeMs(5_000, Number.NaN), 0);
+    assert.equal(remainingExecutionTimeMs(0, 0), 0);
   });
 });

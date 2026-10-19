@@ -16,6 +16,7 @@ const MAX_SESSION_REFERENCES = 8;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
+export const BUDGET_EXHAUSTION_GUIDANCE = "Budget exhausted: this child instance is permanently expired. Inspect partial output, artifacts, and files before deciding on a fresh dispatch; do not resume or mechanically redispatch the unchanged task.";
 function boundedSummary(value) {
     return truncateWithMarker(safeTerminalDocumentLeaf(value), MAX_DISPLAY_SUMMARY_CHARS, "… [summary truncated]");
 }
@@ -68,6 +69,10 @@ function normalizeAsyncIdentifier(value) {
         return undefined;
     return value;
 }
+function isRoleBudgetExhausted(value) {
+    return (value.timeoutOwner === "role" &&
+        (value.timedOut === true || value.terminationReason === "timed_out"));
+}
 function formatAsyncIdLine(details) {
     const asyncId = normalizeAsyncIdentifier(details.asyncId);
     return asyncId ? `Async id: ${asyncId}` : undefined;
@@ -101,6 +106,7 @@ function formatPausedSupervisorActionLines(details) {
     const asyncId = normalizeAsyncIdentifier(details.asyncId);
     const target = details.resumeTarget;
     if (!details.awaitingSupervisor ||
+        details.budgetExhausted ||
         !asyncId ||
         !target ||
         !hasExistingSessionFile(target.sessionPath))
@@ -223,8 +229,16 @@ function resolveResumeTarget(result, asyncId) {
     if (!asyncId)
         return undefined;
     const children = Array.isArray(result.results) ? result.results : [];
-    if (children.length <= 1) {
-        const sessionPath = normalizeSessionPath(children[0]?.sessionPath ?? result.sessionFile);
+    if (children.length === 0) {
+        if (isRoleBudgetExhausted(result))
+            return undefined;
+        const sessionPath = normalizeSessionPath(result.sessionFile);
+        return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
+    }
+    if (children.length === 1) {
+        if (isRoleBudgetExhausted(result) || isRoleBudgetExhausted(children[0]))
+            return undefined;
+        const sessionPath = normalizeSessionPath(children[0].sessionPath ?? result.sessionFile);
         return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
     }
     const statusPriority = [
@@ -233,7 +247,8 @@ function resolveResumeTarget(result, asyncId) {
         "completed",
     ];
     const resumableChild = statusPriority
-        .map((status) => children.find((child) => resolveChildStatus(child) === status &&
+        .map((status) => children.find((child) => !isRoleBudgetExhausted(child) &&
+        resolveChildStatus(child) === status &&
         isValidChildIndex(child.index, children.length) &&
         hasExistingSessionFile(child.sessionPath)))
         .find((child) => child !== undefined);
@@ -285,6 +300,8 @@ export function formatSingleCompletion(details) {
         lines.push("", ...sessionPathLines);
     if (asyncIdLine)
         lines.push("", asyncIdLine);
+    if (details.budgetExhausted)
+        lines.push("", BUDGET_EXHAUSTION_GUIDANCE);
     if (pausedSupervisorActionLines.length > 0) {
         lines.push("", ...pausedSupervisorActionLines);
     }
@@ -371,6 +388,7 @@ export function buildCompletionDetails(result) {
         ? ` (${result.taskIndex + 1}/${result.totalTasks})`
         : undefined;
     const privacySafe = isProtectedPausedLifecycle(result);
+    const budgetExhausted = children.some(isRoleBudgetExhausted) || (children.length <= 1 && isRoleBudgetExhausted(result));
     const session = privacySafe
         ? undefined
         : result.shareUrl
@@ -404,6 +422,7 @@ export function buildCompletionDetails(result) {
         ...(result.state === "paused" && result.pause?.kind === "awaiting_supervisor"
             ? { awaitingSupervisor: true }
             : {}),
+        ...(budgetExhausted ? { budgetExhausted: true } : {}),
         ...(normalizeSubagentRunTelemetry(result.telemetry)
             ? { telemetry: normalizeSubagentRunTelemetry(result.telemetry) }
             : {}),

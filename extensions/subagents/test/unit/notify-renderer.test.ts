@@ -75,6 +75,9 @@ describe("native completion notification renderer", () => {
       const collapsedPreview = collapsedRows[1] ?? "";
       if (!collapsedPreview.includes("Done")) throw new Error("collapsed preview was not result-first: " + collapsed);
       if (collapsedPreview.includes("Async id")) throw new Error("collapsed preview exposed async metadata: " + collapsed);
+      if (!/^ {4}Done\s*$/.test(collapsedPreview)) throw new Error("collapsed preview was not the aligned result-first row: " + collapsed);
+      const hintRow = collapsedRows.find((row) => row.includes("full notification")) ?? "";
+      if (!/^ {4}\S/.test(hintRow)) throw new Error("hint row did not share the detail column: " + collapsed);
       if (!collapsed.includes("full notification")) throw new Error("missing expand hint: " + collapsed);
       if (!/ctrl\+o full notification/i.test(collapsed)) throw new Error("stock notification expansion was not used: " + collapsed);
       if (!expanded.includes("Output artifact: /tmp/worker-output.md")) throw new Error("expanded output lost artifact path: " + expanded);

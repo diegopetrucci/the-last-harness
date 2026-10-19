@@ -11,7 +11,6 @@ export { buildResumeModelResolution, normalizeProjectAgentAccess, requestInterru
 import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.js";
 import { retiredNestedLaunchError } from "../runs/shared/pi-args.js";
 import { normalizeSkillInput } from "../agents/skills.js";
-import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { executeAsyncParallel, executeAsyncSingle, isAsyncAvailable, } from "../runs/background/async-execution.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { resolveControlConfig } from "../runs/shared/subagent-control.js";
@@ -75,7 +74,7 @@ function applyProjectAgentOpenRouterModel(params, identities, currentModel) {
 function retiredExecutionControlError(params) {
     const input = params;
     const topLevelGuidance = {
-        timeoutMs: "Configure `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json`; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing `timeoutMs`.",
+        timeoutMs: "Caller-selected execution timeouts are retired; per-role execution budgets are applied automatically. Restart with a new direct run after removing `timeoutMs`.",
         concurrency: "Configure `parallel.concurrency` in `<agent-dir>/extensions/subagent/config.json`; per-call concurrency is no longer supported.",
         fallbackModels: "Configure fallbackModels in the agent definition; per-call fallback selection is no longer supported.",
         includeProgress: "Progress is tracked automatically and is not a caller-controlled execution option.",
@@ -89,7 +88,7 @@ function retiredExecutionControlError(params) {
             if (!isRecordValue(rawTask))
                 continue;
             if (Object.hasOwn(rawTask, "timeoutMs")) {
-                return `tasks[${index}].timeoutMs is no longer supported. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing timeoutMs.`;
+                return `tasks[${index}].timeoutMs is no longer supported. Caller-selected execution timeouts are retired; per-role execution budgets are applied automatically. Restart with a new direct run after removing timeoutMs.`;
             }
             if (Object.hasOwn(rawTask, "reads")) {
                 return `tasks[${index}].reads is no longer supported. Configure defaultReads in the agent definition instead.`;
@@ -322,7 +321,6 @@ async function runAsyncPath(data, deps) {
             sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index)),
             maxSubagentDepth: currentMaxSubagentDepth,
             controlConfig,
-            timeoutMs: data.timeoutMs,
             projectAgentIdentities: data.projectAgentIdentities,
             ticketBodies,
             ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
@@ -377,7 +375,6 @@ async function runAsyncPath(data, deps) {
             modelFallbackNotice: params.modelFallbackNotice,
             maxSubagentDepth,
             controlConfig,
-            timeoutMs: data.timeoutMs,
             projectAgent: data.projectAgentIdentities?.find((identity) => `embedded.${identity.slug}` === params.agent),
             ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
         });
@@ -590,7 +587,6 @@ async function executeInterruptAction(params, ctx, deps) {
 }
 export function createSubagentExecutor(deps) {
     const configuredArtifactConfig = deps.artifactConfig ?? resolveArtifactConfig(deps.config.artifacts);
-    const executionPolicy = deps.executionPolicy ?? resolveExecutionPolicy(deps.config.execution);
     const execute = async (_id, params, signal, onUpdate, ctx) => {
         deps.state.baseCwd = ctx.cwd;
         const requestParams = params;
@@ -618,7 +614,6 @@ export function createSubagentExecutor(deps) {
                         ...configuredArtifactConfig,
                         enabled: paramsWithResolvedCwd.artifacts !== false,
                     },
-                    executionPolicy,
                 });
             }
             if (action === "steer")
@@ -664,7 +659,6 @@ export function createSubagentExecutor(deps) {
         if (normalized.error)
             return normalized.error;
         let effectiveParams = normalized.params;
-        const runTimeoutMs = executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
         const scope = resolveExecutionAgentScope(effectiveParams.agentScope);
         const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
         const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
@@ -740,7 +734,6 @@ export function createSubagentExecutor(deps) {
             artifactConfig,
             artifactsDir,
             controlConfig,
-            timeoutMs: runTimeoutMs,
             modelScope,
             ticketBodies,
         };

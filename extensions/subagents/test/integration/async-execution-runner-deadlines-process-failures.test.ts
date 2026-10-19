@@ -92,14 +92,14 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(payload.results[0]?.timedOut, undefined);
   });
 
-  it("keeps a shorter internal run deadline below the agent ceiling", async () => {
+  it("derives the async-single deadline from the role ceiling", async () => {
     mockPi.onCall({ output: "caller timeout async done" });
     const id = `async-caller-timeout-${Date.now().toString(36)}`;
     const startedAt = Date.now();
     const result = executeAsyncSingle(id, {
       agent: "worker",
       task: "Say caller timeout async done. Do not edit files.",
-      agentConfig: makeAgent("worker", { maxExecutionTimeMs: 2000 }),
+      agentConfig: makeAgent("worker", { maxExecutionTimeMs: 500 }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -111,7 +111,6 @@ describe("async execution runner deadlines and process failures", () => {
       },
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
-      timeoutMs: 500,
     });
 
     assert.equal(result.isError, undefined);
@@ -120,8 +119,8 @@ describe("async execution runner deadlines and process failures", () => {
     assert.ok(result.details.deadlineAt >= startedAt + 500);
     assert.ok(result.details.deadlineAt <= Date.now() + 500);
     const payload = await readAsyncPayload(id);
-    // The shared run boundary is persisted as an absolute deadline. The
-    // root timeoutMs field is reserved for historical artifacts and is not
+    // Async-single role enforcement is persisted as an absolute root deadline.
+    // The root timeoutMs field is reserved for historical artifacts and is not
     // copied into a newly generated executable result.
     assert.equal(payload.timeoutMs, undefined);
     assert.equal(payload.deadlineAt, result.details.deadlineAt);
@@ -145,12 +144,12 @@ describe("async execution runner deadlines and process failures", () => {
       cwd: tempDir,
       currentSessionId: "session-1",
     };
-    const assertSaturatedConfig = async (id: string) => {
+    const assertConfig = async (id: string, expectedDeadlineAt: number | undefined) => {
       const config = JSON.parse(
         fs.readFileSync(getAsyncConfigPath(id), "utf-8"),
       ) as SubagentRunConfig;
-      assert.equal(config.deadlineAt, maxSafeDuration);
-      assert.ok(Number.isSafeInteger(config.deadlineAt));
+      assert.equal(config.deadlineAt, expectedDeadlineAt);
+      if (expectedDeadlineAt !== undefined) assert.ok(Number.isSafeInteger(expectedDeadlineAt));
       const payload = await readAsyncPayload(id);
       assert.equal(payload.success, true);
     };
@@ -158,31 +157,29 @@ describe("async execution runner deadlines and process failures", () => {
     const parallelId = `async-max-safe-parallel-${Date.now().toString(36)}`;
     mockPi.onCall({ output: "max-safe parallel done" });
     const parallel = executeAsyncParallel(parallelId, {
-      tasks: [{ agent: "worker", task: "Run with a max-safe duration." }],
-      agents: [makeAgent("worker")],
+      tasks: [{ agent: "worker", task: "Run with a max-safe role duration." }],
+      agents: [makeAgent("worker", { maxExecutionTimeMs: maxSafeDuration })],
       ctx,
       artifactConfig,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
-      timeoutMs: maxSafeDuration,
     });
     assert.equal(parallel.isError, undefined);
-    await assertSaturatedConfig(parallelId);
+    await assertConfig(parallelId, undefined);
 
     const singleRunId = `async-max-safe-run-${Date.now().toString(36)}`;
-    mockPi.onCall({ output: "max-safe run done" });
+    mockPi.onCall({ output: "unbounded custom run done" });
     const singleRun = executeAsyncSingle(singleRunId, {
       agent: "worker",
-      task: "Run with a max-safe duration.",
+      task: "Run without a role duration.",
       agentConfig: makeAgent("worker"),
       ctx,
       artifactConfig,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
-      timeoutMs: maxSafeDuration,
     });
     assert.equal(singleRun.isError, undefined);
-    await assertSaturatedConfig(singleRunId);
+    await assertConfig(singleRunId, undefined);
 
     const singleRoleId = `async-max-safe-role-${Date.now().toString(36)}`;
     mockPi.onCall({ output: "max-safe role done" });
@@ -196,11 +193,7 @@ describe("async execution runner deadlines and process failures", () => {
       maxSubagentDepth: 2,
     });
     assert.equal(singleRole.isError, undefined);
-    await readAsyncPayload(singleRoleId);
-    const roleStatus = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, singleRoleId, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.equal(roleStatus.steps?.[0]?.deadlineAt, maxSafeDuration);
+    await assertConfig(singleRoleId, maxSafeDuration);
   });
 
   it("rejects malformed persisted timeoutOwner values before spawn", () => {
@@ -446,7 +439,7 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(mockPi.callCount(), 3, "only compatible plans should launch children");
   });
 
-  it("anchors the role deadline at the child spawn", async () => {
+  it("bounds the role deadline by the per-instance remaining budget", async () => {
     const roleTimeoutMs = scaleTestTimeout(500);
     const id = `async-role-spawn-deadline-${Date.now().toString(36)}`;
     mockPi.onCall({ delay: scaleTestTimeout(25), output: "fresh role deadline accepted" });
@@ -479,7 +472,10 @@ describe("async execution runner deadlines and process failures", () => {
     assert.ok(step?.startedAt !== undefined);
     assert.ok(step.startedAt >= dispatchStartedAt);
     assert.equal(step?.timeoutMs, roleTimeoutMs);
-    assert.equal(step?.deadlineAt, (step?.startedAt ?? 0) + roleTimeoutMs);
+    // The deadline is the remaining active-time budget (a fresh instance has all
+    // of it), anchored no earlier than dispatch and no later than the child spawn.
+    assert.ok((step?.deadlineAt ?? 0) >= dispatchStartedAt + roleTimeoutMs);
+    assert.ok((step?.deadlineAt ?? 0) <= (step?.startedAt ?? 0) + roleTimeoutMs);
   });
 
   it("rejects retired timeout plans before launching a child", () => {
@@ -538,7 +534,7 @@ describe("async execution runner deadlines and process failures", () => {
       );
 
       assert.equal(runner.status, 1, `${testCase.label}: ${runner.stderr}`);
-      assert.match(runner.stderr, /caller-selected execution timeouts.*timeoutMs/i);
+      assert.match(runner.stderr, /Remove timeoutMs.*per-role execution budgets/i);
       assert.equal(mockPi.callCount(), 0, `${testCase.label}: child runner must not launch Pi`);
       assert.ok(
         fs.existsSync(resultPath),
@@ -552,7 +548,7 @@ describe("async execution runner deadlines and process failures", () => {
       );
       const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
       const expectedError =
-        "Async runner config contains retired timeoutMs execution control. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct single or parallel run after removing timeoutMs.";
+        "Async runner config contains retired timeoutMs execution control. Remove timeoutMs and restart with a new direct single or parallel run; per-role execution budgets are applied automatically.";
       assert.equal(payload.state, "failed", testCase.label);
       assert.equal(payload.success, false, testCase.label);
       assert.equal(payload.generation, status.lifecycle?.generation, testCase.label);
@@ -659,7 +655,7 @@ describe("async execution runner deadlines and process failures", () => {
     );
   });
 
-  it("does not write retired runtime ledger fields for a fresh run", async () => {
+  it("persists per-instance active runtime for a fresh run", async () => {
     mockPi.onCall({ output: "fresh run without a runtime ledger" });
     const id = `async-no-runtime-ledger-${Date.now().toString(36)}`;
     executeAsyncSingle(id, {
@@ -687,14 +683,15 @@ describe("async execution runner deadlines and process failures", () => {
       fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
     ) as Record<string, unknown>;
     assert.equal(payload.state, "complete");
-    assert.equal(payload.activeRuntimeMs, undefined);
-    assert.equal(payload.activeRuntimeCheckpointAt, undefined);
     const steps = payload.results as Array<Record<string, unknown>> | undefined;
-    assert.equal(steps?.[0]?.activeRuntimeMs, undefined);
-    assert.equal(steps?.[0]?.activeRuntimeCheckpointAt, undefined);
-    assert.equal(status.activeRuntimeMs, undefined);
-    assert.equal(status.activeRuntimeCheckpointAt, undefined);
-    assert.doesNotMatch(JSON.stringify(status), /activeRuntime/i);
+    const stepRuntime = steps?.[0]?.activeRuntimeMs;
+    assert.ok(typeof stepRuntime === "number" && stepRuntime > 0, "step carries active runtime");
+    const statusSteps = status.steps as Array<Record<string, unknown>> | undefined;
+    const statusRuntime = statusSteps?.[0]?.activeRuntimeMs;
+    assert.ok(
+      typeof statusRuntime === "number" && statusRuntime > 0,
+      "status carries active runtime",
+    );
   });
 
   it("attributes an async single timeout to the binding role ceiling", async () => {
@@ -722,13 +719,14 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(payload.state, "failed");
     assert.equal(payload.results[0]?.timedOut, true);
     assert.equal(payload.results[0]?.terminalResult?.state, "failed");
+    assert.equal(payload.results[0]?.timeoutOwner, "role");
     assert.equal(payload.results[0]?.error, `Subagent timed out after ${roleTimeoutMs}ms.`);
   });
 
-  it("hard-kills async children that ignore timeout SIGTERM", async () => {
+  it("hard-kills async children that ignore role-timeout SIGTERM", async () => {
     mockPi.onCall({ delay: 60_000, ignoreSigterm: true, output: "too late" });
     const id = `async-timeout-hard-kill-${Date.now().toString(36)}`;
-    // Scale with TLH_TEST_TIMEOUT_SCALE so the run deadline does not fire before
+    // Scale with TLH_TEST_TIMEOUT_SCALE so the role deadline does not fire before
     // the child is spawned and recorded on a loaded CI runner (corrected rule:
     // index 0 is just as exposed as any other index).
     const timeoutMs = scaleTestTimeout(1_500);
@@ -746,6 +744,7 @@ describe("async execution runner deadlines and process failures", () => {
       agentConfig: makeAgent("stubborn", {
         model: "primary-model",
         fallbackModels: ["fallback-model"],
+        maxExecutionTimeMs: timeoutMs,
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
@@ -757,7 +756,6 @@ describe("async execution runner deadlines and process failures", () => {
         cleanupDays: 7,
       },
       maxSubagentDepth: 2,
-      timeoutMs,
     });
 
     await waitForMockPiCall(mockPi, 0);
@@ -771,12 +769,11 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(payload.timedOut, true);
     assert.equal(payload.results[0]?.timedOut, true);
     assert.equal(payload.results[0]?.terminalResult?.state, "failed");
-    assert.equal(
-      payload.results[0]?.error,
-      "Subagent exceeded the configured maximum execution time.",
-    );
+    assert.equal(payload.results[0]?.timeoutOwner, "role");
+    assert.equal(payload.results[0]?.error, `Subagent timed out after ${timeoutMs}ms.`);
     assert.equal(status.timedOut, true);
     assert.equal(status.steps?.[0]?.timedOut, true);
+    assert.equal(status.steps?.[0]?.timeoutOwner, "role");
     assert.ok(
       elapsedMs < elapsedBound,
       `timeout result should settle after hard kill, elapsed ${elapsedMs}ms (bound: ${elapsedBound}ms)`,

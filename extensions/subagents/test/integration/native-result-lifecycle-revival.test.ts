@@ -11,6 +11,7 @@ import {
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -382,6 +383,148 @@ describe(
       }
     });
 
+    it("rejects a persisted role-timeout poison record despite a raised limit", async () => {
+      const runId = `resume-poisoned-role-timeout-${Date.now()}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const statusPath = path.join(asyncDir, "status.json");
+      const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      fs.writeFileSync(
+        statusPath,
+        JSON.stringify(
+          {
+            runId,
+            mode: "single",
+            state: "failed",
+            startedAt: 100,
+            endedAt: 200,
+            lastUpdate: 200,
+            cwd: tempDir,
+            steps: [
+              {
+                agent: "worker",
+                status: "failed",
+                sessionFile,
+                timedOut: true,
+                timeoutOwner: "role",
+                timeoutMs: 200,
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      const beforeStatus = fs.readFileSync(statusPath);
+      const beforeSession = fs.readFileSync(sessionFile);
+      try {
+        const { executor } = makeExecutor({
+          agents: [makeAgent("worker", { maxExecutionTimeMs: 1_000 })],
+        });
+        const result = await executor.execute(
+          "resume-poisoned-role-timeout",
+          { action: "resume", id: runId, message: "Continue after raising the limit." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, true);
+        assert.equal(
+          result.content[0]?.text,
+          "Agent 'worker' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+        );
+        assert.equal(mockPi.callCount(), 0);
+        assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+        assert.deepEqual(fs.readFileSync(sessionFile), beforeSession);
+      } finally {
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(sessionFile, { force: true });
+      }
+    });
+
+    it("does not poison run-owned or ownerless legacy timeout records with runtime remaining", async () => {
+      const cases: Array<{ label: string; timeoutOwner?: "run" }> = [
+        { label: "run-owned", timeoutOwner: "run" },
+        { label: "ownerless" },
+      ];
+      for (const [index, currentCase] of cases.entries()) {
+        const runId = `resume-legacy-timeout-${currentCase.label}-${Date.now()}`;
+        const asyncDir = path.join(ASYNC_DIR, runId);
+        const statusPath = path.join(asyncDir, "status.json");
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, "", "utf-8");
+        fs.writeFileSync(
+          statusPath,
+          JSON.stringify(
+            {
+              runId,
+              mode: "single",
+              state: "failed",
+              startedAt: 100,
+              endedAt: 200,
+              lastUpdate: 200,
+              cwd: tempDir,
+              steps: [
+                {
+                  agent: "worker",
+                  status: "failed",
+                  sessionFile,
+                  timedOut: true,
+                  ...(currentCase.timeoutOwner ? { timeoutOwner: currentCase.timeoutOwner } : {}),
+                  activeRuntimeMs: 100,
+                },
+              ],
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        let revivedId: string | undefined;
+        try {
+          mockPi.onCall({ output: `${currentCase.label} legacy timeout resumed` });
+          // Use a generous scaled budget so the remaining role time (budget minus
+          // activeRuntimeMs) does not expire before the mock child spawns in CI.
+          const { executor } = makeExecutor({
+            agents: [makeAgent("worker", { maxExecutionTimeMs: scaleTestTimeout(30_000) })],
+          });
+          const result = await executor.execute(
+            `resume-${currentCase.label}`,
+            { action: "resume", id: runId, message: "Continue with runtime remaining." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+          revivedId = await waitForRevivedAsyncResult(result);
+          assert.equal(mockPi.callCount(), index + 1);
+          // Assert the revived run actually succeeded rather than just that the
+          // result file appeared.
+          const revivedPayload = JSON.parse(
+            fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
+          ) as { success?: boolean };
+          assert.equal(
+            revivedPayload.success,
+            true,
+            `${currentCase.label}: revived result should report success`,
+          );
+        } finally {
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          if (revivedId) {
+            fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
+            fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
+          }
+          fs.rmSync(sessionFile, { force: true });
+        }
+      }
+    });
+
     it("resume action revives completed multi-child async runs by index", async () => {
       mockPi.onCall({ output: "revived async child b" });
       const runId = `resume-revive-multi-${Date.now()}`;
@@ -437,15 +580,12 @@ describe(
       }
     });
 
-    it("gives each selected child of a failed run a fresh resume deadline", async () => {
-      mockPi.onCall({ output: "revived successful child" });
-      mockPi.onCall({ output: "revived failed child" });
+    it("retains runtime for every selected child in a failed parallel revival", async () => {
       const runId = `resume-revive-mixed-results-${Date.now()}`;
       const asyncDir = path.join(ASYNC_DIR, runId);
       const sourceResultPath = path.join(RESULTS_DIR, `${runId}.json`);
       const firstSession = path.join(tempDir, "child-a.jsonl");
       const secondSession = path.join(tempDir, "child-b.jsonl");
-      const revivedIds: string[] = [];
       try {
         fs.mkdirSync(asyncDir, { recursive: true });
         fs.writeFileSync(firstSession, "", "utf-8");
@@ -462,8 +602,18 @@ describe(
               lastUpdate: 200,
               cwd: tempDir,
               steps: [
-                { agent: "a", status: "complete", sessionFile: firstSession },
-                { agent: "b", status: "failed", sessionFile: secondSession },
+                {
+                  agent: "a",
+                  status: "complete",
+                  sessionFile: firstSession,
+                  activeRuntimeMs: 6_000,
+                },
+                {
+                  agent: "b",
+                  status: "failed",
+                  sessionFile: secondSession,
+                  activeRuntimeMs: 6_000,
+                },
               ],
             },
             null,
@@ -482,8 +632,8 @@ describe(
               success: false,
               cwd: tempDir,
               results: [
-                { agent: "a", success: true, sessionFile: firstSession },
-                { agent: "b", success: false, sessionFile: secondSession },
+                { agent: "a", success: true, sessionFile: firstSession, activeRuntimeMs: 6_000 },
+                { agent: "b", success: false, sessionFile: secondSession, activeRuntimeMs: 6_000 },
               ],
             },
             null,
@@ -505,24 +655,12 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        assert.equal(successfulChild.isError, undefined, successfulChild.content[0]?.text ?? "");
-        assert.equal(
-          successfulChild.details?.asyncId ? typeof successfulChild.details.asyncId : undefined,
-          "string",
+        assert.equal(successfulChild.isError, true);
+        assert.match(
+          successfulChild.content[0]?.text ?? "",
+          /Agent 'a' has exhausted its maxExecutionTimeMs ceiling after 6000ms of active runtime\./,
         );
-        const successfulId = await waitForRevivedAsyncResult(successfulChild);
-        revivedIds.push(successfulId);
-        const successfulStatus = readAsyncStatusJson<{
-          steps?: Array<{ timeoutMs?: number; deadlineAt?: number; startedAt?: number }>;
-        }>(successfulId);
-        assert.equal(successfulStatus.steps?.[0]?.timeoutMs, 5_000);
-        assert.equal(
-          successfulStatus.steps?.[0]?.deadlineAt,
-          (successfulStatus.steps?.[0]?.startedAt ?? 0) + 5_000,
-        );
-        assert.equal(mockPi.callCount(), 1, "the successful selected child should launch");
-        const successfulArgs = await readMockCallArgs(0);
-        assert.equal(successfulArgs[successfulArgs.indexOf("--session") + 1], firstSession);
+        assert.equal(mockPi.callCount(), 0, "the successful selected child must not relaunch");
 
         const failedChild = await executor.execute(
           "resume-revive-mixed-failure",
@@ -531,27 +669,159 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        assert.equal(failedChild.isError, undefined, failedChild.content[0]?.text ?? "");
-        const failedId = await waitForRevivedAsyncResult(failedChild);
-        revivedIds.push(failedId);
-        const failedStatus = readAsyncStatusJson<{
-          steps?: Array<{ timeoutMs?: number; deadlineAt?: number; startedAt?: number }>;
-        }>(failedId);
-        assert.equal(failedStatus.steps?.[0]?.timeoutMs, 5_000);
-        assert.equal(
-          failedStatus.steps?.[0]?.deadlineAt,
-          (failedStatus.steps?.[0]?.startedAt ?? 0) + 5_000,
+        assert.equal(failedChild.isError, true);
+        assert.match(
+          failedChild.content[0]?.text ?? "",
+          /Agent 'b' has exhausted its maxExecutionTimeMs ceiling after 6000ms of active runtime\./,
         );
-        assert.equal(mockPi.callCount(), 2, "the failed selected child should also launch");
-        const failedArgs = await readMockCallArgs(1);
-        assert.equal(failedArgs[failedArgs.indexOf("--session") + 1], secondSession);
+        assert.equal(mockPi.callCount(), 0, "the failed selected child must not relaunch");
       } finally {
         fs.rmSync(asyncDir, { recursive: true, force: true });
         fs.rmSync(sourceResultPath, { force: true });
-        for (const revivedId of revivedIds) {
+      }
+    });
+
+    it("only poisons the exhausted sibling in a mixed parallel revival", async () => {
+      const runId = `resume-poisoned-parallel-sibling-${Date.now()}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const statusPath = path.join(asyncDir, "status.json");
+      const poisonedSession = path.join(tempDir, `${runId}-poisoned.jsonl`);
+      const healthySession = path.join(tempDir, `${runId}-healthy.jsonl`);
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(poisonedSession, "poisoned session", "utf-8");
+      fs.writeFileSync(healthySession, "healthy session", "utf-8");
+      fs.writeFileSync(
+        statusPath,
+        JSON.stringify(
+          {
+            runId,
+            mode: "parallel",
+            state: "failed",
+            startedAt: 100,
+            endedAt: 200,
+            lastUpdate: 200,
+            cwd: tempDir,
+            steps: [
+              {
+                agent: "poisoned",
+                status: "failed",
+                sessionFile: poisonedSession,
+                timedOut: true,
+                timeoutOwner: "role",
+                activeRuntimeMs: 100,
+              },
+              {
+                agent: "healthy",
+                status: "complete",
+                sessionFile: healthySession,
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      const beforeStatus = fs.readFileSync(statusPath);
+      const beforePoisonedSession = fs.readFileSync(poisonedSession);
+      const beforeHealthySession = fs.readFileSync(healthySession);
+      let revivedId: string | undefined;
+      try {
+        const { executor } = makeExecutor({
+          agents: [
+            makeAgent("poisoned", { maxExecutionTimeMs: 1_000 }),
+            // Use a generous scaled budget for the healthy agent so the remaining
+            // role time does not expire before mock-child spawn in CI.
+            makeAgent("healthy", { maxExecutionTimeMs: scaleTestTimeout(30_000) }),
+          ],
+        });
+        const blocked = await executor.execute(
+          "resume-poisoned-parallel-sibling",
+          { action: "resume", id: runId, index: 0, message: "Continue the poisoned child." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(blocked.isError, true);
+        assert.equal(
+          blocked.content[0]?.text,
+          "Agent 'poisoned' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+        );
+        assert.equal(mockPi.callCount(), 0);
+        assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+        assert.deepEqual(fs.readFileSync(poisonedSession), beforePoisonedSession);
+        assert.deepEqual(fs.readFileSync(healthySession), beforeHealthySession);
+
+        mockPi.onCall({ output: "healthy sibling resumed" });
+        const resumed = await executor.execute(
+          "resume-healthy-parallel-sibling",
+          { action: "resume", id: runId, index: 1, message: "Continue the healthy child." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(resumed.isError, undefined, resumed.content[0]?.text ?? "");
+        revivedId = await waitForRevivedAsyncResult(resumed);
+        assert.equal(mockPi.callCount(), 1);
+      } finally {
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        if (revivedId) {
           fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
           fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
         }
+        fs.rmSync(poisonedSession, { force: true });
+        fs.rmSync(healthySession, { force: true });
+      }
+    });
+
+    it("charges only consumed active runtime on resume, never the paused wall gap", async () => {
+      mockPi.onCall({ output: "resumed within remaining budget" });
+      const runId = `resume-paused-wall-gap-${Date.now()}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const sessionFile = path.join(tempDir, "child-paused-gap.jsonl");
+      try {
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, "", "utf-8");
+        // The run ended long ago (a very large wall gap) but consumed 1s of its 5s budget.
+        fs.writeFileSync(
+          path.join(asyncDir, "status.json"),
+          JSON.stringify(
+            {
+              runId,
+              mode: "single",
+              state: "complete",
+              startedAt: 100,
+              endedAt: 200,
+              lastUpdate: 200,
+              cwd: tempDir,
+              sessionFile,
+              steps: [{ agent: "worker", status: "complete", sessionFile, activeRuntimeMs: 1_000 }],
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        const { executor } = makeExecutor({
+          agents: [makeAgent("worker", { maxExecutionTimeMs: 5_000 })],
+        });
+
+        const result = await executor.execute(
+          "resume-paused-wall-gap",
+          { action: "resume", id: runId, message: "Continue." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+        // Remaining budget = role budget minus consumed active runtime only.
+        assert.equal((result.details as { timeoutMs?: number } | undefined)?.timeoutMs, 4_000);
+        await waitForRevivedAsyncResult(result);
+      } finally {
+        fs.rmSync(asyncDir, { recursive: true, force: true });
       }
     });
 
@@ -808,6 +1078,213 @@ describe(
           fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
         }
         fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(sessionFile, { force: true });
+      }
+    });
+
+    it("retains role-timeout poison when recovering from a result after status removal", async () => {
+      const runId = `resume-result-only-poisoned-timeout-${Date.now()}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const statusPath = path.join(asyncDir, "status.json");
+      const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
+      const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      fs.writeFileSync(
+        statusPath,
+        JSON.stringify(
+          {
+            runId,
+            mode: "single",
+            state: "failed",
+            startedAt: 100,
+            endedAt: 200,
+            lastUpdate: 200,
+            cwd: tempDir,
+            steps: [
+              {
+                agent: "worker",
+                status: "failed",
+                sessionFile,
+                timedOut: true,
+                timeoutOwner: "role",
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          {
+            id: runId,
+            agent: "worker",
+            mode: "single",
+            state: "failed",
+            success: false,
+            cwd: tempDir,
+            asyncDir,
+            results: [
+              {
+                agent: "worker",
+                success: false,
+                output: "role timeout evidence",
+                sessionFile,
+                timedOut: true,
+                timeoutOwner: "role",
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      const beforeStatus = fs.readFileSync(statusPath);
+      const beforeResult = fs.readFileSync(resultPath);
+      try {
+        const { executor } = makeExecutor({
+          agents: [makeAgent("worker", { maxExecutionTimeMs: 1_000 })],
+        });
+        const statusResume = await executor.execute(
+          "resume-result-only-poison-status",
+          { action: "resume", id: runId, message: "Continue before status removal." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(statusResume.isError, true);
+        assert.equal(
+          statusResume.content[0]?.text,
+          "Agent 'worker' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+        );
+        assert.equal(mockPi.callCount(), 0);
+        assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+        assert.deepEqual(fs.readFileSync(resultPath), beforeResult);
+
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        const resultOnlyResume = await executor.execute(
+          "resume-result-only-poison-after-status-removal",
+          { action: "resume", id: runId, message: "Continue from the saved result." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(resultOnlyResume.isError, true);
+        assert.equal(
+          resultOnlyResume.content[0]?.text,
+          "Agent 'worker' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+        );
+        assert.equal(mockPi.callCount(), 0);
+        assert.deepEqual(fs.readFileSync(resultPath), beforeResult);
+      } finally {
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(resultPath, { force: true });
+        fs.rmSync(sessionFile, { force: true });
+      }
+    });
+
+    it("rejects resume when status has malformed timeoutOwner but result carries valid role evidence", async () => {
+      // Regression for the fail-closed merge fix: a malformed status-side owner
+      // (e.g. "ROLE") must not mask a valid result-side "role" via nullish
+      // coalescing. Resume must be rejected before spawn.
+      const runId = `resume-malformed-status-owner-${Date.now()}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const statusPath = path.join(asyncDir, "status.json");
+      const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
+      const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      // Status persists a malformed (uppercase) timeoutOwner that normalizes to
+      // undefined, which previously could mask the valid result evidence.
+      fs.writeFileSync(
+        statusPath,
+        JSON.stringify(
+          {
+            runId,
+            mode: "single",
+            state: "failed",
+            startedAt: 100,
+            endedAt: 200,
+            lastUpdate: 200,
+            cwd: tempDir,
+            steps: [
+              {
+                agent: "worker",
+                status: "failed",
+                sessionFile,
+                timedOut: true,
+                timeoutOwner: "ROLE",
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      // Result file carries the authoritative valid role-timeout evidence.
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          {
+            id: runId,
+            agent: "worker",
+            mode: "single",
+            state: "failed",
+            success: false,
+            cwd: tempDir,
+            asyncDir,
+            results: [
+              {
+                agent: "worker",
+                success: false,
+                output: "role timeout evidence",
+                sessionFile,
+                timedOut: true,
+                timeoutOwner: "role",
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      const beforeStatus = fs.readFileSync(statusPath);
+      const beforeResult = fs.readFileSync(resultPath);
+      try {
+        const { executor } = makeExecutor({
+          agents: [makeAgent("worker", { maxExecutionTimeMs: 1_000 })],
+        });
+        const result = await executor.execute(
+          "resume-malformed-status-owner",
+          { action: "resume", id: runId, message: "Continue after raising the limit." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, true);
+        assert.equal(
+          result.content[0]?.text,
+          "Agent 'worker' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+        );
+        assert.equal(mockPi.callCount(), 0, "malformed status owner must not allow spawn");
+        assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+        assert.deepEqual(fs.readFileSync(resultPath), beforeResult);
+      } finally {
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(resultPath, { force: true });
         fs.rmSync(sessionFile, { force: true });
       }
     });

@@ -84,7 +84,7 @@ interface BuiltinAgentOverrideConfig {
   tools?: string[] | false;
   subagentOnlyExtensions?: string[] | false;
   supervisorBridge?: boolean;
-  maxExecutionTimeMs?: number | false;
+  maxExecutionTimeMs?: number;
 }
 
 interface BuiltinAgentOverrideInfo {
@@ -141,6 +141,7 @@ interface SubagentSettings {
   defaultModel?: string;
   modelScope?: ModelScopeConfig;
   obsoleteCompletionGuard?: boolean;
+  diagnostics?: string[];
 }
 
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = {
@@ -309,6 +310,7 @@ function parseBuiltinOverrideEntry(
   name: string,
   value: unknown,
   filePath: string,
+  diagnostics: string[],
 ): BuiltinAgentOverrideConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`Builtin override '${name}' in '${filePath}' must be an object.`);
@@ -386,12 +388,18 @@ function parseBuiltinOverrideEntry(
 
   if (Object.hasOwn(input, "maxExecutionTimeMs")) {
     if (input.maxExecutionTimeMs === false) {
-      override.maxExecutionTimeMs = false;
+      const boundedFallback =
+        canonicalAgentMaxExecutionTimeMs(name) === undefined
+          ? "bounded custom-agent fallback"
+          : "bounded canonical role ceiling";
+      diagnostics.push(
+        `Builtin override '${name}' in '${filePath}' uses legacy 'maxExecutionTimeMs: false'; the setting is ignored and the ${boundedFallback} remains active.`,
+      );
     } else {
       const parsed = input.maxExecutionTimeMs;
       if (!isPositiveSafeInteger(parsed))
         throw new Error(
-          `Builtin override '${name}' in '${filePath}' has invalid 'maxExecutionTimeMs'; expected a positive safe integer or false.`,
+          `Builtin override '${name}' in '${filePath}' has invalid 'maxExecutionTimeMs'; expected a positive safe integer.`,
         );
       override.maxExecutionTimeMs = parsed;
     }
@@ -457,6 +465,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
   );
   const parsed = Object.create(null) as Record<string, BuiltinAgentOverrideConfig>;
   let obsoleteCompletionGuard = false;
+  const diagnostics: string[] = [];
   const agentOverrides = Object.hasOwn(subagentsObject, "agentOverrides")
     ? subagentsObject.agentOverrides
     : undefined;
@@ -467,14 +476,24 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
     if (value && typeof value === "object" && !Array.isArray(value)) {
       obsoleteCompletionGuard ||= Object.hasOwn(value, "completionGuard");
     }
-    parsed[name] = parseBuiltinOverrideEntry(name, value, filePath);
+    parsed[name] = parseBuiltinOverrideEntry(name, value, filePath, diagnostics);
   }
   return {
     overrides: parsed,
     defaultModel,
     modelScope,
     ...(obsoleteCompletionGuard ? { obsoleteCompletionGuard: true } : {}),
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
   };
+}
+
+function settingsDiagnostics(
+  settings: SubagentSettings,
+  source: "user" | "project",
+  filePath: string | null,
+): AgentDiscoveryDiagnostic[] {
+  if (!filePath || !settings.diagnostics?.length) return [];
+  return settings.diagnostics.map((error) => ({ source, filePath, error }));
 }
 
 function resolveSubagentDefaultModel(
@@ -597,11 +616,7 @@ function applyCustomAgentOverride(
     fill("supervisorBridge", ["supervisorBridge"], override.supervisorBridge);
   }
   if (override.maxExecutionTimeMs !== undefined) {
-    fill(
-      "maxExecutionTimeMs",
-      ["maxExecutionTimeMs"],
-      override.maxExecutionTimeMs === false ? undefined : override.maxExecutionTimeMs,
-    );
+    fill("maxExecutionTimeMs", ["maxExecutionTimeMs"], override.maxExecutionTimeMs);
   }
 
   if (!anyFilled || !next) return agent;
@@ -866,8 +881,8 @@ function loadCanonicalPackagedAgents(agentDiagnostics: AgentDiscoveryDiagnostic[
   }
 
   // Keep role ceilings code-owned and apply them before any human settings
-  // overrides. An explicit false override therefore clears this value rather
-  // than being replaced by a fallback later in discovery.
+  // overrides. Legacy false overrides are diagnosed and ignored by the
+  // settings parser, so they cannot clear a bounded default.
   return Array.from(byName.values()).map((agent) => {
     const defaultMaxExecutionTimeMs = canonicalAgentMaxExecutionTimeMs(agent.name);
     if (defaultMaxExecutionTimeMs === undefined || agent.maxExecutionTimeMs !== undefined) {
@@ -895,7 +910,10 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     projectSettingsPath,
   );
   const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
-  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
+  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [
+    ...settingsDiagnostics(userSettings, "user", userSettingsPath),
+    ...settingsDiagnostics(projectSettings, "project", projectSettingsPath),
+  ];
   if (userSettings.obsoleteCompletionGuard) {
     agentDiagnostics.push({
       source: "user",
@@ -958,7 +976,10 @@ export function discoverAgentsAll(cwd: string): {
     projectSettingsPath,
   );
   const builtin: AgentConfig[] = [];
-  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
+  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [
+    ...settingsDiagnostics(userSettings, "user", userSettingsPath),
+    ...settingsDiagnostics(projectSettings, "project", projectSettingsPath),
+  ];
   if (userSettings.obsoleteCompletionGuard) {
     agentDiagnostics.push({
       source: "user",

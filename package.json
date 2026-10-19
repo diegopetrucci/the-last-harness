@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.43.0",
+  "version": "0.44.0",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -35,6 +35,7 @@
     "check:package-versions": "node scripts/check-package-versions.mjs",
     "check:package-contents": "node scripts/check-package-contents.mjs",
     "check:lazy-import-boundaries": "node scripts/check-lazy-import-boundaries.mjs",
+    "check:release-notes": "node scripts/release-notes.mjs --check",
     "check:runtime": "node scripts/runtime-typescript.mjs check",
     "check:startup-performance": "node scripts/check-startup-performance.mjs",
     "check:installer-performance": "node scripts/check-installer-performance.mjs",

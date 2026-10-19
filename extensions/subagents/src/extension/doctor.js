@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { discoverAgentsAll } from "../agents/agents.js";
 import { resolveCanonicalGitWorktreeRoot, resolveProjectAgentTrust, } from "../agents/project-agent-loader.js";
-import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { isAsyncAvailable } from "../runs/background/async-execution.js";
 import { discoverAvailableSkills, SOURCE_PRIORITY } from "../agents/skills.js";
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../shared/types.js";
@@ -74,15 +73,6 @@ function formatSessionLines(input) {
     if (input.sessionError)
         lines.push(`- session manager: failed — ${input.sessionError}`);
     return lines;
-}
-function formatExecutionSection(input) {
-    const policy = resolveExecutionPolicy(input.config.execution);
-    const runCeiling = policy.maxRunTimeMs === false ? "disabled" : `${policy.maxRunTimeMs}ms`;
-    return [
-        `- shared run ceiling: ${runCeiling}`,
-        "- role ceilings: fresh wall-clock deadline per child spawn (fallback/resume restart the clock)",
-        ...(policy.diagnostic ? [`- execution policy: warning — ${policy.diagnostic}`] : []),
-    ];
 }
 function formatRuntimeDirCounts(paths) {
     const counts = inspectRuntimeDirs({
@@ -195,9 +185,6 @@ export function buildDoctorReport(input) {
         `- cwd: ${input.cwd}`,
         lineFromCheck("async support", () => `- async support: ${deps.isAsyncAvailable() ? "available" : "unavailable"}`),
         ...formatSessionLines(input),
-        "",
-        "Execution",
-        ...formatExecutionSection(input),
         "",
         "Filesystem",
         formatExistingDirectory("temp root", paths.tempRootDir),

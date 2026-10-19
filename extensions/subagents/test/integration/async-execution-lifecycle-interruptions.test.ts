@@ -708,7 +708,7 @@ describe("async execution lifecycle interruptions", () => {
     },
   );
 
-  it("gives a model fallback respawn a fresh role ceiling", async () => {
+  it("keeps one per-instance role budget across a model fallback respawn", async () => {
     const roleTimeoutMs = scaleTestTimeout(2_000);
     const firstAttemptGate = path.join(tempDir, "first-attempt-release");
     const fallbackAttemptGate = path.join(tempDir, "fallback-attempt-release");
@@ -763,7 +763,9 @@ describe("async execution lifecycle interruptions", () => {
     const firstStep = firstStatus.steps?.[0];
     assert.ok(firstStep?.startedAt !== undefined);
     assert.equal(firstStep?.timeoutMs, roleTimeoutMs);
-    assert.equal(firstStep?.deadlineAt, (firstStep?.startedAt ?? 0) + roleTimeoutMs);
+    // The deadline is the instance's remaining active budget anchored at launch,
+    // so it can never exceed the role budget measured from the child spawn.
+    assert.ok((firstStep?.deadlineAt ?? Infinity) <= (firstStep?.startedAt ?? 0) + roleTimeoutMs);
     const firstStartedAt = firstStep.startedAt;
     const firstDeadlineAt = firstStep.deadlineAt;
     assert.ok(firstDeadlineAt !== undefined);
@@ -777,9 +779,12 @@ describe("async execution lifecycle interruptions", () => {
     const fallbackStep = fallbackStatus.steps?.[0];
     assert.ok(fallbackStep?.startedAt !== undefined);
     assert.equal(fallbackStep?.timeoutMs, roleTimeoutMs);
-    assert.equal(fallbackStep?.deadlineAt, (fallbackStep?.startedAt ?? 0) + roleTimeoutMs);
+    // A fallback respawn spends the same instance budget; it does not restart the clock.
+    assert.ok(
+      (fallbackStep?.deadlineAt ?? Infinity) <= (fallbackStep?.startedAt ?? 0) + roleTimeoutMs,
+    );
     assert.ok(fallbackStep.startedAt > firstStartedAt);
-    assert.ok((fallbackStep.deadlineAt ?? 0) > firstDeadlineAt);
+    assert.ok((fallbackStep.deadlineAt ?? Infinity) <= firstDeadlineAt);
 
     fs.writeFileSync(fallbackAttemptGate, "", "utf-8");
     const payload = await readAsyncPayload(id);
@@ -795,7 +800,8 @@ describe("async execution lifecycle interruptions", () => {
     const step = status.steps?.[0];
     assert.ok(step?.startedAt !== undefined);
     assert.equal(step?.timeoutMs, roleTimeoutMs);
-    assert.equal(step?.deadlineAt, (step?.startedAt ?? 0) + roleTimeoutMs);
+    assert.ok((step?.deadlineAt ?? Infinity) <= (step?.startedAt ?? 0) + roleTimeoutMs);
+    assert.ok((step?.activeRuntimeMs ?? 0) > 0, "consumed active runtime is persisted");
     assert.equal(mockPi.callCount(), 2);
   });
 
@@ -847,7 +853,7 @@ describe("async execution lifecycle interruptions", () => {
   );
 
   it(
-    "marks async parallel runs that exceed the shared run deadline as timed out",
+    "marks async parallel children that exceed their role deadlines as timed out",
     {
       skip:
         process.platform === "win32"
@@ -855,11 +861,10 @@ describe("async execution lifecycle interruptions", () => {
           : undefined,
     },
     async () => {
-      // Invariant: the shared run deadline must stay strictly below childDelayMs
-      // (the run times out before children finish), and both must scale together
-      // under TLH_TEST_TIMEOUT_SCALE so the ~30% ratio is preserved on loaded CI
-      // runners. This guarantees both children are spawned and recorded before the
-      // deadline fires, while still ensuring the run exceeds its own deadline.
+      // Each role deadline must stay strictly below childDelayMs (each child
+      // times out before it finishes), and both must scale together under
+      // TLH_TEST_TIMEOUT_SCALE so the ~30% ratio is preserved on loaded CI
+      // runners. There is deliberately no shared batch deadline.
       const childDelayMs = scaleTestTimeout(5_000);
       const timeoutMs = scaleTestTimeout(1_500); // ≈30% of childDelayMs at all scales
       mockPi.onCall({ delay: childDelayMs, output: "one done" });
@@ -871,7 +876,10 @@ describe("async execution lifecycle interruptions", () => {
           { agent: "two", task: "Wait" },
         ],
         concurrency: 2,
-        agents: [makeAgent("one"), makeAgent("two")],
+        agents: [
+          makeAgent("one", { maxExecutionTimeMs: timeoutMs }),
+          makeAgent("two", { maxExecutionTimeMs: timeoutMs }),
+        ],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
           enabled: false,
@@ -883,13 +891,10 @@ describe("async execution lifecycle interruptions", () => {
         },
         shareEnabled: false,
         maxSubagentDepth: 2,
-        // This is the internal run-deadline seam; public callers configure it
-        // through execution.maxRunTimeMs at the executor boundary.
-        timeoutMs,
       });
       assert.equal(launch.isError, undefined);
-      assert.equal(launch.details.timeoutMs, timeoutMs);
-      assert.ok(launch.details.deadlineAt !== undefined);
+      assert.equal(launch.details.timeoutMs, undefined);
+      assert.equal(launch.details.deadlineAt, undefined);
 
       await waitForMockPiCall(mockPi, 1);
       const resultPath = await waitForAsyncResultFile(id);
@@ -900,19 +905,18 @@ describe("async execution lifecycle interruptions", () => {
       assert.equal(payload.state, "failed");
       assert.equal(payload.success, false);
       assert.equal(payload.exitCode, 1);
-      const sharedDeadlineMessage = "Subagent exceeded the configured maximum execution time.";
-      // The resolved run timeout is represented by an absolute deadline in the
-      // executable runner config; the retired root timeoutMs field is not copied
-      // into the new durable status/result artifacts.
+      const roleDeadlineMessage = `Subagent timed out after ${timeoutMs}ms.`;
+      // Parallel batches have no shared root deadline. Each child owns its
+      // independently derived role deadline and timer.
       assert.equal(payload.timeoutMs, undefined);
-      assert.equal(payload.deadlineAt, launch.details.deadlineAt);
+      assert.equal(payload.deadlineAt, undefined);
       assert.equal(payload.timedOut, true);
-      assert.ok((payload.summary ?? "").includes(sharedDeadlineMessage));
+      assert.ok((payload.summary ?? "").includes(roleDeadlineMessage));
       assert.equal(status.state, "failed");
       assert.equal(status.timeoutMs, undefined);
-      assert.equal(status.deadlineAt, launch.details.deadlineAt);
+      assert.equal(status.deadlineAt, undefined);
       assert.equal(status.timedOut, true);
-      assert.ok((status.error ?? "").includes(sharedDeadlineMessage));
+      assert.ok((status.error ?? "").includes(roleDeadlineMessage));
       assert.deepEqual(
         status.steps?.map((step) => step.status),
         ["failed", "failed"],
@@ -923,7 +927,7 @@ describe("async execution lifecycle interruptions", () => {
       );
       assert.deepEqual(
         status.steps?.map((step) => step.error),
-        [sharedDeadlineMessage, sharedDeadlineMessage],
+        [roleDeadlineMessage, roleDeadlineMessage],
       );
       assert.deepEqual(
         payload.results.map((result) => result.timedOut),
@@ -953,12 +957,14 @@ describe("async execution lifecycle interruptions", () => {
       const launch = (
         id: string,
         tasks: Array<{ agent: string; task: string }>,
-        options: { timeoutMs?: number } = {},
+        options: { agentMaxExecutionTimeMs?: number } = {},
       ) =>
         executeAsyncParallel(id, {
           tasks,
           concurrency: 1,
-          agents: tasks.map(({ agent }) => makeAgent(agent)),
+          agents: tasks.map(({ agent }) =>
+            makeAgent(agent, { maxExecutionTimeMs: options.agentMaxExecutionTimeMs }),
+          ),
           ctx: {
             pi: { events: { emit() {} } },
             cwd: tempDir,
@@ -1021,7 +1027,7 @@ describe("async execution lifecycle interruptions", () => {
           { agent: "timeout-one", task: "Timeout first" },
           { agent: "timeout-two", task: "Timeout second" },
         ],
-        { timeoutMs: timedOutMs },
+        { agentMaxExecutionTimeMs: timedOutMs },
       );
       const timedOutPayload = JSON.parse(
         fs.readFileSync(
@@ -1033,11 +1039,11 @@ describe("async execution lifecycle interruptions", () => {
       assert.equal(timedOutPayload.timedOut, true);
       assert.deepEqual(
         timedOutPayload.results.map((result) => result.terminationReason),
-        ["timed_out", "timed_out"],
+        ["timed_out", "completed"],
       );
       assert.deepEqual(
         timedOutPayload.results.map((result) => result.timedOut),
-        [true, true],
+        [true, undefined],
       );
     },
   );
