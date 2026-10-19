@@ -270,20 +270,6 @@ function widgetStepStatus(status, theme, interruptRequestedAt) {
         return theme.fg("warning", "paused");
     return theme.fg("dim", safeTerminalText(status));
 }
-const TK_TICKET_WIDGET_PREFIX = "ticket: ";
-function widgetTkTicketText(job) {
-    if (!job.tkTicket || (job.status !== "running" && job.status !== "queued"))
-        return undefined;
-    return `${TK_TICKET_WIDGET_PREFIX}${job.tkTicket.title}`;
-}
-function widgetTkTicketLine(job, theme, indent = "  ") {
-    const ticket = widgetTkTicketText(job);
-    return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
-}
-function widgetTkTicketLines(job, theme, indent = "  ") {
-    const line = widgetTkTicketLine(job, theme, indent);
-    return line ? [line] : [];
-}
 function widgetStepActivity(step, snapshotNow, expanded = false, phraseNow) {
     if (isCompletedWidgetStepStatus(step.status))
         return "";
@@ -521,9 +507,7 @@ function singleWidgetAgentDetails(job, theme, expanded, width, phraseNow) {
     const step = job.steps?.[0];
     if (step) {
         const stepLines = awaitedStyleWidgetStepLines(job, theme, step, undefined, 1, 1, expanded, width, singleWidgetStepDisplayStatus(job, step), phraseNow);
-        const ticketLines = widgetTkTicketLines(job, theme, "    ");
-        const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
-        return lines;
+        return stepLines;
     }
     const agent = job.agents?.[0] ? safeTerminalText(job.agents[0]) : widgetJobName(job);
     const stats = widgetSummaryStats(job, theme, expanded);

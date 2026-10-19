@@ -8,7 +8,10 @@ import {
   checkPidLiveness,
   reconcileAsyncRun,
 } from "../../src/runs/background/stale-run-reconciler.ts";
-import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
+import {
+  transitionLifecycleStatus,
+  writeNormalizedLifecycleStatus,
+} from "../../src/runs/shared/lifecycle-state.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 
 const STALE_LIVE_PID_MS = 24 * 60 * 60 * 1000;
@@ -1262,6 +1265,139 @@ describe("async stale-run reconciliation", () => {
         artifact.telemetry?.outcome?.terminationReason,
         "process_exit",
         "result artifact telemetry must carry process_exit terminationReason",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("result-based repair is aborted when a terminal transition lands between observation and commit", () => {
+    // Regression: a terminal transition (or continuation claim) landing between the observation
+    // snapshot and the result-based repair must never be silently overwritten.
+    const root = tempRoot("pi-stale-result-concurrent-terminal-");
+    try {
+      const asyncDir = path.join(root, "run-concurrent-terminal");
+      const resultsDir = path.join(root, "results");
+      const runId = "run-concurrent-terminal";
+      fs.mkdirSync(resultsDir, { recursive: true });
+
+      // Write the initial non-terminal status (no PID, generation 0).
+      writeStatus(asyncDir, {
+        runId,
+        mode: "single",
+        state: "running",
+        startedAt: 1_000,
+        lastUpdate: 1_000,
+        steps: [{ agent: "worker", status: "running", startedAt: 1_000 }],
+      });
+      fs.writeFileSync(
+        path.join(resultsDir, `${runId}.json`),
+        JSON.stringify({ id: runId, state: "complete", success: true }),
+        "utf-8",
+      );
+
+      // Capture the stale snapshot bytes to feed as observed via statusRead.
+      const staleBytes = fs.readFileSync(path.join(asyncDir, "status.json"));
+      let body = staleBytes.toString("utf-8");
+      const staleMetadata = fs.statSync(path.join(asyncDir, "status.json"));
+      const statusRead = {
+        statSync: () => staleMetadata,
+        readFileSync: () => body,
+        sleep: () => {},
+      };
+
+      // Simulate a concurrent writer transitioning to terminal before the reconciler commits.
+      // The initial status has no lifecycle metadata so its generation is 0.
+      transitionLifecycleStatus({
+        asyncDir,
+        expectedGeneration: 0,
+        mutate: (current): typeof current => ({
+          ...current,
+          state: "failed" as const,
+          pid: undefined,
+          endedAt: 1_500,
+          lastUpdate: 1_500,
+          error: "completed by another writer",
+        }),
+      });
+
+      // The disk now has a terminal status at generation 1; statusRead still returns gen 0.
+      const result = reconcileAsyncRun(asyncDir, { resultsDir, statusRead, now: () => 2_000 });
+
+      // Repair must be aborted
+
+      assert.equal(
+        result.repaired,
+        false,
+        "repair must not overwrite a concurrent terminal transition",
+      );
+      assert.equal(result.status?.state, "failed", "must return the concurrent terminal status");
+      assert.equal(
+        JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).error,
+        "completed by another writer",
+        "concurrent terminal status must be preserved intact",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("result-based repair is aborted when a PID is acquired between observation and commit", () => {
+    // Regression: a continuation claim that publishes a new PID between observation and repair
+    // must abort the result-based repair, not overwrite the claiming runner's ownership.
+    const root = tempRoot("pi-stale-result-concurrent-pid-");
+    try {
+      const asyncDir = path.join(root, "run-concurrent-pid");
+      const resultsDir = path.join(root, "results");
+      const runId = "run-concurrent-pid";
+      fs.mkdirSync(resultsDir, { recursive: true });
+
+      // Write the initial non-terminal status (no PID).
+      writeStatus(asyncDir, {
+        runId,
+        mode: "single",
+        state: "running",
+        startedAt: 1_000,
+        lastUpdate: 1_000,
+        steps: [{ agent: "worker", status: "running", startedAt: 1_000 }],
+      });
+      fs.writeFileSync(
+        path.join(resultsDir, `${runId}.json`),
+        JSON.stringify({ id: runId, state: "complete", success: true }),
+        "utf-8",
+      );
+
+      // Feed the no-PID snapshot as stale observed.
+      const staleBytes = fs.readFileSync(path.join(asyncDir, "status.json"));
+      let body = staleBytes.toString("utf-8");
+      const staleMetadata = fs.statSync(path.join(asyncDir, "status.json"));
+      const statusRead = {
+        statSync: () => staleMetadata,
+        readFileSync: () => body,
+        sleep: () => {},
+      };
+
+      // Simulate a continuation claim that publishes a new PID (same generation, raw write).
+      const claimedPid = 99999;
+      const staleObj = JSON.parse(body) as Record<string, unknown>;
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify({ ...staleObj, pid: claimedPid, lastUpdate: 1_200 }),
+        "utf-8",
+      );
+
+      const result = reconcileAsyncRun(asyncDir, { resultsDir, statusRead, now: () => 2_000 });
+
+      // Repair must be aborted.
+      assert.equal(
+        result.repaired,
+        false,
+        "repair must not overwrite a concurrent PID acquisition",
+      );
+      assert.equal(
+        JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).pid,
+        claimedPid,
+        "the claiming runner's PID must survive",
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

@@ -12,59 +12,6 @@ import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/li
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.js";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
-function sanitizeTkTicketTitle(raw) {
-    let cleaned = "";
-    for (let i = 0; i < raw.length; i++) {
-        const code = raw.charCodeAt(i);
-        if (code === 0x1b) {
-            const next = raw.charCodeAt(++i);
-            if (next === 0x5b) {
-                while (++i < raw.length) {
-                    const fc = raw.charCodeAt(i);
-                    if (fc >= 0x40 && fc <= 0x7e)
-                        break;
-                }
-            }
-            else if (next === 0x5d) {
-                while (++i < raw.length) {
-                    const sc = raw.charCodeAt(i);
-                    if (sc === 0x07)
-                        break;
-                    if (sc === 0x1b && raw.charCodeAt(i + 1) === 0x5c) {
-                        i++;
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-        if (code <= 0x08 ||
-            code === 0x0b ||
-            code === 0x0c ||
-            (code >= 0x0e && code <= 0x1f) ||
-            (code >= 0x7f && code <= 0x9f)) {
-            cleaned += " ";
-            continue;
-        }
-        cleaned += raw[i];
-    }
-    const trimmed = cleaned.replace(/\s+/g, " ").trim();
-    return trimmed || undefined;
-}
-function normalizeTkTicketMetadata(raw) {
-    if (!raw || typeof raw !== "object")
-        return undefined;
-    const r = raw;
-    const id = typeof r.id === "string" && /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(r.id) ? r.id : undefined;
-    if (!id)
-        return undefined;
-    if (typeof r.title !== "string")
-        return undefined;
-    const title = sanitizeTkTicketTitle(r.title);
-    if (!title)
-        return undefined;
-    return { id, title };
-}
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -182,7 +129,6 @@ function statusToSummary(asyncDir, status) {
             ...(step.childLocation ? { childLocation: step.childLocation } : {}),
         };
     });
-    const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
     const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     return {
         id: status.runId || path.basename(asyncDir),
@@ -222,7 +168,6 @@ function statusToSummary(asyncDir, status) {
         ...(status.pause ? { pause: status.pause } : {}),
         ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
         ...(telemetry ? { telemetry } : {}),
-        ...(normalizedTkTicket !== undefined ? { tkTicket: normalizedTkTicket } : {}),
     };
 }
 function sortRuns(runs) {

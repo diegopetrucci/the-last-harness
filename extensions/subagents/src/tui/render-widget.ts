@@ -381,23 +381,6 @@ function widgetStepStatus(
   return theme.fg("dim", safeTerminalText(status));
 }
 
-const TK_TICKET_WIDGET_PREFIX = "ticket: ";
-
-function widgetTkTicketText(job: AsyncJobState): string | undefined {
-  if (!job.tkTicket || (job.status !== "running" && job.status !== "queued")) return undefined;
-  return `${TK_TICKET_WIDGET_PREFIX}${job.tkTicket.title}`;
-}
-
-function widgetTkTicketLine(job: AsyncJobState, theme: Theme, indent = "  "): string | undefined {
-  const ticket = widgetTkTicketText(job);
-  return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
-}
-
-function widgetTkTicketLines(job: AsyncJobState, theme: Theme, indent = "  "): string[] {
-  const line = widgetTkTicketLine(job, theme, indent);
-  return line ? [line] : [];
-}
-
 function widgetStepActivity(
   step: NonNullable<AsyncJobState["steps"]>[number],
   snapshotNow?: number,
@@ -754,9 +737,7 @@ function singleWidgetAgentDetails(
       singleWidgetStepDisplayStatus(job, step),
       phraseNow,
     );
-    const ticketLines = widgetTkTicketLines(job, theme, "    ");
-    const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
-    return lines;
+    return stepLines;
   }
 
   const agent = job.agents?.[0] ? safeTerminalText(job.agents[0]) : widgetJobName(job);

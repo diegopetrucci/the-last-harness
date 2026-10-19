@@ -9,6 +9,7 @@ export function buildPausedRunnerTelemetry(input) {
         return undefined;
     return telemetryFromRunnerResults({
         runId: input.config.id,
+        execution: input.config.awaited ? "foreground" : "async",
         mode: input.plan.kind,
         results: input.results,
         provenance,

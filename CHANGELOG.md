@@ -60,6 +60,14 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed the `DUMB ZONE` footer warning that appeared after context usage exceeded 200,000 tokens.
 - Removed TLH's custom `/review` command and interactive picker; automatic architect review remains.
 - Retired the bundled Pi Voice/Transcribe defaults. Updates remove only entries whose TLH ownership is recorded in default-extension provenance; ambiguous legacy entries without provenance stay installed. To reinstall manually, run `tlh install npm:@earendil-works/pi-voice` (or install a specific version) in the isolated profile; downloaded models and unrelated package files are left untouched.
+- Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
+- Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.
+- Removed the subagent acceptance contract, report parsing, role overrides, and verdict rendering. Terminal lifecycle facts now provide bounded execution evidence without judging task completion; historical status records remain readable and transcript text is preserved.
+- Retired the completion guard, task-intent classifier, and bash mutation/failure heuristics. Legacy `completionGuard` frontmatter and settings keys are ignored; the subagent runtime doctor calls out occurrences found in settings and canonical packaged-agent discovery, while embedded project-agent definitions are not scanned. Remove legacy keys manually when convenient.
+- Removed the retired `control.failedToolAttemptsBeforeAttention` control. Install, update, and `tlh doctor --repair` remove that legacy persisted key from valid isolated-profile configuration while preserving unrelated control values.
+- Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
+- Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
+- Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
 
 ## [0.43.0] - 2026-09-25
 
@@ -81,14 +89,6 @@ All notable changes to The Last Harness will be documented in this file.
 ### Removed
 
 - The bundled `pi-quiet-tools` default extension is removed.
-- Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
-- Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.
-- Removed the subagent acceptance contract, report parsing, role overrides, and verdict rendering. Terminal lifecycle facts now provide bounded execution evidence without judging task completion; historical status records remain readable and transcript text is preserved.
-- Retired the completion guard, task-intent classifier, and bash mutation/failure heuristics. Legacy `completionGuard` frontmatter and settings keys are ignored; the subagent runtime doctor calls out occurrences found in settings and canonical packaged-agent discovery, while embedded project-agent definitions are not scanned. Remove legacy keys manually when convenient.
-- Removed the retired `control.failedToolAttemptsBeforeAttention` control. Install, update, and `tlh doctor --repair` remove that legacy persisted key from valid isolated-profile configuration while preserving unrelated control values.
-- Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
-- Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
-- Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
 
 ## [0.42.1] - 2026-09-16
 

@@ -8,6 +8,7 @@ import {
   type SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
 import {
+  buildPausedRunnerTelemetry,
   persistRunnerTerminalRun,
   type RunnerStepResult,
 } from "../../src/runs/background/terminal-persistence.ts";
@@ -662,5 +663,92 @@ describe("runner result item carries per-child cwd (BUG-02)", () => {
       "result artifact step must carry the per-child cwd, not the run cwd",
     );
     assert.equal(artifact.cwd, runCwd, "result artifact top-level cwd must still be the run cwd");
+  });
+});
+
+describe("buildPausedRunnerTelemetry execution label", () => {
+  it("sets execution to 'foreground' for the first committed paused status of an awaited run", () => {
+    // Regression for P2: buildPausedRunnerTelemetry omitted the execution field, so
+    // awaited runs produced an atomic paused snapshot with execution='async'.
+    const config = {
+      id: "paused-awaited",
+      awaited: true,
+      plan: terminalPlan,
+      resultPath: "/tmp/paused-awaited.json",
+      cwd: "/tmp",
+      asyncDir: "/tmp",
+      artifactConfig: terminalArtifactConfig,
+      controlConfig: controls,
+      telemetry: {
+        schemaVersion: 1 as const,
+        run: { id: "paused-awaited", execution: "foreground" as const, mode: "single" as const },
+        steps: [],
+        provenance,
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention" as const],
+          notifyChannels: ["event" as const, "async" as const],
+        },
+      },
+    };
+    const result = buildPausedRunnerTelemetry({
+      config,
+      plan: terminalPlan,
+      results: [],
+      controlConfig: controls,
+      overallStartTime: 100,
+      endedAt: 200,
+      statusSteps: [],
+    });
+    assert.ok(result, "paused telemetry must be produced when provenance is present");
+    assert.equal(
+      result.run.execution,
+      "foreground",
+      "first committed paused status of an awaited run must carry execution='foreground'",
+    );
+    assert.equal(result.outcome?.state, "paused");
+  });
+
+  it("sets execution to 'async' for the first committed paused status of a non-awaited run", () => {
+    // Complement: a detached (non-awaited) run must still produce execution='async'.
+    const config = {
+      id: "paused-async",
+      awaited: false,
+      plan: terminalPlan,
+      resultPath: "/tmp/paused-async.json",
+      cwd: "/tmp",
+      asyncDir: "/tmp",
+      artifactConfig: terminalArtifactConfig,
+      controlConfig: controls,
+      telemetry: {
+        schemaVersion: 1 as const,
+        run: { id: "paused-async", execution: "async" as const, mode: "single" as const },
+        steps: [],
+        provenance,
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention" as const],
+          notifyChannels: ["event" as const, "async" as const],
+        },
+      },
+    };
+    const result = buildPausedRunnerTelemetry({
+      config,
+      plan: terminalPlan,
+      results: [],
+      controlConfig: controls,
+      overallStartTime: 100,
+      endedAt: 200,
+      statusSteps: [],
+    });
+    assert.ok(result, "paused telemetry must be produced when provenance is present");
+    assert.equal(
+      result.run.execution,
+      "async",
+      "first committed paused status of an async run must carry execution='async'",
+    );
+    assert.equal(result.outcome?.state, "paused");
   });
 });

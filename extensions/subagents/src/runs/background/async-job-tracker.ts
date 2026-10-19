@@ -150,7 +150,6 @@ export function createAsyncJobTracker(
         };
       })(),
       projectAgents: run.projectAgents,
-      ...(run.tkTicket ? { tkTicket: run.tkTicket } : {}),
     };
   };
   const cancelCleanup = (asyncId: string) => {

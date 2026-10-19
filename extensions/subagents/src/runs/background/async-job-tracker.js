@@ -109,7 +109,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                 };
             })(),
             projectAgents: run.projectAgents,
-            ...(run.tkTicket ? { tkTicket: run.tkTicket } : {}),
         };
     };
     const cancelCleanup = (asyncId) => {

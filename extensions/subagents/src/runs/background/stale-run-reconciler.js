@@ -169,6 +169,10 @@ function readResultForRepair(resultPath) {
         if (typeof rec.state !== "string")
             return undefined;
         return {
+            id: typeof rec.id === "string" ? rec.id : undefined,
+            generation: typeof rec.generation === "number" && Number.isSafeInteger(rec.generation)
+                ? rec.generation
+                : undefined,
             state: rec.state,
             success: typeof rec.success === "boolean" ? rec.success : undefined,
             results: Array.isArray(rec.results)
@@ -185,9 +189,15 @@ function repairStatusFromResult(asyncDir, observed, resultPath, now) {
     const repair = readResultForRepair(resultPath);
     if (!repair)
         return undefined;
+    const expectedRunId = observed.runId || path.basename(asyncDir);
+    if (repair.id !== undefined && repair.id !== expectedRunId)
+        return undefined;
     const isComplete = repair.state === "complete" || repair.state === "completed";
     const isFailed = repair.state === "failed";
     if (!isComplete && !isFailed)
+        return undefined;
+    const observedGeneration = lifecycleGeneration(observed);
+    if (typeof repair.generation === "number" && repair.generation !== observedGeneration)
         return undefined;
     const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, observed.telemetry);
     const isTerminalTelemetryState = (state) => state === "completed" || state === "failed" || state === "cancelled" || state === "paused";
@@ -241,30 +251,42 @@ function repairStatusFromResult(asyncDir, observed, resultPath, now) {
             terminalResult: terminalResultForStatusStep(step, childSuccess ? "complete" : "failed"),
         };
     });
-    const repairedStatus = {
-        ...observed,
-        state: isComplete ? "complete" : "failed",
-        pid: undefined,
-        error: isFailed ? (observed.error ?? "Async run failed.") : undefined,
-        endedAt: observed.endedAt ?? now,
-        lastUpdate: now,
-        ...(repairedSteps ? { steps: repairedSteps } : {}),
-        ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
-    };
+    const observedPid = observed.pid;
+    let committed;
     try {
-        writeAtomicJson(path.join(asyncDir, "status.json"), repairedStatus);
+        committed = transitionLifecycleStatus({
+            asyncDir,
+            expectedGeneration: observedGeneration,
+            mutate: (current) => {
+                if (isTerminalLifecycleState(current.state))
+                    throw STALE_REPAIR_GUARD_FAILED;
+                if (current.pid !== observedPid)
+                    throw STALE_REPAIR_GUARD_FAILED;
+                return {
+                    ...current,
+                    state: isComplete ? "complete" : "failed",
+                    pid: undefined,
+                    error: isFailed ? (current.error ?? "Async run failed.") : undefined,
+                    endedAt: current.endedAt ?? now,
+                    lastUpdate: now,
+                    ...(repairedSteps ? { steps: repairedSteps } : {}),
+                    ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
+                };
+            },
+        }).status;
     }
     catch {
-        return { status: observed, repaired: false, resultPath };
+        const latest = safeStatus(asyncDir);
+        return { status: latest ?? observed, repaired: false, resultPath };
     }
     appendRepairEvent(path.join(asyncDir, "events.jsonl"), {
         type: "subagent.run.repaired_stale",
         ts: now,
-        runId: observed.runId,
+        runId: committed.runId,
         resultPath,
-        message: `Stale run repaired from existing result artifact (state=${repairedStatus.state}).`,
+        message: `Stale run repaired from existing result artifact (state=${committed.state}).`,
     });
-    return { status: repairedStatus, repaired: true, resultPath };
+    return { status: committed, repaired: true, resultPath };
 }
 export function reconcileAsyncRun(asyncDir, options = {}) {
     const observed = safeStatus(asyncDir, options.statusRead);

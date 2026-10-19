@@ -249,6 +249,8 @@ export { checkPidLiveness };
 /** Read the result artifact for stale repair, if available. */
 function readResultForRepair(resultPath: string):
   | {
+      id?: string;
+      generation?: number;
       state: string;
       success?: boolean;
       results?: Array<Record<string, unknown>>;
@@ -262,6 +264,11 @@ function readResultForRepair(resultPath: string):
     const rec = parsed as Record<string, unknown>;
     if (typeof rec.state !== "string") return undefined;
     return {
+      id: typeof rec.id === "string" ? rec.id : undefined,
+      generation:
+        typeof rec.generation === "number" && Number.isSafeInteger(rec.generation)
+          ? rec.generation
+          : undefined,
       state: rec.state,
       success: typeof rec.success === "boolean" ? rec.success : undefined,
       results: Array.isArray(rec.results)
@@ -279,6 +286,10 @@ function readResultForRepair(resultPath: string):
  * exited without updating status to a terminal state. Adopts the result's
  * telemetry when it carries an authoritative terminal outcome; synthesizes
  * an outcome from the result state/steps otherwise.
+ *
+ * The write is performed under the lifecycle lock with a generation check so
+ * that a concurrent terminal transition, continuation claim, or PID publication
+ * landing between the observation and this repair is never silently overwritten.
  */
 function repairStatusFromResult(
   asyncDir: string,
@@ -288,9 +299,19 @@ function repairStatusFromResult(
 ): ReconcileAsyncRunResult | undefined {
   const repair = readResultForRepair(resultPath);
   if (!repair) return undefined;
+
+  // Validate result identity — reject an artifact that does not belong to this run.
+  const expectedRunId = observed.runId || path.basename(asyncDir);
+  if (repair.id !== undefined && repair.id !== expectedRunId) return undefined;
+
   const isComplete = repair.state === "complete" || repair.state === "completed";
   const isFailed = repair.state === "failed";
   if (!isComplete && !isFailed) return undefined;
+
+  // Validate result generation — if the artifact carries one it must match the observed snapshot.
+  const observedGeneration = lifecycleGeneration(observed);
+  if (typeof repair.generation === "number" && repair.generation !== observedGeneration)
+    return undefined;
 
   const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, observed.telemetry);
 
@@ -308,6 +329,8 @@ function repairStatusFromResult(
         });
 
   // Update per-child telemetry steps based on the result file's child outcomes.
+  // Computed outside the lock because the result artifact is immutable and
+  // the generation check guarantees current === observed when we enter mutate.
   let repairedTelemetry: SubagentRunTelemetry | undefined = mergedTelemetry;
   if (repairedTelemetry) {
     const updatedSteps = repairedTelemetry.steps.map((step) => {
@@ -339,7 +362,7 @@ function repairStatusFromResult(
     };
   }
 
-  // Build the repaired status, updating step statuses to match the result.
+  // Build step repairs outside the lock for the same reason.
   const repairedSteps = observed.steps?.map((step) => {
     if (isCompletedLifecycleStepState(step.status) || step.status === "failed") return step;
     const child = repair.results?.[observed.steps!.indexOf(step)] as
@@ -358,32 +381,49 @@ function repairStatusFromResult(
     };
   });
 
-  const repairedStatus: AsyncStatus = {
-    ...observed,
-    state: isComplete ? "complete" : "failed",
-    pid: undefined,
-    error: isFailed ? (observed.error ?? "Async run failed.") : undefined,
-    endedAt: observed.endedAt ?? now,
-    lastUpdate: now,
-    ...(repairedSteps ? { steps: repairedSteps } : {}),
-    ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
-  };
+  // Snapshot the PID before the lock so we can detect a concurrent claim inside mutate.
+  const observedPid = observed.pid;
 
+  // Perform the write under the lifecycle lock with a generation revalidation so that
+  // a concurrent terminal transition, continuation claim, or PID publication is never
+  // silently overwritten.
+  let committed: AsyncStatus;
   try {
-    writeAtomicJson(path.join(asyncDir, "status.json"), repairedStatus);
+    committed = transitionLifecycleStatus({
+      asyncDir,
+      expectedGeneration: observedGeneration,
+      mutate: (current) => {
+        // Abort if a concurrent writer already moved to a terminal state.
+        if (isTerminalLifecycleState(current.state)) throw STALE_REPAIR_GUARD_FAILED;
+        // Abort if the PID changed — a continuation was claimed or a new runner started.
+        if (current.pid !== observedPid) throw STALE_REPAIR_GUARD_FAILED;
+        // Build the repaired status from current (generation-validated equal to observed).
+        return {
+          ...current,
+          state: isComplete ? "complete" : "failed",
+          pid: undefined,
+          error: isFailed ? (current.error ?? "Async run failed.") : undefined,
+          endedAt: current.endedAt ?? now,
+          lastUpdate: now,
+          ...(repairedSteps ? { steps: repairedSteps } : {}),
+          ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
+        } as AsyncStatus;
+      },
+    }).status;
   } catch {
-    return { status: observed, repaired: false, resultPath };
+    const latest = safeStatus(asyncDir);
+    return { status: latest ?? observed, repaired: false, resultPath };
   }
 
   appendRepairEvent(path.join(asyncDir, "events.jsonl"), {
     type: "subagent.run.repaired_stale",
     ts: now,
-    runId: observed.runId,
+    runId: committed.runId,
     resultPath,
-    message: `Stale run repaired from existing result artifact (state=${repairedStatus.state}).`,
+    message: `Stale run repaired from existing result artifact (state=${committed.state}).`,
   });
 
-  return { status: repairedStatus, repaired: true, resultPath };
+  return { status: committed, repaired: true, resultPath };
 }
 
 export function reconcileAsyncRun(

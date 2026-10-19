@@ -494,7 +494,10 @@ describe(
       }
     });
 
-    it("sanitizes restored tk ticket metadata from persisted status", () => {
+    it("parses historical status files that contain a tkTicket field without error", () => {
+      // Regression: status files written by older versions carry a tkTicket field.
+      // The projection chain is retired; the field must be silently ignored so that
+      // history files still parse correctly and the job is restored as active.
       const asyncRoot = createTempDir("pi-async-job-restore-ticket-");
       try {
         const runDir = path.join(asyncRoot, "run-restored-ticket");
@@ -522,10 +525,22 @@ describe(
         );
         tracker.restoreActiveJobs();
 
-        assert.deepEqual(state.asyncJobs.get("run-restored-ticket")?.tkTicket, {
-          id: "psr-raw4",
-          title: "Restored title now",
-        });
+        // The job must be restored despite carrying the retired tkTicket field.
+        assert.ok(
+          state.asyncJobs.has("run-restored-ticket"),
+          "historical status file with tkTicket must still restore the job",
+        );
+        assert.equal(
+          state.asyncJobs.get("run-restored-ticket")?.status,
+          "running",
+          "restored job must reflect the persisted lifecycle state",
+        );
+        // The retired tkTicket field must not be projected into AsyncJobState.
+        assert.equal(
+          (state.asyncJobs.get("run-restored-ticket") as Record<string, unknown>).tkTicket,
+          undefined,
+          "tkTicket must be ignored and must not appear in AsyncJobState",
+        );
       } finally {
         removeTempDir(asyncRoot);
       }
