@@ -13,11 +13,12 @@ interface MockPiResponse {
   exitCode?: number;
   delay?: number;
   /**
-   * Wait until the child process has been alive this long (`process.uptime()`,
-   * so loader startup counts) before emitting output. Makes emission land at a
-   * fixed offset from spawn regardless of startup cost.
+   * Wait until this wall-clock time (`Date.now()` epoch ms) before emitting
+   * output, or emit immediately if it has already passed. Lets a test anchor
+   * emission to the same clock origin as a parent-computed deadline, whatever
+   * the process startup cost.
    */
-  emitAtProcessUptimeMs?: number;
+  emitAtEpochMs?: number;
   keepAliveAfterFinalMessageMs?: number;
   ignoreSigterm?: boolean;
   ignoreSigint?: boolean;

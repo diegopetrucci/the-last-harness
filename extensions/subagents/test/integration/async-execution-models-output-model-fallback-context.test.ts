@@ -331,14 +331,18 @@ describe("async execution model restoration and fallback", () => {
     async () => {
       // The deadline must fire after the child's context evidence is seen but
       // inside the runner's fixed 1s final-stop grace (which would otherwise
-      // classify the run as context_exhausted). Scale the deadline for startup
-      // headroom and emit a fixed, unscaled gap before it, relative to child spawn. The gap must stay
-      // under the 1s grace; a wider gap tolerates a starved runner reading the line late.
-      const deadlineMs = scaleTestTimeout(1_500);
-      const deadlineGapMs = 800;
+      // classify the run as context_exhausted). executeAsyncSingle computes the
+      // root deadline in this process (Date.now() + maxExecutionTimeMs) before
+      // spawning the runner, so it includes runner and child startup. Anchor the
+      // child's emission to the same wall clock: emit deadlineGapMs before the
+      // deadline. Startup must fit in deadlineMs - deadlineGapMs; the gap must
+      // stay well under the 1s grace.
+      const deadlineMs = scaleTestTimeout(2_000);
+      const deadlineGapMs = 600;
+      const dispatchAt = Date.now();
       mockPi.onCall({
         jsonl: highContextEmptyTerminalJsonl(),
-        emitAtProcessUptimeMs: deadlineMs - deadlineGapMs,
+        emitAtEpochMs: dispatchAt + deadlineMs - deadlineGapMs,
         keepAliveAfterFinalMessageMs: scaleTestTimeout(5_000),
       });
       const id = `async-context-timeout-boundary-${Date.now().toString(36)}`;

@@ -562,8 +562,8 @@ async function main() {
   if (typeof response.delay === "number" && response.delay > 0) {
     await new Promise((resolve) => setTimeout(resolve, response.delay));
   }
-  if (typeof response.emitAtProcessUptimeMs === "number") {
-    const waitMs = response.emitAtProcessUptimeMs - process.uptime() * 1000;
+  if (typeof response.emitAtEpochMs === "number") {
+    const waitMs = response.emitAtEpochMs - Date.now();
     if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
