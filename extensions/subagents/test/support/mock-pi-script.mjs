@@ -526,6 +526,13 @@ async function main() {
       appendSignalRecord("SIGTERM");
     });
   }
+  if (typeof response.flushMarkerOnSigterm === "string" && response.flushMarkerOnSigterm) {
+    // Cooperative child: flush state on SIGTERM, then exit.
+    process.on("SIGTERM", () => {
+      writeMarkerFile(response.flushMarkerOnSigterm);
+      process.exit(0);
+    });
+  }
   if (response.ignoreSigint === true) {
     process.on("SIGINT", () => {
       appendSignalRecord("SIGINT");

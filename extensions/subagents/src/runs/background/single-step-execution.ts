@@ -14,6 +14,8 @@ import {
 import {
   contextWindowForModel,
   emptyUsage,
+  killLiveChildGroups,
+  terminateLiveChildGroups,
   runPiStreaming,
   type ChildEvent,
   type RunPiStreamingResult,
@@ -107,20 +109,30 @@ let killCleanupInstalled = false;
 function ensureKillCleanup(): void {
   if (killCleanupInstalled) return;
   killCleanupInstalled = true;
-  const sigintHandler = (): void => {
-    process.removeListener("SIGTERM", sigtermHandler);
-    for (const dir of activeTempDirs) cleanupTempDir(dir);
-    activeTempDirs.clear();
-    process.kill(process.pid, "SIGINT");
-  };
-  const sigtermHandler = (): void => {
+  let terminating = false;
+  const reraise = (signal: NodeJS.Signals): void => {
     process.removeListener("SIGINT", sigintHandler);
+    process.removeListener("SIGTERM", sigtermHandler);
+    process.kill(process.pid, signal);
+  };
+  const handle = (signal: NodeJS.Signals): void => {
+    if (terminating) {
+      // A second signal means the parent is escalating: stop waiting.
+      killLiveChildGroups();
+      reraise(signal);
+      return;
+    }
+    terminating = true;
     for (const dir of activeTempDirs) cleanupTempDir(dir);
     activeTempDirs.clear();
-    process.kill(process.pid, "SIGTERM");
+    // SIGTERM first so cooperative children can flush, SIGKILL after a bounded
+    // grace; re-raise only once children are gone so no timer is orphaned.
+    void terminateLiveChildGroups().then(() => reraise(signal));
   };
-  process.once("SIGINT", sigintHandler);
-  process.once("SIGTERM", sigtermHandler);
+  const sigintHandler = (): void => handle("SIGINT");
+  const sigtermHandler = (): void => handle("SIGTERM");
+  process.on("SIGINT", sigintHandler);
+  process.on("SIGTERM", sigtermHandler);
 }
 
 function costSummaryFromAttempts(attempts: ModelAttempt[] | undefined): CostSummary | undefined {

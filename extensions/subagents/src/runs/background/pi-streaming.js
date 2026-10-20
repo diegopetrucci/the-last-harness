@@ -6,7 +6,7 @@ import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.js"
 import { CHILD_PROTOCOL_HARD_KILL_GRACE_MS, appendBoundedChildMessage, boundChildError, boundChildStderrError, claimChildTerminalReason, childUsageNumber, createBoundedBytePrefix, createBoundedByteTail, createBoundedLineReader, formatBoundedRawStdout, formatBoundedStderr, formatProtocolOutputLimit, formatStderrLineOverflow, formatStderrTailOverflow, MAX_CHILD_RAW_STDOUT_BYTES, MAX_CHILD_STDERR_LINE_BYTES, parseChildProtocolInput, } from "../shared/child-protocol.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
 import { extractTextFromContent, extractToolArgsPreview, getFinalOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
-import { cleanupOwnedProcessGroup, createOwnedProcessGroupOwner, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
+import { cleanupOwnedProcessGroup, createOwnedProcessGroupOwner, probeOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { resolveRuntimeModelContext } from "../../shared/model-info.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, resolveSubagentTerminationReason, updateContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
@@ -32,6 +32,45 @@ export function contextWindowForModel(model, contextWindows) {
 export function runtimeModelReference(identity) {
     return `${identity.provider}/${identity.model}${identity.thinking ? `:${identity.thinking}` : ""}`;
 }
+const liveChildGroups = new Map();
+export const LIVE_CHILD_GROUP_TERM_GRACE_MS = 750;
+const LIVE_CHILD_GROUP_POLL_MS = 25;
+function signalLiveChildGroups(signal) {
+    for (const groupId of liveChildGroups.keys()) {
+        try {
+            process.kill(-groupId, signal);
+        }
+        catch {
+            void 0;
+        }
+    }
+}
+let runnerTerminating = false;
+export function killLiveChildGroups() {
+    signalLiveChildGroups("SIGKILL");
+    liveChildGroups.clear();
+}
+export function terminateLiveChildGroups(graceMs = LIVE_CHILD_GROUP_TERM_GRACE_MS) {
+    runnerTerminating = true;
+    signalLiveChildGroups("SIGTERM");
+    const deadline = Date.now() + Math.max(0, graceMs);
+    return new Promise((resolve) => {
+        const poll = () => {
+            for (const [groupId, owner] of liveChildGroups) {
+                if (probeOwnedProcessGroup(owner) === "dead")
+                    liveChildGroups.delete(groupId);
+            }
+            if (liveChildGroups.size === 0)
+                return resolve();
+            if (Date.now() >= deadline) {
+                killLiveChildGroups();
+                return resolve();
+            }
+            setTimeout(poll, LIVE_CHILD_GROUP_POLL_MS);
+        };
+        poll();
+    });
+}
 export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env, piPackageRoot, piArgv1, maxSubagentDepth, childEventContext, registerInterrupt, onChildEvent, transcriptWriter, registerTimeout, timeoutMessage, onChildProtocolOutputLimit, context) {
     return new Promise((resolve) => {
         const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
@@ -52,6 +91,8 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
         const processGroupOwner = processGroupId
             ? createOwnedProcessGroupOwner(child)
             : undefined;
+        if (processGroupId && processGroupOwner)
+            liveChildGroups.set(processGroupId, processGroupOwner);
         const stderrTail = createBoundedByteTail();
         const messages = [];
         const messageLedger = { bytes: 0, sizes: [] };
@@ -473,6 +514,10 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
         }
         child.on("exit", (exitCode, signal) => {
             processGroupOwner?.observeExit(child.pid);
+            if (processGroupId && !runnerTerminating)
+                liveChildGroups.delete(processGroupId);
+            if (runnerTerminating)
+                return;
             childExited = true;
             exitCodeFromExit = exitCode;
             exitSignalFromExit = signal;
@@ -502,6 +547,8 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             });
         });
         child.on("close", (exitCode, signal) => {
+            if (runnerTerminating)
+                return;
             processGroupOwner?.observeExit(child.pid);
             disableSoftInterrupts();
             void resolveProcessCleanup().finally(() => {

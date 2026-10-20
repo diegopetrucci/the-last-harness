@@ -98,6 +98,10 @@ function probe(pid, kill, owner) {
         return code === "EPERM" ? "alive" : "unknown";
     }
 }
+export function probeOwnedProcessGroup(owner, kill = process.kill.bind(process)) {
+    claimOwner(owner.processGroupId, owner);
+    return probe(owner.processGroupId, kill, owner);
+}
 function directOwnerChildIsLive(pid, owner) {
     if (!hasClaimedOwner(pid, owner))
         return false;

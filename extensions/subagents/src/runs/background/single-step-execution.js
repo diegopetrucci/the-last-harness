@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
-import { contextWindowForModel, emptyUsage, runPiStreaming, } from "./pi-streaming.js";
+import { contextWindowForModel, emptyUsage, killLiveChildGroups, terminateLiveChildGroups, runPiStreaming, } from "./pi-streaming.js";
 import { getArtifactPaths, writeArtifactWithFloor } from "../../shared/artifacts.js";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
 import {} from "../../shared/types.js";
@@ -27,22 +27,28 @@ function ensureKillCleanup() {
     if (killCleanupInstalled)
         return;
     killCleanupInstalled = true;
-    const sigintHandler = () => {
-        process.removeListener("SIGTERM", sigtermHandler);
-        for (const dir of activeTempDirs)
-            cleanupTempDir(dir);
-        activeTempDirs.clear();
-        process.kill(process.pid, "SIGINT");
-    };
-    const sigtermHandler = () => {
+    let terminating = false;
+    const reraise = (signal) => {
         process.removeListener("SIGINT", sigintHandler);
+        process.removeListener("SIGTERM", sigtermHandler);
+        process.kill(process.pid, signal);
+    };
+    const handle = (signal) => {
+        if (terminating) {
+            killLiveChildGroups();
+            reraise(signal);
+            return;
+        }
+        terminating = true;
         for (const dir of activeTempDirs)
             cleanupTempDir(dir);
         activeTempDirs.clear();
-        process.kill(process.pid, "SIGTERM");
+        void terminateLiveChildGroups().then(() => reraise(signal));
     };
-    process.once("SIGINT", sigintHandler);
-    process.once("SIGTERM", sigtermHandler);
+    const sigintHandler = () => handle("SIGINT");
+    const sigtermHandler = () => handle("SIGTERM");
+    process.on("SIGINT", sigintHandler);
+    process.on("SIGTERM", sigtermHandler);
 }
 function costSummaryFromAttempts(attempts) {
     if (!attempts || attempts.length === 0)

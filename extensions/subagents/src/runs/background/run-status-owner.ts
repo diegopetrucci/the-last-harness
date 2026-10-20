@@ -689,6 +689,8 @@ export function createBackgroundRunStatusOwner(
       timedOut?: boolean;
       cancel?: AsyncStatus["cancel"];
       step?: TerminalStepPatch;
+      /** Keep status.pid so a paused run is not resumable before child cleanup is proven. */
+      retainOwnerPid?: boolean;
     } = {},
   ): boolean {
     // Freeze before publishing so teardown time never enters a continuation
@@ -697,7 +699,7 @@ export function createBackgroundRunStatusOwner(
     const succeeded = transition("running->terminal", (status) => ({
       ...status,
       state,
-      pid: undefined,
+      pid: options.retainOwnerPid ? status.pid : undefined,
       activityState: undefined,
       currentTool: undefined,
       currentToolStartedAt: undefined,
@@ -920,9 +922,12 @@ export function createBackgroundRunStatusOwner(
       return;
 
     const now = Date.now();
+    // Retain the owner pid: terminal persistence releases it under the status
+    // lock only after the children are confirmed stopped (resume gates on it).
     projectTerminal("paused", now, {
       stepState: "paused",
       onlyRunning: true,
+      retainOwnerPid: true,
       step: (_step, at) => ({ endedAt: at, exitCode: 0, terminationReason: "paused" }),
     });
 

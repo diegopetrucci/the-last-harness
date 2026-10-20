@@ -44,6 +44,7 @@ import {
 import {
   cleanupOwnedProcessGroup,
   createOwnedProcessGroupOwner,
+  probeOwnedProcessGroup,
   skipOwnedProcessGroupCleanup,
   supportsOwnedProcessGroupCleanup,
   type OwnedProcessGroupOwner,
@@ -124,6 +125,65 @@ export function runtimeModelReference(identity: SubagentModelIdentity): string {
   return `${identity.provider}/${identity.model}${identity.thinking ? `:${identity.thinking}` : ""}`;
 }
 
+/**
+ * Detached child process groups still running under this runner. If the runner
+ * itself is signalled (e.g. an awaited-owner abort), its children live in their
+ * own groups and would otherwise outlive it when they ignore SIGINT/SIGTERM.
+ */
+const liveChildGroups = new Map<number, OwnedProcessGroupOwner>();
+/**
+ * Grace between SIGTERM and SIGKILL for live child groups when the runner is
+ * signalled. Kept below the parent's SIGINT grace so the runner re-raises
+ * before the parent escalates to the next signal.
+ */
+export const LIVE_CHILD_GROUP_TERM_GRACE_MS = 750;
+const LIVE_CHILD_GROUP_POLL_MS = 25;
+function signalLiveChildGroups(signal: NodeJS.Signals): void {
+  for (const groupId of liveChildGroups.keys()) {
+    try {
+      process.kill(-groupId, signal);
+    } catch {
+      void 0;
+    }
+  }
+}
+/**
+ * Set once the runner is being signalled: child exits caused by the shutdown
+ * SIGTERM must not publish a step result (the parent owns the abort outcome).
+ */
+let runnerTerminating = false;
+export function killLiveChildGroups(): void {
+  signalLiveChildGroups("SIGKILL");
+  liveChildGroups.clear();
+}
+/**
+ * SIGTERM live child groups, poll group-level liveness (a group stays tracked
+ * after its leader exits while any descendant survives), and SIGKILL every group
+ * still alive after the grace period. The returned promise settles only once no
+ * timer is left pending.
+ */
+export function terminateLiveChildGroups(
+  graceMs: number = LIVE_CHILD_GROUP_TERM_GRACE_MS,
+): Promise<void> {
+  runnerTerminating = true;
+  signalLiveChildGroups("SIGTERM");
+  const deadline = Date.now() + Math.max(0, graceMs);
+  return new Promise((resolve) => {
+    const poll = (): void => {
+      for (const [groupId, owner] of liveChildGroups) {
+        if (probeOwnedProcessGroup(owner) === "dead") liveChildGroups.delete(groupId);
+      }
+      if (liveChildGroups.size === 0) return resolve();
+      if (Date.now() >= deadline) {
+        killLiveChildGroups();
+        return resolve();
+      }
+      setTimeout(poll, LIVE_CHILD_GROUP_POLL_MS);
+    };
+    poll();
+  });
+}
+
 export function runPiStreaming(
   args: string[],
   cwd: string,
@@ -169,6 +229,7 @@ export function runPiStreaming(
     const processGroupOwner: OwnedProcessGroupOwner | undefined = processGroupId
       ? createOwnedProcessGroupOwner(child)
       : undefined;
+    if (processGroupId && processGroupOwner) liveChildGroups.set(processGroupId, processGroupOwner);
     const stderrTail = createBoundedByteTail();
     const messages: Message[] = [];
     const messageLedger = { bytes: 0, sizes: [] as number[] };
@@ -619,6 +680,11 @@ export function runPiStreaming(
     }
     child.on("exit", (exitCode, signal) => {
       processGroupOwner?.observeExit(child.pid);
+      // While the runner is terminating, the group stays tracked until a
+      // group-level probe proves it gone: the leader exiting says nothing about
+      // descendants that ignored SIGTERM.
+      if (processGroupId && !runnerTerminating) liveChildGroups.delete(processGroupId);
+      if (runnerTerminating) return;
       childExited = true;
       exitCodeFromExit = exitCode;
       exitSignalFromExit = signal;
@@ -644,6 +710,7 @@ export function runPiStreaming(
       });
     });
     child.on("close", (exitCode, signal) => {
+      if (runnerTerminating) return;
       processGroupOwner?.observeExit(child.pid);
       disableSoftInterrupts();
       void resolveProcessCleanup().finally(() => {

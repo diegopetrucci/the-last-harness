@@ -132,6 +132,17 @@ function probe(pid: number, kill: KillFn, owner: OwnedProcessGroupOwner): Probe 
     return code === "EPERM" ? "alive" : "unknown";
   }
 }
+/**
+ * Group-level liveness for an owned process group, independent of whether the
+ * direct leader child has exited (descendants can keep the group alive).
+ */
+export function probeOwnedProcessGroup(
+  owner: OwnedProcessGroupOwner,
+  kill: KillFn = process.kill.bind(process),
+): Probe {
+  claimOwner(owner.processGroupId, owner);
+  return probe(owner.processGroupId, kill, owner);
+}
 function directOwnerChildIsLive(pid: number, owner: OwnedProcessGroupOwner): boolean {
   if (!hasClaimedOwner(pid, owner)) return false;
   try {

@@ -59,6 +59,8 @@ All notable changes to The Last Harness will be documented in this file.
 - Diff reviews now keep POSIX filenames containing backslashes inside the repository boundary when loading text and binary working-tree content.
 - The result watcher now rescans existing results after a restart, since results written while it was down emit no events.
 - Async resume now waits for paused source ownership to stop before reusing its session.
+- Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
+- Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
 - Subagent session analysis now merges telemetry in transcript order.
 - Async parallel planning now preserves inherited model provenance, so out-of-scope agent defaults and parent models warn without weakening explicit scope rejection.
 

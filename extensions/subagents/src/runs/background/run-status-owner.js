@@ -390,7 +390,7 @@ export function createBackgroundRunStatusOwner(input) {
         const succeeded = transition("running->terminal", (status) => ({
             ...status,
             state,
-            pid: undefined,
+            pid: options.retainOwnerPid ? status.pid : undefined,
             activityState: undefined,
             currentTool: undefined,
             currentToolStartedAt: undefined,
@@ -579,6 +579,7 @@ export function createBackgroundRunStatusOwner(input) {
         projectTerminal("paused", now, {
             stepState: "paused",
             onlyRunning: true,
+            retainOwnerPid: true,
             step: (_step, at) => ({ endedAt: at, exitCode: 0, terminationReason: "paused" }),
         });
         owner.interrupted = true;
