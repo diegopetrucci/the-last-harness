@@ -4,7 +4,7 @@ import { getArtifactPaths } from "../../shared/artifacts.js";
 import { readStatus, resolveChildCwd } from "../../shared/utils.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { isActiveLifecycleState, isCompletedLifecycleStepState, isLifecycleTransitionContentionError, isTerminalLifecycleState, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
-import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
+import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, applyActiveRuntimeCheckpoint, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
 import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
 import { persistedTicketId } from "../shared/ticket-context.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
@@ -146,6 +146,8 @@ export function createBackgroundRunStatusOwner(input) {
     fs.mkdirSync(asyncDir, { recursive: true });
     writeNormalizedLifecycleStatus(asyncDir, statusPayload);
     const terminalReason = {};
+    const activeRuntimeTrackers = new Map();
+    let runtimeCheckpointTimer;
     const trackedSessions = initialStatusSteps.map((step) => step.sessionFile
         ? {
             sessionDir: path.dirname(step.sessionFile),
@@ -228,6 +230,14 @@ export function createBackgroundRunStatusOwner(input) {
         }
         if (!persisted || !isTerminalLifecycleState(persisted.state))
             return undefined;
+        const adoptedAt = Date.now();
+        for (const [index, tracker] of activeRuntimeTrackers) {
+            const step = statusPayload.steps[index];
+            if (!step)
+                continue;
+            step.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0, tracker.freeze(adoptedAt));
+            step.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) ?? 0, adoptedAt);
+        }
         let adopted = persisted;
         try {
             adopted = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
@@ -258,6 +268,53 @@ export function createBackgroundRunStatusOwner(input) {
         Object.assign(statusPayload, merged);
         if (isTerminalLifecycleState(merged.state) && merged.state !== previousState)
             adoptConcurrentTerminalStatus();
+    }
+    function checkpointActiveRuntime(now = Date.now(), freeze = false) {
+        const candidates = [...activeRuntimeTrackers].flatMap(([index, tracker]) => {
+            const step = statusPayload.steps[index];
+            if (!step || step.status !== "running")
+                return [];
+            return [
+                {
+                    tracker,
+                    previousActiveRuntimeMs: step.activeRuntimeMs,
+                    previousActiveRuntimeCheckpointAt: step.activeRuntimeCheckpointAt,
+                    apply: ({ activeRuntimeMs, activeRuntimeCheckpointAt, }) => {
+                        step.activeRuntimeMs = activeRuntimeMs;
+                        step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
+                    },
+                },
+            ];
+        });
+        return applyActiveRuntimeCheckpoint(candidates, {
+            now,
+            freeze,
+            persist: () => {
+                const aggregate = statusPayload.steps.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
+                statusPayload.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0, aggregate);
+                statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(now) ?? 0);
+                statusPayload.lastUpdate = now;
+                writeStatusPayload();
+            },
+        });
+    }
+    function startRuntimeCheckpointTimer() {
+        disposeRuntimeCheckpointTimer();
+        runtimeCheckpointTimer = setInterval(() => {
+            if (statusPayload.state !== "running")
+                return;
+            try {
+                checkpointActiveRuntime(Date.now());
+            }
+            catch {
+            }
+        }, ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS);
+        runtimeCheckpointTimer.unref?.();
+    }
+    function disposeRuntimeCheckpointTimer() {
+        if (runtimeCheckpointTimer)
+            clearInterval(runtimeCheckpointTimer);
+        runtimeCheckpointTimer = undefined;
     }
     function transition(phase, mutate) {
         try {
@@ -328,6 +385,7 @@ export function createBackgroundRunStatusOwner(input) {
         clearHeartbeatTimer();
     }
     function projectTerminal(state, now, options = {}) {
+        checkpointActiveRuntime(now, true);
         const succeeded = transition("running->terminal", (status) => ({
             ...status,
             state,
@@ -426,6 +484,7 @@ export function createBackgroundRunStatusOwner(input) {
             requestedAt,
         };
         const now = Date.now();
+        checkpointActiveRuntime(now, true);
         const checkpointed = transition("running->pausing", (status) => ({
             ...status,
             state: "pausing",
@@ -632,6 +691,7 @@ export function createBackgroundRunStatusOwner(input) {
         sessionEnabled,
         statusPayload,
         terminalReason,
+        activeRuntimeTrackers,
         get latestSessionFile() {
             return latestSessionFile;
         },
@@ -667,6 +727,9 @@ export function createBackgroundRunStatusOwner(input) {
         applyPausedStepMetadata,
         startHeartbeat,
         stopHeartbeat,
+        checkpointActiveRuntime,
+        startRuntimeCheckpointTimer,
+        disposeRuntimeCheckpointTimer,
     };
     return owner;
 }

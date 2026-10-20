@@ -27,8 +27,12 @@ import {
   writeNormalizedLifecycleStatus,
 } from "../shared/lifecycle-state.ts";
 import {
+  ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS,
+  applyActiveRuntimeCheckpoint,
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
+  type ActiveRuntimeCheckpointUpdate,
+  type ActiveRuntimeTracker,
 } from "../shared/active-runtime.ts";
 import type { RunnerSubagentStep, SubagentRunPlan } from "../shared/parallel-utils.ts";
 import type { runSingleStep } from "./single-step-execution.ts";
@@ -93,6 +97,8 @@ export interface BackgroundRunStatusOwner {
   readonly sessionEnabled: boolean;
   readonly statusPayload: RunnerStatusPayload;
   readonly terminalReason: ChildTerminalReasonLatch;
+  /** Live active-runtime segments for running steps, keyed by flat step index. */
+  readonly activeRuntimeTrackers: Map<number, ActiveRuntimeTracker>;
   latestSessionFile: string | undefined;
   interrupted: boolean;
   cancelled: boolean;
@@ -144,6 +150,15 @@ export interface BackgroundRunStatusOwner {
   ): void;
   /** Stop the heartbeat timer (idempotent). */
   stopHeartbeat(): void;
+  /**
+   * Checkpoint (or, with `freeze`, finally settle) every live runtime tracker
+   * and persist the advance. Returns whether any status was written.
+   */
+  checkpointActiveRuntime(now?: number, freeze?: boolean): boolean;
+  /** Start the periodic durable active-runtime checkpoint timer. */
+  startRuntimeCheckpointTimer(): void;
+  /** Stop the checkpoint timer (idempotent). */
+  disposeRuntimeCheckpointTimer(): void;
 }
 
 const LIFECYCLE_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
@@ -374,6 +389,8 @@ export function createBackgroundRunStatusOwner(
   fs.mkdirSync(asyncDir, { recursive: true });
   writeNormalizedLifecycleStatus(asyncDir, statusPayload);
   const terminalReason: ChildTerminalReasonLatch = {};
+  const activeRuntimeTrackers = new Map<number, ActiveRuntimeTracker>();
+  let runtimeCheckpointTimer: NodeJS.Timeout | undefined;
   const trackedSessions: Array<TrackedStepSession | undefined> = initialStatusSteps.map((step) =>
     step.sessionFile
       ? {
@@ -453,6 +470,21 @@ export function createBackgroundRunStatusOwner(
     }
 
     if (!persisted || !isTerminalLifecycleState(persisted.state)) return undefined;
+    // Another lifecycle owner ended this live segment. Freeze local trackers so
+    // child teardown cannot inflate runtime; the merge keeps the larger value.
+    const adoptedAt = Date.now();
+    for (const [index, tracker] of activeRuntimeTrackers) {
+      const step = statusPayload.steps[index];
+      if (!step) continue;
+      step.activeRuntimeMs = Math.max(
+        normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0,
+        tracker.freeze(adoptedAt),
+      );
+      step.activeRuntimeCheckpointAt = Math.max(
+        normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) ?? 0,
+        adoptedAt,
+      );
+    }
     let adopted = persisted;
     try {
       adopted = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
@@ -485,6 +517,67 @@ export function createBackgroundRunStatusOwner(
 
     if (isTerminalLifecycleState(merged.state) && merged.state !== previousState)
       adoptConcurrentTerminalStatus();
+  }
+
+  function checkpointActiveRuntime(now = Date.now(), freeze = false): boolean {
+    const candidates = [...activeRuntimeTrackers].flatMap(([index, tracker]) => {
+      const step = statusPayload.steps[index];
+      if (!step || step.status !== "running") return [];
+      return [
+        {
+          tracker,
+          previousActiveRuntimeMs: step.activeRuntimeMs,
+          previousActiveRuntimeCheckpointAt: step.activeRuntimeCheckpointAt,
+          apply: ({
+            activeRuntimeMs,
+            activeRuntimeCheckpointAt,
+          }: ActiveRuntimeCheckpointUpdate) => {
+            step.activeRuntimeMs = activeRuntimeMs;
+            step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
+          },
+        },
+      ];
+    });
+    // Checkpoints are internal accounting evidence: persist them through the
+    // generation-safe merge path without a control notification or heartbeat.
+    return applyActiveRuntimeCheckpoint(candidates, {
+      now,
+      freeze,
+      persist: () => {
+        const aggregate = statusPayload.steps.reduce(
+          (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
+          0,
+        );
+        statusPayload.activeRuntimeMs = Math.max(
+          normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0,
+          aggregate,
+        );
+        statusPayload.activeRuntimeCheckpointAt = Math.max(
+          normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
+          normalizeActiveRuntimeCheckpointAt(now) ?? 0,
+        );
+        statusPayload.lastUpdate = now;
+        writeStatusPayload();
+      },
+    });
+  }
+
+  function startRuntimeCheckpointTimer(): void {
+    disposeRuntimeCheckpointTimer();
+    runtimeCheckpointTimer = setInterval(() => {
+      if (statusPayload.state !== "running") return;
+      try {
+        checkpointActiveRuntime(Date.now());
+      } catch {
+        // A failed checkpoint write is retried on the next tick.
+      }
+    }, ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS);
+    runtimeCheckpointTimer.unref?.();
+  }
+
+  function disposeRuntimeCheckpointTimer(): void {
+    if (runtimeCheckpointTimer) clearInterval(runtimeCheckpointTimer);
+    runtimeCheckpointTimer = undefined;
   }
 
   function transition(
@@ -598,6 +691,9 @@ export function createBackgroundRunStatusOwner(
       step?: TerminalStepPatch;
     } = {},
   ): boolean {
+    // Freeze before publishing so teardown time never enters a continuation
+    // budget; paused wall time is excluded because no tracker stays live.
+    checkpointActiveRuntime(now, true);
     const succeeded = transition("running->terminal", (status) => ({
       ...status,
       state,
@@ -718,6 +814,7 @@ export function createBackgroundRunStatusOwner(
       requestedAt,
     };
     const now = Date.now();
+    checkpointActiveRuntime(now, true);
     const checkpointed = transition("running->pausing", (status) => ({
       ...status,
       state: "pausing",
@@ -956,6 +1053,7 @@ export function createBackgroundRunStatusOwner(
     sessionEnabled,
     statusPayload,
     terminalReason,
+    activeRuntimeTrackers,
     get latestSessionFile() {
       return latestSessionFile;
     },
@@ -991,6 +1089,9 @@ export function createBackgroundRunStatusOwner(
     applyPausedStepMetadata,
     startHeartbeat,
     stopHeartbeat,
+    checkpointActiveRuntime,
+    startRuntimeCheckpointTimer,
+    disposeRuntimeCheckpointTimer,
   };
   return owner;
 }

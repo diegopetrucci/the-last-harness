@@ -44,7 +44,12 @@ import {
   type SubagentTerminalResult,
   type SubagentTerminalState,
 } from "../../shared/types.ts";
-import { boundedActiveRuntimeMs } from "../shared/active-runtime.ts";
+import {
+  boundedActiveRuntimeMs,
+  createActiveRuntimeTracker,
+  normalizeActiveRuntimeCheckpointAt,
+  type ActiveRuntimeTracker,
+} from "../shared/active-runtime.ts";
 import { type RunnerSubagentStep as SubagentStep } from "../shared/parallel-utils.ts";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -160,6 +165,8 @@ interface SingleStepContext {
   timeoutMs?: number;
   deadlineAt?: number;
   startedAt?: number;
+  /** Runner-owned segment tracker, so periodic checkpoints and the step share one ledger. */
+  runtimeTracker?: ActiveRuntimeTracker;
   onAttemptStart?: (attempt: ModelAttemptStart) => void;
   onChildEvent?: (event: ChildEvent) => void;
   /** Called after each child attempt has fully settled, including failures. */
@@ -249,6 +256,8 @@ interface SingleStepExecutionState {
   seenToolCallIds: Set<string>;
   /** Active child runtime consumed by this lineage, including earlier resumes. */
   activeRuntimeMs: number;
+  /** Active-runtime segment for this step; the runner may checkpoint it durably. */
+  runtimeTracker: ActiveRuntimeTracker;
 }
 
 interface SingleStepSetup {
@@ -384,6 +393,12 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
         : [],
       seenToolCallIds: new Set(),
       activeRuntimeMs: boundedActiveRuntimeMs(step.activeRuntimeMs),
+      runtimeTracker:
+        ctx.runtimeTracker ??
+        createActiveRuntimeTracker({
+          priorActiveRuntimeMs: step.activeRuntimeMs,
+          segmentStartedAt: normalizeActiveRuntimeCheckpointAt(ctx.startedAt) ?? Date.now(),
+        }),
     },
   };
 }
@@ -1168,11 +1183,7 @@ export async function runSingleStep(
         effectiveExitSignal: run.exitSignal,
       });
     } finally {
-      state.activeRuntimeMs = Math.min(
-        Number.MAX_SAFE_INTEGER,
-        state.activeRuntimeMs +
-          Math.ceil(Math.max(0, performance.now() - attempt.monotonicStartedAt)),
-      );
+      state.activeRuntimeMs = state.runtimeTracker.checkpoint();
       attemptTimeoutTimer?.cancel();
       if (attemptTempDir) {
         activeTempDirs.delete(attemptTempDir);

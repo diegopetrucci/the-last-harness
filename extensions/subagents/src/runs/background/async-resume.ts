@@ -41,6 +41,7 @@ import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.ts";
 import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.ts";
 import {
+  malformedActiveRuntimeAccountingField,
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
 } from "../shared/active-runtime.ts";
@@ -166,6 +167,11 @@ interface AsyncResumeResolutionContext {
   requireSessionFile: boolean;
   location: AsyncRunLocation;
   status: AsyncStatus | null;
+  /**
+   * status.json as persisted, before normalization drops untrusted accounting
+   * values. Only used to fail closed on present-but-malformed metadata.
+   */
+  rawStatus?: Record<string, unknown>;
   result?: AsyncResultFile;
   runId: string;
   state: AsyncStatus["state"];
@@ -360,18 +366,17 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         throw new Error(
           `Invalid async result file '${resultPath}': results[${index}].timedOut must be a boolean.`,
         );
-      const timeoutOwner = normalizeExecutionTimeoutOwner(child.timeoutOwner);
-      const activeRuntimeMs = child.activeRuntimeMs;
-      if (
-        activeRuntimeMs !== undefined &&
-        (typeof activeRuntimeMs !== "number" ||
-          !Number.isFinite(activeRuntimeMs) ||
-          activeRuntimeMs < 0)
-      ) {
+      const malformedAccounting = malformedActiveRuntimeAccountingField(child);
+      if (malformedAccounting)
         throw new Error(
-          `Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`,
+          `Invalid async result file '${resultPath}': results[${index}].${malformedAccounting} ${
+            malformedAccounting === "timeoutOwner"
+              ? 'must be "role" or "run"'
+              : "must be a non-negative finite number"
+          }.`,
         );
-      }
+      const timeoutOwner = normalizeExecutionTimeoutOwner(child.timeoutOwner);
+      const activeRuntimeMs = normalizeActiveRuntimeMs(child.activeRuntimeMs);
       const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
         child.activeRuntimeCheckpointAt,
       );
@@ -388,7 +393,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
         ...(typeof timedOut === "boolean" ? { timedOut } : {}),
         ...(timeoutOwner ? { timeoutOwner } : {}),
-        ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(model ? { model } : {}),
         ...(ticketId ? { ticketId } : {}),
@@ -1009,6 +1014,30 @@ function buildTerminalAsyncResumeTarget(
     statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
       ? ("role" as const)
       : (statusTimeoutOwner ?? resultTimeoutOwner);
+  // Absent legacy accounting is accepted, but present-and-malformed accounting
+  // is untrustworthy: continuing would silently widen the role budget. Role
+  // evidence from either source already poisons the instance (reported by the
+  // caller), so only reject here when no valid role evidence exists.
+  if (timeoutOwner !== "role") {
+    const rawSteps = context.rawStatus?.steps;
+    const rawStep: unknown = Array.isArray(rawSteps) ? rawSteps[index] : undefined;
+    for (const [source, evidence] of [
+      ["status", context.rawStatus],
+      ["status", rawStep],
+      ["result", context.resultSteps[index]],
+    ] as const) {
+      const field =
+        typeof evidence === "object" &&
+        evidence !== null &&
+        malformedActiveRuntimeAccountingField(evidence as Record<string, unknown>);
+      if (field)
+        throw new Error(
+          `Async run '${context.runId}' cannot be resumed: persisted ${source} ${field} for child ${index} is malformed (${
+            field === "timeoutOwner" ? 'expected "role" or "run"' : "expected a non-negative number"
+          }). Repair or remove it to continue; no artifacts were changed.`,
+        );
+    }
+  }
   // Similarly normalize timedOut from each source so a truthy non-boolean in
   // the status cannot suppress a legitimate true in the result.
   const timedOut =
@@ -1148,6 +1177,23 @@ function resolveTerminalAsyncResumeTarget(
   );
 }
 
+function readRawStatusRecord(
+  asyncDir: string | null | undefined,
+): Record<string, unknown> | undefined {
+  if (!asyncDir) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    );
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    // The validated status read has already accepted or rejected this file.
+    return undefined;
+  }
+}
+
 export function resolveAsyncResumeTarget(
   params: AsyncResumeParams,
   deps: AsyncResumeDeps = {},
@@ -1201,6 +1247,7 @@ export function resolveAsyncResumeTarget(
     requireSessionFile,
     location,
     status,
+    rawStatus: readRawStatusRecord(location.asyncDir),
     result,
     runId,
     state,

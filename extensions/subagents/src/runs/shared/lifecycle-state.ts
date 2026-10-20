@@ -758,6 +758,40 @@ function mergeStatus(current: AsyncStatus, memory: AsyncStatus, changed: boolean
   };
 }
 
+/**
+ * Consumed active runtime only ever advances: whichever side of a merge holds
+ * the larger persisted value wins, so a stale writer can never shrink it.
+ */
+type RuntimeEvidenceOwner = AsyncStatus | StatusStep;
+
+function maxRuntimeEvidence(
+  merged: RuntimeEvidenceOwner,
+  a: RuntimeEvidenceOwner | undefined,
+  b: RuntimeEvidenceOwner | undefined,
+): void {
+  const runtime = [a?.activeRuntimeMs, b?.activeRuntimeMs]
+    .map(normalizeActiveRuntimeMs)
+    .filter((value): value is number => value !== undefined);
+  if (runtime.length) merged.activeRuntimeMs = Math.max(...runtime);
+  const checkpoints = [a?.activeRuntimeCheckpointAt, b?.activeRuntimeCheckpointAt]
+    .map(normalizeActiveRuntimeCheckpointAt)
+    .filter((value): value is number => value !== undefined);
+  if (checkpoints.length) merged.activeRuntimeCheckpointAt = Math.max(...checkpoints);
+}
+
+function mergeStatusMonotonicRuntime(
+  current: AsyncStatus,
+  memory: AsyncStatus,
+  changed: boolean,
+): AsyncStatus {
+  const merged = mergeStatus(current, memory, changed);
+  maxRuntimeEvidence(merged, current, memory);
+  merged.steps?.forEach((step, index) =>
+    maxRuntimeEvidence(step, current.steps?.[index], memory.steps?.[index]),
+  );
+  return merged;
+}
+
 export function mergeAndWriteSourceRunnerStatus(
   asyncDir: string,
   inMemory: AsyncStatus,
@@ -769,7 +803,11 @@ export function mergeAndWriteSourceRunnerStatus(
       const current = normalizeAsyncLifecycleStatus(persisted);
       return writeNormalizedLifecycleStatus(
         asyncDir,
-        mergeStatus(current, inMemory, lifecycleGeneration(current) !== memoryGeneration),
+        mergeStatusMonotonicRuntime(
+          current,
+          inMemory,
+          lifecycleGeneration(current) !== memoryGeneration,
+        ),
       );
     });
   } catch (error) {
@@ -785,7 +823,11 @@ export function mergeAndWriteSourceRunnerStatus(
       lifecycleGeneration(persisted) === memoryGeneration &&
       !liveLock(asyncDir)
     ) {
-      const merged = mergeStatus(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
+      const merged = mergeStatusMonotonicRuntime(
+        normalizeAsyncLifecycleStatus(persisted),
+        inMemory,
+        false,
+      );
       return writeNormalizedLifecycleStatus(asyncDir, {
         ...persisted,
         state: "failed",

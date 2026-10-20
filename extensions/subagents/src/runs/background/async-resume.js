@@ -12,7 +12,7 @@ import { readStatus } from "../../shared/utils.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.js";
 import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.js";
-import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
+import { malformedActiveRuntimeAccountingField, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
 import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "failed", "paused"]);
 const RESUME_TERMINAL_RUN_STATES = new Set([
@@ -125,14 +125,13 @@ function validateResultFile(value, resultPath) {
             const timedOut = child.timedOut;
             if (timedOut !== undefined && typeof timedOut !== "boolean")
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].timedOut must be a boolean.`);
+            const malformedAccounting = malformedActiveRuntimeAccountingField(child);
+            if (malformedAccounting)
+                throw new Error(`Invalid async result file '${resultPath}': results[${index}].${malformedAccounting} ${malformedAccounting === "timeoutOwner"
+                    ? 'must be "role" or "run"'
+                    : "must be a non-negative finite number"}.`);
             const timeoutOwner = normalizeExecutionTimeoutOwner(child.timeoutOwner);
-            const activeRuntimeMs = child.activeRuntimeMs;
-            if (activeRuntimeMs !== undefined &&
-                (typeof activeRuntimeMs !== "number" ||
-                    !Number.isFinite(activeRuntimeMs) ||
-                    activeRuntimeMs < 0)) {
-                throw new Error(`Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`);
-            }
+            const activeRuntimeMs = normalizeActiveRuntimeMs(child.activeRuntimeMs);
             const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(child.activeRuntimeCheckpointAt);
             const projectAgent = parseProjectAgentCapture(child.projectAgent, resultPath, `results[${index}].projectAgent`);
             return {
@@ -143,7 +142,7 @@ function validateResultFile(value, resultPath) {
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
                 ...(typeof timedOut === "boolean" ? { timedOut } : {}),
                 ...(timeoutOwner ? { timeoutOwner } : {}),
-                ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+                ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
                 ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
                 ...(model ? { model } : {}),
                 ...(ticketId ? { ticketId } : {}),
@@ -597,6 +596,21 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
     const timeoutOwner = statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
         ? "role"
         : (statusTimeoutOwner ?? resultTimeoutOwner);
+    if (timeoutOwner !== "role") {
+        const rawSteps = context.rawStatus?.steps;
+        const rawStep = Array.isArray(rawSteps) ? rawSteps[index] : undefined;
+        for (const [source, evidence] of [
+            ["status", context.rawStatus],
+            ["status", rawStep],
+            ["result", context.resultSteps[index]],
+        ]) {
+            const field = typeof evidence === "object" &&
+                evidence !== null &&
+                malformedActiveRuntimeAccountingField(evidence);
+            if (field)
+                throw new Error(`Async run '${context.runId}' cannot be resumed: persisted ${source} ${field} for child ${index} is malformed (${field === "timeoutOwner" ? 'expected "role" or "run"' : "expected a non-negative number"}). Repair or remove it to continue; no artifacts were changed.`);
+        }
+    }
     const timedOut = selectedStatusStep?.timedOut === true || context.resultSteps[index]?.timedOut === true;
     return {
         ...targetWithModelMetadata,
@@ -691,6 +705,19 @@ function resolveTerminalAsyncResumeTarget(context) {
         : undefined;
     return buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, selectedContinuation, agent, resolvedSessionFile);
 }
+function readRawStatusRecord(asyncDir) {
+    if (!asyncDir)
+        return undefined;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+            ? parsed
+            : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
     const resultsDir = deps.resultsDir ?? RESULTS_DIR;
@@ -732,6 +759,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         requireSessionFile,
         location,
         status,
+        rawStatus: readRawStatusRecord(location.asyncDir),
         result,
         runId,
         state,

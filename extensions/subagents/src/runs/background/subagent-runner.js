@@ -16,6 +16,7 @@ import { persistedTicketId, TICKET_LOOKUP_MAX_OUTPUT_BYTES } from "../shared/tic
 import { advanceLifecycleContinuation, isCompletedLifecycleStepState, lifecycleGeneration, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { formatSupervisorPauseMessage } from "../../shared/pause-messages.js";
 import { retiredNestedLaunchError } from "../shared/pi-args.js";
+import { boundedActiveRuntimeMs, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
 import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution.js";
 import { appendUnexpectedLifecycleTransitionDiagnostic, createBackgroundRunStatusOwner, } from "./run-status-owner.js";
 import { finalizeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
@@ -159,6 +160,11 @@ function isRunnerSubagentStepValue(value) {
     }
     const hasTimeoutMs = Object.hasOwn(value, "timeoutMs");
     if (hasTimeoutMs && !isPositiveSafeInteger(value.timeoutMs))
+        return false;
+    if ((Object.hasOwn(value, "activeRuntimeMs") &&
+        normalizeActiveRuntimeMs(value.activeRuntimeMs) === undefined) ||
+        (Object.hasOwn(value, "activeRuntimeCheckpointAt") &&
+            normalizeActiveRuntimeCheckpointAt(value.activeRuntimeCheckpointAt) === undefined))
         return false;
     if (Object.hasOwn(value, "timeoutOwner")) {
         if (value.timeoutOwner !== "role" && value.timeoutOwner !== "run")
@@ -353,6 +359,20 @@ async function runSubagentWithInput(config, plan) {
         appendDiagnosticEvent,
     });
     const { sessionEnabled, statusPayload } = statusOwner;
+    const settleActiveRuntime = (index, result, at) => {
+        const tracker = statusOwner.activeRuntimeTrackers.get(index);
+        statusOwner.activeRuntimeTrackers.delete(index);
+        const step = statusPayload.steps[index];
+        if (!step)
+            return;
+        const settled = Math.max(normalizeActiveRuntimeMs(result.activeRuntimeMs) ?? 0, normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0, tracker?.finalize(at) ?? 0);
+        result.activeRuntimeMs = settled;
+        result.activeRuntimeCheckpointAt = at;
+        step.activeRuntimeMs = settled;
+        step.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) ?? 0, at);
+        statusPayload.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0, statusPayload.steps.reduce((total, candidate) => total + (normalizeActiveRuntimeMs(candidate.activeRuntimeMs) ?? 0), 0));
+        statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, at);
+    };
     const controlOwner = createBackgroundRunControlOwner({
         status: statusOwner,
         id,
@@ -411,6 +431,7 @@ async function runSubagentWithInput(config, plan) {
     };
     controlOwner.startActivityTimer();
     statusOwner.startHeartbeat();
+    statusOwner.startRuntimeCheckpointTimer();
     const disposeControlInbox = controlOwner.watchControlInbox({
         onInterrupt: (request) => interruptRunner?.(request),
         onTimeout: timeoutRunner,
@@ -526,6 +547,7 @@ async function runSubagentWithInput(config, plan) {
             statusOwner.latestSessionFile = resolvedSeqSessionFile;
         }
         singleResult = normalizeTimedOutStepResult(statusPayload.steps[flatIndex], singleResult, timeoutMessage);
+        settleActiveRuntime(flatIndex, singleResult, Date.now());
         const stepTimedOut = statusPayload.steps[flatIndex]?.timedOut === true || singleResult.timedOut === true;
         const timeoutOutput = statusPayload.steps[flatIndex]?.error ??
             singleResult.error ??
@@ -661,10 +683,6 @@ async function runSubagentWithInput(config, plan) {
         statusPayload.steps[flatIndex].timedOut = stepTimedOut ? true : undefined;
         statusPayload.steps[flatIndex].timeoutOwner =
             statusPayload.steps[flatIndex].timeoutOwner ?? seqStep.timeoutOwner;
-        if (singleResult.activeRuntimeMs !== undefined) {
-            statusPayload.steps[flatIndex].activeRuntimeMs = singleResult.activeRuntimeMs;
-            statusPayload.steps[flatIndex].activeRuntimeCheckpointAt = Date.now();
-        }
         statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
         statusPayload.steps[flatIndex].contextUsage =
             singleResult.contextUsage ?? statusPayload.steps[flatIndex].contextUsage;
@@ -768,6 +786,11 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.lastActivityAt = taskStartTime;
                 statusPayload.lastUpdate = taskStartTime;
                 appendRecentStepOutput(statusPayload.steps[fi], task.attemptNotes ?? []);
+                statusPayload.steps[fi].activeRuntimeMs = boundedActiveRuntimeMs(statusPayload.steps[fi].activeRuntimeMs);
+                statusOwner.activeRuntimeTrackers.set(fi, createActiveRuntimeTracker({
+                    priorActiveRuntimeMs: statusPayload.steps[fi].activeRuntimeMs,
+                    segmentStartedAt: taskStartTime,
+                }));
                 statusOwner.writeStatusPayload();
                 appendJsonl(eventsPath, JSON.stringify({
                     type: "subagent.step.started",
@@ -805,6 +828,7 @@ async function runSubagentWithInput(config, plan) {
                     timeoutMs: task.timeoutMs,
                     deadlineAt: config.deadlineAt,
                     startedAt: taskStartTime,
+                    runtimeTracker: statusOwner.activeRuntimeTrackers.get(fi),
                     onAttemptStart: (attempt) => {
                         statusPayload.steps[fi].startedAt = attempt.startedAt;
                         statusPayload.steps[fi].durationMs = 0;
@@ -825,6 +849,7 @@ async function runSubagentWithInput(config, plan) {
                     statusOwner.latestSessionFile = task.sessionFile;
                 }
                 const taskEndTime = Date.now();
+                settleActiveRuntime(fi, singleResult, taskEndTime);
                 const stepTimedOut = statusPayload.steps[fi]?.timedOut === true || singleResult.timedOut === true;
                 const timeoutOutput = statusPayload.steps[fi]?.error ??
                     singleResult.error ??
@@ -863,10 +888,6 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.steps[fi].timedOut = stepTimedOut ? true : undefined;
                 statusPayload.steps[fi].timeoutOwner =
                     statusPayload.steps[fi].timeoutOwner ?? task.timeoutOwner;
-                if (singleResult.activeRuntimeMs !== undefined) {
-                    statusPayload.steps[fi].activeRuntimeMs = singleResult.activeRuntimeMs;
-                    statusPayload.steps[fi].activeRuntimeCheckpointAt = Date.now();
-                }
                 statusPayload.steps[fi].processCleanup = singleResult.processCleanup;
                 statusPayload.steps[fi].contextUsage =
                     singleResult.contextUsage ?? statusPayload.steps[fi].contextUsage;
@@ -986,6 +1007,11 @@ async function runSubagentWithInput(config, plan) {
             statusPayload.lastUpdate = stepStartTime;
             statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
             appendRecentStepOutput(statusPayload.steps[flatIndex], seqStep.attemptNotes ?? []);
+            statusPayload.steps[flatIndex].activeRuntimeMs = boundedActiveRuntimeMs(statusPayload.steps[flatIndex].activeRuntimeMs);
+            statusOwner.activeRuntimeTrackers.set(flatIndex, createActiveRuntimeTracker({
+                priorActiveRuntimeMs: statusPayload.steps[flatIndex].activeRuntimeMs,
+                segmentStartedAt: stepStartTime,
+            }));
             statusOwner.writeStatusPayload();
             appendJsonl(eventsPath, JSON.stringify({
                 type: "subagent.step.started",
@@ -1018,6 +1044,7 @@ async function runSubagentWithInput(config, plan) {
                 timeoutMs: seqStep.timeoutMs,
                 deadlineAt: config.deadlineAt,
                 startedAt: stepStartTime,
+                runtimeTracker: statusOwner.activeRuntimeTrackers.get(flatIndex),
                 onAttemptStart: (attempt) => {
                     statusPayload.steps[flatIndex].startedAt = attempt.startedAt;
                     statusPayload.steps[flatIndex].durationMs = 0;
@@ -1065,6 +1092,7 @@ async function runSubagentWithInput(config, plan) {
     const agentName = finalFlatAgents.length === 1 ? finalFlatAgents[0] : `parallel:${finalFlatAgents.join("+")}`;
     controlOwner.disposeActivityTimer();
     statusOwner.stopHeartbeat();
+    statusOwner.disposeRuntimeCheckpointTimer();
     if (timeoutTimer)
         timeoutTimer.cancel();
     disposeControlInbox();

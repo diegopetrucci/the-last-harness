@@ -6,7 +6,7 @@ import { contextWindowForModel, emptyUsage, runPiStreaming, } from "./pi-streami
 import { getArtifactPaths, writeArtifactWithFloor } from "../../shared/artifacts.js";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
 import {} from "../../shared/types.js";
-import { boundedActiveRuntimeMs } from "../shared/active-runtime.js";
+import { boundedActiveRuntimeMs, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, } from "../shared/active-runtime.js";
 import {} from "../shared/parallel-utils.js";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
@@ -164,6 +164,11 @@ function prepareSingleStepSetup(step, ctx) {
                 : [],
             seenToolCallIds: new Set(),
             activeRuntimeMs: boundedActiveRuntimeMs(step.activeRuntimeMs),
+            runtimeTracker: ctx.runtimeTracker ??
+                createActiveRuntimeTracker({
+                    priorActiveRuntimeMs: step.activeRuntimeMs,
+                    segmentStartedAt: normalizeActiveRuntimeCheckpointAt(ctx.startedAt) ?? Date.now(),
+                }),
         },
     };
 }
@@ -754,8 +759,7 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
             });
         }
         finally {
-            state.activeRuntimeMs = Math.min(Number.MAX_SAFE_INTEGER, state.activeRuntimeMs +
-                Math.ceil(Math.max(0, performance.now() - attempt.monotonicStartedAt)));
+            state.activeRuntimeMs = state.runtimeTracker.checkpoint();
             attemptTimeoutTimer?.cancel();
             if (attemptTempDir) {
                 activeTempDirs.delete(attemptTempDir);

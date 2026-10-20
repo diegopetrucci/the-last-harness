@@ -578,6 +578,24 @@ function mergeStatus(current, memory, changed) {
         ...(steps ? { steps: steps.filter((step) => step !== undefined) } : {}),
     };
 }
+function maxRuntimeEvidence(merged, a, b) {
+    const runtime = [a?.activeRuntimeMs, b?.activeRuntimeMs]
+        .map(normalizeActiveRuntimeMs)
+        .filter((value) => value !== undefined);
+    if (runtime.length)
+        merged.activeRuntimeMs = Math.max(...runtime);
+    const checkpoints = [a?.activeRuntimeCheckpointAt, b?.activeRuntimeCheckpointAt]
+        .map(normalizeActiveRuntimeCheckpointAt)
+        .filter((value) => value !== undefined);
+    if (checkpoints.length)
+        merged.activeRuntimeCheckpointAt = Math.max(...checkpoints);
+}
+function mergeStatusMonotonicRuntime(current, memory, changed) {
+    const merged = mergeStatus(current, memory, changed);
+    maxRuntimeEvidence(merged, current, memory);
+    merged.steps?.forEach((step, index) => maxRuntimeEvidence(step, current.steps?.[index], memory.steps?.[index]));
+    return merged;
+}
 export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
     const memoryGeneration = lifecycleGeneration(inMemory);
     try {
@@ -585,7 +603,7 @@ export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
             if (!persisted)
                 return writeNormalizedLifecycleStatus(asyncDir, inMemory);
             const current = normalizeAsyncLifecycleStatus(persisted);
-            return writeNormalizedLifecycleStatus(asyncDir, mergeStatus(current, inMemory, lifecycleGeneration(current) !== memoryGeneration));
+            return writeNormalizedLifecycleStatus(asyncDir, mergeStatusMonotonicRuntime(current, inMemory, lifecycleGeneration(current) !== memoryGeneration));
         });
     }
     catch (error) {
@@ -597,7 +615,7 @@ export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
             isActiveLifecycleState(persisted.state) &&
             lifecycleGeneration(persisted) === memoryGeneration &&
             !liveLock(asyncDir)) {
-            const merged = mergeStatus(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
+            const merged = mergeStatusMonotonicRuntime(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
             return writeNormalizedLifecycleStatus(asyncDir, {
                 ...persisted,
                 state: "failed",
