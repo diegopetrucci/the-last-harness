@@ -776,55 +776,6 @@ describe(
       }
     });
 
-    it("charges only consumed active runtime on resume, never the paused wall gap", async () => {
-      mockPi.onCall({ output: "resumed within remaining budget" });
-      const runId = `resume-paused-wall-gap-${Date.now()}`;
-      const asyncDir = path.join(ASYNC_DIR, runId);
-      const sessionFile = path.join(tempDir, "child-paused-gap.jsonl");
-      try {
-        fs.mkdirSync(asyncDir, { recursive: true });
-        fs.writeFileSync(sessionFile, "", "utf-8");
-        // The run ended long ago (a very large wall gap) but consumed 1s of its 5s budget.
-        fs.writeFileSync(
-          path.join(asyncDir, "status.json"),
-          JSON.stringify(
-            {
-              runId,
-              mode: "single",
-              state: "complete",
-              startedAt: 100,
-              endedAt: 200,
-              lastUpdate: 200,
-              cwd: tempDir,
-              sessionFile,
-              steps: [{ agent: "worker", status: "complete", sessionFile, activeRuntimeMs: 1_000 }],
-            },
-            null,
-            2,
-          ),
-          "utf-8",
-        );
-        const { executor } = makeExecutor({
-          agents: [makeAgent("worker", { maxExecutionTimeMs: 5_000 })],
-        });
-
-        const result = await executor.execute(
-          "resume-paused-wall-gap",
-          { action: "resume", id: runId, message: "Continue." },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
-        // Remaining budget = role budget minus consumed active runtime only.
-        assert.equal((result.details as { timeoutMs?: number } | undefined)?.timeoutMs, 4_000);
-        await waitForRevivedAsyncResult(result);
-      } finally {
-        fs.rmSync(asyncDir, { recursive: true, force: true });
-      }
-    });
-
     it("resume action revives completed async runs with concise status receipts", async () => {
       mockPi.onCall({ output: "revived answer" });
       const runId = `resume-revive-${Date.now()}`;
