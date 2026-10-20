@@ -506,10 +506,19 @@ function readResultFile(resultPath: string): AsyncResultFile {
   }
 }
 
+function isPathFreeRunId(value: string): boolean {
+  return !path.isAbsolute(value) && !/[\\/]/.test(value) && !value.includes("..");
+}
+
+function isInsideRoot(root: string, target: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(target));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function assertRunId(value: string | undefined, field: "id"): string | undefined {
   if (value === undefined) return undefined;
   if (value.trim() === "") throw new Error(`${field} must not be empty.`);
-  if (path.isAbsolute(value) || /[\\/]/.test(value) || value.includes("..")) {
+  if (!isPathFreeRunId(value)) {
     throw new Error(`${field} must be an async run id or prefix, not a path.`);
   }
   return value;
@@ -518,8 +527,7 @@ function assertRunId(value: string | undefined, field: "id"): string | undefined
 function assertInsideRoot(root: string, target: string, label: string): void {
   const rootPath = path.resolve(root);
   const targetPath = path.resolve(target);
-  const relative = path.relative(rootPath, targetPath);
-  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) return;
+  if (isInsideRoot(rootPath, targetPath)) return;
   throw new Error(`${label} must be inside ${rootPath}.`);
 }
 
@@ -984,7 +992,9 @@ const UNREADABLE_OWNER_EVIDENCE: PersistedOwnerField = Object.freeze({ malformed
  * sentinel so the owner rule fails closed.
  */
 export function readPersistedResultOwner(resultsDir: string, runId: string): PersistedOwnerField {
+  if (runId.trim() === "" || !isPathFreeRunId(runId)) return UNREADABLE_OWNER_EVIDENCE;
   const resultPath = path.join(resultsDir, `${runId}.json`);
+  if (!isInsideRoot(resultsDir, resultPath)) return UNREADABLE_OWNER_EVIDENCE;
   let raw: string;
   try {
     raw = fs.readFileSync(resultPath, "utf-8");

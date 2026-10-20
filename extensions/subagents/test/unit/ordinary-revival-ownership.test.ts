@@ -451,4 +451,35 @@ describe("durable revival owner gate for ordinary runs", () => {
       assert.equal(launches.length, 0);
     });
   }
+
+  for (const state of ["running", "paused"] as const) {
+    it(`ignores a traversal runId in a ${state} run's status when reading the result owner`, async () => {
+      const { runId, asyncDir } = writeRun(`traversal-${state}`, {
+        state,
+        statusOwner: PARENT_FILE,
+        ...(state === "running" ? { pid: 2_147_483_000 } : {}),
+      });
+      const outsideDir = `tlh-outside-${runId}`;
+      const traversal = `../${outsideDir}/x`;
+      const outsideFile = path.join(RESULTS_DIR, `${traversal}.json`);
+      const outsideRoot = path.dirname(outsideFile);
+      fs.mkdirSync(outsideRoot, { recursive: true });
+      try {
+        // The escaped file names the caller as owner; honoring it would admit the resume.
+        fs.writeFileSync(outsideFile, JSON.stringify({ sessionId: PARENT_FILE }), "utf-8");
+        const statusPath = path.join(asyncDir, "status.json");
+        const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+        status.runId = traversal;
+        fs.writeFileSync(statusPath, JSON.stringify(status), "utf-8");
+        const before = snapshot(asyncDir, outsideFile);
+        const result = await resume(makeExecutor(), { id: runId }, PARENT_A);
+        assert.equal(result.isError, true, text(result));
+        assert.match(text(result), /recovering-ownerless-or-foreign-runs|owned by another session/);
+        assert.equal(launches.length, 0);
+        assert.deepEqual(snapshot(asyncDir, outsideFile), before);
+      } finally {
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  }
 });
