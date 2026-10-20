@@ -242,7 +242,7 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following carried-forward checks are required release-preparation work for the pinned Pi version (first listed for Pi 1.1.0; v0.44.0 and v0.45.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following carried-forward checks are required release-preparation work for the pinned Pi version (first listed for Pi 1.1.0; v0.44.0, v0.45.0, and v0.46.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
 - **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.

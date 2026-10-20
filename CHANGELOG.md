@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.46.0] - 2026-10-20
+
 ### Added
 
 - TLH's OSC 7501 root record now carries a `msg` (compaction, session name, subagent count, prompt title, or first error line), and each active background subagent gets a child record (`id=subagent/<runId>`, `title` = agent names, cleared on removal, capped at 32). Prompts, assistant output, and subagent task text are never sent. `progress`, `kind=auth`, feature detection, and a root `title` are intentionally unsupported.
