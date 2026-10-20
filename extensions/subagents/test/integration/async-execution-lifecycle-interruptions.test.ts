@@ -100,7 +100,8 @@ fs.renameSync = (sourcePath, targetPath) => {
 function sanitizedChildEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
+    if (key === "TICKETS_DIR" || key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_"))
+      delete env[key];
   }
   delete env.NODE_TEST_CONTEXT;
   return { ...env, ...overrides };
@@ -246,6 +247,76 @@ describe("async execution lifecycle interruptions", () => {
     await runCase(false);
     await runCase(true);
   });
+
+  it(
+    "attributes a role timeout when call publication is held before the record exists",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout signal delivery intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const preloadPath = path.join(tempDir, "hold-role-timeout-publication.cjs");
+      const readyPath = path.join(tempDir, "role-timeout-publication-ready");
+      const releasePath = path.join(tempDir, "role-timeout-publication-release");
+      fs.writeFileSync(preloadPath, HOLD_PUBLICATION_PRELOAD, "utf8");
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      const previousReadyPath = process.env.MOCK_PI_PUBLICATION_READY;
+      const previousReleasePath = process.env.MOCK_PI_PUBLICATION_RELEASE;
+      const roleTimeoutMs = scaleTestTimeout(2_000);
+      const id = `async-role-timeout-before-call-record-${Date.now().toString(36)}`;
+      mockPi.onCall({ delay: 60_000, output: "too late" });
+      process.env.NODE_OPTIONS = [previousNodeOptions, `--require=${preloadPath}`]
+        .filter(Boolean)
+        .join(" ");
+      process.env.MOCK_PI_PUBLICATION_READY = readyPath;
+      process.env.MOCK_PI_PUBLICATION_RELEASE = releasePath;
+
+      try {
+        executeAsyncSingle(id, {
+          agent: "role-bound",
+          task: "Wait for the role ceiling before call publication completes.",
+          agentConfig: makeAgent("role-bound", { maxExecutionTimeMs: roleTimeoutMs }),
+          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+          artifactConfig: {
+            enabled: false,
+            includeInput: false,
+            includeOutput: false,
+            includeJsonl: false,
+            includeMetadata: false,
+            cleanupDays: 7,
+          },
+          maxSubagentDepth: 2,
+        });
+
+        // Startup may expire before the preload reaches readyPath; the terminal
+        // result is the boundary for asserting timeout attribution and no call.
+        const payload = await readAsyncPayload(id);
+        assert.equal(payload.state, "failed");
+        assert.equal(payload.timedOut, true);
+        assert.equal(payload.results[0]?.timedOut, true);
+        assert.equal(payload.results[0]?.timeoutOwner, "role");
+        assert.equal(payload.results[0]?.error, `Subagent timed out after ${roleTimeoutMs}ms.`);
+        assert.equal(mockPi.callCount(), 0, "timeout attribution must not require a call record");
+      } finally {
+        try {
+          await mockPi.cleanup();
+        } finally {
+          try {
+            fs.writeFileSync(releasePath, "", "utf8");
+          } finally {
+            if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+            else process.env.NODE_OPTIONS = previousNodeOptions;
+            if (previousReadyPath === undefined) delete process.env.MOCK_PI_PUBLICATION_READY;
+            else process.env.MOCK_PI_PUBLICATION_READY = previousReadyPath;
+            if (previousReleasePath === undefined) delete process.env.MOCK_PI_PUBLICATION_RELEASE;
+            else process.env.MOCK_PI_PUBLICATION_RELEASE = previousReleasePath;
+          }
+        }
+      }
+    },
+  );
 
   it(
     "interrupts every active async parallel child",

@@ -40,7 +40,9 @@ function createNoopReporter() {
         dispose() { },
     };
 }
-function createQueuedStateReporter(sendState, resolveState, options = {}, onStateCommitted) {
+function createQueuedStateReporter(sendState, resolveState, options = {}, onStateCommitted, hooks = {}) {
+    const isWorking = hooks.isWorking ?? ((state) => state === "working");
+    const equals = hooks.equals ?? ((a, b) => a === b);
     const timers = {
         setTimeout: options.timers?.setTimeout ?? setTimeout,
         clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
@@ -61,7 +63,9 @@ function createQueuedStateReporter(sendState, resolveState, options = {}, onStat
         idleTimer = undefined;
     };
     const queueState = (state) => {
-        if (disposed || terminalQueued || terminalSent || lastQueuedState === state)
+        if (disposed || terminalQueued || terminalSent)
+            return;
+        if (lastQueuedState !== undefined && equals(lastQueuedState, state))
             return;
         queuedState = state;
         lastQueuedState = state;
@@ -109,7 +113,7 @@ function createQueuedStateReporter(sendState, resolveState, options = {}, onStat
             if (disposed || terminalQueued || terminalSent)
                 return;
             const nextState = resolveState(snapshot);
-            if (nextState === "working") {
+            if (isWorking(nextState)) {
                 clearIdleTimer();
                 queueState(nextState);
                 return;
@@ -570,17 +574,115 @@ function resolveBlockedProgramStatusState(kind) {
         return "blocked:question";
     return "blocked";
 }
-function formatProgramStatusSequence(state) {
-    if (state === "clear") {
-        return "\x1b]7501;state=clear\x1b\\";
+const PROGRAM_STATUS_ID_SEGMENT = /^[A-Za-z0-9_.+-]{1,32}$/;
+const PROGRAM_STATUS_MAX_ID_BYTES = 128;
+const PROGRAM_STATUS_MAX_ID_LEVELS = 8;
+const PROGRAM_STATUS_MAX_MSG_BYTES = 2048;
+const PROGRAM_STATUS_MAX_TITLE_BYTES = 192;
+export function isValidProgramStatusId(id) {
+    if (Buffer.byteLength(id, "utf8") > PROGRAM_STATUS_MAX_ID_BYTES)
+        return false;
+    const segments = id.split("/");
+    return (segments.length <= PROGRAM_STATUS_MAX_ID_LEVELS &&
+        segments.every((segment) => PROGRAM_STATUS_ID_SEGMENT.test(segment)));
+}
+function truncateUtf8(text, maxBytes) {
+    if (Buffer.byteLength(text, "utf8") <= maxBytes)
+        return text;
+    let bytes = 0;
+    let end = 0;
+    for (const char of text) {
+        const size = Buffer.byteLength(char, "utf8");
+        if (bytes + size > maxBytes)
+            break;
+        bytes += size;
+        end += char.length;
     }
-    if (state === "blocked:permission") {
-        return "\x1b]7501;state=blocked:app=tlh:kind=permission\x1b\\";
+    return text.slice(0, end);
+}
+function replaceControlCharacters(text) {
+    let out = "";
+    let inRun = false;
+    for (const char of text) {
+        const code = char.codePointAt(0) ?? 0;
+        const isControl = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+        if (isControl) {
+            if (!inRun)
+                out += " ";
+        }
+        else {
+            out += char;
+        }
+        inRun = isControl;
     }
-    if (state === "blocked:question") {
-        return "\x1b]7501;state=blocked:app=tlh:kind=question\x1b\\";
+    return out;
+}
+function encodeProgramStatusText(text, maxBytes) {
+    if (text === undefined)
+        return undefined;
+    const cleaned = truncateUtf8(replaceControlCharacters(text).trim(), maxBytes).trim();
+    return cleaned.length > 0 ? Buffer.from(cleaned, "utf8").toString("base64") : undefined;
+}
+export function formatProgramStatusReport(report) {
+    if (report.id !== undefined && !isValidProgramStatusId(report.id))
+        return undefined;
+    const pairs = [`state=${report.state}`];
+    if (report.id !== undefined)
+        pairs.push(`id=${report.id}`);
+    if (report.id === undefined &&
+        report.app !== undefined &&
+        PROGRAM_STATUS_ID_SEGMENT.test(report.app)) {
+        pairs.push(`app=${report.app}`);
     }
-    return `\x1b]7501;state=${state}:app=tlh\x1b\\`;
+    if (report.state === "blocked" && report.kind)
+        pairs.push(`kind=${report.kind}`);
+    const title = encodeProgramStatusText(report.title, PROGRAM_STATUS_MAX_TITLE_BYTES);
+    if (title)
+        pairs.push(`title=${title}`);
+    const msg = encodeProgramStatusText(report.msg, PROGRAM_STATUS_MAX_MSG_BYTES);
+    if (msg)
+        pairs.push(`msg=${msg}`);
+    return `\x1b]7501;${pairs.join(":")}\x1b\\`;
+}
+function formatProgramStatusSequence(resolved) {
+    if (resolved === "clear")
+        return formatProgramStatusReport({ state: "clear" });
+    const { state, msg } = resolved;
+    const report = state === "blocked:permission"
+        ? { state: "blocked", app: "tlh", kind: "permission" }
+        : state === "blocked:question"
+            ? { state: "blocked", app: "tlh", kind: "question" }
+            : { state, app: "tlh" };
+    if (msg !== undefined)
+        report.msg = msg;
+    return formatProgramStatusReport(report);
+}
+const PROGRAM_STATUS_MAX_CHILDREN = 32;
+function programStatusChildId(runId) {
+    const segment = runId.replace(/[^A-Za-z0-9_.+-]/g, "-").slice(0, 32);
+    if (segment.length === 0)
+        return undefined;
+    const id = `subagent/${segment}`;
+    return isValidProgramStatusId(id) ? id : undefined;
+}
+function resolveChildren(snapshot) {
+    const children = new Map();
+    const awaited = new Set(snapshot.awaitedAsyncJobIds);
+    for (const runId of [...snapshot.activeAsyncJobIds].sort()) {
+        if (children.size >= PROGRAM_STATUS_MAX_CHILDREN)
+            break;
+        if (awaited.has(runId))
+            continue;
+        const id = programStatusChildId(runId);
+        if (id === undefined || children.has(id))
+            continue;
+        const names = snapshot.activeAsyncJobAgents?.[runId];
+        children.set(id, names && names.length > 0 ? { id, title: names.join("+") } : { id });
+    }
+    return [...children.values()];
+}
+function childrenKey(resolved) {
+    return JSON.stringify(resolved.children ?? []);
 }
 export function createProgramStatusActivityReporter(options = {}) {
     const env = options.env ?? process.env;
@@ -592,7 +694,11 @@ export function createProgramStatusActivityReporter(options = {}) {
         return createNoopReporter();
     }
     let rootSession = false;
-    const resolveState = (snapshot) => {
+    let sessionName;
+    let lastWrittenRoot;
+    const emittedChildren = new Map();
+    let lastSnapshot;
+    const resolveBaseState = (snapshot) => {
         if (snapshot.waitingForUser) {
             return resolveBlockedProgramStatusState(snapshot.waitingForUserKind);
         }
@@ -606,21 +712,84 @@ export function createProgramStatusActivityReporter(options = {}) {
             return "done";
         return "idle";
     };
-    const sendState = async (state) => {
+    const resolveState = (snapshot) => {
+        const state = resolveBaseState(snapshot);
+        let msg;
+        if (state === "working") {
+            if (snapshot.compacting)
+                msg = "Compacting context";
+            else if (snapshot.runActive || snapshot.primaryReasons.length > 0)
+                msg = sessionName;
+            else {
+                let count = 0;
+                const awaited = new Set(snapshot.awaitedAsyncJobIds);
+                for (const runId of snapshot.activeAsyncJobIds) {
+                    if (awaited.has(runId))
+                        continue;
+                    const names = snapshot.activeAsyncJobAgents?.[runId];
+                    count += names && names.length > 0 ? names.length : 1;
+                }
+                if (count > 0)
+                    msg = `${count} ${count === 1 ? "subagent" : "subagents"} running`;
+            }
+        }
+        else if (state === "done")
+            msg = sessionName;
+        else if (state === "error")
+            msg = snapshot.lastRunErrorLine;
+        else if (state.startsWith("blocked"))
+            msg = snapshot.waitingForUserTitle;
+        const resolved = msg !== undefined && msg.length > 0 ? { state, msg } : { state };
+        const children = resolveChildren(snapshot);
+        if (children.length > 0)
+            resolved.children = children;
+        return resolved;
+    };
+    const sendState = async (resolved) => {
         try {
-            output.write(formatProgramStatusSequence(state));
+            if (lastWrittenRoot === undefined ||
+                lastWrittenRoot.state !== resolved.state ||
+                lastWrittenRoot.msg !== resolved.msg) {
+                output.write(formatProgramStatusSequence(resolved));
+                lastWrittenRoot = { state: resolved.state, msg: resolved.msg };
+            }
+            const wanted = new Map();
+            for (const child of resolved.children ?? [])
+                wanted.set(child.id, child.title);
+            for (const id of emittedChildren.keys()) {
+                if (wanted.has(id))
+                    continue;
+                emittedChildren.delete(id);
+                const clear = formatProgramStatusReport({ state: "clear", id });
+                if (clear !== undefined)
+                    output.write(clear);
+            }
+            for (const [id, title] of wanted) {
+                if (emittedChildren.has(id) && emittedChildren.get(id) === title)
+                    continue;
+                const report = formatProgramStatusReport({ state: "working", id, title });
+                if (report === undefined)
+                    continue;
+                output.write(report);
+                emittedChildren.set(id, title);
+            }
         }
         catch {
         }
     };
     const sendClear = async () => {
+        lastWrittenRoot = undefined;
+        emittedChildren.clear();
         try {
             output.write(formatProgramStatusSequence("clear"));
         }
         catch {
         }
     };
-    const queuedReporter = createQueuedStateReporter(sendState, resolveState, options);
+    const queuedReporter = createQueuedStateReporter(sendState, resolveState, options, undefined, {
+        isWorking: (r) => r.state === "working",
+        equals: (a, b) => a.state === b.state && a.msg === b.msg && childrenKey(a) === childrenKey(b),
+    });
     return {
         handleSessionStart(ctx) {
             if (ctx.mode !== "tui") {
@@ -628,11 +797,20 @@ export function createProgramStatusActivityReporter(options = {}) {
                 return;
             }
             rootSession = true;
+            sessionName = readSessionName(ctx);
         },
         handleSnapshot(snapshot) {
             if (!rootSession)
                 return;
+            lastSnapshot = snapshot;
             queuedReporter.handleSnapshot(snapshot);
+        },
+        handleSessionInfoChanged(ctx) {
+            if (!rootSession)
+                return;
+            sessionName = readSessionName(ctx);
+            if (lastSnapshot)
+                queuedReporter.handleSnapshot(lastSnapshot);
         },
         handleSessionShutdown() {
             if (!rootSession)

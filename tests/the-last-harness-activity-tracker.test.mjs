@@ -186,6 +186,7 @@ test("tracker tracks nested Pi UI prompts separately from primary activity", () 
     inProgress: false,
     waitingForUser: true,
     waitingForUserKind: "confirm",
+    waitingForUserTitle: "Approve change?",
     primaryReasons: [],
     activeAsyncJobIds: [],
   });

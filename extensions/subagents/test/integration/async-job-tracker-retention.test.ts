@@ -22,11 +22,12 @@ describe(
   () => {
     it("removes completed jobs after retention and requests a rerender", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
       try {
         const state = createState();
         const ui = createUiContext();
         const recorder = createEventRecorder();
-        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+        tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
           completionRetentionMs: 5,
         });
         tracker.resetJobs(ui.ctx as never);
@@ -38,12 +39,13 @@ describe(
         tracker.handleComplete({ id: "run-1", success: true });
 
         assert.equal(state.asyncJobs.size, 1);
-        await new Promise((resolve) => setTimeout(resolve, 40));
+        await waitForCondition(() => state.asyncJobs.size === 0, "completed job cleanup");
 
         assert.equal(state.asyncJobs.size, 0);
         assert.ok(ui.widgets.length > 0, "expected widget cleanup to replace the widget");
         assert.equal(ui.widgets.at(-1), undefined);
       } finally {
+        tracker?.resetJobs();
         removeTempDir(asyncRoot);
       }
     });
@@ -761,6 +763,7 @@ describe(
 
     it("rerenders changed polled status but not unchanged bookkeeping", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
       try {
         const runDir = path.join(asyncRoot, "run-unchanged");
         fs.mkdirSync(runDir, { recursive: true });
@@ -784,7 +787,7 @@ describe(
         const state = createState();
         const ui = createUiContext();
         const recorder = createEventRecorder();
-        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+        tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
           pollIntervalMs: 10,
           now: () => fixedNow,
         });
@@ -792,10 +795,9 @@ describe(
         tracker.handleStarted({ id: "run-unchanged", asyncDir: runDir, agent: "worker" });
 
         const widgetUpdatesAfterStart = ui.widgets.length;
-        await new Promise((resolve) => setTimeout(resolve, 35));
-        assert.ok(
-          ui.widgets.length > widgetUpdatesAfterStart,
-          "first status load should replace the widget",
+        await waitForCondition(
+          () => ui.widgets.length > widgetUpdatesAfterStart,
+          "first status load widget update",
         );
 
         const widgetUpdatesAfterStatusLoaded = ui.widgets.length;
@@ -815,10 +817,9 @@ describe(
           })}\n`,
           "utf-8",
         );
-        await new Promise((resolve) => setTimeout(resolve, 40));
-        assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-event"),
-          true,
+        await waitForCondition(
+          () => recorder.events.some((event) => event.channel === "subagent:control-event"),
+          "control event projection",
         );
         assert.equal(
           ui.widgets.length,
@@ -827,12 +828,12 @@ describe(
         );
 
         writeStatus(3000, 1);
-        await new Promise((resolve) => setTimeout(resolve, 40));
-        assert.ok(
-          ui.widgets.length > widgetUpdatesAfterStatusLoaded,
-          "changed non-terminal status should replace the widget",
+        await waitForCondition(
+          () => ui.widgets.length > widgetUpdatesAfterStatusLoaded,
+          "changed non-terminal status widget update",
         );
       } finally {
+        tracker?.resetJobs();
         removeTempDir(asyncRoot);
       }
     });
@@ -972,18 +973,25 @@ describe(
 
     it("does not synthesize status when a started job dies before writing status", async () => {
       const asyncRoot = createTempDir("pi-async-job-no-status-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
       try {
         const resultsDir = path.join(asyncRoot, "results");
         const runDir = path.join(asyncRoot, "run-no-status");
+        let pollClockReads = 0;
         const state = createState();
         const ui = createUiContext();
         const recorder = createEventRecorder();
-        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+        tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
           completionRetentionMs: 5,
           pollIntervalMs: 10,
           resultsDir,
           kill: pidGone,
-          now: () => Date.now() + 2000,
+          now: () => {
+            // Called synchronously from each poll tick (and its reconciliation),
+            // so a growing count proves polls ran to completion.
+            pollClockReads += 1;
+            return Date.now() + 2000;
+          },
         });
         tracker.resetJobs(ui.ctx as never);
         tracker.handleStarted({
@@ -995,7 +1003,9 @@ describe(
           agents: ["scout", "reviewer", "worker"],
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        // Negative assertion: wait until several poll ticks have completed
+        // (each reads the clock at least once), so the absence of synthesis is proven.
+        await waitForCondition(() => pollClockReads >= 4, "status polls to run");
 
         // The lifecycle boundary requires a persisted status document before
         // reconciliation can make a terminal claim. The start event alone is
@@ -1006,12 +1016,14 @@ describe(
         tracker.resetJobs();
         assert.ok(ui.widgets.length > 0, "expected reset to replace the widget");
       } finally {
+        tracker?.resetJobs();
         removeTempDir(asyncRoot);
       }
     });
 
     it("cleans up jobs when status polling hits a terminal read error", async () => {
       const asyncRoot = createTempDir("pi-async-job-bad-status-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
       try {
         const runDir = path.join(asyncRoot, "run-bad-status");
         fs.mkdirSync(runDir, { recursive: true });
@@ -1019,18 +1031,19 @@ describe(
         const state = createState();
         const ui = createUiContext();
         const recorder = createEventRecorder();
-        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+        tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
           completionRetentionMs: 5,
           pollIntervalMs: 10,
         });
         tracker.resetJobs(ui.ctx as never);
         tracker.handleStarted({ id: "run-bad-status", asyncDir: runDir, agent: "worker" });
 
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        await waitForCondition(() => state.asyncJobs.size === 0, "malformed status cleanup");
 
         assert.equal(state.asyncJobs.size, 0);
         assert.ok(ui.widgets.length > 0, "expected malformed status cleanup to replace the widget");
       } finally {
+        tracker?.resetJobs();
         removeTempDir(asyncRoot);
       }
     });
@@ -1064,10 +1077,10 @@ describe(
           "utf-8",
         );
 
-        const deadline = Date.now() + 200;
-        while (Date.now() < deadline && state.cleanupTimers.has("run-recovered")) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
+        await waitForCondition(
+          () => !state.cleanupTimers.has("run-recovered"),
+          "recovered cleanup cancellation",
+        );
 
         assert.equal(state.cleanupTimers.has("run-recovered"), false);
         assert.equal(state.asyncJobs.get("run-recovered")?.status, "running");

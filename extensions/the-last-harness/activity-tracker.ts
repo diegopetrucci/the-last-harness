@@ -74,6 +74,31 @@ export type TlhEffectiveActivitySnapshot = {
    * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
    */
   lastRunOutcome?: "completed" | "aborted" | "error";
+  /**
+   * Title (ui_prompt_start.title) of the most recently opened prompt that is still open.
+   * Only set while waitingForUser and the prompt supplied a non-empty title. Prompt bodies
+   * are never stored. Internal to the snapshot; NOT on the shared bus payload.
+   */
+  waitingForUserTitle?: string;
+  /** True while any primary:compaction reason is active. Internal; NOT on the bus payload. */
+  compacting?: true;
+  /**
+   * First non-empty trimmed line of the settled run's error message. Set only when
+   * lastRunOutcome is "error". Internal; NOT on the bus payload.
+   */
+  lastRunErrorLine?: string;
+  /**
+   * Agent names of active async jobs, keyed by run id (only jobs whose
+   * subagent:async-started payload named agents). Task text is never stored.
+   * Internal; NOT on the bus payload.
+   */
+  activeAsyncJobAgents?: Record<string, string[]>;
+  /**
+   * Run ids in activeAsyncJobIds that the parent is awaiting (run.execution
+   * "foreground"); only detached runs get OSC child records. Internal; NOT on
+   * the bus payload.
+   */
+  awaitedAsyncJobIds?: string[];
 };
 
 type TlhEffectiveActivityListener = (snapshot: TlhEffectiveActivitySnapshot) => void;
@@ -152,6 +177,10 @@ type AsyncJobRecord = {
   /** Pid recorded from the subagent:async-started payload; used as liveness anchor before status.json is written. */
   pid?: number;
   sessionId?: string;
+  /** Agent name(s) from the subagent:async-started payload; used for child titles. */
+  agents?: string[];
+  /** True when the parent awaits this run (telemetry run.execution "foreground"). */
+  awaited?: true;
   source: "started" | "control" | "rehydrated" | "restored";
 };
 
@@ -198,6 +227,41 @@ function isAsyncControlContext(
   return source === "async" || source === "background";
 }
 
+/** True when a payload or status record marks the run as awaited by the parent. */
+function isAwaitedRecord(raw: Record<string, unknown>): boolean {
+  if (raw.awaited === true) return true;
+  const run = isRecord(raw.telemetry) ? raw.telemetry.run : undefined;
+  return isRecord(run) && run.execution === "foreground";
+}
+
+/** Reads agent name(s) from an async-started payload's `agent` / `agents` fields only. */
+function readAsyncAgentNames(data: Record<string, unknown>): string[] {
+  const valid = (value: unknown): string[] =>
+    typeof value === "string" && value.trim().length > 0 ? [value.trim()] : [];
+  if (Array.isArray(data.agents) && data.agents.length > 0) {
+    // Multiplicity matters: parallel agents with the same name are counted separately.
+    const names = data.agents.flatMap(valid);
+    if (names.length > 0) return names;
+  }
+  return valid(data.agent);
+}
+
+/** First non-empty trimmed line of the last assistant message's errorMessage, if any. */
+function deriveAgentEndErrorLine(messages: readonly unknown[] | undefined): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message) || message.role !== "assistant") continue;
+    if (typeof message.errorMessage !== "string") return undefined;
+    for (const line of message.errorMessage.split(/\r\n|[\r\n\u2028\u2029]/)) {
+      const trimmed = line.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
 function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): boolean {
   if (!Array.isArray(messages) || messages.length === 0) {
     return false;
@@ -235,9 +299,41 @@ function deriveAgentEndOutcome(
   return "completed";
 }
 
+/** Agent names from status.json steps[].agent only (ordered, no dedup). Task text is never read. */
+function readStatusStepAgents(raw: Record<string, unknown>): string[] {
+  if (!Array.isArray(raw.steps)) return [];
+  return raw.steps.flatMap((step): string[] => {
+    if (!isRecord(step)) return [];
+    const agent = step.agent;
+    return typeof agent === "string" && agent.trim().length > 0 ? [agent.trim()] : [];
+  });
+}
+
+/** Best-effort awaited-marker read for restored jobs; any failure means detached. */
+function readAsyncDirAwaited(asyncDir: string): boolean {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as unknown;
+    return isRecord(raw) && isAwaitedRecord(raw);
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort agent-name read for restored jobs; any failure yields no names. */
+function readAsyncDirAgentNames(asyncDir: string): string[] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as unknown;
+    return isRecord(raw) ? readStatusStepAgents(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 function readRestorableAsyncJob(
   asyncDir: string,
-): { runId: string; sessionId: string; pid?: number } | undefined {
+):
+  | { runId: string; sessionId: string; pid?: number; agents?: string[]; awaited?: true }
+  | undefined {
   const statusPath = path.join(asyncDir, "status.json");
   const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as unknown;
   if (
@@ -251,10 +347,13 @@ function readRestorableAsyncJob(
     return undefined;
   }
   const pid = toValidPid(raw.pid);
+  const agents = readStatusStepAgents(raw);
   return {
     runId: raw.runId,
     sessionId: raw.sessionId,
+    ...(agents.length > 0 ? { agents } : {}),
     ...(pid !== undefined ? { pid } : {}),
+    ...(isAwaitedRecord(raw) ? { awaited: true as const } : {}),
   };
 }
 
@@ -283,6 +382,9 @@ export function createTlhEffectiveActivityTracker(
   let pendingOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
   /** Outcome committed at agent_settled; undefined until the first run settles. */
   let lastRunOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
+  /** Error line captured at agent_end; committed with the outcome at agent_settled. */
+  let pendingErrorLine: string | undefined;
+  let lastRunErrorLine: string | undefined;
   /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
   let uiPromptDepth = 0;
   /**
@@ -293,6 +395,8 @@ export function createTlhEffectiveActivityTracker(
    * Cleared to empty when uiPromptDepth returns to 0.
    */
   const uiPromptKindStack: (UIPromptKind | undefined)[] = [];
+  /** Parallel to uiPromptKindStack: prompt titles (undefined when absent/blank). */
+  const uiPromptTitleStack: (string | undefined)[] = [];
   let lastSnapshotKey = "0::0::0::::::";
   /** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
   let livenessTimer: TimeoutHandle | undefined;
@@ -404,8 +508,13 @@ export function createTlhEffectiveActivityTracker(
     const asyncDir = incomingAsyncDir ?? existingAsyncDir;
     const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
     const sessionId = incoming.sessionId ?? existing?.sessionId;
+    const agents =
+      incoming.agents && incoming.agents.length > 0 ? incoming.agents : existing?.agents;
+    const awaited = incoming.awaited ?? existing?.awaited;
     return {
       source: incoming.source,
+      ...(awaited ? { awaited } : {}),
+      ...(agents && agents.length > 0 ? { agents } : {}),
       ...(asyncDir ? { asyncDir } : {}),
       ...(pid !== undefined ? { pid } : {}),
       ...(sessionId ? { sessionId } : {}),
@@ -432,6 +541,8 @@ export function createTlhEffectiveActivityTracker(
       asyncDir: string;
       sessionId?: string;
       pid?: number;
+      agents?: string[];
+      awaited?: true;
       source: "rehydrated" | "restored";
     }[],
   ): void => {
@@ -454,6 +565,8 @@ export function createTlhEffectiveActivityTracker(
       activeAsyncJobs.set(job.runId, {
         source: job.source,
         asyncDir: job.asyncDir,
+        ...(job.agents && job.agents.length > 0 ? { agents: [...job.agents] } : {}),
+        ...(job.awaited ? { awaited: true as const } : {}),
         ...(job.sessionId ? { sessionId: job.sessionId } : {}),
         ...(pid !== undefined ? { pid } : {}),
       });
@@ -596,6 +709,19 @@ export function createTlhEffectiveActivityTracker(
     // Only propagate kind when it is a recognised UIPromptKind (not undefined).
     const waitingForUserKind: UIPromptKind | undefined =
       topKind !== undefined ? topKind : undefined;
+    const waitingForUserTitle = waitingForUser
+      ? uiPromptTitleStack[uiPromptTitleStack.length - 1]
+      : undefined;
+    const compacting = [...primaryReasons.keys()].some((reason) =>
+      reason.startsWith("primary:compaction:"),
+    );
+    const activeAsyncJobAgents: Record<string, string[]> = {};
+    const awaitedAsyncJobIds: string[] = [];
+    for (const [runId, record] of [...activeAsyncJobs].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (record.awaited) awaitedAsyncJobIds.push(runId);
+      if (record.agents && record.agents.length > 0)
+        activeAsyncJobAgents[runId] = [...record.agents];
+    }
     return {
       inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
       waitingForUser,
@@ -604,6 +730,11 @@ export function createTlhEffectiveActivityTracker(
       primaryReasons: [...primaryReasons.keys()].sort(),
       activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
       ...(lastRunOutcome !== undefined ? { lastRunOutcome } : {}),
+      ...(waitingForUserTitle !== undefined ? { waitingForUserTitle } : {}),
+      ...(compacting ? { compacting: true as const } : {}),
+      ...(lastRunOutcome === "error" && lastRunErrorLine !== undefined ? { lastRunErrorLine } : {}),
+      ...(Object.keys(activeAsyncJobAgents).length > 0 ? { activeAsyncJobAgents } : {}),
+      ...(awaitedAsyncJobIds.length > 0 ? { awaitedAsyncJobIds } : {}),
     };
   };
 
@@ -615,7 +746,13 @@ export function createTlhEffectiveActivityTracker(
       snapshot.waitingForUserKind ?? "",
       snapshot.primaryReasons.join(","),
       snapshot.activeAsyncJobIds.join(","),
+      Object.entries(snapshot.activeAsyncJobAgents ?? {})
+        .map(([runId, names]) => `${runId}=${names.join("+")}`)
+        .join(","),
+      (snapshot.awaitedAsyncJobIds ?? []).join(","),
       snapshot.lastRunOutcome ?? "",
+      snapshot.waitingForUserTitle ?? "",
+      snapshot.lastRunErrorLine ?? "",
     ].join("::");
 
   const notifyIfChanged = (): void => {
@@ -655,6 +792,8 @@ export function createTlhEffectiveActivityTracker(
       runActive = false;
       pendingOutcome = undefined;
       lastRunOutcome = undefined;
+      pendingErrorLine = undefined;
+      lastRunErrorLine = undefined;
     },
     rehydrateFromArtifacts(ctx) {
       if (disposed) return;
@@ -664,6 +803,8 @@ export function createTlhEffectiveActivityTracker(
         asyncDir: string;
         sessionId: string;
         pid?: number;
+        agents?: string[];
+        awaited?: true;
         source: "rehydrated";
       }> = [];
       const entries = (() => {
@@ -691,6 +832,8 @@ export function createTlhEffectiveActivityTracker(
               asyncDir: candidateAsyncDir,
               sessionId: status.sessionId,
               ...(status.pid !== undefined ? { pid: status.pid } : {}),
+              ...(status.agents ? { agents: status.agents } : {}),
+              ...(status.awaited ? { awaited: true as const } : {}),
               source: "rehydrated",
             });
           } catch {
@@ -714,8 +857,11 @@ export function createTlhEffectiveActivityTracker(
       runActive = false;
       pendingOutcome = undefined;
       lastRunOutcome = undefined;
+      pendingErrorLine = undefined;
+      lastRunErrorLine = undefined;
       uiPromptDepth = 0;
       uiPromptKindStack.length = 0;
+      uiPromptTitleStack.length = 0;
       notifyIfChanged();
       listeners.clear();
     },
@@ -741,6 +887,9 @@ export function createTlhEffectiveActivityTracker(
       pendingOutcome = deriveAgentEndOutcome(
         Array.isArray(event.messages) ? event.messages : undefined,
       );
+      pendingErrorLine = deriveAgentEndErrorLine(
+        Array.isArray(event.messages) ? event.messages : undefined,
+      );
       if (looksLikeRetryableAgentEnd(event.messages)) {
         scheduleRetryGrace("agent-end");
       }
@@ -754,10 +903,13 @@ export function createTlhEffectiveActivityTracker(
       // events always provide the required native boolean.
       if (event.aborted) {
         lastRunOutcome = "aborted";
+        lastRunErrorLine = undefined;
       } else if (pendingOutcome !== undefined) {
         lastRunOutcome = pendingOutcome;
+        lastRunErrorLine = pendingOutcome === "error" ? pendingErrorLine : undefined;
       }
       pendingOutcome = undefined;
+      pendingErrorLine = undefined;
       runActive = false;
       clearRetryGrace();
       notifyIfChanged();
@@ -809,13 +961,17 @@ export function createTlhEffectiveActivityTracker(
           ? kind
           : undefined;
       uiPromptKindStack.push(recordedKind);
+      const title = typeof event?.title === "string" ? event.title.trim() : "";
+      uiPromptTitleStack.push(title.length > 0 ? title : undefined);
       notifyIfChanged();
     },
     handleUIPromptEnd(_event) {
       if (uiPromptDepth === 0) return;
       uiPromptDepth -= 1;
       uiPromptKindStack.pop();
+      uiPromptTitleStack.pop();
       if (uiPromptDepth === 0) {
+        uiPromptTitleStack.length = 0;
         // Defensive: ensure stack is cleared when depth reaches 0.
         uiPromptKindStack.length = 0;
       }
@@ -830,6 +986,8 @@ export function createTlhEffectiveActivityTracker(
         asyncDir: string;
         sessionId: string;
         pid?: number;
+        agents?: string[];
+        awaited?: true;
         source: "restored";
       }> = [];
       for (const candidate of snapshot.jobs) {
@@ -839,11 +997,15 @@ export function createTlhEffectiveActivityTracker(
         const sessionId = readNonEmptyStringField(candidate, "sessionId");
         if (!runId || !asyncDir || sessionId !== activeSessionId) continue;
         const pid = toValidPid(candidate.pid);
+        const agents = readAsyncDirAgentNames(asyncDir);
+        const awaited = readAsyncDirAwaited(asyncDir);
         restoredJobs.push({
           runId,
           asyncDir,
           sessionId,
           ...(pid !== undefined ? { pid } : {}),
+          ...(agents.length > 0 ? { agents } : {}),
+          ...(awaited ? { awaited: true as const } : {}),
           source: "restored",
         });
       }
@@ -863,6 +1025,9 @@ export function createTlhEffectiveActivityTracker(
       if (sessionId) record.sessionId = sessionId;
       const pid = toValidPid(data.pid);
       if (pid !== undefined) record.pid = pid;
+      const agents = readAsyncAgentNames(data);
+      if (agents.length > 0) record.agents = agents;
+      if (isAwaitedRecord(data)) record.awaited = true;
       setAsyncJobActive(data.id, record);
       notifyIfChanged();
     },

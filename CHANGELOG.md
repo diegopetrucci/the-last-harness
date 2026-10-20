@@ -20,6 +20,9 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`.
 - The `tlh` wrapper defaults `PI_PROGRAM_STATUS=0` to keep Pi 1.1.0's native OSC 7501 emitter off while TLH's effective-activity reporter remains the root owner.
 
+### Added
+
+- TLH's OSC 7501 root record now carries a `msg` (compaction, session name, subagent count, prompt title, or first error line), and each active background subagent gets a child record (`id=subagent/<runId>`, `title` = agent names, cleared on removal, capped at 32). Prompts, assistant output, and subagent task text are never sent. `progress`, `kind=auth`, feature detection, and a root `title` are intentionally unsupported.
 
 ### Fixed
 
@@ -32,10 +35,11 @@ All notable changes to The Last Harness will be documented in this file.
 - The `/annotate-git-diff` review window now configures Monaco's inlined AMD loader with an absolute base URL for `about:blank` WebViews and excludes locale packs from the inlined runtime.
 - Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
 - Subagent thinking phrases no longer flicker on fast-turning agents; they now rotate on a steady 8-second cadence instead of changing every turn.
+- `check-package-versions` now fails when the Pi version recorded in `config/pi-runtime/package-lock.json` (the `node_modules/@earendil-works/pi-coding-agent` entry or the root dependency) drifts from the managed Pi pin. [#760](https://github.com/diegopetrucci/the-last-harness/issues/760)
 
 ### Changed
 
-- Raised TLH's reversible primary and other non-child context cap from 200,000 to 300,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
+- Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
 - Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
 - Bumped the bundled Pi runtime from `1.0.3` to `1.0.4`. Pi 1.0.4 adds `*` patterns to `--tools`/`--exclude-tools`, `--no-mcp` for single-run MCP disablement, a codemode fix for `tools.read()` on images, and several MCP and provider fixes. Runtime behavior for TLH users is unchanged: mcporter remains the MCP adapter and `-builtin:mcp` remains active in isolated settings.
@@ -54,6 +58,10 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH launch time should be ~25/30% faster.
 - Opus 5.5 is the default for many things, now.
 - The private Pi runtime is now installed via `npm ci` from a TLH-shipped lockfile in `config/pi-runtime/`, keeping Pi's dependency graph pinned even when upstream stops shipping a shrinkwrap; existing runtimes are reinstalled once from the lockfile on the next `tlh update` or fresh install, a failed install preserves the previous runtime, and `tlh doctor` warns when the runtime does not match the shipped lockfile.
+- Bumped the bundled Pi runtime from `1.2.0` to `1.3.0`. Inspection found Kimi Code now uses Chat Completions and custom `models.json` base URLs require `/v1`; OpenAI GPT-6 thinking-level cache retention applies to API-key access, not the OpenAI Codex subscription provider. Pi's provider-ambiguity resolution and resumed-session active-tool restoration are covered by permanent deterministic/isolated regression suites; provider-backed release-tier checks remain pending. TLH keeps its model defaults, context caps, MCP/OSC policy, and user-configuration boundaries unchanged.
+- Install and update now keep TLH's pinned `gn` and `tk` in the isolated profile `bin` up to date: the managed copies are reinstalled whenever the shipped pin differs from the recorded `tlh.gnosis.installedVersion` / `tlh.tickets.installedSha256` (upgrade or downgrade) or no record exists, instead of adopting an existing `PATH` copy. `PATH`/Homebrew binaries are never modified and are used only as a fallback if the managed install fails. A `tk` chosen explicitly with `tlh tickets enable --install-path` is recorded as `tlh.tickets.installPathSource: "user"` and preserved across updates while it validates. [#787](https://github.com/diegopetrucci/the-last-harness/issues/787)
+- TLH now ships `compaction.reserveTokens: 49152` as a packaged default (inserted only when absent, recorded with a `tlh.compactionReserveTokensManaged` marker) to mitigate compaction summaries hitting the token cap on reasoning models. Auto-compaction triggers about 32,768 tokens earlier; see [`docs/install.md`](docs/install.md#compaction-reserve-default). [#785](https://github.com/diegopetrucci/the-last-harness/issues/785)
+- The architect no longer creates a branch before launching a worker when working in a fresh worktree, including one on `main`/`master`.
 
 ### Removed
 
@@ -68,6 +76,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
 - Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
 - Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
+
 
 ## [0.45.0] - 2026-10-14
 

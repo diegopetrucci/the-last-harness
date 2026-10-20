@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.2.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.3.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
 
 Run the one-liner:
 
@@ -10,7 +10,7 @@ Run the one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. TLH currently pins the managed default to Gnosis `v0.5.4`; installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides can still point at another release or repository when needed. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`. If TLH cannot validate or install `tk`, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
+On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. TLH currently pins the managed default to Gnosis `v0.5.4`; installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides can still point at another release or repository when needed. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; TLH installs its pinned managed copy at `~/.the-last-harness/agent/bin/tk` and refreshes it whenever a later install/update ships a different pin. If the managed install fails, TLH warns and falls back to a valid `tk` on `PATH`; if none exists, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings. The subagent orchestration runtime is first-party TLH code declared by this package, not a separate extension package that users must install or pin.
 
@@ -94,7 +94,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 1.2.0 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 1.3.0 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -112,7 +112,7 @@ tlh update --track latest-release
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-Normal updates keep Gnosis and ticket integration enabled. They install or refresh the managed isolated `gn` binary when needed, re-enable legacy `settings.tlh.tickets.enabled=false` values, reuse a valid configured/existing `tk` when possible, and install or refresh the managed isolated copy at `~/.the-last-harness/agent/bin/tk` when needed. If no valid `tk` is available and the managed install fails, `tlh update` fails with an actionable error; provide a valid command with `tlh tickets enable --install-path /path/to/tk` for tickets, or rerun the update once the managed download can succeed. Existing repo-local `.gnosis` and `.tickets` data is left in place.
+Normal updates keep Gnosis and ticket integration enabled. They reinstall the managed isolated `gn` (tracked by `settings.tlh.gnosis.installedVersion`) and `tk` (tracked by `settings.tlh.tickets.installedSha256`) whenever the shipped pin differs from the recorded one or no record exists, and re-enable legacy `settings.tlh.tickets.enabled=false` values. A `tk` you chose explicitly with `tlh tickets enable --install-path /path/to/tk` is kept (opt-out) while it still validates. `PATH`/Homebrew copies of `gn` and `tk` are never modified and are used only as a fallback if the managed install fails. `TLH_SKIP_GNOSIS_INSTALL=1` skips Gnosis setup, and `TLH_GNOSIS_VERSION` overrides the pinned Gnosis version. If no valid `tk` is available and the managed install fails, `tlh update` fails with an actionable error; provide a valid command with `tlh tickets enable --install-path /path/to/tk` for tickets, or rerun the update once the managed download can succeed. Existing repo-local `.gnosis` and `.tickets` data is left in place.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
@@ -192,13 +192,35 @@ Running `tlh update --force` (or equivalently `bash install.sh --force`) passes 
 
 ## Pi-native prompt-cache warming
 
-The pinned Pi `1.2.0` runtime has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
+The pinned Pi `1.3.0` runtime has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
 
 TLH ships `cacheWarming: "idle"` as a packaged default. Install and update apply this value using the same append-if-missing merge used for all packaged settings defaults: when `cacheWarming` is absent from the isolated `settings.json` it is written as `"idle"`; an existing user value is preserved untouched. To revert to Pi's native `streaming` mode (warm while a run is active), set `cacheWarming` to `streaming` in `/settings` or in `~/.the-last-harness/agent/settings.json`. To disable warming entirely, set it to `off`.
 
 This setting is user-owned and global to the isolated profile (`~/.the-last-harness/agent/settings.json`, or the active `PI_CODING_AGENT_DIR`), not project-scoped. Use Pi's `/settings` screen or edit that profile deliberately; back up before manual edits and preserve unknown keys. Canonical TLH parent and child processes share the isolated profile, so one global value governs both unless a separately configured profile is intentionally used. Pi exposes warm status and its economic decision through `/session`. TLH's packaged defaults set `showCacheMissNotices` to `true`, so successful native refreshes appear as `Cache warmed ...` transcript notices by default; set it to `false` to hide them.
 
 Pi-native warming is separate from the retired TLH async-parent prompt-cache heartbeat. The heartbeat code has been removed; a legacy `heartbeat` key is ignored at runtime and preserved for manual cleanup, while any historical `heartbeat.jsonl` is left in place. To stop Pi-native warming, set `cacheWarming` to `off`; to restore the upstream default, remove the key or choose `streaming`. See [subagents.md](subagents.md#prompt-cache-warming) for the native warming limits, legacy-key notice, and rollback steps.
+
+## Compaction reserve default
+
+TLH ships `compaction.reserveTokens: 49152` as a packaged default, a mitigation for compaction summaries hitting the token cap on reasoning models ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785); upstream [earendil-works/pi#9075](https://github.com/earendil-works/pi/issues/9075), [#9512](https://github.com/earendil-works/pi/issues/9512)). Pi caps the compaction summary at 0.8 × `reserveTokens` and the split-turn prefix at 0.5 × `reserveTokens`; with Pi's default of 16,384 that is 13,107 tokens, and on adaptive-thinking models thinking shares that cap, so long high/xhigh/max sessions can fail every `/compact`. At 49,152 the limits are 39,321 (summary) and 24,576 (split-turn prefix).
+
+Trade-off: auto-compaction triggers about 32,768 tokens earlier, roughly 301k under the 350k context cap and roughly 223k for 272k developer children. The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
+
+Small-window caveat: Pi does not scale the reserve to the model's window, so models with windows of 64k or less need their own override. The example below uses `16384`, which restores Pi's own default for that model:
+
+```json
+{
+  "compaction": {
+    "modelOverrides": {
+      "provider/modelId": { "reserveTokens": 16384 }
+    }
+  }
+}
+```
+
+Install and update use the usual append-if-missing merge: the value is written only when absent and an existing user value is preserved. When TLH writes it, it records `tlh.compactionReserveTokensManaged: true` in `settings.json` as provenance. Deleting the key does not opt out, because `tlh update` re-adds missing keys; set an explicit value such as `16384` instead. `tlh update --force` overwrites the value like other packaged defaults.
+
+This is only a mitigation: summaries grow with the session, so very long sessions can still hit the cap. `/tree` branch summaries (upstream [#10908](https://github.com/earendil-works/pi/issues/10908)) are unaffected.
 
 ## Doctor
 

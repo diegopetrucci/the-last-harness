@@ -57,6 +57,15 @@ export interface MockPiCallRecord {
   systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
 }
 
+export interface WaitForMockPiCallOptions {
+  /** Stop polling with a diagnostic if this async result reaches a terminal state first. */
+  terminalResultPath?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 // ---------------------------------------------------------------------------
 // Private module-level interfaces for tryImport
 // ---------------------------------------------------------------------------
@@ -124,6 +133,18 @@ assert.equal(isAsyncAvailable(), true, "required async runner module is unavaila
 
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export async function waitForTestCondition(
+  condition: () => boolean,
+  description: string,
+  timeoutMs: ScaledMs = scaleTestTimeout(10_000),
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) assert.fail(`Timed out waiting for ${description}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,10 +232,32 @@ export async function waitForAsyncControlCondition(
   }
 }
 
+function readTerminalMockPiWaitResult(
+  resultPath: string,
+): { state: string; summary?: string; error?: string; timedOut?: boolean } | undefined {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+  } catch {
+    // A result writer may still be publishing the file. Keep polling until the
+    // next pass rather than turning a transient partial read into a diagnostic.
+    return undefined;
+  }
+  if (!isRecord(payload) || typeof payload.state !== "string") return undefined;
+  if (["queued", "running", "pausing"].includes(payload.state)) return undefined;
+  return {
+    state: payload.state,
+    ...(typeof payload.summary === "string" ? { summary: payload.summary } : {}),
+    ...(typeof payload.error === "string" ? { error: payload.error } : {}),
+    ...(payload.timedOut === true ? { timedOut: true } : {}),
+  };
+}
+
 export async function waitForMockPiCall(
   mockPi: MockPi,
   index: number,
   timeoutMs: ScaledMs = scaleTestTimeout(30_000),
+  options: WaitForMockPiCallOptions = {},
 ): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -229,6 +272,22 @@ export async function waitForMockPiCall(
       ) as MockPiCallRecord;
       assert.ok(Array.isArray(payload.args), "expected recorded args");
       return { args: payload.args, systemPrompts: payload.systemPrompts ?? [] };
+    }
+    if (options.terminalResultPath && fs.existsSync(options.terminalResultPath)) {
+      const terminal = readTerminalMockPiWaitResult(options.terminalResultPath);
+      if (terminal) {
+        const detail = [
+          `state=${terminal.state}`,
+          terminal.timedOut ? "timedOut=true" : undefined,
+          terminal.error ? `error=${terminal.error}` : undefined,
+          terminal.summary ? `summary=${terminal.summary}` : undefined,
+        ]
+          .filter((value): value is string => value !== undefined)
+          .join(", ");
+        assert.fail(
+          `Async result ${options.terminalResultPath} reached terminal state before recorded mock pi call ${index}: ${detail}`,
+        );
+      }
     }
     if (Date.now() > deadline) assert.fail(`Timed out waiting for recorded mock pi call ${index}`);
     await new Promise((resolve) => setTimeout(resolve, 100));

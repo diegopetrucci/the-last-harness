@@ -105,7 +105,7 @@ After approval:
 4. Use `tk dep <id> <depends-on-id>` to wire dependencies.
 5. Present the ticket tree to the user.
 6. Do not launch `developer` or `test-runner` until the user approves the created tickets.
-7. Just before launching a worker, if still on `main`/`master` branch, create a new branch for the work.
+7. Just before launching a worker, if still on `main`/`master` branch, create a new branch for the work. If on a fresh worktree, do not create branches.
 
 The approved `tk` tickets are the only implementation artifacts `developer` and `test-runner` should rely on. Keep them concise, specific, and free of secrets or PII.
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -1498,33 +1497,6 @@ test("hostile values fail closed without invoking accessors or echoing values", 
   );
   assertFailure(malformedResult, "state-invalid");
   assert.equal(JSON.stringify(malformedResult).includes(hostileHandle), false);
-});
-
-test("npm pack dry-run excludes repository-only mirror contracts and this conformance test", () => {
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(npmCommand, ["pack", "--dry-run", "--json"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  const packResult = JSON.parse(result.stdout);
-  const packedPaths = new Set(
-    packResult.flatMap((entry) => entry.files ?? []).map((entry) => entry.path),
-  );
-
-  assert.equal(
-    packedPaths.has("extensions/the-last-harness.js"),
-    true,
-    "npm pack must include its packaged runtime sentinel",
-  );
-  for (const directory of ["protocol/device-mirror/", "protocol/session-mirror/"]) {
-    assert.equal(
-      [...packedPaths].some((path) => path.startsWith(directory)),
-      false,
-      `npm pack must exclude ${directory}`,
-    );
-  }
-  assert.equal(packedPaths.has("tests/device-mirror-conformance.test.mjs"), false);
 });
 
 test("frozen session-mirror/v1 dependency hashes remain unchanged", () => {

@@ -714,7 +714,10 @@ describe("async execution runner deadlines and process failures", () => {
       maxSubagentDepth: 2,
     });
 
-    await waitForMockPiCall(mockPi, 0);
+    // A role timeout may fire before the mock process publishes its call record
+    // on a loaded runner. The result artifact is the authoritative timeout
+    // boundary; requiring a call record here turns that valid path into a
+    // misleading polling failure.
     const payload = await readAsyncPayload(id);
     assert.equal(payload.state, "failed");
     assert.equal(payload.results[0]?.timedOut, true);
@@ -758,7 +761,9 @@ describe("async execution runner deadlines and process failures", () => {
       maxSubagentDepth: 2,
     });
 
-    await waitForMockPiCall(mockPi, 0);
+    await waitForMockPiCall(mockPi, 0, scaleTestTimeout(10_000), {
+      terminalResultPath: path.join(RESULTS_DIR, `${id}.json`),
+    });
     const resultPath = await waitForAsyncResultFile(id);
     const elapsedMs = Date.now() - startedAt;
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;

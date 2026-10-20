@@ -36,7 +36,19 @@ type ProgramStatusState =
   | "done"
   | "idle"
   | "error";
-type ActivityReportState = HerdrProtocolState | CmuxStatusState | ProgramStatusState;
+/** Resolved root OSC 7501 report: state plus the optional msg; deduped on all fields. */
+type ProgramStatusChild = { id: string; title?: string };
+type ProgramStatusResolved = {
+  state: ProgramStatusState;
+  msg?: string;
+  /** Child records for active background subagents (sorted by id, capped). */
+  children?: ProgramStatusChild[];
+};
+type ActivityReportState =
+  | HerdrProtocolState
+  | CmuxStatusState
+  | ProgramStatusState
+  | ProgramStatusResolved;
 type StateSender<State extends ActivityReportState> = (state: State) => Promise<void>;
 type StateResolver<State extends ActivityReportState> = (
   snapshot: TlhEffectiveActivitySnapshot,
@@ -134,7 +146,10 @@ function createQueuedStateReporter<State extends ActivityReportState>(
   resolveState: StateResolver<State>,
   options: TlhActivityReporterOptions = {},
   onStateCommitted?: (state: State) => void,
+  hooks: { isWorking?: (state: State) => boolean; equals?: (a: State, b: State) => boolean } = {},
 ): QueuedStateReporter {
+  const isWorking = hooks.isWorking ?? ((state: State) => (state as unknown) === "working");
+  const equals = hooks.equals ?? ((a: State, b: State) => a === b);
   const timers: TimerApi = {
     setTimeout: options.timers?.setTimeout ?? setTimeout,
     clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
@@ -156,7 +171,8 @@ function createQueuedStateReporter<State extends ActivityReportState>(
   };
 
   const queueState = (state: State): void => {
-    if (disposed || terminalQueued || terminalSent || lastQueuedState === state) return;
+    if (disposed || terminalQueued || terminalSent) return;
+    if (lastQueuedState !== undefined && equals(lastQueuedState, state)) return;
     queuedState = state;
     lastQueuedState = state;
     onStateCommitted?.(state);
@@ -202,7 +218,7 @@ function createQueuedStateReporter<State extends ActivityReportState>(
     handleSnapshot(snapshot) {
       if (disposed || terminalQueued || terminalSent) return;
       const nextState = resolveState(snapshot);
-      if (nextState === "working") {
+      if (isWorking(nextState)) {
         clearIdleTimer();
         queueState(nextState);
         return;
@@ -764,17 +780,132 @@ function resolveBlockedProgramStatusState(
   return "blocked";
 }
 
-function formatProgramStatusSequence(state: ProgramStatusState | "clear"): string {
-  if (state === "clear") {
-    return "\x1b]7501;state=clear\x1b\\";
+const PROGRAM_STATUS_ID_SEGMENT = /^[A-Za-z0-9_.+-]{1,32}$/;
+const PROGRAM_STATUS_MAX_ID_BYTES = 128;
+const PROGRAM_STATUS_MAX_ID_LEVELS = 8;
+const PROGRAM_STATUS_MAX_MSG_BYTES = 2048;
+const PROGRAM_STATUS_MAX_TITLE_BYTES = 192;
+
+/** Fields of one OSC 7501 report. `kind` is only emitted for `blocked`; `app` is root-only. */
+export type ProgramStatusReport = {
+  state: "working" | "blocked" | "done" | "idle" | "error" | "clear";
+  id?: string;
+  app?: string;
+  kind?: "permission" | "question";
+  title?: string;
+  msg?: string;
+};
+
+/** True when `id` matches the OSC 7501 id grammar (<=8 `/`-separated segments, <=128 bytes). */
+export function isValidProgramStatusId(id: string): boolean {
+  if (Buffer.byteLength(id, "utf8") > PROGRAM_STATUS_MAX_ID_BYTES) return false;
+  const segments = id.split("/");
+  return (
+    segments.length <= PROGRAM_STATUS_MAX_ID_LEVELS &&
+    segments.every((segment) => PROGRAM_STATUS_ID_SEGMENT.test(segment))
+  );
+}
+
+function truncateUtf8(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let bytes = 0;
+  let end = 0;
+  for (const char of text) {
+    const size = Buffer.byteLength(char, "utf8");
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    end += char.length;
   }
-  if (state === "blocked:permission") {
-    return "\x1b]7501;state=blocked:app=tlh:kind=permission\x1b\\";
+  return text.slice(0, end);
+}
+
+/** Replaces each run of C0 (U+0000-001F) / C1 (U+007F-009F) control characters with one space. */
+function replaceControlCharacters(text: string): string {
+  let out = "";
+  let inRun = false;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    const isControl = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+    if (isControl) {
+      if (!inRun) out += " ";
+    } else {
+      out += char;
+    }
+    inRun = isControl;
   }
-  if (state === "blocked:question") {
-    return "\x1b]7501;state=blocked:app=tlh:kind=question\x1b\\";
+  return out;
+}
+
+function encodeProgramStatusText(text: string | undefined, maxBytes: number): string | undefined {
+  if (text === undefined) return undefined;
+  const cleaned = truncateUtf8(replaceControlCharacters(text).trim(), maxBytes).trim();
+  return cleaned.length > 0 ? Buffer.from(cleaned, "utf8").toString("base64") : undefined;
+}
+
+/**
+ * Encodes one OSC 7501 report terminated by ST. Returns undefined when `id` is
+ * present but invalid: an invalid id must never be emitted, and must not fall
+ * back to the root record.
+ */
+export function formatProgramStatusReport(report: ProgramStatusReport): string | undefined {
+  if (report.id !== undefined && !isValidProgramStatusId(report.id)) return undefined;
+  const pairs = [`state=${report.state}`];
+  if (report.id !== undefined) pairs.push(`id=${report.id}`);
+  if (
+    report.id === undefined &&
+    report.app !== undefined &&
+    PROGRAM_STATUS_ID_SEGMENT.test(report.app)
+  ) {
+    pairs.push(`app=${report.app}`);
   }
-  return `\x1b]7501;state=${state}:app=tlh\x1b\\`;
+  if (report.state === "blocked" && report.kind) pairs.push(`kind=${report.kind}`);
+  const title = encodeProgramStatusText(report.title, PROGRAM_STATUS_MAX_TITLE_BYTES);
+  if (title) pairs.push(`title=${title}`);
+  const msg = encodeProgramStatusText(report.msg, PROGRAM_STATUS_MAX_MSG_BYTES);
+  if (msg) pairs.push(`msg=${msg}`);
+  return `\x1b]7501;${pairs.join(":")}\x1b\\`;
+}
+
+function formatProgramStatusSequence(resolved: ProgramStatusResolved | "clear"): string {
+  if (resolved === "clear") return formatProgramStatusReport({ state: "clear" }) as string;
+  const { state, msg } = resolved;
+  const report: ProgramStatusReport =
+    state === "blocked:permission"
+      ? { state: "blocked", app: "tlh", kind: "permission" }
+      : state === "blocked:question"
+        ? { state: "blocked", app: "tlh", kind: "question" }
+        : { state, app: "tlh" };
+  if (msg !== undefined) report.msg = msg;
+  return formatProgramStatusReport(report) as string;
+}
+
+const PROGRAM_STATUS_MAX_CHILDREN = 32;
+
+/** Maps an async run id to a valid child id, or undefined when it cannot be made valid. */
+function programStatusChildId(runId: string): string | undefined {
+  const segment = runId.replace(/[^A-Za-z0-9_.+-]/g, "-").slice(0, 32);
+  if (segment.length === 0) return undefined;
+  const id = `subagent/${segment}`;
+  return isValidProgramStatusId(id) ? id : undefined;
+}
+
+/** Child records for active detached jobs; never includes task text, only agent names. */
+function resolveChildren(snapshot: TlhEffectiveActivitySnapshot): ProgramStatusChild[] {
+  const children = new Map<string, ProgramStatusChild>();
+  const awaited = new Set(snapshot.awaitedAsyncJobIds);
+  for (const runId of [...snapshot.activeAsyncJobIds].sort()) {
+    if (children.size >= PROGRAM_STATUS_MAX_CHILDREN) break;
+    if (awaited.has(runId)) continue;
+    const id = programStatusChildId(runId);
+    if (id === undefined || children.has(id)) continue;
+    const names = snapshot.activeAsyncJobAgents?.[runId];
+    children.set(id, names && names.length > 0 ? { id, title: names.join("+") } : { id });
+  }
+  return [...children.values()];
+}
+
+function childrenKey(resolved: ProgramStatusResolved): string {
+  return JSON.stringify(resolved.children ?? []);
 }
 
 export function createProgramStatusActivityReporter(
@@ -790,8 +921,14 @@ export function createProgramStatusActivityReporter(
   }
 
   let rootSession = false;
+  let sessionName: string | undefined;
+  // Last root report written and the child records currently live in the
+  // terminal, so root and per-id child reports dedupe independently.
+  let lastWrittenRoot: { state: ProgramStatusState; msg?: string } | undefined;
+  const emittedChildren = new Map<string, string | undefined>();
+  let lastSnapshot: TlhEffectiveActivitySnapshot | undefined;
 
-  const resolveState = (snapshot: TlhEffectiveActivitySnapshot): ProgramStatusState => {
+  const resolveBaseState = (snapshot: TlhEffectiveActivitySnapshot): ProgramStatusState => {
     // waitingForUser takes precedence over inProgress so that a blocking UI
     // prompt raised during a tool run reports "blocked" rather than "working".
     if (snapshot.waitingForUser) {
@@ -811,15 +948,70 @@ export function createProgramStatusActivityReporter(
     return "idle"; // undefined = no run has settled yet this session
   };
 
-  const sendState: StateSender<ProgramStatusState> = async (state) => {
+  // msg never carries prompts, assistant output, or subagent task text: only the
+  // session name, a prompt title, the first line of a run error, or fixed text.
+  const resolveState = (snapshot: TlhEffectiveActivitySnapshot): ProgramStatusResolved => {
+    const state = resolveBaseState(snapshot);
+    let msg: string | undefined;
+    if (state === "working") {
+      if (snapshot.compacting) msg = "Compacting context";
+      else if (snapshot.runActive || snapshot.primaryReasons.length > 0) msg = sessionName;
+      else {
+        // Count agents, not jobs: a parallel job counts once per agent name.
+        let count = 0;
+        const awaited = new Set(snapshot.awaitedAsyncJobIds);
+        for (const runId of snapshot.activeAsyncJobIds) {
+          if (awaited.has(runId)) continue;
+          const names = snapshot.activeAsyncJobAgents?.[runId];
+          count += names && names.length > 0 ? names.length : 1;
+        }
+        if (count > 0) msg = `${count} ${count === 1 ? "subagent" : "subagents"} running`;
+      }
+    } else if (state === "done") msg = sessionName;
+    else if (state === "error") msg = snapshot.lastRunErrorLine;
+    else if (state.startsWith("blocked")) msg = snapshot.waitingForUserTitle;
+    const resolved: ProgramStatusResolved =
+      msg !== undefined && msg.length > 0 ? { state, msg } : { state };
+    const children = resolveChildren(snapshot);
+    if (children.length > 0) resolved.children = children;
+    return resolved;
+  };
+
+  const sendState: StateSender<ProgramStatusResolved> = async (resolved) => {
     try {
-      output.write(formatProgramStatusSequence(state));
+      // The root report is written first so child records always follow the
+      // root change that accompanies them. Unchanged roots are not repeated.
+      if (
+        lastWrittenRoot === undefined ||
+        lastWrittenRoot.state !== resolved.state ||
+        lastWrittenRoot.msg !== resolved.msg
+      ) {
+        output.write(formatProgramStatusSequence(resolved));
+        lastWrittenRoot = { state: resolved.state, msg: resolved.msg };
+      }
+      const wanted = new Map<string, string | undefined>();
+      for (const child of resolved.children ?? []) wanted.set(child.id, child.title);
+      for (const id of emittedChildren.keys()) {
+        if (wanted.has(id)) continue;
+        emittedChildren.delete(id);
+        const clear = formatProgramStatusReport({ state: "clear", id });
+        if (clear !== undefined) output.write(clear);
+      }
+      for (const [id, title] of wanted) {
+        if (emittedChildren.has(id) && emittedChildren.get(id) === title) continue;
+        const report = formatProgramStatusReport({ state: "working", id, title });
+        if (report === undefined) continue;
+        output.write(report);
+        emittedChildren.set(id, title);
+      }
     } catch {
       // Write failures must never crash TLH.
     }
   };
 
   const sendClear = async (): Promise<void> => {
+    lastWrittenRoot = undefined;
+    emittedChildren.clear();
     try {
       output.write(formatProgramStatusSequence("clear"));
     } catch {
@@ -827,7 +1019,10 @@ export function createProgramStatusActivityReporter(
     }
   };
 
-  const queuedReporter = createQueuedStateReporter(sendState, resolveState, options);
+  const queuedReporter = createQueuedStateReporter(sendState, resolveState, options, undefined, {
+    isWorking: (r) => r.state === "working",
+    equals: (a, b) => a.state === b.state && a.msg === b.msg && childrenKey(a) === childrenKey(b),
+  });
 
   return {
     handleSessionStart(ctx) {
@@ -836,10 +1031,17 @@ export function createProgramStatusActivityReporter(
         return;
       }
       rootSession = true;
+      sessionName = readSessionName(ctx);
     },
     handleSnapshot(snapshot) {
       if (!rootSession) return;
+      lastSnapshot = snapshot;
       queuedReporter.handleSnapshot(snapshot);
+    },
+    handleSessionInfoChanged(ctx) {
+      if (!rootSession) return;
+      sessionName = readSessionName(ctx);
+      if (lastSnapshot) queuedReporter.handleSnapshot(lastSnapshot);
     },
     handleSessionShutdown() {
       if (!rootSession) return;
