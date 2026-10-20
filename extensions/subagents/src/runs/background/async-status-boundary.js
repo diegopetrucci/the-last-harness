@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/async-status-boundary.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { safeTerminalText } from "../../shared/display-text.js";

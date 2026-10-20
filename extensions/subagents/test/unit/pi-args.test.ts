@@ -880,6 +880,23 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
     assert.ok(!args.includes("--no-builtin-tools"));
   });
 
+  it("keeps .ts and .js extension-path tools for ordinary non-project policies", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["read", "ordinary-tool.ts", "ordinary-tool.js"],
+    });
+
+    assert.equal(toolsFlag(args), "read,contact_supervisor");
+    assert.deepEqual(
+      extensionArgs(args).filter((arg) => arg.startsWith("ordinary-tool.")),
+      ["ordinary-tool.ts", "ordinary-tool.js"],
+    );
+  });
+
   it("rejects extension-path-only policies when lazy skills require read", () => {
     assert.throws(
       () =>

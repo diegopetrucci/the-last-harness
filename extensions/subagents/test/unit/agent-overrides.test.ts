@@ -482,6 +482,29 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(developer.override?.scope, "user");
   });
 
+  it("applies user agentOverrides identically with and without a leading BOM", () => {
+    writeCanonicalAgent(
+      "developer",
+      "---\nname: developer\ndescription: TLH developer\n---\n\nImplement the change.\n",
+    );
+    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+    const settings = JSON.stringify({
+      subagents: { agentOverrides: { developer: { model: "mock/bom-parity" } } },
+    });
+    const results = ["", "\uFEFF"].map((prefix) => {
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(settingsPath, `${prefix}${settings}`, "utf-8");
+      const developer = findAgent("developer");
+      return {
+        model: developer.model,
+        overrideScope: developer.override?.scope,
+        overridePath: developer.override?.path,
+      };
+    });
+
+    assert.deepEqual(results[1], results[0]);
+  });
+
   it("prefers project agentOverrides over user agentOverrides on a canonical role", () => {
     fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
     writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
@@ -543,6 +566,22 @@ describe("canonical packaged agent overrides", () => {
     const developer = findAgent("developer");
     assert.equal(developer.model, undefined);
     assert.equal(developer.override, undefined);
+  });
+
+  it("surfaces malformed BOM-prefixed settings files and preserves their contents", () => {
+    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+    const contents = '\uFEFF{"subagents":';
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, contents, "utf-8");
+
+    assert.throws(
+      () => discoverAgents(tempProject, "both"),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(settingsPath) &&
+        error.message.includes("Failed to parse settings file"),
+    );
+    assert.equal(fs.readFileSync(settingsPath, "utf-8"), contents);
   });
 
   it("surfaces malformed settings files instead of silently ignoring them", () => {

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/tui/render-primitives.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import {} from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { liveDetailShortcutDisplay } from "../shared/subagent-shortcuts.js";

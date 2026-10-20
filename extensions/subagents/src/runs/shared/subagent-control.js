@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/subagent-control.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import {} from "../../shared/types.js";
 const CONTROL_EVENT_TYPES = ["needs_attention"];
 export function normalizeIdleEpisodeId(value) {

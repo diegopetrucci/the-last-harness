@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-support-files.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";

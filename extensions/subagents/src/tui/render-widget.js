@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/tui/render-widget.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import {} from "@earendil-works/pi-coding-agent";
 import { Container, Text, visibleWidth } from "@earendil-works/pi-tui";

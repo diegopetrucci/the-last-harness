@@ -31,6 +31,8 @@ export const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
  *   name: string;
  *   commands: string[][];
  *   env?: Record<string, string | undefined>;
+ *   commandEnvs?: Array<Record<string, string | undefined> | undefined>;
+ *   timingCommands?: Array<{ suite: string; eventFile: string } | undefined>;
  * }} Lane
  */
 
@@ -59,6 +61,8 @@ let _signalHandlersInstalled = false;
 let _shutdownRequested = false;
 /** @type {Promise<void> | null} */
 let _shutdownComplete = null;
+/** @type {Set<(signal: string) => void>} */
+const _shutdownCallbacks = new Set();
 
 /**
  * Grace period (ms) between SIGTERM and SIGKILL when terminating child trees.
@@ -165,6 +169,18 @@ function _installSignalHandlers() {
       // not consult _activeSpawns here: its leader may already have closed.
       await new Promise((resolve) => setTimeout(resolve, KILL_GRACE_MS));
       for (const groupPid of groupPids) _killProcessGroup(groupPid, "SIGKILL");
+      // Notify opt-in observers after escalation has been dispatched to every
+      // group captured at shutdown. Observers must be synchronous and bounded;
+      // cancellation reporting must not delay the existing diagnostic flush.
+      for (const callback of _shutdownCallbacks) {
+        try {
+          callback(sig);
+        } catch (error) {
+          process.stderr.write(
+            `[tlh] shutdown observer failed: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }
       // Let runLanes callers enter their finally blocks only after escalation
       // has been dispatched to every group captured at shutdown.
       completeShutdown();
@@ -185,6 +201,22 @@ function _installSignalHandlers() {
 
   process.on("SIGINT", () => flushAndExit("SIGINT"));
   process.on("SIGTERM", () => flushAndExit("SIGTERM"));
+}
+
+// ---------------------------------------------------------------------------
+// Signal observer registration
+// ---------------------------------------------------------------------------
+
+/**
+ * Register a synchronous observer for the existing cancellation path.
+ *
+ * @param {(signal: string) => void} callback
+ * @returns {() => void} unregister function
+ */
+export function registerShutdownCallback(callback) {
+  _installSignalHandlers();
+  _shutdownCallbacks.add(callback);
+  return () => _shutdownCallbacks.delete(callback);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +365,7 @@ export function spawnBuffered(
  *   cwd?: string;
  *   stdout?: import("node:stream").Writable;
  *   stderr?: import("node:stream").Writable;
+ *   timing?: import("./ci-timings.mjs").TimingCollector;
  * }} [opts]
  * @returns {Promise<boolean>} true if all commands passed
  */
@@ -340,20 +373,49 @@ export async function runLane(lane, laneHomeDir, opts = {}) {
   mkdirSync(laneHomeDir, { recursive: true });
 
   const laneEnv = { ...process.env, ...lane.env, HOME: laneHomeDir };
+  const timing = opts.timing;
+  let laneOk = false;
+  timing?.startLane(lane.name);
 
-  for (const argv of lane.commands) {
-    // A command may close successfully after cancellation (for example, a
-    // TERM handler exits with status 0).  Re-check the latch before every
-    // queued command so that close continuations cannot spawn during grace,
-    // escalation, or buffered-output flush.
-    if (_shutdownRequested) return false;
-    const parts = [basename(argv[0]), ...argv.slice(1).map(_displayArg)].join(" ");
-    const raw = `lane ${lane.name}: ${parts}`;
-    const label = raw.length > 120 ? `${raw.slice(0, 117)}...` : raw;
-    const { ok } = await spawnBuffered(argv, laneEnv, { ...opts, label });
-    if (!ok) return false;
+  try {
+    for (let index = 0; index < lane.commands.length; index += 1) {
+      const argv = lane.commands[index];
+      // A command may close successfully after cancellation (for example, a
+      // TERM handler exits with status 0).  Re-check the latch before every
+      // queued command so that close continuations cannot spawn during grace,
+      // escalation, or buffered-output flush.
+      if (_shutdownRequested) return false;
+      const parts = [basename(argv[0]), ...argv.slice(1).map(_displayArg)].join(" ");
+      const raw = `lane ${lane.name}: ${parts}`;
+      const label = raw.length > 120 ? `${raw.slice(0, 117)}...` : raw;
+      const commandEnv = { ...laneEnv, ...lane.commandEnvs?.[index] };
+      const timingMeta = lane.timingCommands?.[index];
+      const commandTiming =
+        timing && timingMeta
+          ? timing.startCommand({
+              lane: lane.name,
+              suite: timingMeta.suite,
+              index,
+              eventFile: timingMeta.eventFile,
+            })
+          : null;
+      let result;
+      try {
+        result = await spawnBuffered(argv, commandEnv, { ...opts, label });
+      } catch (error) {
+        if (commandTiming) timing.endCommand(commandTiming, { ok: false });
+        throw error;
+      }
+      if (commandTiming) {
+        timing.endCommand(commandTiming, { ...result, cancelled: _shutdownRequested });
+      }
+      if (!result.ok) return false;
+    }
+    laneOk = true;
+    return true;
+  } finally {
+    timing?.endLane(lane.name, laneOk);
   }
-  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -372,19 +434,27 @@ export async function runLane(lane, laneHomeDir, opts = {}) {
  * @param {{
  *   stdout?: import("node:stream").Writable;
  *   stderr?: import("node:stream").Writable;
+ *   timing?: import("./ci-timings.mjs").TimingCollector;
  * }} [opts]
  * @returns {Promise<number>} 0 if all passed, 1 if any failed
  */
 export async function runLanes(lanes, { baseHomeDir, cwd }, opts = {}) {
-  const results = await Promise.allSettled(
-    lanes.map((lane) => {
-      const laneHomeDir = join(baseHomeDir, `lane-${lane.name}`);
-      return runLane(lane, laneHomeDir, { cwd, ...opts });
-    }),
-  );
-  if (_shutdownRequested) {
-    if (_shutdownComplete !== null) await _shutdownComplete;
-    return 1;
+  const unregister = opts.timing?.onCancellation
+    ? registerShutdownCallback(opts.timing.onCancellation)
+    : () => {};
+  try {
+    const results = await Promise.allSettled(
+      lanes.map((lane) => {
+        const laneHomeDir = join(baseHomeDir, `lane-${lane.name}`);
+        return runLane(lane, laneHomeDir, { cwd, ...opts });
+      }),
+    );
+    if (_shutdownRequested) {
+      if (_shutdownComplete !== null) await _shutdownComplete;
+      return 1;
+    }
+    return results.every((r) => r.status === "fulfilled" && r.value === true) ? 0 : 1;
+  } finally {
+    unregister();
   }
-  return results.every((r) => r.status === "fulfilled" && r.value === true) ? 0 : 1;
 }

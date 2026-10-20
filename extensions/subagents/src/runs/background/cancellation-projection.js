@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/cancellation-projection.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 export function isPausedStepStatus(status) {
     return status === "paused";

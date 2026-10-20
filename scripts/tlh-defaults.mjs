@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-defaults.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -462,7 +463,8 @@ function commandEnable(settings, defaultExtensions, id, mcpDecision) {
     if (!mcpAdapterMigrationFrozen(extension, mcpDecision)) {
         enablePackage(settings, extension);
     }
-    if (extension.id === MCPORTER_EXTENSION_ID) {
+    if (extension.id === MCPORTER_EXTENSION_ID &&
+        !defaultExtensionPackageFilterDisables(settings, extension)) {
         applyBuiltinMcpExclusionOnEnable(settings);
     }
     if (extension.id === "anthropic-auth") {

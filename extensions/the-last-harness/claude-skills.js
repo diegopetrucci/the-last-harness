@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/claude-skills.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";

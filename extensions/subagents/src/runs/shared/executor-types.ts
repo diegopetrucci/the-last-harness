@@ -18,7 +18,6 @@ export interface TaskParam {
   task: string;
   ticket?: string;
   cwd?: string;
-  count?: number;
   output?: string | boolean;
   outputMode?: "inline" | "file-only";
   model?: string;
@@ -96,8 +95,9 @@ export interface ExecutorDeps {
     agentDiagnostics?: AgentDiscoveryDiagnostic[];
   };
   getProjectAgentAccess?: (request: ProjectAgentAccessRequest) => ProjectAgentAccess | undefined;
-  /** Narrow functional seam for exercising continuation authorization without spawning a child. */
+  /** Narrow functional seams for exercising async dispatch without spawning a child. */
   executeAsyncSingle?: typeof import("../background/async-execution.ts").executeAsyncSingle;
+  executeAsyncParallel?: typeof import("../background/async-execution.ts").executeAsyncParallel;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   /** Parent-captured telemetry provenance forwarded to child runs. */
   telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/prompts.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { join } from "node:path";
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
 import { allowedSubagentsForExperimentalConfig } from "../the-last-harness-subagent-safety.mjs";

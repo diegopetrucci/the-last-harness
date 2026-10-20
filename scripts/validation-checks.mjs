@@ -81,6 +81,12 @@ export const VALIDATION_CHECKS = Object.freeze(
       order: 3,
     },
     {
+      id: "check-doc-links",
+      argv: ["npm", "run", "check:doc-links"],
+      lane: "pkg",
+      order: 13,
+    },
+    {
       id: "merge-settings",
       argv: ["node", "scripts/merge-settings.mjs", "--dry-run"],
       lane: "pkg",

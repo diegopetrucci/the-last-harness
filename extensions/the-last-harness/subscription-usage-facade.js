@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/subscription-usage-facade.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createRetryableLazyImport } from "./common.js";
 class LazyTlhSubscriptionUsageService {
     loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/header.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { TLH_NAME } from "./constants.js";
 function formatLaunchContextPercent(tokens, contextWindow) {
@@ -36,8 +37,8 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         muted: (text) => theme.fg("muted", text),
         accent: (text) => theme.fg("accent", text),
     };
-    const renderLogo = () => headerUpdate
-        ? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
+    const renderLogo = (width) => headerUpdate
+        ? truncateToWidth(`${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`, Math.max(0, width), color.dim("..."))
         : theme.bold(color.accent(TLH_NAME));
     const section = (name, items, width) => {
         if (items.length === 0) {
@@ -47,7 +48,8 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         const prefix = "  ";
         const wrappedLines = [];
         let currentLine = prefix;
-        for (const item of items) {
+        for (const rawItem of items) {
+            const item = truncateToWidth(rawItem, Math.max(0, width - visibleWidth(prefix)), color.dim("..."));
             const isFirstOnLine = currentLine === prefix;
             const candidate = isFirstOnLine ? prefix + item : currentLine + ", " + item;
             if (isFirstOnLine || visibleWidth(candidate) <= width - 2) {
@@ -106,7 +108,7 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         ...contextLine(startupResources.context, width),
     ];
     const renderCollapsed = (width) => {
-        const lines = [renderLogo()];
+        const lines = [renderLogo(width)];
         const details = [...launchContextLines(width)];
         if (details.length > 0) {
             lines.push("", ...details);
@@ -118,7 +120,7 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         return lines;
     };
     const renderExpanded = (width) => {
-        const lines = [renderLogo()];
+        const lines = [renderLogo(width)];
         const details = headerDetails(width);
         if (details.length > 0) {
             lines.push("", ...details);

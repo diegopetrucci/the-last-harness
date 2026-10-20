@@ -6,6 +6,7 @@ import {
 } from "../../../shared/project-agent-worktree.js";
 import { getAgentDir } from "../shared/utils.ts";
 import { parseAgentDefinition, type AgentConfig } from "./agents.ts";
+import { isExtensionToolPath } from "./identity.ts";
 import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.ts";
 
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
@@ -562,10 +563,7 @@ function readFixedDefinition(
   }
 }
 
-export function parseProjectAgentDefinition(
-  filePath: string,
-  content: string | Buffer,
-): AgentConfig {
+function parseProjectAgentDefinition(filePath: string, content: string | Buffer): AgentConfig {
   const text = Buffer.isBuffer(content)
     ? new TextDecoder("utf-8", { fatal: true }).decode(content)
     : content;
@@ -598,6 +596,14 @@ function validateLoadedAgent(
   }
   if (!Array.isArray(agent.tools) || agent.tools.length === 0) {
     throw new ProjectAgentDefinitionError(filePath, "tools must declare at least one usable tool");
+  }
+  for (const tool of agent.tools) {
+    if (isExtensionToolPath(tool)) {
+      throw new ProjectAgentDefinitionError(
+        filePath,
+        `tool '${tool}' is an extension path and is prohibited for project agents`,
+      );
+    }
   }
   if (agent.extensions !== undefined || agent.subagentOnlyExtensions !== undefined) {
     throw new ProjectAgentDefinitionError(

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/long-running-guard.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function resolveCurrentPath(toolName, args) {
     if (!toolName || !args)
         return undefined;

@@ -736,6 +736,20 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     assert.equal(mockPi.callCount(), 0);
   });
 
+  it("rejects retired tasks[].count before launch", async () => {
+    const result = await makeExecutor().execute(
+      "id",
+      { tasks: [{ agent: "echo", task: "task one", count: 3 }] } as never,
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(tempDir),
+    );
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0]?.text ?? "", /tasks\[0\]\.count is no longer supported/);
+    assert.equal(mockPi.callCount(), 0);
+  });
+
   it("does not use migration notices as unknown-agent load errors", async () => {
     const result = await makeExecutorWithDiscoverAgents(() => ({
       agents: [makeAgent("echo", { description: "Echo test agent" })],
@@ -761,7 +775,7 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     assert.equal(mockPi.callCount(), 0);
   });
 
-  it("memoizes ticket lookups before expanding top-level parallel task counts", async () => {
+  it("memoizes ticket lookups across top-level parallel tasks", async () => {
     const ticketRoot = createTempDir("pi-subagent-count-ticket-");
     const binDir = path.join(ticketRoot, "bin");
     const firstCwd = path.join(ticketRoot, "first");
@@ -798,7 +812,7 @@ process.stdout.write(ticket.body);
         "id",
         {
           tasks: [
-            { agent: "echo", task: "same key one", ticket: "tlhm-count", cwd: firstCwd, count: 2 },
+            { agent: "echo", task: "same key one", ticket: "tlhm-count", cwd: firstCwd },
             {
               agent: "echo",
               task: "same ticket different cwd",
@@ -815,8 +829,8 @@ process.stdout.write(ticket.body);
 
       assert.equal(result.isError, undefined);
       assert.equal(result.details?.mode, "parallel");
-      assert.equal(result.details?.results?.length, 4);
-      assert.equal(mockPi.callCount(), 4);
+      assert.equal(result.details?.results?.length, 3);
+      assert.equal(mockPi.callCount(), 3);
       const lookups = fs.readFileSync(lookupLog, "utf8").trim().split("\n");
       assert.equal(lookups.length, 3, "same normalized cwd and ticket ID should be loaded once");
       assert.deepEqual(
@@ -839,10 +853,10 @@ process.stdout.write(ticket.body);
     }
   });
 
-  it("rejects top-level parallel counts that exceed the default limit", async () => {
+  it("rejects top-level parallel tasks that exceed the default limit", async () => {
     const result = await makeExecutor().execute(
       "id",
-      { tasks: [{ agent: "echo", task: "task one", count: 9 }] },
+      { tasks: Array.from({ length: 9 }, () => ({ agent: "echo", task: "task one" })) },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
@@ -988,7 +1002,12 @@ process.stdout.write(ticket.body);
         parallel: { maxTasks: testCase.configuredMaxTasks },
       }).execute(
         testCase.name,
-        { tasks: [{ agent: "echo", task: "task one", count: testCase.count }] },
+        {
+          tasks: Array.from({ length: testCase.count }, () => ({
+            agent: "echo",
+            task: "task one",
+          })),
+        },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
@@ -1122,7 +1141,10 @@ process.stdout.write(ticket.body);
   it("rejects invalid async top-level parallel requests during preflight", async () => {
     const result = await makeExecutor().execute(
       "id",
-      { tasks: [{ agent: "echo", task: "task one", count: 9 }], async: true },
+      {
+        tasks: Array.from({ length: 9 }, () => ({ agent: "echo", task: "task one" })),
+        async: true,
+      },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/project-agent-control.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { embeddedSlugFromName, loadProjectAgent, normalizeProjectAgentIdentity, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";
 import { resolveProjectAgentSessionId } from "../../shared/session-identity.js";

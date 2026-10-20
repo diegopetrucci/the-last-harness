@@ -5,13 +5,24 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { renderWrapper } from "../scripts/tlh-wrapper.mjs";
+import { DEFAULT_MARKER, renderWrapper, writeWrapper } from "../scripts/tlh-wrapper.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -280,3 +291,98 @@ test("rendered wrapper: version with missing script prints recovery error and ex
     /tlh version package support files are missing or corrupt; run `tlh update` to recover\./,
   );
 });
+
+function wrapperFixture(t) {
+  const root = mkdtempSync(join(tmpdir(), "tlh-wrapper-symlink-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const binDir = join(root, "bin");
+  mkdirSync(binDir, { recursive: true });
+  const args = { ...BASE_ARGS, binDir, piCmd: "", force: false, quiet: true };
+  return { root, binDir, args, path: join(binDir, "tlh") };
+}
+
+test("writeWrapper: dangling symlink at wrapper path is refused without --force", (t) => {
+  const { root, args, path } = wrapperFixture(t);
+  const target = join(root, "missing-target");
+  symlinkSync(target, path);
+  assert.throws(() => writeWrapper(args, path), /already exists and is not managed/);
+  assert.equal(readlinkSync(path), target);
+  assert.equal(existsSync(target), false);
+});
+
+test("writeWrapper: --force replaces a dangling symlink without following it", (t) => {
+  const { root, args, path } = wrapperFixture(t);
+  const target = join(root, "missing-target");
+  symlinkSync(target, path);
+  writeWrapper({ ...args, force: true }, path);
+  assert.equal(lstatSync(path).isSymbolicLink(), false);
+  assert.match(readFileSync(path, "utf8"), new RegExp(DEFAULT_MARKER));
+  assert.equal(existsSync(target), false);
+});
+
+test("writeWrapper: pre-existing symlink at the temp path is not followed", (t) => {
+  const { root, args, path } = wrapperFixture(t);
+  const victim = join(root, "victim");
+  writeFileSync(victim, "keep", { mode: 0o600 });
+  symlinkSync(victim, `${path}.tmp.${process.pid}`);
+  writeWrapper(args, path);
+  assert.equal(readFileSync(victim, "utf8"), "keep");
+  assert.equal(lstatSync(victim).mode & 0o777, 0o600);
+  assert.match(readFileSync(path, "utf8"), new RegExp(DEFAULT_MARKER));
+});
+
+test("tlh-wrapper --dry-run warns for a dangling symlink at the wrapper path", (t) => {
+  const { root, binDir, path } = wrapperFixture(t);
+  symlinkSync(join(root, "missing-target"), path);
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(REPO_ROOT, "scripts/tlh-wrapper.mjs"),
+      "--dry-run",
+      "--agent-dir",
+      join(root, "agent"),
+      "--bin-dir",
+      binDir,
+      "--wrapper-name",
+      "tlh",
+      "--package-root",
+      REPO_ROOT,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /would not overwrite unmanaged existing wrapper/);
+});
+
+test("writeWrapper: live symlink to a managed wrapper is replaced without --force", (t) => {
+  const { root, args, path } = wrapperFixture(t);
+  const target = join(root, "managed-target");
+  writeFileSync(target, renderWrapper({ ...args, packageRoot: REPO_ROOT }));
+  symlinkSync(target, path);
+  writeWrapper(args, path);
+  assert.equal(lstatSync(path).isSymbolicLink(), false);
+  assert.match(readFileSync(path, "utf8"), new RegExp(DEFAULT_MARKER));
+});
+
+test("writeWrapper: directory at the wrapper path is refused without --force", (t) => {
+  const { args, path } = wrapperFixture(t);
+  mkdirSync(path);
+  assert.throws(() => writeWrapper(args, path), /already exists and is not managed/);
+});
+
+test(
+  "writeWrapper: FIFO at the wrapper path is never opened and needs --force",
+  { timeout: 10_000 },
+  (t) => {
+    const { args, path } = wrapperFixture(t);
+    const made = spawnSync("mkfifo", [path], { encoding: "utf8" });
+    if (made.error || made.status !== 0) {
+      t.skip("mkfifo unavailable");
+      return;
+    }
+    assert.throws(() => writeWrapper(args, path), /already exists and is not managed/);
+    writeWrapper({ ...args, force: true }, path);
+    assert.equal(lstatSync(path).isFile(), true);
+    assert.match(readFileSync(path, "utf8"), new RegExp(DEFAULT_MARKER));
+  },
+);

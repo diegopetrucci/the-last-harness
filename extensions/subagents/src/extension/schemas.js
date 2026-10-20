@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/schemas.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { Type } from "typebox";
 function keepTopLevelParameterDescriptions(schema) {
     return pruneNestedDescriptions(schema, []);
@@ -44,10 +45,6 @@ const TaskItem = Type.Object({
     cwd: Type.Optional(Type.String({
         description: "Task working directory; relative paths resolve against the run cwd.",
     })),
-    count: Type.Optional(Type.Integer({
-        minimum: 1,
-        description: "Repeat this parallel task N times with the same settings.",
-    })),
     output: Type.Optional(OutputOverride),
     outputMode: Type.Optional(OutputModeOverride),
     model: Type.Optional(Type.String({ description: "Override model for this task" })),
@@ -60,7 +57,7 @@ const SubagentParamsSchema = Type.Object({
         description: "Optional ticket ID; TLH loads `tk show <id>` in the task cwd before launch.",
     })),
     tasks: Type.Optional(Type.Array(TaskItem, {
-        description: "PARALLEL mode: [{agent, task, ticket?, cwd?, count?, output?, outputMode?, model?}, ...]",
+        description: "PARALLEL mode: [{agent, task, ticket?, cwd?, output?, outputMode?, model?}, ...]",
     })),
     async: Type.Optional(Type.Boolean({
         description: "Launch detached background work (default: false, or per config)",

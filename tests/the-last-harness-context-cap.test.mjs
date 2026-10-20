@@ -1663,6 +1663,57 @@ test("/toggle-context-cap enables cap (flips disabled=true to false) and applies
   );
 });
 
+test("/toggle-context-cap reads BOM-prefixed settings like plain JSON and preserves unrelated values", async (t) => {
+  const writtenSettings = [];
+
+  for (const prefix of ["", "\uFEFF"]) {
+    const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
+    const settingsPath = join(fixture.agent, "settings.json");
+    const initialSettings = {
+      unrelated: { keep: true },
+      tlh: {
+        contextCap: { disabled: true },
+        modelVisibility: { hidden: ["keep-me"] },
+      },
+    };
+    const initialContent = `${prefix}${JSON.stringify(initialSettings, null, 2)}\n`;
+    writeFileSync(settingsPath, initialContent);
+
+    await withEnv(
+      { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+      async () => {
+        const pi = createPiHarness();
+        registerContextCap(pi);
+        const command = pi.commands.get("toggle-context-cap");
+        assert.ok(command, "command must be registered");
+
+        const ctx = createCtx({ cwd: fixture.dir });
+        await command.handler("", ctx);
+
+        assert.equal(ctx.notifications.length, 1);
+        assert.equal(ctx.notifications[0].type, "info");
+        const content = readFileSync(settingsPath, "utf8");
+        assert.notEqual(content.charCodeAt(0), 0xfeff, "successful writes should normalize BOMs");
+        writtenSettings.push(JSON.parse(content));
+        const backups = readdirSync(fixture.agent).filter((entry) =>
+          entry.startsWith("settings.json.bak-"),
+        );
+        assert.equal(backups.length, 1);
+        assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialContent);
+      },
+    );
+  }
+
+  assert.deepEqual(writtenSettings[0], writtenSettings[1]);
+  assert.deepEqual(writtenSettings[0], {
+    unrelated: { keep: true },
+    tlh: {
+      contextCap: { disabled: false },
+      modelVisibility: { hidden: ["keep-me"] },
+    },
+  });
+});
+
 test("/toggle-context-cap disables cap (flips enabled to disabled=true) and restores live", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   const settingsPath = join(fixture.agent, "settings.json");
@@ -1798,6 +1849,35 @@ test("/toggle-context-cap refuses a non-object tlh without rewriting settings", 
         ctx.notifications[0].message,
         /Could not update context cap setting: settings field 'tlh' must be an object if present/,
       );
+    },
+  );
+});
+
+test("/toggle-context-cap preserves malformed JSON and reports the guarded write failure", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = '\uFEFF{"tlh":{"contextCap":';
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+    async () => {
+      const pi = createPiHarness();
+      registerContextCap(pi);
+      const command = pi.commands.get("toggle-context-cap");
+      assert.ok(command, "command must be registered");
+
+      const ctx = createCtx({ cwd: fixture.dir });
+      await command.handler("", ctx);
+
+      assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+      assert.deepEqual(
+        readdirSync(fixture.agent).filter((name) => name.startsWith("settings.json.bak-")),
+        [],
+      );
+      assert.equal(ctx.notifications.length, 1);
+      assert.equal(ctx.notifications[0].type, "error");
+      assert.match(ctx.notifications[0].message, /Could not update context cap setting/);
     },
   );
 });

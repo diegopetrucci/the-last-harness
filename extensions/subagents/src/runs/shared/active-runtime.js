@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/active-runtime.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function normalizeActiveRuntimeMs(value) {
     return typeof value === "number" && Number.isFinite(value) && value >= 0
         ? Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(value))

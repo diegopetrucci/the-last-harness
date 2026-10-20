@@ -20,10 +20,7 @@ import {
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { writeChildMessageRequestToDir } from "../../src/runs/background/control-channel.ts";
-import {
-  PACKAGED_MINOR_AGENT_ROLES,
-  projectAgentGuidanceFilename,
-} from "../../../shared/project-agent-guidance.ts";
+import { PACKAGED_MINOR_AGENT_ROLES } from "../../../shared/project-agent-guidance.ts";
 import { setStructuredChildPromptRuntime } from "../../../shared/subagent-child-boundary.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
@@ -279,8 +276,7 @@ function writeProjectGuidance(
   role: string,
   content: string,
 ): string {
-  const filename = projectAgentGuidanceFilename(role);
-  assert.ok(filename, `expected a packaged project-guidance filename for ${role}`);
+  const filename = `${role.toUpperCase()}_PROMPT_APPEND.md`;
   const directory = path.join(fixture.cwd, ".tlh", "agents", "builtin");
   fs.mkdirSync(directory, { recursive: true });
   const filePath = path.join(directory, filename);

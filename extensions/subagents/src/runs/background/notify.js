@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/notify.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";

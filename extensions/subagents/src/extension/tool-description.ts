@@ -3,7 +3,7 @@ export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the
 EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
 • SINGLE: { agent, task?, ticket? }.
-• PARALLEL: { tasks:[{ agent, task, ticket?, cwd?, count?, output?, outputMode?, model? }, ...] }.
+• PARALLEL: { tasks:[{ agent, task, ticket?, cwd?, output?, outputMode?, model? }, ...] }.
 • ticket is an optional ticket ID. TLH runs tk show <id> in the effective task cwd before launch, injects the exact body under ## Ticket <id>, and records only the ID in status/results.
 • Sync (default): the parent awaits the run and receives its terminal result; ordinary single/parallel calls use the TLH-tracked awaited runner.
 • Optional execution fields: async:true, cwd, artifacts. async:true keeps the detached background behavior.

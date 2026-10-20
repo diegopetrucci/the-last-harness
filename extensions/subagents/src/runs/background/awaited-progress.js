@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/awaited-progress.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { canonicalLifecycleStepState } from "./async-status-boundary.js";
 function progressStatusForStep(status) {
     switch (canonicalLifecycleStepState(status)) {

@@ -1,3 +1,4 @@
+// Generated from extensions/shared/quiet-glimpse.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";

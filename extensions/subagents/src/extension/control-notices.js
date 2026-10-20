@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/control-notices.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { controlNotificationKey, formatControlNoticeMessage, } from "../runs/shared/subagent-control.js";
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
 export function formatSubagentControlNotice(details, content) {

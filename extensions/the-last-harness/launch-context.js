@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/launch-context.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { getMcpToolKind } from "./mcp-tools.js";
 const CHARS_PER_TOKEN = 4;
 function estimateTokensFromChars(charCount) {

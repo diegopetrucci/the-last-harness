@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/status-format.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 function formatActivityAge(ms) {
     if (ms < 1000)
         return "now";

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/supervisor/native-supervisor-channel.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";

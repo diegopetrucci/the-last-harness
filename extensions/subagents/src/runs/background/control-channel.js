@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/control-channel.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -321,28 +322,7 @@ function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     return true;
 }
 export function deliverInterruptRequest(input) {
-    const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
-        now: input.now,
-    });
-    if (typeof input.pid === "number" && input.pid > 0) {
-        try {
-            (input.kill ?? process.kill)(input.pid, input.signal ?? INTERRUPT_SIGNAL);
-        }
-        catch (error) {
-            if (error?.code === "ENOSYS") {
-                return;
-            }
-            try {
-                fs.rmSync(requestPath, { force: true });
-            }
-            catch {
-            }
-            throw error;
-        }
-    }
-}
-export function deliverTimeoutRequest(input) {
-    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+    requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
         now: input.now,
     });
 }
@@ -398,4 +378,9 @@ export function watchAsyncControlInbox(asyncDir, opts) {
         }
         timers.clearInterval(interval);
     };
+}
+export function deliverTimeoutRequest(input) {
+    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+        now: input.now,
+    });
 }

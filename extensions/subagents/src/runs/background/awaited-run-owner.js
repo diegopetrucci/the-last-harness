@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/awaited-run-owner.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT, } from "../../shared/types.js";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";

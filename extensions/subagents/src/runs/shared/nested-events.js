@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/nested-events.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { TEMP_ROOT_DIR } from "../../shared/types.js";
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");

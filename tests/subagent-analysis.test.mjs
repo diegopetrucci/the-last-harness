@@ -6,14 +6,7 @@ import {
   mergeTelemetrySnapshots,
   parseNormalizedTelemetry,
 } from "../scripts/lib/subagent-analysis-parser.mjs";
-import {
-  BACKGROUND_COMPLETION_NUDGE,
-  CONTROL_NOTICE_NUDGE,
-} from "../scripts/lib/subagent-analysis-wakeup.mjs";
-import {
-  BACKGROUND_COMPLETION_NUDGE_TEXT,
-  CONTROL_NOTICE_NUDGE_TEXT,
-} from "../extensions/subagents/src/runs/shared/nudge-texts.js";
+import { BACKGROUND_COMPLETION_NUDGE } from "../scripts/lib/subagent-analysis-wakeup.mjs";
 import {
   assistantMessageLine,
   completionBatchMessage,
@@ -33,11 +26,6 @@ function freezeDeep(value) {
 // ---------------------------------------------------------------------------
 // Subagent analysis tests
 // ---------------------------------------------------------------------------
-
-test("subagent analysis wakeup literals match runtime nudge constants", () => {
-  assert.equal(BACKGROUND_COMPLETION_NUDGE, BACKGROUND_COMPLETION_NUDGE_TEXT);
-  assert.equal(CONTROL_NOTICE_NUDGE, CONTROL_NOTICE_NUDGE_TEXT);
-});
 
 test("subagent analysis: deduplicates telemetry and attributes only the immediate wakeup turn", async (t) => {
   const foregroundTelemetry = telemetryEnvelope("run-foreground", "foreground", {

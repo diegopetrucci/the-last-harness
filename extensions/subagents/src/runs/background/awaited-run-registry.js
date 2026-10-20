@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/awaited-run-registry.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const awaitedRuns = new Map();
 export function registerAwaitedRun(runId, onCompletion, generation, onDispose, onCompletionGuard, onSuperseded) {
     const previous = awaitedRuns.get(runId);

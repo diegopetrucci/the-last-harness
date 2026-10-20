@@ -11,12 +11,11 @@ Upstream: `nicobailon/pi-web-access`
 
 TLH no longer installs `pi-web-access` from a git dependency. The current bundled default is the scoped npm package:
 
-- TLH bundled extension source: `npm:@diegopetrucci/pi-web-access@0.29.2`
-- Current scoped release tag: `tlh-v0.29.2` (the live npm release, not a git dependency)
+- TLH bundled extension source: the `pi-web-access` entry in `config/default-extensions.json` (the live scoped npm release, not a git dependency; its `tlh-v...` release tag matches that version)
 - Source repository: <https://github.com/diegopetrucci/pi-web-access>
 - Previous git-based TLH source retained for migration coverage: `git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1`
 
-`0.29.2` is a selective TLH fork, not upstream feature parity. It registers exactly `web_search`, `fetch_content`, and `get_search_content`, and requires an absolute `PI_CODING_AGENT_DIR`. It intentionally excludes alternate providers and fallbacks, curator/search commands, the bundled research skill, GitHub cloning, PDF/video/browser-cookie workflows, hosted extraction, and local Exa usage accounting. Its settings and fetched-content cache stay under the isolated profile:
+The current package is a selective TLH fork, not upstream feature parity. It registers exactly `web_search`, `fetch_content`, and `get_search_content`, and requires an absolute `PI_CODING_AGENT_DIR`. It intentionally excludes alternate providers and fallbacks, curator/search commands, the bundled research skill, GitHub cloning, PDF/video/browser-cookie workflows, hosted extraction, and local Exa usage accounting. Its settings and fetched-content cache stay under the isolated profile:
 
 - `$PI_CODING_AGENT_DIR/extensions/pi-web-access/settings.json`
 - `$PI_CODING_AGENT_DIR/cache/pi-web-access/`
@@ -32,7 +31,7 @@ When TLH needs a durable source checkpoint in the fork, use tags of the form `tl
 
 Example: `tlh-v0.10.7-1` is the first TLH revision on top of upstream `v0.10.7`.
 
-These tags are provenance markers for reviewed fork source states. Once the scoped npm package is published, TLH should treat the npm package version as the live bundled pin and the `tlh-v...` tag as historical source provenance only. The current scoped release tag `tlh-v0.29.2` identifies the live npm release and is distinct from the historical git dependency tag.
+These tags are provenance markers for reviewed fork source states. Once the scoped npm package is published, TLH should treat the npm package version as the live bundled pin and the `tlh-v...` tag as historical source provenance only. The current scoped release tag identifies the live npm release and is distinct from the historical git dependency tag.
 
 ## Bump process
 

@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-support-manifest.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const REQUIRED = "required";
 const OPTIONAL = "optional";
 const BASE_SUPPORT_FILES = Object.freeze([

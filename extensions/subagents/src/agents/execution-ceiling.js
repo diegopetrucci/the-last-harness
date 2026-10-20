@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/execution-ceiling.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { normalizeActiveRuntimeMs } from "../runs/shared/active-runtime.js";
 export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = 14_400_000;
 export const CANONICAL_AGENT_MAX_EXECUTION_TIME_MS = Object.freeze({

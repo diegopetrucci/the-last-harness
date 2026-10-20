@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/version.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { VERSION } from "@earendil-works/pi-coding-agent";
 import { getTlhVersion } from "./package-version.js";
 export function formatVersionOutput(tlhVersion, piVersion) {

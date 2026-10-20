@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/model-fallback.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { parseThinkingLevel, splitKnownThinkingSuffix } from "../../shared/model-info.js";
 import { checkModelScope, } from "./model-scope.js";
 function sameModelIdentity(left, right) {

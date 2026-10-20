@@ -164,14 +164,17 @@ function createProbeFactory({ states = [], calls = [] } = {}) {
         sessionBeforeTree() {
           calls.push({ type: "sessionBeforeTree" });
         },
-        sessionTree() {
-          calls.push({ type: "sessionTree" });
+        sessionTree(event, context) {
+          calls.push({ type: "sessionTree", event, context });
         },
         sessionBeforeCompact() {
           calls.push({ type: "sessionBeforeCompact" });
         },
-        sessionCompact() {
-          calls.push({ type: "sessionCompact" });
+        sessionCompact(event, context) {
+          calls.push({ type: "sessionCompact", event, context });
+        },
+        sessionCompactFailed(event, context) {
+          calls.push({ type: "sessionCompactFailed", event, context });
         },
         sessionShutdown() {
           calls.push({ type: "sessionShutdown" });
@@ -352,6 +355,117 @@ function runPendingContextRetentionChild(fixture) {
   );
 }
 
+function runReplyIdleCapabilityChild(fixture) {
+  const facadeUrl = new URL(
+    "../extensions/the-last-harness/session-mirror-observer-facade.js",
+    import.meta.url,
+  ).href;
+  const script = `
+      const { createSessionMirrorObserverFacade } = await import(${JSON.stringify(facadeUrl)});
+      let idleA = true;
+      let idleB = false;
+      const firstIdleQuery = () => idleA;
+      const replacementIdleQuery = () => idleB;
+      let shutdowns = 0;
+      const idleCallbacks = [];
+      const manager = { getSessionFile: () => ${JSON.stringify(fixture.sessionFile)} };
+      const probe = {
+        sessionStart() {},
+        sessionShutdown() {
+          shutdowns += 1;
+        },
+        getState() {
+          return {};
+        },
+      };
+      const facade = createSessionMirrorObserverFacade({
+        attest: () => ({ ok: true, phase: "session-file" }),
+        sendUserMessage: () => {},
+        loadProbe: async () => ({
+          createSessionMirrorObserverProbe(options) {
+            idleCallbacks.push(options.isIdle);
+            return probe;
+          },
+        }),
+      });
+
+      function startFirstSession() {
+        let context = {
+          cwd: ${JSON.stringify(fixture.cwd)},
+          mode: "rpc",
+          hasUI: false,
+          sessionManager: manager,
+          transcript: [{ role: "user", content: "SENTINEL_TRANSCRIPT" }],
+          isIdle: firstIdleQuery,
+        };
+        const weak = new WeakRef(context);
+        const pending = facade.sessionStart(context, "startup");
+        context = null;
+        return { weak, pending };
+      }
+
+      let firstStart = startFirstSession();
+      await firstStart.pending;
+      firstStart.pending = undefined;
+      const weakFirstContext = firstStart.weak;
+      firstStart.weak = undefined;
+      firstStart = undefined;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        global.gc();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const collected = weakFirstContext.deref() === undefined;
+
+      const firstIdle = idleCallbacks[0];
+      const firstAfterGc = firstIdle();
+      idleA = false;
+      const firstBusy = firstIdle();
+      idleA = true;
+      const firstCurrent = firstIdle();
+
+      let replacementContext = {
+        cwd: ${JSON.stringify(fixture.cwd)},
+        mode: "rpc",
+        hasUI: false,
+        sessionManager: manager,
+        isIdle: replacementIdleQuery,
+      };
+      await facade.sessionStart(replacementContext, "new");
+      replacementContext = null;
+      const replacementIdle = idleCallbacks[1];
+      const staleAfterReplacement = firstIdle();
+      const replacementBusy = replacementIdle();
+      idleB = true;
+      const replacementCurrent = replacementIdle();
+      facade.sessionShutdown();
+      const staleAfterShutdown = replacementIdle();
+
+      console.log(JSON.stringify({
+        collected,
+        firstAfterGc,
+        firstBusy,
+        firstCurrent,
+        staleAfterReplacement,
+        replacementBusy,
+        replacementCurrent,
+        staleAfterShutdown,
+        shutdowns,
+      }));
+  `;
+  const scriptPath = join(fixture.root, "reply-idle-capability-child.mjs");
+  writeFileSync(scriptPath, script, "utf8");
+  try {
+    return JSON.parse(
+      execFileSync(process.execPath, ["--expose-gc", scriptPath], {
+        encoding: "utf8",
+        env: process.env,
+      }),
+    );
+  } finally {
+    rmSync(scriptPath, { force: true });
+  }
+}
+
 test("the main TLH extension does not register observer controls in a minor-agent child", async (t) => {
   const fixture = makeFixture(t, false);
   await withFixtureEnv(fixture, async () => {
@@ -405,6 +519,7 @@ test("default-disabled startup gates loading, publication, and reply injection",
       "agent_start",
       "message_end",
       "session_compact",
+      "session_compact_failed",
       "session_shutdown",
       "session_start",
       "session_tree",
@@ -654,6 +769,22 @@ test("pending activation retains only the pinned manager, not the ExtensionConte
   });
 });
 
+test("non-UI reply idle capability survives context GC and revokes stale sessions", async (t) => {
+  const fixture = makeFixture(t, true);
+  await withFixtureEnv(fixture, async () => {
+    const result = runReplyIdleCapabilityChild(fixture);
+    assert.equal(result.collected, true);
+    assert.equal(result.firstAfterGc, true);
+    assert.equal(result.firstBusy, false);
+    assert.equal(result.firstCurrent, true);
+    assert.equal(result.staleAfterReplacement, false);
+    assert.equal(result.replacementBusy, false);
+    assert.equal(result.replacementCurrent, true);
+    assert.equal(result.staleAfterShutdown, false);
+    assert.equal(result.shutdowns, 2);
+  });
+});
+
 test("normal, default, ephemeral, and unsafe sessions are attested before import and never activate", async (t) => {
   const reasons = [
     "default-or-normal-profile",
@@ -843,16 +974,50 @@ test("reply activation requires session-mirror-observer and a callable runtime s
     await fire(pi, "message_start", { message: { role: "user", content: "bounded" } }, context);
     await fire(pi, "session_before_tree", {}, context);
     await fire(pi, "session_before_compact", {}, context);
+    const treeEvent = { type: "session_tree", newLeafId: "leaf", oldLeafId: "old" };
+    const compactEvent = { type: "session_compact", reason: "manual", willRetry: false };
+    const failedEvent = {
+      type: "session_compact_failed",
+      reason: "manual",
+      aborted: true,
+      willRetry: false,
+    };
+    await fire(pi, "session_tree", treeEvent, context);
+    await fire(pi, "session_compact", compactEvent, context);
+    await fire(pi, "session_compact_failed", failedEvent, context);
     assert.deepEqual(
       calls
         .filter((call) =>
-          ["input", "messageStart", "sessionBeforeTree", "sessionBeforeCompact"].includes(
-            call.type,
-          ),
+          [
+            "input",
+            "messageStart",
+            "sessionBeforeTree",
+            "sessionBeforeCompact",
+            "sessionTree",
+            "sessionCompact",
+            "sessionCompactFailed",
+          ].includes(call.type),
         )
         .map((call) => call.type),
-      ["input", "messageStart", "sessionBeforeTree", "sessionBeforeCompact"],
+      [
+        "input",
+        "messageStart",
+        "sessionBeforeTree",
+        "sessionBeforeCompact",
+        "sessionTree",
+        "sessionCompact",
+        "sessionCompactFailed",
+      ],
     );
+    const treeCall = calls.find((call) => call.type === "sessionTree");
+    const compactCall = calls.find((call) => call.type === "sessionCompact");
+    const failedCall = calls.find((call) => call.type === "sessionCompactFailed");
+    assert.deepEqual(treeCall.event, treeEvent);
+    assert.deepEqual(compactCall.event, compactEvent);
+    assert.deepEqual(failedCall.event, failedEvent);
+    assert.equal(treeCall.context, context);
+    assert.equal(compactCall.context, context);
+    assert.equal(failedCall.context, context);
     // Replies are enabled whenever the observer is active
     assert.equal(facade.getStatus(context).sessionConfigured, true);
   });

@@ -30,6 +30,7 @@ import {
 } from "../background/async-resume.ts";
 import {
   advanceLifecycleContinuation,
+  checkPidLiveness,
   lifecycleContinuationForIndex,
   lifecycleGeneration,
   recoverStaleLifecycleContinuationStatus,
@@ -217,6 +218,7 @@ function claimPausedAwaitingSupervisorTarget(
   target: ResumeSourceTarget,
   continuationRunId: string,
   effectiveContextWindow?: number,
+  options: { kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean } = {},
 ): ContinuationClaimDecision {
   if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir) return undefined;
   const asyncDir = target.asyncDir;
@@ -276,6 +278,22 @@ function claimPausedAwaitingSupervisorTarget(
         );
       return undefined;
     }
+    // A paused publication can precede the old runner's child cleanup. The
+    // lifecycle lock protects the claim record, not the session JSONL file, so
+    // prove every persisted owner has stopped before claiming a continuation.
+    // Unknown liveness is fail-closed: a recycled or inaccessible PID must not
+    // be allowed to share the source session with the new runner.
+    const persistedOwnerPids = [current.pid, current.pause?.ownerPid].filter(
+      (pid, index, pids): pid is number =>
+        typeof pid === "number" && pid > 0 && pids.indexOf(pid) === index,
+    );
+    for (const persistedOwnerPid of persistedOwnerPids) {
+      const liveness = checkPidLiveness(persistedOwnerPid, options.kill);
+      if (liveness !== "dead")
+        return {
+          blockedMessage: `Paused run '${target.runId}' is still stopping; persisted owner pid ${persistedOwnerPid} is ${liveness}. Retry resume after cleanup completes.`,
+        };
+    }
     if (isClaimedPausedLifecycle(current, target.index))
       throw new Error(
         `Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`,
@@ -284,6 +302,7 @@ function claimPausedAwaitingSupervisorTarget(
     const claimedAt = Date.now();
     const nextStatus: AsyncStatus = {
       ...current,
+      pid: undefined,
       lastUpdate: claimedAt,
       pause: current.pause ? { ...current.pause, ownerPid: undefined } : current.pause,
       lifecycle: {
@@ -895,6 +914,7 @@ export async function resumeAsyncRun(input: {
       target,
       continuationRunId,
       modelContextWindow,
+      { kill: input.deps.kill },
     );
     if (claimDecision && "blockedMessage" in claimDecision) {
       return {

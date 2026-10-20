@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -758,6 +758,42 @@ test("check-package-versions uses the root lock entry version for exact npm alia
 
   assert.equal(result.status, 0);
   assert.equal(result.stderr, "");
+});
+
+test("check-package-versions fails when a package.json exact pin drifts from the lockfile", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    dependencies: { driftDirect: "2.0.0", aliasDrift: "npm:replacement@3.0.0" },
+    lockfileDependencyVersions: { driftDirect: "1.9.0", aliasDrift: "2.0.0" },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /run npm install to refresh package-lock\.json, then npm ci/);
+  assert.match(
+    result.stderr,
+    /package\.json#dependencies\.driftDirect is pinned to "2\.0\.0", but .*package-lock\.json resolves "driftDirect" to "1\.9\.0"/,
+  );
+  assert.match(result.stderr, /dependencies\.aliasDrift is pinned to "npm:replacement@3\.0\.0"/);
+});
+
+test("check-package-versions fails when the lock root spec drifts from the package.json pin", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    dependencies: { rootDrift: "2.0.0" },
+  });
+  const lock = JSON.parse(readFileSync(fixture.lockfilePath, "utf8"));
+  lock.packages[""].dependencies.rootDrift = "1.0.0";
+  writeFileSync(fixture.lockfilePath, `${JSON.stringify(lock, null, 2)}\n`);
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /dependencies\.rootDrift is pinned to "2\.0\.0", but .*package-lock\.json#packages\[""\]\.dependencies\.rootDrift records "1\.0\.0"/,
+  );
 });
 
 test("check-package-versions reports an eligible dependency without a usable root lock version", () => {

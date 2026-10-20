@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/slash/slash-commands.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "../extension/doctor.js";
 import { SLASH_TEXT_RESULT_TYPE, } from "../shared/types.js";
 function sendSlashText(pi, text) {

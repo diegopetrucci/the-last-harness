@@ -6,10 +6,7 @@ import * as path from "node:path";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, it } from "node:test";
 import { handlePauseAllShortcut } from "../../src/extension/pause-all-shortcut.ts";
-import {
-  INTERRUPT_SIGNAL,
-  interruptRequestPath,
-} from "../../src/runs/background/control-channel.ts";
+import { interruptRequestPath } from "../../src/runs/background/control-channel.ts";
 import { ASYNC_DIR, TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
 
 function createState(): SubagentState {
@@ -45,12 +42,6 @@ function stubPortableInterruptKill(): Array<{
   const kills: Array<{ pid: number; signal: NodeJS.Signals | number | undefined }> = [];
   mutableProcess.kill = ((pid: number, signal?: number | NodeJS.Signals) => {
     kills.push({ pid, signal });
-    if (signal === 0) return true;
-    if (process.platform === "win32") {
-      const error = new Error("kill ENOSYS") as NodeJS.ErrnoException;
-      error.code = "ENOSYS";
-      throw error;
-    }
     return true;
   }) as typeof process.kill;
   return kills;
@@ -63,7 +54,7 @@ function assertPortableInterruptRequested(
 ): void {
   assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);
   assert.ok(kills.some((entry) => entry.pid === pid && entry.signal === 0));
-  assert.ok(kills.some((entry) => entry.pid === pid && entry.signal === INTERRUPT_SIGNAL));
+  assert.ok(kills.every((entry) => entry.signal === 0));
 }
 
 afterEach(() => {
@@ -117,12 +108,13 @@ describe("pause-all shortcut handler", () => {
     assertPortableInterruptRequested(asyncDir, 4242, kills);
   });
 
-  it("requests pause for disk-only running async work after reload even when cwd differs", () => {
+  it("uses the inbox without signalling a recycled pid for disk-only work", () => {
     const state = createState();
     state.currentSessionId = "current-session";
     fs.mkdirSync(ASYNC_DIR, { recursive: true });
     const asyncDir = fs.mkdtempSync(path.join(ASYNC_DIR, "pause-all-disk-only-"));
     cleanupPaths.add(asyncDir);
+    const persistedAt = Date.now() - 60 * 60 * 1000;
     fs.writeFileSync(
       path.join(asyncDir, "status.json"),
       JSON.stringify({
@@ -131,7 +123,8 @@ describe("pause-all shortcut handler", () => {
         mode: "single",
         state: "running",
         cwd: path.join(os.tmpdir(), "task-specific-agent-cwd"),
-        startedAt: Date.now(),
+        startedAt: persistedAt,
+        lastUpdate: persistedAt,
         pid: 5252,
       }),
       "utf-8",

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/activity-reporters.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createConnection } from "node:net";

@@ -1,3 +1,4 @@
+// Generated from extensions/shared/project-agent-worktree.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 const DEFAULT_FILE_SYSTEM = {

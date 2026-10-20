@@ -14,8 +14,6 @@ import {
   PROJECT_AGENT_GUIDANCE_ROLES,
   inventoryProjectAgentGuidance,
   isCanonicalPackagedMinorAgent,
-  projectAgentGuidanceFilename,
-  resolveProjectAgentGuidance,
   resolveProjectAgentGuidanceFromInventory,
   __testing,
   type ProjectAgentGuidanceDiagnostic,
@@ -94,6 +92,21 @@ const EXPECTED_ROLE_FILENAMES = [
   ["contrarian", "CONTRARIAN_PROMPT_APPEND.md"],
 ] as const;
 
+function resolveProjectAgentGuidance(
+  cwd: unknown,
+  agentDir: unknown,
+  role: unknown,
+): ReturnType<typeof resolveProjectAgentGuidanceFromInventory> {
+  return resolveProjectAgentGuidanceFromInventory(
+    inventoryProjectAgentGuidance(cwd, agentDir),
+    role,
+  );
+}
+
+function projectAgentGuidanceFilename(role: string): string | undefined {
+  return EXPECTED_ROLE_FILENAMES.find(([expectedRole]) => expectedRole === role)?.[1];
+}
+
 describe("project-agent-guidance", () => {
   it("returns non-throwing diagnostics for invalid cwd and agent-directory inputs", () => {
     assert.doesNotThrow(() => {
@@ -161,13 +174,20 @@ describe("project-agent-guidance", () => {
       [...PROJECT_AGENT_GUIDANCE_ROLES],
     );
     for (const [role, expectedFilename] of EXPECTED_ROLE_FILENAMES) {
-      assert.equal(projectAgentGuidanceFilename(role), expectedFilename);
       assert.equal(expectedFilename.includes("/"), false);
+      const fixture = makeFixture();
+      writeGuidance(fixture.cwd, role, `${role} guidance`);
+      persistTrust(fixture.agentDir, fixture.cwd, true);
+      const result = resolveProjectAgentGuidance(fixture.cwd, fixture.agentDir, role);
+      assert.equal(path.basename(result.sourcePath ?? ""), expectedFilename);
     }
-    assert.equal(projectAgentGuidanceFilename("embedded.oracle"), undefined);
-    assert.equal(projectAgentGuidanceFilename("custom-agent"), undefined);
-    assert.equal(projectAgentGuidanceFilename("ARCHITECT"), undefined);
-    assert.equal(projectAgentGuidanceFilename(undefined), undefined);
+    for (const role of ["embedded.oracle", "custom-agent", "ARCHITECT", undefined]) {
+      const fixture = makeFixture({ git: false });
+      assert.equal(
+        resolveProjectAgentGuidance(fixture.cwd, fixture.agentDir, role).guidance,
+        undefined,
+      );
+    }
   });
 
   it("ignores a prompt append placed directly under .tlh", () => {

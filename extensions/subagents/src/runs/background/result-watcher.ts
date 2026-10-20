@@ -611,6 +611,9 @@ export function createResultWatcher(
       try {
         fsApi.mkdirSync(resultsDir, { recursive: true });
         startResultWatcher();
+        // Results written while the watcher was down emit no events; rescan once
+        // (existing dedupe prevents duplicate notifications).
+        if (state.watcher) primeExistingResults();
       } catch (error) {
         if (shouldFallBackToPolling(error)) {
           startPollingFallback(error);

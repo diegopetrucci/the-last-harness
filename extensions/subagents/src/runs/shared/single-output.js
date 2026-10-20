@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/single-output.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";

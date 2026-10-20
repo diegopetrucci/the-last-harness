@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/async-control-resume.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import { appendSubagentTelemetryContinuation, continuationTelemetryMetadata, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import * as fs from "node:fs";
@@ -11,7 +12,7 @@ import { resolveControlConfig } from "../shared/subagent-control.js";
 import { canonicalSubagentModelIdentity, modelReferenceFromIdentity, } from "../shared/model-fallback.js";
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.js";
 import { buildRevivedAsyncTask, continuationResumeBlock, resolveAsyncResumeTarget, } from "../background/async-resume.js";
-import { advanceLifecycleContinuation, lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { advanceLifecycleContinuation, checkPidLiveness, lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { childMessageAckPath, requestAsyncResume, waitForChildMessageAcceptance, } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
@@ -97,7 +98,7 @@ function revivedPressureOptions(target, claimedPause) {
             : {}),
     };
 }
-function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiveContextWindow) {
+function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiveContextWindow, options = {}) {
     if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir)
         return undefined;
     const asyncDir = target.asyncDir;
@@ -140,12 +141,21 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiv
                 throw new Error(`Paused run '${target.runId}' child ${target.index} is not paused and cannot be resumed.`);
             return undefined;
         }
+        const persistedOwnerPids = [current.pid, current.pause?.ownerPid].filter((pid, index, pids) => typeof pid === "number" && pid > 0 && pids.indexOf(pid) === index);
+        for (const persistedOwnerPid of persistedOwnerPids) {
+            const liveness = checkPidLiveness(persistedOwnerPid, options.kill);
+            if (liveness !== "dead")
+                return {
+                    blockedMessage: `Paused run '${target.runId}' is still stopping; persisted owner pid ${persistedOwnerPid} is ${liveness}. Retry resume after cleanup completes.`,
+                };
+        }
         if (isClaimedPausedLifecycle(current, target.index))
             throw new Error(`Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`);
         const claimToken = `claim-${target.runId}-${target.index}-${Date.now()}`;
         const claimedAt = Date.now();
         const nextStatus = {
             ...current,
+            pid: undefined,
             lastUpdate: claimedAt,
             pause: current.pause ? { ...current.pause, ownerPid: undefined } : current.pause,
             lifecycle: {
@@ -657,7 +667,7 @@ export async function resumeAsyncRun(input) {
     const continuationRunId = randomUUID().slice(0, 8);
     let claimedPause;
     try {
-        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, modelContextWindow);
+        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, modelContextWindow, { kill: input.deps.kill });
         if (claimDecision && "blockedMessage" in claimDecision) {
             return {
                 content: [{ type: "text", text: claimDecision.blockedMessage }],

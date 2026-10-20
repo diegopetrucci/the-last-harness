@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/async-execution.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -270,9 +271,11 @@ export function buildAsyncRunnerPlan(id, params) {
             throw new AsyncStartValidationError(validationError);
         const task = injectSingleOutputInstruction(`${readInstructions.prefix}${taskSpec.task ?? ""}${progressInstructions.suffix}`, outputPath);
         const requestedModel = behavior.model ?? agent.model;
+        const modelSource = taskSpec.modelSource ??
+            (taskSpec.model?.trim() && taskSpec.model.trim() !== "inherit" ? "explicit" : "inherited");
         const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, {
             scope: ctx.modelScope,
-            source: behavior.model ? "explicit" : "inherited",
+            source: modelSource,
         });
         const fallbackModels = buildFallbackModelList(taskSpec.providerFallbackModels, agent.fallbackModels);
         const effectiveThinking = agent.thinking;

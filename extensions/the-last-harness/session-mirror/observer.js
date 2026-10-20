@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/observer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { projectSessionMirrorSnapshot, } from "./session-adapter.js";
 export const SESSION_MIRROR_OBSERVER_DEFAULT_QUEUE_CAPACITY = 8;
 export const SESSION_MIRROR_OBSERVER_MAX_QUEUE_CAPACITY = 32;

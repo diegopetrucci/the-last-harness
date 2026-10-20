@@ -150,7 +150,6 @@ describe("async execution lifecycle supervisor races", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       const pausingStatus = await waitForAsyncStatusPredicate(
@@ -237,7 +236,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -361,7 +359,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -432,7 +429,7 @@ describe("async execution lifecycle supervisor races", () => {
   );
 
   it(
-    "adopts canonical continuation telemetry when a resumed source settles concurrently",
+    "resumes after proven source cleanup and preserves canonical continuation telemetry",
     {
       skip:
         process.platform === "win32"
@@ -472,9 +469,9 @@ describe("async execution lifecycle supervisor races", () => {
         notifyChannels: ["event", "async"],
       };
 
-      // Keep the source child alive after the interrupt. The real resume action
-      // can then commit the continuation edge and terminal source state before
-      // the source runner performs its post-child terminal write.
+      // Keep the source child alive after the interrupt so the resume gate is
+      // exercised while the old session owner is still stopping. The real
+      // continuation is launched only after the source cleanup is proven.
       mockPi.onCall({
         ignoreSigint: true,
         ignoreSigterm: true,
@@ -513,7 +510,6 @@ describe("async execution lifecycle supervisor races", () => {
           },
           sessionRoot: path.join(tempDir, "sessions"),
           sessionFile: sourceSessionFile,
-          maxSubagentDepth: 2,
           controlConfig,
           telemetryProvenance: provenance,
         });
@@ -526,20 +522,46 @@ describe("async execution lifecycle supervisor races", () => {
         const executor = createSubagentExecutor({
           pi: makeExtensionAPI(),
           state: makeSubagentState({ baseCwd: tempDir }),
-          config: { maxSubagentDepth: 2, control: controlConfig },
+          config: { control: controlConfig },
           tempArtifactsDir: tempDir,
           getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
           expandTilde: (value: string) => value,
           discoverAgents: () => ({ agents: [makeAgent("worker")] }),
           telemetryProvenance: provenance,
         });
-        const resume = await executor.execute(
-          "async-telemetry-adoption-resume",
-          { action: "resume", id: sourceRunId, message: "Continue the source work." },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
+        const resumeSource = () =>
+          executor.execute(
+            "async-telemetry-adoption-resume",
+            { action: "resume", id: sourceRunId, message: "Continue the source work." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+        const sourceChildPids = startedMockPiPids(mockPi);
+        assert.equal(sourceChildPids.length, 1, "the source child must still be owned and live");
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        const sourceResultPath = await waitForAsyncResultFile(sourceRunId);
+        await waitForPidsToExit(
+          [...sourceRunnerPids, ...sourceChildPids],
+          `source cleanup before telemetry resume ${sourceRunId}`,
         );
+        const cleanedSourceStatus = await waitForAsyncStatusPredicate(
+          sourceAsyncDir,
+          (status) =>
+            status.state === "paused" &&
+            status.pid === undefined &&
+            status.pause?.ownerPid === undefined &&
+            (status.steps?.every((step) => step.pause?.ownerPid === undefined) ?? true),
+          "source ownership cleared after child cleanup",
+        );
+        assert.equal(cleanedSourceStatus.state, "paused");
+        assert.equal(
+          (JSON.parse(fs.readFileSync(sourceResultPath, "utf-8")) as AsyncResultPayload).state,
+          "paused",
+          "source result must be paused before the real resume",
+        );
+
+        const resume = await resumeSource();
         assert.equal(
           resume.isError,
           undefined,
@@ -562,38 +584,43 @@ describe("async execution lifecycle supervisor races", () => {
           sourceStepIndex: 0,
         });
 
-        // The branch normalizes "continued" → "complete" in the lifecycle state;
-        // wait for a complete/continued state with the continuation lineage present.
-        await waitForAsyncStatusPredicate(
+        // Keep the continuation child live after the source adopts its terminal
+        // telemetry. This makes the teardown race deterministic without sleeps.
+        await waitForMarker(continuationReadyMarker);
+        assert.equal(
+          fs.existsSync(path.join(RESULTS_DIR, `${continuationRunId}.json`)),
+          false,
+          "continuation result must not exist while its child is deliberately held",
+        );
+
+        // The source runner was proven stopped before the real resume. The
+        // continuation launch now owns the source terminal transition, while
+        // its child remains held for deterministic telemetry observation.
+        const status = await waitForAsyncStatusPredicate(
           sourceAsyncDir,
-          (status) =>
-            (status.state === "continued" || status.state === "complete") &&
-            status.telemetry?.lineage?.continuations?.some(
+          (current) =>
+            (current.state === "continued" || current.state === "complete") &&
+            current.telemetry?.lineage?.continuations?.some(
               (continuation) => continuation.continuationRunId === continuationRunId,
             ) === true,
           "source continuation terminal telemetry",
         );
+        const historicalSourceResult = JSON.parse(
+          fs.readFileSync(sourceResultPath, "utf-8"),
+        ) as AsyncResultPayload;
 
-        // The source runner is still draining its interrupted child. Releasing
-        // it now forces the concurrent-terminal adoption path before result write.
-        fs.writeFileSync(releaseMarker, "", "utf-8");
-        const resultPath = await waitForAsyncResultFile(sourceRunId);
-        const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-        const status = JSON.parse(
-          fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8"),
-        ) as AsyncStatusPayload;
-
-        // On the branch, "continued" is normalized to "complete" in the lifecycle state.
+        // The branch normalizes "continued" to "complete" in lifecycle state.
         assert.ok(
           ["complete", "continued"].includes(status.state),
-          `expected state to be complete or continued, got ${status.state}`,
+          `unexpected state ${status.state}`,
         );
-        assert.ok(
-          ["complete", "continued"].includes(result.state),
-          `expected result state to be complete or continued, got ${result.state}`,
+        assert.equal(
+          historicalSourceResult.state,
+          "paused",
+          "the pre-resume source result remains a historical paused artifact",
         );
+        assert.equal(historicalSourceResult.telemetry?.outcome?.state, "paused");
         assert.ok(status.telemetry, "source status must retain canonical telemetry");
-        assert.deepEqual(result.telemetry, status.telemetry);
         assert.deepEqual(status.telemetry?.provenance, provenance);
         assert.deepEqual(status.telemetry?.lineage?.continuations, [
           { sourceStepIndex: 0, continuationRunId },
@@ -610,6 +637,21 @@ describe("async execution lifecycle supervisor races", () => {
           "continued",
           "source run step telemetry must be 'continued'",
         );
+
+        // The source result was already published before resume. Release the
+        // actual continuation and validate its own result and notification
+        // carriers instead of treating that historical source artifact as new.
+        fs.writeFileSync(continuationReleaseMarker, "", "utf-8");
+        const continuationResultPath = await waitForAsyncResultFile(continuationRunId);
+        const continuationResult = JSON.parse(
+          fs.readFileSync(continuationResultPath, "utf-8"),
+        ) as AsyncResultPayload;
+        assert.equal(continuationResult.state, "complete");
+        assert.deepEqual(continuationResult.telemetry?.provenance, provenance);
+        assert.deepEqual(continuationResult.telemetry?.lineage?.continuationFrom, {
+          sourceRunId,
+          sourceStepIndex: 0,
+        });
 
         const completionEvents: unknown[] = [];
         const completionEventsBus = createEventBus();
@@ -630,11 +672,11 @@ describe("async execution lifecycle supervisor races", () => {
               (payload) =>
                 typeof payload === "object" &&
                 payload !== null &&
-                (payload as { runId?: unknown }).runId === sourceRunId,
+                (payload as { runId?: unknown }).runId === continuationRunId,
             )
           ) {
             if (Date.now() > deadline)
-              assert.fail("Timed out waiting for adopted source completion telemetry");
+              assert.fail("Timed out waiting for continuation completion telemetry");
             await new Promise((resolve) => setTimeout(resolve, 25));
           }
         } finally {
@@ -644,20 +686,15 @@ describe("async execution lifecycle supervisor races", () => {
           (payload): payload is AsyncResultPayload & { runId: string } =>
             typeof payload === "object" &&
             payload !== null &&
-            (payload as { runId?: unknown }).runId === sourceRunId,
+            (payload as { runId?: unknown }).runId === continuationRunId,
         );
-        assert.ok(completion, "completion notification must include the source run");
-        assert.deepEqual(completion.telemetry, status.telemetry);
+        assert.ok(completion, "continuation completion notification must be published");
+        assert.deepEqual(completion.telemetry, continuationResult.telemetry);
         assert.deepEqual(completion.telemetry?.provenance, provenance);
-        assert.deepEqual(completion.telemetry?.lineage?.continuations, [
-          { sourceStepIndex: 0, continuationRunId },
-        ]);
-        // Branch lifecycle state is "complete"; telemetry outcome must be "continued".
-        assert.equal(
-          completion.telemetry?.outcome?.state,
-          "continued",
-          "completion notification telemetry outcome must be 'continued'",
-        );
+        assert.deepEqual(completion.telemetry?.lineage?.continuationFrom, {
+          sourceRunId,
+          sourceStepIndex: 0,
+        });
       } finally {
         // Release both deterministic gates before cleanup so an assertion failure
         // cannot strand either mock child. The normal path has observed both
@@ -799,7 +836,6 @@ describe("async execution lifecycle supervisor races", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
           controlConfig,
           telemetryProvenance: provenance,
         });
@@ -945,7 +981,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1042,7 +1077,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir2 = path.join(ASYNC_DIR, id);
@@ -1177,7 +1211,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1336,7 +1369,6 @@ describe("async execution lifecycle supervisor races", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
 
     // The result file must appear. Without the fix (no writeAtomicJson before the

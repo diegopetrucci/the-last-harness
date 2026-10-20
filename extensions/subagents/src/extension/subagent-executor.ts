@@ -41,7 +41,7 @@ export {
   requestInterruptAllRunningSubagentRuns,
 };
 import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.ts";
-import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
+import type { ModelScopeConfig, ModelSource } from "../runs/shared/model-scope.ts";
 import { retiredNestedLaunchError } from "../runs/shared/pi-args.ts";
 import { normalizeSkillInput } from "../agents/skills.ts";
 import {
@@ -84,7 +84,7 @@ import {
   resolveChildMaxSubagentDepth,
   resolveCurrentMaxSubagentDepth,
 } from "../shared/types.ts";
-import type { ExecutorDeps, SubagentParamsLike, TaskParam } from "../runs/shared/executor-types.ts";
+import type { ExecutorDeps, SubagentParamsLike } from "../runs/shared/executor-types.ts";
 export type {
   ExecutorDeps,
   ProjectAgentAccess,
@@ -261,6 +261,11 @@ function validateExecutionInput(
   return null;
 }
 
+function modelSourceForTaskOverride(model: string | undefined): ModelSource {
+  const trimmed = model?.trim();
+  return trimmed && trimmed !== "inherit" ? "explicit" : "inherited";
+}
+
 function buildRequestedModeError(
   params: SubagentParamsLike,
   message: string,
@@ -272,24 +277,21 @@ function buildRequestedModeError(
   };
 }
 
-function expandTopLevelTaskCounts(tasks: TaskParam[]): { tasks?: TaskParam[]; error?: string } {
-  const expanded: TaskParam[] = [];
+function rejectRetiredTaskCounts(
+  params: SubagentParamsLike,
+): SubagentToolResult<Details> | undefined {
+  const tasks: unknown = params.tasks;
+  if (!Array.isArray(tasks)) return undefined;
   for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
-    const task = tasks[taskIndex]!;
-    const rawCount = (task as TaskParam & { count?: unknown }).count;
-    if (
-      rawCount !== undefined &&
-      (typeof rawCount !== "number" || !Number.isInteger(rawCount) || rawCount < 1)
-    ) {
-      return { error: `tasks[${taskIndex}].count must be an integer >= 1` };
-    }
-    const concreteTask = { ...task };
-    delete concreteTask.count;
-    for (let repeat = 0; repeat < (rawCount ?? 1); repeat++) {
-      expanded.push({ ...concreteTask });
+    const task: unknown = tasks[taskIndex];
+    if (task !== null && typeof task === "object" && Object.hasOwn(task, "count")) {
+      return buildRequestedModeError(
+        params,
+        `tasks[${taskIndex}].count is no longer supported. List each parallel task explicitly in tasks[].`,
+      );
     }
   }
-  return { tasks: expanded };
+  return undefined;
 }
 
 function normalizeExecutionTickets(params: SubagentParamsLike): {
@@ -360,20 +362,6 @@ function prepareTicketBodies(
   return ticketBodies.size > 0 ? { ticketBodies } : {};
 }
 
-function normalizeRepeatedParallelCounts(params: SubagentParamsLike): {
-  params?: SubagentParamsLike;
-  error?: SubagentToolResult<Details>;
-} {
-  if (params.tasks) {
-    const expandedTasks = expandTopLevelTaskCounts(params.tasks);
-    if (expandedTasks.error) {
-      return { error: buildRequestedModeError(params, expandedTasks.error) };
-    }
-    return { params: { ...params, tasks: expandedTasks.tasks } };
-  }
-  return { params };
-}
-
 async function runAsyncPath(
   data: ExecutionContextData,
   deps: ExecutorDeps,
@@ -430,10 +418,11 @@ async function runAsyncPath(
     const agentConfigs = params.tasks.map((task) =>
       agents.find((agent) => agent.name === task.agent),
     );
+    const modelSources = params.tasks.map((task) => modelSourceForTaskOverride(task.model));
     const modelOverrides = params.tasks.map((task, index) =>
       resolveSubagentModelOverride(task.model ?? agentConfigs[index]?.model, ctx.model, {
         scope: data.modelScope,
-        source: task.model ? "explicit" : "inherited",
+        source: modelSources[index],
       }),
     );
     const parallelTasks = params.tasks.map((task, index) => ({
@@ -441,7 +430,9 @@ async function runAsyncPath(
       task: task.task,
       ...(task.ticket ? { ticket: task.ticket } : {}),
       cwd: task.cwd,
-      ...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
+      ...(modelOverrides[index]
+        ? { model: modelOverrides[index], modelSource: modelSources[index] }
+        : {}),
       ...(providerFallbackModelsForTarget(task)
         ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
         : {}),
@@ -455,7 +446,7 @@ async function runAsyncPath(
           : {}),
       ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
     }));
-    return executeAsyncParallel(id, {
+    return (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
       awaited,
       signal: data.signal,
       onUpdate: data.onUpdate,
@@ -874,9 +865,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     if (ticketNormalized.error) {
       return buildRequestedModeError(paramsWithResolvedCwd, ticketNormalized.error);
     }
-    const normalized = normalizeRepeatedParallelCounts(ticketNormalized.params!);
-    if (normalized.error) return normalized.error;
-    let effectiveParams = normalized.params!;
+    const retiredCountError = rejectRetiredTaskCounts(ticketNormalized.params!);
+    if (retiredCountError) return retiredCountError;
+    let effectiveParams = ticketNormalized.params!;
     const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
     const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
     const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;

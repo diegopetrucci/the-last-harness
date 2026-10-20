@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/tui/render-result.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, stripTerminalSequences, visibleWidth, } from "@earendil-works/pi-tui";
 import {} from "../shared/types.js";

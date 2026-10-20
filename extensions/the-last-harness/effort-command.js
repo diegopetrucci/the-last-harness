@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/effort-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { ThinkingSelectorComponent, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord, readText } from "./common.js";
 import { safeTlhProfileFilePath, withLockedTlhSettingsWrite } from "./profile-state.js";

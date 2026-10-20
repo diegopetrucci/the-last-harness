@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/agent-management.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
 import { resolveExecutionAgentScope } from "./agent-scope.js";

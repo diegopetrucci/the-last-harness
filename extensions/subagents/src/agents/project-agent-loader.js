@@ -1,8 +1,10 @@
+// Generated from extensions/subagents/src/agents/project-agent-loader.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveValidatedGitWorktreeRoot, } from "../../../shared/project-agent-worktree.js";
 import { getAgentDir } from "../shared/utils.js";
 import { parseAgentDefinition } from "./agents.js";
+import { isExtensionToolPath } from "./identity.js";
 import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.js";
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
 export const PROJECT_AGENT_PACKAGE = "embedded";
@@ -346,7 +348,7 @@ function readFixedDefinition(projectRoot, slug, fileSystem) {
         throw new ProjectAgentDefinitionError(filePath, "definition file could not be read securely");
     }
 }
-export function parseProjectAgentDefinition(filePath, content) {
+function parseProjectAgentDefinition(filePath, content) {
     const text = Buffer.isBuffer(content)
         ? new TextDecoder("utf-8", { fatal: true }).decode(content)
         : content;
@@ -369,6 +371,11 @@ function validateLoadedAgent(filePath, slug, projectRoot, agent) {
     }
     if (!Array.isArray(agent.tools) || agent.tools.length === 0) {
         throw new ProjectAgentDefinitionError(filePath, "tools must declare at least one usable tool");
+    }
+    for (const tool of agent.tools) {
+        if (isExtensionToolPath(tool)) {
+            throw new ProjectAgentDefinitionError(filePath, `tool '${tool}' is an extension path and is prohibited for project agents`);
+        }
     }
     if (agent.extensions !== undefined || agent.subagentOnlyExtensions !== undefined) {
         throw new ProjectAgentDefinitionError(filePath, "extensions and subagentOnlyExtensions are prohibited for project agents");

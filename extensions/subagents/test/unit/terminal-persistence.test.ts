@@ -12,6 +12,7 @@ import {
   persistRunnerTerminalRun,
   type RunnerStepResult,
 } from "../../src/runs/background/terminal-persistence.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import {
   createBackgroundRunStatusOwner,
   type RunnerStatusPayload,
@@ -255,6 +256,133 @@ describe("terminal persistence", () => {
     assert.deepEqual(artifact.totalTokens, tokens);
     assert.deepEqual(artifact.totalCost, cost);
     assert.deepEqual(artifact.telemetry, canonicalTelemetry);
+  });
+
+  it("releases interrupted ownership after cleanup so a reused pid cannot block resume", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-terminal-interrupt-release-"));
+    tempDirs.push(root);
+    const id = "terminal-interrupt-release";
+    const asyncRoot = path.join(root, "runs");
+    const asyncDir = path.join(asyncRoot, id);
+    const resultsDir = path.join(root, "results");
+    const resultPath = path.join(resultsDir, `${id}.json`);
+    const sessionFile = path.join(root, "worker-session.jsonl");
+    const oldPid = 4242;
+    const pause = {
+      kind: "cohort_pause" as const,
+      summary: "Paused after interrupt.",
+      ownerPid: oldPid,
+    };
+    fs.writeFileSync(sessionFile, "", "utf-8");
+
+    const owner = createBackgroundRunStatusOwner({
+      id,
+      asyncDir,
+      cwd: root,
+      plan: terminalPlan,
+      overallStartTime: 100,
+      artifactConfig: terminalArtifactConfig,
+      appendEvent: () => undefined,
+    });
+    owner.statusPayload.state = "paused";
+    owner.statusPayload.pid = oldPid;
+    owner.statusPayload.sessionFile = sessionFile;
+    owner.statusPayload.pause = pause;
+    owner.statusPayload.steps = owner.statusPayload.steps.map((step) => ({
+      ...step,
+      status: "paused",
+      startedAt: 100,
+      endedAt: 200,
+      sessionFile,
+      pause,
+      processCleanup: { supported: true, attempted: true, terminated: true },
+    }));
+    owner.interrupted = true;
+    writeNormalizedLifecycleStatus(asyncDir, owner.statusPayload);
+
+    const result: RunnerStepResult = {
+      agent: "worker",
+      output: "Paused after interrupt.",
+      success: false,
+      exitCode: 0,
+      interrupted: true,
+      sessionFile,
+      pause,
+    };
+    persistRunnerTerminalRun({
+      config: {
+        id,
+        plan: terminalPlan,
+        resultPath,
+        cwd: root,
+        artifactConfig: terminalArtifactConfig,
+        asyncDir,
+      },
+      plan: terminalPlan,
+      statusOwner: owner,
+      statusPayload: owner.statusPayload,
+      results: [result],
+      controlConfig: controls,
+      overallStartTime: 100,
+      runEndedAt: 200,
+      effectiveSessionFile: sessionFile,
+      summary: "Paused after interrupt.",
+      truncated: false,
+      agentName: "worker",
+      resultPath,
+      cwd: root,
+      asyncDir,
+      pausedOwnershipConfirmedStopped: true,
+      skipFinalStatusWrite: false,
+      pausedOutputForIndex: () => "Paused after interrupt.",
+      appendEvent: () => undefined,
+      writeRunLog: () => undefined,
+    });
+
+    const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as {
+      state: string;
+      pid?: number;
+      pause?: { ownerPid?: number };
+      steps: Array<{ pause?: { ownerPid?: number } }>;
+    };
+    assert.equal(persisted.state, "paused");
+    assert.equal(persisted.pid, undefined);
+    assert.equal(persisted.pause?.ownerPid, undefined);
+    assert.equal(persisted.steps[0]?.pause?.ownerPid, undefined);
+
+    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+      pause?: { ownerPid?: number };
+      results: Array<{ pause?: { ownerPid?: number } }>;
+    };
+    assert.equal(artifact.pause?.ownerPid, undefined);
+    assert.equal(artifact.results[0]?.pause?.ownerPid, undefined);
+
+    // A late status write from the drained runner must not resurrect ownership.
+    owner.writeStatusPayload();
+    const afterLateWrite = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as typeof persisted;
+    assert.equal(afterLateWrite.pid, undefined);
+    assert.equal(afterLateWrite.pause?.ownerPid, undefined);
+    assert.equal(afterLateWrite.steps[0]?.pause?.ownerPid, undefined);
+
+    let livenessProbes = 0;
+    const target = resolveAsyncResumeTarget(
+      { id },
+      {
+        asyncDirRoot: asyncRoot,
+        resultsDir,
+        // This simulates the old pid being alive after reuse. A durable clear
+        // means resume should not probe or block on that unrelated process.
+        kill: () => {
+          livenessProbes++;
+          return true;
+        },
+      },
+    );
+    assert.equal(target.kind, "revive");
+    assert.equal(target.sessionFile, sessionFile);
+    assert.equal(livenessProbes, 0);
   });
 
   it("preserves direct status timestamps across locked and unlocked writes", () => {

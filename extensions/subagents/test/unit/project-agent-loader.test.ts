@@ -384,6 +384,19 @@ describe("loadProjectAgent", () => {
     await assert.rejects(() => load(root), /frontmatter name\/package/);
   });
 
+  it("rejects extension-path tool aliases while accepting named tools", async () => {
+    for (const tools of ["payload.ts", "payload.js", "read,./payload"]) {
+      const root = createProject(
+        `---\nname: worker\npackage: embedded\ndescription: Worker\ntools: ${tools}\n---\nPrompt\n`,
+      );
+      await assert.rejects(() => load(root), /extension path and is prohibited/);
+    }
+    const named = createProject(
+      "---\nname: worker\npackage: embedded\ndescription: Worker\ntools: read,bash\n---\nPrompt\n",
+    );
+    assert.deepEqual((await load(named)).agent.tools, ["read", "bash"]);
+  });
+
   it("rechecks persisted trust before a later control authorization", async () => {
     const root = createProject();
     let decision = true;

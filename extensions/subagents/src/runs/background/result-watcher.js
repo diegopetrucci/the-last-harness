@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/result-watcher.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createFileCoalescer } from "../../shared/file-coalescer.js";
@@ -474,6 +475,8 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
             try {
                 fsApi.mkdirSync(resultsDir, { recursive: true });
                 startResultWatcher();
+                if (state.watcher)
+                    primeExistingResults();
             }
             catch (error) {
                 if (shouldFallBackToPolling(error)) {

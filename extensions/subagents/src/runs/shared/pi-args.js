@@ -1,7 +1,9 @@
+// Generated from extensions/subagents/src/runs/shared/pi-args.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isExtensionToolPath } from "../../agents/identity.js";
 import { TEMP_ROOT_DIR } from "../../shared/types.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
 const TASK_ARG_LIMIT = 8000;
@@ -54,9 +56,6 @@ export function retiredNestedLaunchError(value) {
     return hasRetiredNestedRouteEnv() || isRetiredNestedChildRuntime()
         ? RETIRED_NESTED_ORCHESTRATION_ERROR
         : undefined;
-}
-function isExtensionToolPath(tool) {
-    return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
 }
 function canonicalChildExtensionPath(extensionPath, cwd) {
     const resolvedPath = path.resolve(cwd, extensionPath);

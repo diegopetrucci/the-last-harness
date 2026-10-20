@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/terminal-result.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.js";
 export const MAX_SUBAGENT_TERMINAL_ATTEMPTS = 64;
 export const MAX_SUBAGENT_TERMINAL_SNAPSHOT_BYTES = 1024 * 1024;

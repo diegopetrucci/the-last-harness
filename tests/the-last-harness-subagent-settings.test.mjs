@@ -170,6 +170,90 @@ test("subagent-settings set preserves unrelated settings and applies on the next
   });
 });
 
+test("subagent-settings reads BOM-prefixed settings like plain JSON and preserves unrelated values", async (t) => {
+  const writtenSettings = [];
+
+  for (const prefix of ["", "\uFEFF"]) {
+    const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
+      cwd: true,
+      test: t,
+    });
+    const settingsPath = join(fixture.agent, "settings.json");
+    const initialSettings = {
+      unrelated: { keep: true },
+      tlh: { experimental: { enabledFeatures: ["keep-me"] } },
+      subagents: {
+        agentOverrides: {
+          developer: { note: "keep-me" },
+          external: { model: "openai-codex/gpt-5.4" },
+        },
+      },
+    };
+    const initialContent = `${prefix}${JSON.stringify(initialSettings, null, 2)}\n`;
+    writeFileSync(settingsPath, initialContent);
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const pi = createPiHarness();
+      registerSubagentSettingsCommand(pi);
+      const command = pi.commands.get("subagent-settings");
+      assert.ok(command, "subagent-settings command should register");
+
+      const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
+      await command.handler("set developer model openai-codex/gpt-5.4 effort high", ctx);
+      assert.match(notifications.at(-1)?.message ?? "", /Updated TLH minor-agent settings/i);
+
+      const content = readFileSync(settingsPath, "utf8");
+      assert.notEqual(content.charCodeAt(0), 0xfeff, "successful writes should normalize BOMs");
+      writtenSettings.push(JSON.parse(content));
+      const backups = readdirSync(fixture.agent).filter((entry) =>
+        entry.startsWith("settings.json.bak-"),
+      );
+      assert.equal(backups.length, 1);
+      assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialContent);
+    });
+  }
+
+  assert.deepEqual(writtenSettings[0], writtenSettings[1]);
+  assert.deepEqual(writtenSettings[0], {
+    unrelated: { keep: true },
+    tlh: { experimental: { enabledFeatures: ["keep-me"] } },
+    subagents: {
+      agentOverrides: {
+        developer: { note: "keep-me", model: "openai-codex/gpt-5.4", thinking: "high" },
+        external: { model: "openai-codex/gpt-5.4" },
+      },
+    },
+  });
+});
+
+test("subagent-settings preserves malformed JSON and reports the guarded write failure", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
+    cwd: true,
+    test: t,
+  });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = '\uFEFF{"subagents":{"agentOverrides":';
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    registerSubagentSettingsCommand(pi);
+    const command = pi.commands.get("subagent-settings");
+    assert.ok(command, "subagent-settings command should register");
+
+    const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
+    await command.handler("set developer model openai-codex/gpt-5.4 effort high", ctx);
+
+    assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+    assert.deepEqual(
+      readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+      [],
+    );
+    assert.equal(notifications.at(-1)?.type, "error");
+    assert.equal(notifications.at(-1)?.message, "Unexpected end of JSON input");
+  });
+});
+
 test("subagent tool-call runtime honors persisted false model and thinking sentinels", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
     cwd: true,

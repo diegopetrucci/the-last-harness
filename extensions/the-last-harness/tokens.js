@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/tokens.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -190,11 +191,8 @@ function renderUsageTotalsTable(analysis, primaryLabel = "Primary assistant") {
         formatInteger(usage.assistantMessages),
     ];
     const subAgentRows = analysis.subagents.byAgent.map((entry) => usageRow(entry.agent ?? "unknown", entry.provider ?? em, entry.usage));
-    const primaryBreakdownRows = hasCacheWarmUsage(primaryUsage)
-        ? [
-            usageRow("Assistant-turn usage", em, primaryUsage.assistantTurnUsage),
-            usageRow("Pi-native cache_warm (non-turn)", em, primaryUsage.cacheWarmUsage),
-        ]
+    const primaryBreakdownRows = hasNonTurnUsage(primaryUsage)
+        ? primaryBreakdownEntries(primaryUsage).map(([label, usage]) => usageRow(label, em, usage))
         : [];
     const rows = [
         usageRow(primaryLabel, em, analysis.totals.primary),
@@ -204,7 +202,7 @@ function renderUsageTotalsTable(analysis, primaryLabel = "Primary assistant") {
         usageRow("Combined", em, analysis.totals.combined),
     ];
     return [
-        `<p class="section-note">${escapeHtml("The primary row is a total: it includes assistant-message usage plus Pi-native cache_warm spend. The cache_warm component is provider cost/tokens, not an assistant turn or message; its zero counts keep the primary total reconcilable.")}</p>`,
+        `<p class="section-note">${escapeHtml("The primary row is a total: it includes assistant-message usage plus Pi-native cache_warm and compaction/branch summary spend. The cache_warm and summary components are provider cost/tokens, not assistant turns or messages; their zero counts keep the primary total reconcilable.")}</p>`,
         renderTable([
             "Bucket",
             "Provider",
@@ -309,8 +307,8 @@ function renderToolTable(tools) {
 function renderCacheTotalsTable(analysis, primaryLabel = "Primary assistant") {
     const primaryUsage = getPrimaryUsageBreakdown(analysis);
     const rows = [[primaryLabel, analysis.totals.primary]];
-    if (hasCacheWarmUsage(primaryUsage)) {
-        rows.push(["Assistant-turn usage", primaryUsage.assistantTurnUsage], ["Pi-native cache_warm (non-turn)", primaryUsage.cacheWarmUsage]);
+    if (hasNonTurnUsage(primaryUsage)) {
+        rows.push(...primaryBreakdownEntries(primaryUsage));
     }
     rows.push(["Subagents", analysis.totals.subagents], ["Combined", analysis.totals.combined]);
     return renderTable(["Bucket", "Cache read", "Cache write", "Cache total", "Share of bucket total"], rows.map(([label, usage]) => {
@@ -498,10 +496,11 @@ function formatCurrency(value) {
 }
 function getPrimaryUsageBreakdown(analysis) {
     const cacheWarmUsage = analysis.primaryAssistant.cacheWarmUsage ?? createUsageTotals();
+    const summaryUsage = analysis.primaryAssistant.summaryUsage ?? createUsageTotals();
     const assistantTurnUsage = analysis.primaryAssistant.assistantTurnUsage ??
-        subtractUsageTotals(analysis.totals.primary, cacheWarmUsage);
+        subtractUsageTotals(subtractUsageTotals(analysis.totals.primary, cacheWarmUsage), summaryUsage);
     const cacheWarmRequestCount = analysis.primaryAssistant.cacheWarmRequestCount ?? (hasUsage(cacheWarmUsage) ? 1 : 0);
-    return { assistantTurnUsage, cacheWarmUsage, cacheWarmRequestCount };
+    return { assistantTurnUsage, cacheWarmUsage, summaryUsage, cacheWarmRequestCount };
 }
 function subtractUsageTotals(total, subtract) {
     return {
@@ -525,6 +524,16 @@ function hasUsage(usage) {
 }
 function hasCacheWarmUsage(usage) {
     return usage.cacheWarmRequestCount > 0 || hasUsage(usage.cacheWarmUsage);
+}
+function hasNonTurnUsage(usage) {
+    return hasCacheWarmUsage(usage) || hasUsage(usage.summaryUsage);
+}
+function primaryBreakdownEntries(usage) {
+    return [
+        ["Assistant-turn usage", usage.assistantTurnUsage],
+        ["Pi-native cache_warm (non-turn)", usage.cacheWarmUsage],
+        ["Compaction/branch summaries (non-turn)", usage.summaryUsage],
+    ];
 }
 function formatCacheWarmCardDetail(usage) {
     if (!hasCacheWarmUsage(usage)) {

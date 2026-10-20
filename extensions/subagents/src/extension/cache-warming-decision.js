@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/cache-warming-decision.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { countLiveAsyncRuns } from "../runs/background/live-async-runs.js";
 const MIN_SAVINGS = 0.05;

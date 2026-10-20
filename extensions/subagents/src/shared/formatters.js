@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/formatters.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.js";
 export function formatTokens(n) {

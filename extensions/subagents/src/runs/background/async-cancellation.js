@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/async-cancellation.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { readStatus } from "../../shared/utils.js";
 import { continuationResumeBlock } from "./async-resume.js";
 import { SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "../../shared/pause-messages.js";

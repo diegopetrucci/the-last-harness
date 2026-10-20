@@ -1,3 +1,4 @@
+// Generated from extensions/shared/project-agent-provenance.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as os from "node:os";
 import * as path from "node:path";
 const PACKAGED_MINOR_AGENT_ROLES = new Set([

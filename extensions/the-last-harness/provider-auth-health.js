@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/provider-auth-health.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 let runtimeCapabilityWarned = false;
 function hasGetProviderAuth(registry) {
     return (typeof registry === "object" &&

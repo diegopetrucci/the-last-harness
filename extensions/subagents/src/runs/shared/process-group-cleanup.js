@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/process-group-cleanup.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const INT_GRACE_MS = 1000;
 const TERM_GRACE_MS = 2000;
 const KILL_GRACE_MS = 1000;

@@ -855,6 +855,81 @@ describe("result watcher", () => {
     }
   });
 
+  it("rescans existing results once after a successful watcher restart", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
+    try {
+      const emitted: Array<{ event: string; data: unknown }> = [];
+      const pi = {
+        events: {
+          on: () => () => {},
+          emit(event: string, data: unknown) {
+            emitted.push({ event, data });
+          },
+        },
+      };
+      const state = createState();
+      state.currentSessionId = "session-1";
+      let restart: (() => void) | undefined;
+      let emitWatcherError: ((error: Error) => void) | undefined;
+      const makeFakeWatcher = () => {
+        const fake = {
+          on(event: string, handler: (error: Error) => void) {
+            if (event === "error") emitWatcherError = handler;
+            return fake;
+          },
+          close() {},
+          unref() {},
+        } as fs.FSWatcher;
+        return fake;
+      };
+      let watchCalls = 0;
+      const watcher = createResultWatcher(pi, state, resultsDir, {
+        fs: {
+          ...fs,
+          watch: () => {
+            watchCalls++;
+            return makeFakeWatcher();
+          },
+        },
+        timers: {
+          setTimeout: ((handler: () => void) => {
+            restart = handler;
+            return { unref() {} } as NodeJS.Timeout;
+          }) as typeof setTimeout,
+          clearTimeout() {},
+          setInterval,
+          clearInterval,
+        },
+      });
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        watcher.startResultWatcher();
+        emitWatcherError?.(new Error("transient watcher failure"));
+        assert.equal(state.watcher, null);
+        assert.ok(restart, "a restart should be scheduled");
+
+        // Written while the watcher is down: no fs.watch event will ever fire for it.
+        fs.writeFileSync(
+          path.join(resultsDir, "during-restart.json"),
+          JSON.stringify({ sessionId: "session-1", summary: "done" }),
+          "utf-8",
+        );
+        restart?.();
+        assert.equal(watchCalls, 2);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } finally {
+        console.error = originalError;
+        watcher.stopResultWatcher();
+      }
+
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+      assert.equal(fs.existsSync(path.join(resultsDir, "during-restart.json")), false);
+    } finally {
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
   it("emits one async completion event with safe child session references", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
     try {

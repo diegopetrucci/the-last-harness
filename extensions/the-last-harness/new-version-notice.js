@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/new-version-notice.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 const TLH_NEW_VERSION_NOTICE_PATCHED = Symbol.for("tlh.newVersionNoticePatched");
 const noOpShowNewVersionNotification = () => { };

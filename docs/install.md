@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.3.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
+Requires Node.js on `PATH` (the minimum is `engines.node` in `package.json`). TLH always installs its own pinned Pi (version in `config/pi-runtime/package.json`) into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified, so you can keep both. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
 
 Run the one-liner:
 
@@ -10,9 +10,9 @@ Run the one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. TLH currently pins the managed default to Gnosis `v0.5.4`; installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides can still point at another release or repository when needed. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; TLH installs its pinned managed copy at `~/.the-last-harness/agent/bin/tk` and refreshes it whenever a later install/update ships a different pin. If the managed install fails, TLH warns and falls back to a valid `tk` on `PATH`; if none exists, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
+On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. It also installs a managed `tk` ticket CLI at `~/.the-last-harness/agent/bin/tk`. Pins, overrides, fallbacks, and failure behavior are owned by [Gnosis integration](integrations.md#gnosis-integration) and [Ticket integration](integrations.md#ticket-integration). Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
-Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings. The subagent orchestration runtime is first-party TLH code declared by this package, not a separate extension package that users must install or pin.
+Normal `~/.pi/agent` settings are never mutated. The subagent orchestration runtime is first-party TLH code declared by this package, not a separate extension package that users must install or pin.
 
 The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a stage-1 Node helper (`scripts/tlh-install.mjs`). Stage 0 parses the initial flags, preserves stdin `--dry-run` without downloads, and finds or fetches the matching stage-1 helper/support files from the selected release/ref; stage 1 runs the normal isolated install, settings merge, first-party resource provisioning, default-extension install, Gnosis and ticket setup, update metadata, and wrapper creation.
 
@@ -24,15 +24,7 @@ This guarantee does not apply to raw source installers, mutable or custom refs, 
 
 ## Installer compatibility boundary
 
-Only the generated GitHub Release `install.sh` asset is pinned and integrity-verifiable for its tag: the release workflow bakes the matching tag and support-file SHA-256 inventory into that stage-0 asset, so later changes on `main` cannot silently change the verified bytes for that release. A matching generated asset is the canonical stage-0 handoff and verifies support files directly instead of self-refreshing; explicit matching `--ref`/`TLH_REF` values remain eligible for that direct path. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; raw, mutable, custom, and local paths are not release-verified. The v0.27 boundary otherwise means remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
-
-The supported recovery for a saved pre-v0.27 raw source installer is to download and run the current installer:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
-```
-
-Through 2026-09-29, compatibility was retained only for locally saved pre-v0.27 raw source installers from published or tagged releases whose baked manifests requested the retained query/librarian assets. That window excluded arbitrary snapshots of `main` and unreleased intermediate states, including the never-released profile-writer manifest window.
+Only the generated GitHub Release `install.sh` asset is pinned and integrity-verifiable for its tag: the release workflow bakes the matching tag and support-file SHA-256 inventory into that stage-0 asset, so later changes on `main` cannot silently change the verified bytes for that release. A matching generated asset is the canonical stage-0 handoff and verifies support files directly instead of self-refreshing; explicit matching `--ref`/`TLH_REF` values remain eligible for that direct path. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; raw, mutable, custom, and local paths are not release-verified. Remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
 
 ## More ways to install
 
@@ -41,26 +33,27 @@ Through 2026-09-29, compatibility was retained only for locally saved pre-v0.27 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.45.0/install.sh | bash -s -- --track pinned-tag
 ```
+
 - Any remote branch, eg `main`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
 ```
 
-  When installing from `main`, the installer automatically uses separate defaults so that a main-track install does not collide with a stable-release install: the wrapper command defaults to **`tlh-main`** (instead of `tlh`) and the isolated agent dir defaults to **`~/.the-last-harness-main/agent`** (with a private runtime at `~/.the-last-harness-main/runtime`). You can override either default back to the release values by passing explicit flags:
+When installing from `main`, the installer automatically uses separate defaults so that a main-track install does not collide with a stable-release install: the wrapper command defaults to **`tlh-main`** (instead of `tlh`) and the isolated agent dir defaults to **`~/.the-last-harness-main/agent`** (with a private runtime at `~/.the-last-harness-main/runtime`). You can override either default back to the release values by passing explicit flags:
 
-  ```sh
-  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- \
-    --ref main --track ref \
-    --wrapper-name tlh --agent-dir ~/.the-last-harness/agent
-  ```
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- \
+  --ref main --track ref \
+  --wrapper-name tlh --agent-dir ~/.the-last-harness/agent
+```
 
-  Or set the equivalent environment variables on the `bash` side of the pipe so the installer process inherits them (assigning them before `curl` would scope them to `curl` only, not to `install.sh`):
+Or set the equivalent environment variables on the `bash` side of the pipe so the installer process inherits them (assigning them before `curl` would scope them to `curl` only, not to `install.sh`):
 
-  ```sh
-  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | \
-    TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
-  ```
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | \
+  TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
+```
 
 These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.45.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; after the background GitHub comparison succeeds, it may append `1 commit behind origin/main` or `N commits behind origin/main`. Older main-track state without that metadata continues to show `TLH main`, and current, divergent, failed, or unavailable comparisons show no behind suffix.
 
@@ -94,7 +87,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 1.3.0 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned version when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -112,7 +105,7 @@ tlh update --track latest-release
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-Normal updates keep Gnosis and ticket integration enabled. They reinstall the managed isolated `gn` (tracked by `settings.tlh.gnosis.installedVersion`) and `tk` (tracked by `settings.tlh.tickets.installedSha256`) whenever the shipped pin differs from the recorded one or no record exists, and re-enable legacy `settings.tlh.tickets.enabled=false` values. A `tk` you chose explicitly with `tlh tickets enable --install-path /path/to/tk` is kept (opt-out) while it still validates. `PATH`/Homebrew copies of `gn` and `tk` are never modified and are used only as a fallback if the managed install fails. `TLH_SKIP_GNOSIS_INSTALL=1` skips Gnosis setup, and `TLH_GNOSIS_VERSION` overrides the pinned Gnosis version. If no valid `tk` is available and the managed install fails, `tlh update` fails with an actionable error; provide a valid command with `tlh tickets enable --install-path /path/to/tk` for tickets, or rerun the update once the managed download can succeed. Existing repo-local `.gnosis` and `.tickets` data is left in place.
+Normal updates keep Gnosis and ticket integration enabled and refresh the managed `gn` and `tk` when their pins change; see [Gnosis integration](integrations.md#gnosis-integration) and [Ticket integration](integrations.md#ticket-integration) for the behavior, opt-outs, and fallbacks. Existing repo-local `.gnosis` and `.tickets` data is left in place.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
@@ -138,19 +131,21 @@ The project custom-agent cutover is separate from retired external-package clean
 
 There is no `tlh defaults disable subagents` path. For a one-run diagnostic, `tlh --no-extensions` disables **all** extensions without changing settings. The upstream resource selector exposed by `tlh config` can persistently disable the root-package resource `./extensions/subagents/src/extension/index.js`, but doing so breaks architect delegation and is not a supported steady state; reopen `tlh config` and re-enable that same resource to recover. Use the full uninstall flow below to remove TLH persistently. See [subagents.md](subagents.md) for runtime behavior and diagnostic details.
 
-At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. Official `main` ref installs use that same non-blocking daily check to compare the persisted checkout commit with GitHub `main`; only an ancestor that is behind gets the footer count. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable both checks.
+## Update checks and opt-outs
 
-Release builds with TelemetryDeck identifiers configured send pseudonymous telemetry from interactive `tlh` runs. `Tlh.launched` is sent at most once per interactive process start. The hashed random install ID means TelemetryDeck unique-user aggregation continues to represent installations rather than people or individual runs. Runtime provider and model values are privacy-filtered, only registered TLH experimental feature IDs are reported, and sensitive fields such as prompts, cwd, command arguments, repo names, file contents, settings contents, API keys, provider base URLs, auth state, headers, and account identifiers are omitted. See [`docs/telemetry.md`](telemetry.md) for the exact signal names, dimensions, filters, and semantics.
+At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. Official `main` ref installs use that same non-blocking daily check to compare the persisted checkout commit with GitHub `main`; only an ancestor that is behind gets the footer count. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable both checks. `PI_OFFLINE=1` also makes `tlh update` refuse to run network work.
 
-To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
+Release builds send pseudonymous telemetry from interactive runs; signals, filters, and every opt-out are owned by [telemetry.md](telemetry.md#opting-out).
+
+### Bundled default extensions
 
 Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while any remaining TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. The first-party subagent runtime is refreshed with the TLH package itself rather than through this default-extension update path.
 
-`pi-quiet-tools` is a mandatory, always-on, renderer-only TLH default pinned to `npm:@diegopetrucci/pi-quiet-tools@0.1.14`. Historical `quiet-tools` and `compact-bash` opt-outs do not apply: install/update removes those invalid opt-out IDs, migrates recognized old sources, and enforces the verified source and extension loading while preserving unrelated settings and package metadata. There is no supported `tlh defaults disable` or off recommendation for this default. Its `/quiet-tools` command is read-only status for the installer-managed source only; Ctrl+O and per-row expansion still show native full output, and separately loaded third-party extensions are outside this renderer guarantee.
+`pi-quiet-tools` is a mandatory, always-on, renderer-only TLH default (source pinned in `config/default-extensions.json`). Historical `quiet-tools` and `compact-bash` opt-outs do not apply: install/update removes those invalid opt-out IDs, migrates recognized old sources, and enforces the verified source and extension loading while preserving unrelated settings and package metadata. There is no supported `tlh defaults disable` or off recommendation for this default. Its `/quiet-tools` command is read-only status for the installer-managed source only; Ctrl+O and per-row expansion still show native full output, and separately loaded third-party extensions are outside this renderer guarantee.
 
 ## Fullscreen TUI
 
-Starting with Pi 1.0.0, the interactive terminal UI runs in fullscreen mode by default (`tuiMode: "fullscreen"`). In fullscreen mode Pi owns the viewport: the transcript scrolls within the terminal window, the editor and status area stay fixed, and mouse-wheel scroll events go to the transcript rather than terminal history.
+The interactive terminal UI runs in fullscreen mode by default (`tuiMode: "fullscreen"`). In fullscreen mode Pi owns the viewport: the transcript scrolls within the terminal window, the editor and status area stay fixed, and mouse-wheel scroll events go to the transcript rather than terminal history.
 
 TLH does not set a `tuiMode` override in its packaged defaults (`config/settings.defaults.json`), so Pi's `"fullscreen"` default applies to all TLH sessions.
 
@@ -192,7 +187,7 @@ Running `tlh update --force` (or equivalently `bash install.sh --force`) passes 
 
 ## Pi-native prompt-cache warming
 
-The pinned Pi `1.3.0` runtime has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
+Pi has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
 
 TLH ships `cacheWarming: "idle"` as a packaged default. Install and update apply this value using the same append-if-missing merge used for all packaged settings defaults: when `cacheWarming` is absent from the isolated `settings.json` it is written as `"idle"`; an existing user value is preserved untouched. To revert to Pi's native `streaming` mode (warm while a run is active), set `cacheWarming` to `streaming` in `/settings` or in `~/.the-last-harness/agent/settings.json`. To disable warming entirely, set it to `off`.
 
@@ -204,7 +199,7 @@ Pi-native warming is separate from the retired TLH async-parent prompt-cache hea
 
 TLH ships `compaction.reserveTokens: 49152` as a packaged default, a mitigation for compaction summaries hitting the token cap on reasoning models ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785); upstream [earendil-works/pi#9075](https://github.com/earendil-works/pi/issues/9075), [#9512](https://github.com/earendil-works/pi/issues/9512)). Pi caps the compaction summary at 0.8 × `reserveTokens` and the split-turn prefix at 0.5 × `reserveTokens`; with Pi's default of 16,384 that is 13,107 tokens, and on adaptive-thinking models thinking shares that cap, so long high/xhigh/max sessions can fail every `/compact`. At 49,152 the limits are 39,321 (summary) and 24,576 (split-turn prefix).
 
-Trade-off: auto-compaction triggers about 32,768 tokens earlier, roughly 301k under the 350k context cap and roughly 223k for 272k developer children. The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
+Trade-off: auto-compaction triggers about 32,768 tokens earlier than Pi's own default reserve, in both primary and child sessions (effective context caps are described in [subagents.md](subagents.md#child-context-window-policy)). The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
 
 Small-window caveat: Pi does not scale the reserve to the model's window, so models with windows of 64k or less need their own override. The example below uses `16384`, which restores Pi's own default for that model:
 
@@ -245,37 +240,39 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
   --wrapper-name tlh-main --agent-dir ~/.the-last-harness-main/agent
 ```
 
-The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. A legacy TLH-installed pi at `~/.local` is removed only when `--force-include-pi` is explicitly passed; without that flag the uninstaller leaves it in place and prints a manual-removal hint. The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
+The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. If the agent dir exists without its TLH install-state marker, it is preserved while independently owned runtime and managed-wrapper cleanup can continue; the uninstaller prints an actionable warning and exits nonzero so the incomplete cleanup is visible. A legacy `~/.local` pi is handled separately (see [Pi removal decision](#pi-removal-decision)). The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
+
+The uninstaller also accepts the default profile through a symlinked `HOME` or a symlinked ancestor on `HOME`'s own path, after validating its physical target. Exact platform root aliases remain supported; other symlinked profile parents, symlinked agent roots, and profile descendants remain refused. For an explicit agent path reached through an unrelated alias, pass its canonical physical path instead; this keeps symlink aliases from expanding recursive deletion authority.
 
 ### Uninstaller flags
 
 The uninstaller prints its plan and then proceeds immediately — there is no confirmation prompt. Use `--dry-run` to preview what would be removed without performing any removals.
 
-| Flag | Description |
-|---|---|
-| `--dry-run` | Print planned actions without performing any removals. |
-| `--force-include-pi` | Removes the private runtime when a valid ownership marker is present; if the runtime is unmarked, it is still skipped with a manual-removal hint. When the private runtime is absent and a legacy `~/.local/bin/pi` exists, removes that instead. This flag is **required** to remove a legacy `~/.local` pi — without it the uninstaller never auto-removes it, to protect user-owned installations. |
-| `--keep-pi` | Skip runtime and pi removal even when install-state says `piInstalledByTlh=true`. |
-| `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). Only the agent dir is removed; the parent dir is cleaned up only if empty. |
-| `--bin-dir DIR` | Override wrapper install dir (default: `~/.local/bin`). |
-| `--wrapper-name NAME` | Override wrapper command basename (default: `tlh`). |
-| `--quiet` | Suppress non-essential output (errors and summary always shown). |
-| `--verbose` | Print each removal command before executing it. |
-| `-h`, `--help` | Show help. |
+| Flag                  | Description                                                                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--dry-run`           | Print planned actions without performing any removals.                                                                                                                                                                                                 |
+| `--force-include-pi`  | Removes the private runtime when a valid ownership marker is present; if the runtime is unmarked, it is still skipped with a manual-removal hint. Also the only way to remove a legacy `~/.local` pi; see [Pi removal decision](#pi-removal-decision). |
+| `--keep-pi`           | Skip runtime and pi removal even when install-state says `piInstalledByTlh=true`.                                                                                                                                                                      |
+| `--agent-dir DIR`     | Override isolated agent dir (default: `~/.the-last-harness/agent`). Only the agent dir is removed; the parent dir is cleaned up only if empty.                                                                                                         |
+| `--bin-dir DIR`       | Override wrapper install dir (default: `~/.local/bin`).                                                                                                                                                                                                |
+| `--wrapper-name NAME` | Override wrapper command basename (default: `tlh`).                                                                                                                                                                                                    |
+| `--quiet`             | Suppress non-essential output (errors and summary always shown).                                                                                                                                                                                       |
+| `--verbose`           | Print each removal command before executing it.                                                                                                                                                                                                        |
+| `-h`, `--help`        | Show help.                                                                                                                                                                                                                                             |
 
 `--force-include-pi` and `--keep-pi` are mutually exclusive.
 
 ### Pi removal decision
 
-TLH records ownership of the private Pi runtime via a marker file (`.tlh-runtime-owned`) written inside `~/.the-last-harness/runtime` at install time. The uninstaller validates this marker (fail-closed: verifies the recorded runtime path matches the resolved directory, the directory is not a symlink, and a positive Pi layout is present) before removing the runtime. Install-state `piInstalledByTlh=true` alone is no longer sufficient — without a valid marker, the runtime is skipped and a manual-removal hint is printed. Older installs without the marker gain it automatically on the next `tlh update` or installer rerun; after that, uninstall can auto-remove as normal. A legacy `~/.local` pi is never removed automatically — it is removed only when `--force-include-pi` is explicitly passed, because the uninstaller cannot determine whether that binary was installed by TLH or by the user.
+TLH records ownership of the private Pi runtime via a marker file (`.tlh-runtime-owned`) written inside `~/.the-last-harness/runtime` at install time. The uninstaller validates this marker (fail-closed: verifies the recorded runtime path matches the resolved directory, the directory is not a symlink, and a positive Pi layout is present) before removing the runtime. Install-state `piInstalledByTlh=true` alone is no longer sufficient — without a valid marker, the runtime is skipped and a manual-removal hint is printed. Older installs without the marker gain it automatically on the next `tlh update` or installer rerun; after that, uninstall can auto-remove as normal. A legacy `~/.local` pi is never removed automatically, because the uninstaller cannot tell whether TLH or the user installed it; it is removed only with an explicit `--force-include-pi`, and only when the private runtime is absent and `~/.local/bin/pi` exists. To remove it by hand: `npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent`.
 
-| Condition | Effect |
-|---|---|
-| valid `.tlh-runtime-owned` marker, `origin=created` | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
-| valid `.tlh-runtime-owned` marker, `origin=migrated` | surgical removal: `npm uninstall -g --prefix …` removes Pi only; `lib/package.json` and `lib/package-lock.json` are also removed when their `name` is exactly `tlh-pi-runtime` (the TLH runtime manifest); foreign files are preserved |
-| marker absent or invalid (unmarked or pre-marker runtime) | private runtime **skipped** — manual-removal hint printed; `piInstalledByTlh=true` alone does not override this |
-| `--force-include-pi` flag | removes private runtime when a valid marker is present; runtime skipped with a hint if unmarked; removes legacy `~/.local/bin/pi` if present and private runtime is absent |
-| `--keep-pi` flag | keeps everything — skips runtime and pi removal |
+| Condition                                                 | Effect                                                                                                                                                                                                                                 |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| valid `.tlh-runtime-owned` marker, `origin=created`       | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed                                                                                 |
+| valid `.tlh-runtime-owned` marker, `origin=migrated`      | surgical removal: `npm uninstall -g --prefix …` removes Pi only; `lib/package.json` and `lib/package-lock.json` are also removed when their `name` is exactly `tlh-pi-runtime` (the TLH runtime manifest); foreign files are preserved |
+| marker absent or invalid (unmarked or pre-marker runtime) | private runtime **skipped** — manual-removal hint printed; `piInstalledByTlh=true` alone does not override this                                                                                                                        |
+| `--force-include-pi` flag                                 | removes private runtime when a valid marker is present (skipped with a hint if unmarked); also removes legacy `~/.local/bin/pi` if present and the private runtime is absent                                                           |
+| `--keep-pi` flag                                          | keeps everything — skips runtime and pi removal                                                                                                                                                                                        |
 
 ### What stays behind
 
@@ -284,7 +281,7 @@ The uninstaller never auto-removes:
 - **`~/.pi`** — Pi's own user config directory. To remove it manually: `rm -rf ~/.pi`
 - **Private TLH Pi runtime (when kept)** — if you pass `--keep-pi`, if the runtime has no valid ownership marker (unmarked or pre-marker install), or if install-state is `false`/absent, the runtime at `~/.the-last-harness/runtime` is left in place; remove it manually: `rm -rf ~/.the-last-harness/runtime`.
 - **Separately-installed pi** — any `pi` you installed independently of TLH is left in place and never touched by tlh.
-- **Legacy TLH-owned pi at `~/.local`** — the uninstaller never auto-removes this (to protect user-owned installations). To remove it, pass `--force-include-pi` to the uninstaller, or remove manually: `npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent`.
+- **Legacy `~/.local` pi** — see [Pi removal decision](#pi-removal-decision).
 - **Repo-local `.gnosis/`, `.tickets/`, and `.pi-subagents/` data** — per-repository and managed separately. `.pi-subagents/` can contain child artifacts worth inspecting after a failed run. To remove all three from a repo after reviewing them: `rm -rf .gnosis .tickets .pi-subagents`
 
 ### Manual removal
@@ -296,15 +293,11 @@ rm -f ~/.local/bin/tlh
 rm -rf ~/.the-last-harness
 ```
 
-This removes the isolated agent dir, the private Pi runtime at `~/.the-last-harness/runtime`, and the managed `tk` copy under the TLH profile, along with any remaining TLH-owned legacy profile artifacts inside `~/.the-last-harness`. To also remove a TLH-managed legacy pi at `~/.local` (from an older install, only if TLH originally installed it):
-
-```sh
-npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent
-```
+This removes the isolated agent dir, the private Pi runtime at `~/.the-last-harness/runtime`, and the managed `tk` copy under the TLH profile, along with any remaining TLH-owned legacy profile artifacts inside `~/.the-last-harness`. A legacy `~/.local` pi is not covered; see [Pi removal decision](#pi-removal-decision).
 
 ## Backup retention
 
-Backup files at the isolated-profile root (`settings.json.backup-*`, `keybindings.json.backup-*`) are pruned automatically on install and update: any backup older than ~28 days is removed, but the two newest backups are always kept regardless of age. This pruning is scoped strictly to the isolated profile (`~/.the-last-harness/agent`) and never touches `~/.pi`. If you want to keep a particular backup indefinitely, copy it to a location outside the isolated profile before it ages out. Backups created beside the first-party subagent config (`extensions/subagent/config.json.backup-*`) are not covered by root-profile backup pruning and are retained until manually removed. After inspecting them, remove only matching files from `<agent-dir>/extensions/subagent/`; do not remove the active `config.json` or recursively clean the isolated profile.
+Installer-written backups at the isolated-profile root (`settings.json.backup-*`, `keybindings.json.backup-*`, including TLH's marker variants such as `.backup-before-install-*`) are pruned automatically on install and update: any backup older than ~28 days is removed, but the two newest backups are always kept regardless of age. This pruning is scoped strictly to the isolated profile (`~/.the-last-harness/agent`) and never touches `~/.pi`. If you want to keep a particular backup indefinitely, copy it to a location outside the isolated profile before it ages out. `settings.json.bak-*` files written by TLH's in-session settings commands (see [commands.md](commands.md)) use a different name and are not pruned; remove them manually when no longer needed. Backups created beside the first-party subagent config (`extensions/subagent/config.json.backup-*`) are not covered by root-profile backup pruning and are retained until manually removed. After inspecting them, remove only matching files from `<agent-dir>/extensions/subagent/`; do not remove the active `config.json` or recursively clean the isolated profile.
 
 ## First-party subagent configuration
 
@@ -314,15 +307,9 @@ A changed valid existing config is backed up to `config.json.backup-*` before wr
 
 ### Execution limits and migration
 
-Execution time is bounded per child instance and owned by its role definition, not by the model or caller. The former shared `execution.maxRunTimeMs` key in `<agent-dir>/extensions/subagent/config.json` is retired. If an existing config still contains that key, TLH checks only its presence, emits a warning, ignores its value, and leaves the user-owned file untouched; install and update do not rewrite or remove it. A legacy role override of `maxExecutionTimeMs: false` is likewise ignored and retains the bounded role fallback.
+Execution time is bounded per child instance by its role definition, not by the model or caller. The retired shared `execution.maxRunTimeMs` key is ignored with a warning and install/update leave it untouched. Ceilings, override precedence, the custom-agent fallback, `timeoutMs` rejection, and migration/rollback are owned by [subagents.md](subagents.md#timeout-ownership-and-execution-ceilings) and [custom-subagents.md](custom-subagents.md#execution-budget-and-recovery).
 
-Canonical minor roles have code-owned `maxExecutionTimeMs` ceilings. TLH selects one `subagents.agentOverrides.<role>` object: the selected project's entry in `.pi/settings.json` when present, otherwise the profile entry in `<agent-dir>/settings.json`. The two objects are not merged field-by-field. Therefore, a project entry that omits `maxExecutionTimeMs` does not retain a profile value; absent an authoritative frontmatter value, the code-owned role default remains. A selected human override accepts only a positive safe integer. A custom project agent owns its positive-safe-integer `maxExecutionTimeMs` in frontmatter; omission uses the **14400000 ms (4h)** custom fallback, and profile/project settings do not override that definition. See [subagents.md](subagents.md#timeout-ownership-and-execution-ceilings) for the exact nine-role values and precedence details.
-
-There is no new shared deadline: each child in a single or parallel dispatch consumes its own role budget, and that budget is not divided among siblings. Models/callers must not send model-facing root `timeoutMs` or public `tasks[].timeoutMs`. Separately, an executable async-runner envelope/config with its own root `timeoutMs`, or a persisted plan with plan-root `timeoutMs`, fails closed before child launch with migration guidance: remove only that retired envelope/plan-root field and restart as a new direct single or parallel run. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Existing historical records remain readable and are not rewritten. Older in-flight artifacts may retain trusted run-owned `deadlineAt` metadata, which remains compatible for that existing job but does not establish new policy or permanently exhaust a role instance.
-
-A recoverable pause resumes the same child lineage and context with its remaining active-time budget; paused wall time does not consume it. When a role budget expires, that instance is permanently poisoned. The architect must inspect partial output, artifacts, and files, then decide whether to narrow/split the remaining scope or make a fresh dispatch. TLH does not automatically replace, roll back, or mechanically redispatch the unchanged task. Exhausted output, notifications, and status omit resume hints; ordinary recoverable pauses retain valid same-lineage hints.
-
-There is no compatibility switch for retired caller timeouts. If older timeout behavior is required, roll back the TLH package version; this changes the runtime release without changing user configuration or rewriting historical artifacts. To restore a canonical role's code-owned ceiling, remove its positive settings override; a legacy `false` already falls back to that ceiling. Removing a custom agent's frontmatter field restores its 4-hour fallback. Preserve backups and unknown keys, and never edit normal `~/.pi/agent` configuration. Other timeout fields—such as provider/network/control timeouts, and historical status/reader metadata—remain separate.
+Pause/resume, budget exhaustion, rollback, and the custom-agent 4-hour fallback are owned by [subagents.md](subagents.md#timeout-ownership-and-execution-ceilings) and [custom-subagents.md](custom-subagents.md#execution-budget-and-recovery); installs and updates never edit the normal `~/.pi/agent` configuration.
 
 ## gh CLI prerequisite (for librarian)
 
@@ -330,4 +317,4 @@ The `librarian` subagent performs read-only GitHub research using the `gh` CLI a
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`; managed Gnosis defaults to the pinned `v0.5.4` release unless you override it. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`. Managed Gnosis and `tk` pins live in the installer scripts, and `tk` is copied from the pinned `wedow/ticket` source tarball only after SHA-256 verification (see [integrations.md](integrations.md#gnosis-integration)); TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the [update-check opt-outs](#update-checks-and-opt-outs). This repo does not create, read, or modify API keys or auth files.

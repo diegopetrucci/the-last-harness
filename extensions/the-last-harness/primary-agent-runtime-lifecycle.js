@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime-lifecycle.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { DISABLED_PRIMARY_AGENT, isEnabledPrimaryAgentSelection, } from "../the-last-harness-primary-agent.mjs";
 import { setTlhProjectAgentAccessProvider } from "./project-agent-access.mjs";

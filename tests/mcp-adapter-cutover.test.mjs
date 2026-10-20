@@ -141,7 +141,7 @@ test("constrained legacy selectors stay held despite stale native installed meta
   assert.deepEqual(legacyGitResult.settings.packages, [harnessPackage, oldGitSource]);
   assert.match(
     legacyGitResult.stderr,
-    /cutover held for mcporter: selected adapter version is unresolved/,
+    /cutover held for mcporter: installed adapter metadata conflicts/,
   );
 });
 

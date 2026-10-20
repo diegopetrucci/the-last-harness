@@ -36,6 +36,31 @@ All notable changes to The Last Harness will be documented in this file.
 - Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
 - Subagent thinking phrases no longer flicker on fast-turning agents; they now rotate on a steady 8-second cadence instead of changing every turn.
 - `check-package-versions` now fails when the Pi version recorded in `config/pi-runtime/package-lock.json` (the `node_modules/@earendil-works/pi-coding-agent` entry or the root dependency) drifts from the managed Pi pin. [#760](https://github.com/diegopetrucci/the-last-harness/issues/760)
+- Uninstall now accepts installer-compatible symlinked HOME/ancestor aliases while retaining canonical path and profile safety guards.
+- Normal Pi path guards now recognize existing case aliases on case-insensitive filesystems without folding distinct case-sensitive paths.
+- Uninstall preserves an unmarked agent dir after a late install failure while still cleaning independently owned runtime and managed-wrapper artifacts, with an actionable warning and nonzero status.
+- First-time private runtime provisioning now checkpoints affirmative ownership before staged swaps, so failed or interrupted retries remain safe without adopting unmarked prefixes.
+- TLH settings readers and writers now accept a leading UTF-8 BOM while preserving malformed-file guards and unrelated settings.
+- Session-mirror reply receipts now distinguish pre-injection expiry from post-injection unconfirmed outcomes and accept persisted completion within confirmation bounds.
+- Non-UI session-mirror replies now retain only a revocable active-session idle capability, so context garbage collection preserves valid idle checks.
+- Session-mirror reply busy and compaction latches now clear only after idle tree/compaction completion, including cancelled and failed manual compactions.
+- Trusted embedded project-agent tool declarations now reject `.ts`/`.js` extension-path aliases at load and execution boundaries while ordinary agent extension tools remain supported.
+- Interrupt and pause-all now use the file-based inbox without signalling persisted runner PIDs.
+- The `tlh` wrapper now refuses dangling symlinks and non-file entries without `--force` and writes its temporary file exclusively.
+- `tlh doctor --repair` now preserves pinned, branch, and local TLH package sources while repairing isolated settings drift.
+- `tlh update` keeps user-set filters on the TLH package entry.
+- `tlh defaults enable mcporter` no longer drops native MCP while the adapter stays filter-disabled.
+- The MCP adapter startup check now detects a stale cached adapter for `tlh-vX` git tag selections.
+- The footer cost and session-limit report now include `cache_warm`, tool-result, and compaction/`branch_summary` spend, matching upstream Pi.
+- `/tokens` counts each subagent once and includes compaction/`branch_summary` spend.
+- Header lines no longer exceed the terminal width.
+- `annotate-git-diff` now handles non-ASCII, space, and tab filenames and file-type changes.
+- `annotate-git-diff` now isolates shell startup output from Git name-status and binary revision data.
+- Diff reviews now keep POSIX filenames containing backslashes inside the repository boundary when loading text and binary working-tree content.
+- The result watcher now rescans existing results after a restart, since results written while it was down emit no events.
+- Async resume now waits for paused source ownership to stop before reusing its session.
+- Subagent session analysis now merges telemetry in transcript order.
+- Async parallel planning now preserves inherited model provenance, so out-of-scope agent defaults and parent models warn without weakening explicit scope rejection.
 
 ### Changed
 
@@ -62,6 +87,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Install and update now keep TLH's pinned `gn` and `tk` in the isolated profile `bin` up to date: the managed copies are reinstalled whenever the shipped pin differs from the recorded `tlh.gnosis.installedVersion` / `tlh.tickets.installedSha256` (upgrade or downgrade) or no record exists, instead of adopting an existing `PATH` copy. `PATH`/Homebrew binaries are never modified and are used only as a fallback if the managed install fails. A `tk` chosen explicitly with `tlh tickets enable --install-path` is recorded as `tlh.tickets.installPathSource: "user"` and preserved across updates while it validates. [#787](https://github.com/diegopetrucci/the-last-harness/issues/787)
 - TLH now ships `compaction.reserveTokens: 49152` as a packaged default (inserted only when absent, recorded with a `tlh.compactionReserveTokensManaged` marker) to mitigate compaction summaries hitting the token cap on reasoning models. Auto-compaction triggers about 32,768 tokens earlier; see [`docs/install.md`](docs/install.md#compaction-reserve-default). [#785](https://github.com/diegopetrucci/the-last-harness/issues/785)
 - The architect no longer creates a branch before launching a worker when working in a fresh worktree, including one on `main`/`master`.
+- Removed the unused `tasks[].count` parameter from the subagent tool; passing it is now rejected with an error. List each parallel task explicitly.
 
 ### Removed
 
@@ -77,6 +103,19 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
 - Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
 
+### Internal
+
+- Corrected current context-cap guidance to the implemented 350k primary cap and role-specific child windows.
+- Fixed a flaky `tlh doctor ignores RTK executables on PATH` test that matched random temp-path suffixes.
+- Generated `.js` twins now carry a generated-file header pointing at their TypeScript source.
+- Removed `docs/subagents-history`; provenance lives in `docs/subagents.md` and git history.
+- Fixed the `module.register()` deprecation warning printed by the subagent test loader.
+- Added a fast-checks section to `VALIDATING.md`.
+- Added a nested `extensions/subagents/AGENTS.md` with subagent-specific contributor guidance.
+- Changelog policy: every PR gets an entry, with contributor-only changes under `### Internal`.
+- Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
+- `check-package-versions` now fails on `package.json`-vs-lockfile pin drift, and CI `node_modules` cache keys include `package.json`.
+- Docs now state each fact once in an owning doc (ownership table in CONTRIBUTING.md), drop version numbers from prose, and `npm run validate` checks internal Markdown links and anchors.
 
 ## [0.45.0] - 2026-10-14
 
