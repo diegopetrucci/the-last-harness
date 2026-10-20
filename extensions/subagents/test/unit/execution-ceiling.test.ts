@@ -6,6 +6,7 @@ import {
   CANONICAL_AGENT_MAX_EXECUTION_TIME_MS,
   DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS,
   canonicalAgentMaxExecutionTimeMs,
+  remainingExecutionTimeMs,
   resolveCustomAgentMaxExecutionTimeMs,
 } from "../../src/agents/execution-ceiling.ts";
 
@@ -59,5 +60,17 @@ describe("role execution ceilings", () => {
     );
     assert.equal(canonicalAgentMaxExecutionTimeMs("toString"), undefined);
     assert.equal(canonicalAgentMaxExecutionTimeMs("constructor"), undefined);
+  });
+
+  it("derives the remaining per-instance budget from consumed active runtime only", () => {
+    assert.equal(remainingExecutionTimeMs(undefined, 10), undefined);
+    assert.equal(remainingExecutionTimeMs(5_000), 5_000);
+    assert.equal(remainingExecutionTimeMs(5_000, 1_200.2), 3_799);
+    assert.equal(remainingExecutionTimeMs(5_000, 5_000), 0);
+    assert.equal(remainingExecutionTimeMs(5_000, 9_000), 0);
+    // Corrupt consumption evidence can never widen a continuation budget.
+    assert.equal(remainingExecutionTimeMs(5_000, -1), 0);
+    assert.equal(remainingExecutionTimeMs(5_000, Number.NaN), 0);
+    assert.equal(remainingExecutionTimeMs(0, 0), 0);
   });
 });

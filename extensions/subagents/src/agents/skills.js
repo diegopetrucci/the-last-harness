@@ -650,3 +650,29 @@ export function clearSkillCache() {
     skillCache.clear();
     loadSkillsCache = null;
 }
+export function normalizeSkillInput(input) {
+    if (input === false)
+        return false;
+    if (input === true || input === undefined)
+        return undefined;
+    if (Array.isArray(input)) {
+        return [...new Set(input.map((s) => s.trim()).filter((s) => s.length > 0))];
+    }
+    const trimmed = input.trim();
+    if (trimmed.startsWith("[")) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+                return normalizeSkillInput(parsed);
+            }
+        }
+        catch {
+        }
+    }
+    return [
+        ...new Set(input
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)),
+    ];
+}

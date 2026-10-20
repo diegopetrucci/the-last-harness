@@ -1,700 +1,324 @@
 // Generated from extensions/subagents/src/runs/background/stale-run-reconciler.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeAtomicJson } from "../../shared/atomic-json.js";
-import { RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
-import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStoppedLifecycleOwnership, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
-import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
-import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
-import { normalizeTkTicketId } from "../shared/tk-ticket.js";
-import { parseThinkingLevel } from "../../shared/model-info.js";
-import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
-import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
-import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, resolveSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
+import { RESULTS_DIR } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
-function getErrorMessage(error) {
-    return error instanceof Error ? error.message : String(error);
-}
-function readRunnerStartupDiagnostics(asyncDir) {
-    const stderrPath = path.join(asyncDir, "runner.stderr.log");
-    const maxBytes = 64 * 1024;
-    let content;
+import { writeAtomicJson } from "../../shared/atomic-json.js";
+import { checkPidLiveness, isCompletedLifecycleStepState, isTerminalLifecycleState, lifecycleGeneration, transitionLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { terminalResultForStatusStep } from "../../shared/terminal-result.js";
+import { boundChildError } from "../shared/child-protocol.js";
+import { isAsyncStatusReadError } from "./async-status-boundary.js";
+import { finalizeSubagentRunTelemetry, mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, resolveSubagentTelemetryOutcome, resolveParallelSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
+const STALE_MESSAGE_PREFIX = "Async runner process";
+const STALE_MESSAGE_SUFFIX = "exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.";
+const DEFAULT_STALE_ALIVE_PID_MS = 24 * 60 * 60 * 1000;
+const STALE_REPAIR_GUARD_FAILED = Symbol("stale-repair-guard-failed");
+function safeStatus(asyncDir, options = {}) {
     try {
-        const stat = fs.statSync(stderrPath);
-        if (stat.size <= 0)
-            return undefined;
-        const fd = fs.openSync(stderrPath, "r");
-        try {
-            const bytesToRead = Math.min(stat.size, maxBytes);
-            const start = Math.max(0, stat.size - bytesToRead);
-            const buffer = Buffer.alloc(bytesToRead);
-            fs.readSync(fd, buffer, 0, bytesToRead, start);
-            content = buffer.toString("utf-8").trim();
-        }
-        finally {
-            fs.closeSync(fd);
-        }
-    }
-    catch {
-        return undefined;
-    }
-    if (!content)
-        return undefined;
-    const lines = content.split(/\r?\n/).slice(-30).join("\n");
-    return lines.length > 4000 ? `${lines.slice(-4000)}\n[stderr tail truncated]` : lines;
-}
-function isNotFoundError(error) {
-    return (typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT");
-}
-function appendJsonlBestEffort(filePath, payload) {
-    try {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf-8");
-    }
-    catch {
-    }
-}
-function readStatusFile(asyncDir) {
-    return readStatus(asyncDir);
-}
-const DURABLE_ATTENTION_REASONS = new Set([
-    "context_pressure",
-    "tool_failures",
-    "completion_guard",
-]);
-const COMPACTION_REASONS = new Set([
-    "manual",
-    "threshold",
-    "overflow",
-]);
-function parseHealthDurableAttentionReasons(value) {
-    if (!Array.isArray(value))
-        return undefined;
-    const reasons = value.filter((reason) => typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason));
-    return reasons.length > 0 ? [...new Set(reasons)] : undefined;
-}
-function parseHealthCompaction(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return undefined;
-    const reason = value.reason;
-    return typeof reason === "string" && COMPACTION_REASONS.has(reason)
-        ? { reason: reason }
-        : undefined;
-}
-function parseHealthActivityState(value) {
-    return value === "needs_attention" ? value : undefined;
-}
-function sanitizeStatusStep(step) {
-    const { modelIdentity: _modelIdentity, modelResolution: _modelResolution, thinking: _thinking, activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _activeRuntimeCheckpointAt, activityState: _activityState, idleEpisodeId: _idleEpisodeId, durableAttentionReasons: _durableAttentionReasons, compaction: _compaction, tkTicketId: _tkTicketId, ...rest } = step;
-    const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
-    const modelIdentity = sanitizeSubagentModelIdentity(step.modelIdentity);
-    const modelResolution = sanitizeSubagentModelResolution(step.modelResolution);
-    const thinking = parseThinkingLevel(step.thinking);
-    const activityState = parseHealthActivityState(step.activityState);
-    const idleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
-    const durableAttentionReasons = parseHealthDurableAttentionReasons(step.durableAttentionReasons);
-    const compaction = parseHealthCompaction(step.compaction);
-    const tkTicketId = step.agent === "developer" ? normalizeTkTicketId(step.tkTicketId) : undefined;
-    return {
-        ...rest,
-        ...(modelIdentity ? { modelIdentity } : {}),
-        ...(modelResolution ? { modelResolution } : {}),
-        ...(thinking ? { thinking } : {}),
-        ...(activityState ? { activityState } : {}),
-        ...(idleEpisodeId ? { idleEpisodeId } : {}),
-        ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
-        ...(compaction ? { compaction } : {}),
-        ...(tkTicketId ? { tkTicketId } : {}),
-        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-    };
-}
-function resolvePersistedDeveloperTkTicketId(step, child) {
-    if (step.agent !== "developer")
-        return undefined;
-    return (normalizeTkTicketId(step.tkTicketId) ??
-        (child?.agent === "developer" ? normalizeTkTicketId(child.tkTicketId) : undefined));
-}
-function readResultRepairData(resultPath) {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-            throw new Error(`Async result file '${resultPath}' must contain a JSON object.`);
-        }
-        const data = parsed;
-        const state = data.success === true
-            ? "complete"
-            : data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
-                ? data.state
-                : data.state === "paused" || data.exitCode === 0
-                    ? "paused"
-                    : "failed";
-        const projectMarkerPresent = Object.hasOwn(data, "projectAgent") ||
-            Object.hasOwn(data, "projectAgents") ||
-            (Array.isArray(data.results) &&
-                data.results.some((entry) => typeof entry === "object" &&
-                    entry !== null &&
-                    !Array.isArray(entry) &&
-                    Object.hasOwn(entry, "projectAgent")));
-        const projectAgents = Array.isArray(data.projectAgents)
-            ? data.projectAgents
-                .map((capture) => normalizeProjectAgentRunCapture(capture))
-                .filter((capture) => Boolean(capture))
-            : undefined;
-        const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
-        const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(data.activeRuntimeCheckpointAt);
-        const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
-        const results = Array.isArray(data.results)
-            ? data.results.map((entry) => {
-                if (!entry || typeof entry !== "object" || Array.isArray(entry))
-                    return {};
-                const child = entry;
-                const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
-                const projectAgent = normalizeProjectAgentRunCapture(child.projectAgent);
-                const tkTicketId = child.agent === "developer" ? normalizeTkTicketId(child.tkTicketId) : undefined;
-                const contextPressure = parseContextPressureProjection(child.contextPressure);
-                const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds);
-                const terminationReason = parseSubagentTerminationReason(child.terminationReason);
-                const durableAttentionReasons = parseHealthDurableAttentionReasons(child.durableAttentionReasons);
-                const modelIdentity = sanitizeSubagentModelIdentity(child.modelIdentity);
-                const modelResolution = sanitizeSubagentModelResolution(child.modelResolution);
-                const attemptedModels = Array.isArray(child.attemptedModels)
-                    ? child.attemptedModels.filter((value) => typeof value === "string")
-                    : undefined;
-                const activeRuntimeMs = normalizeActiveRuntimeMs(child.activeRuntimeMs);
-                const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(child.activeRuntimeCheckpointAt);
-                return {
-                    ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
-                    ...(projectAgent ? { projectAgent } : {}),
-                    ...(tkTicketId ? { tkTicketId } : {}),
-                    ...(typeof child.success === "boolean" ? { success: child.success } : {}),
-                    ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
-                    ...(typeof child.error === "string" ? { error: child.error } : {}),
-                    ...(typeof child.sessionFile === "string" ? { sessionFile: child.sessionFile } : {}),
-                    ...(typeof child.model === "string" ? { model: child.model } : {}),
-                    ...(modelIdentity ? { modelIdentity } : {}),
-                    ...(modelResolution ? { modelResolution } : {}),
-                    ...(attemptedModels?.length ? { attemptedModels } : {}),
-                    ...(contextUsage ? { contextUsage } : {}),
-                    ...(contextPressure ? { contextPressure } : {}),
-                    ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
-                    ...(terminationReason ? { terminationReason } : {}),
-                    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-                    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-                };
-            })
-            : undefined;
-        return {
-            state,
-            ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-            ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-            ...(results ? { results } : {}),
-            ...(projectAgents ? { projectAgents } : projectMarkerPresent ? { projectAgents: [] } : {}),
-            ...(telemetry ? { telemetry } : {}),
-        };
+        return readStatus(asyncDir, { ...options, cache: false });
     }
     catch (error) {
-        if (isNotFoundError(error))
-            return undefined;
-        throw new Error(`Failed to read async result file '${resultPath}': ${getErrorMessage(error)}`, {
-            cause: error,
-        });
+        if (isAsyncStatusReadError(error))
+            throw error;
+        return null;
     }
 }
-function childState(overallState, child) {
-    if (child?.success === true)
-        return "complete";
-    if (child?.success === false)
-        return "failed";
-    return overallState === "cancelled" ? "paused" : overallState;
+function appendRepairEvent(filePath, payload) {
+    try {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+        fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf8");
+    }
+    catch {
+    }
 }
-function isTerminalTelemetryOutcome(outcome) {
-    return (outcome?.state === "completed" ||
-        outcome?.state === "failed" ||
-        outcome?.state === "paused" ||
-        outcome?.state === "cancelled" ||
-        outcome?.state === "continued");
-}
-function copyTerminalTelemetryOutcome(outcome) {
-    return isTerminalTelemetryOutcome(outcome) ? { ...outcome } : undefined;
-}
-function telemetryForRepairedSteps(telemetry, repairedSteps, now, runOutcome) {
-    if (!telemetry)
-        return undefined;
-    const steps = telemetry.steps.map((step) => {
-        const statusStep = repairedSteps[step.index];
-        if (!statusStep || isTerminalTelemetryOutcome(step.outcome))
-            return { ...step };
-        const stillActive = statusStep.status === "running" ||
-            statusStep.status === "pending" ||
-            statusStep.status === "pausing";
-        const priorTiming = step.timing;
-        const startedAt = priorTiming?.startedAt ?? statusStep.startedAt;
-        const timingValues = {
-            ...(statusStep.startedAt !== undefined ? { startedAt: statusStep.startedAt } : {}),
-            ...(statusStep.endedAt !== undefined ? { endedAt: statusStep.endedAt } : {}),
-            ...(statusStep.durationMs !== undefined ? { durationMs: statusStep.durationMs } : {}),
-            ...(statusStep.activeRuntimeMs !== undefined
-                ? { activeRuntimeMs: statusStep.activeRuntimeMs }
-                : {}),
-            ...(stillActive && statusStep.endedAt === undefined ? { endedAt: now } : {}),
-            ...(stillActive && statusStep.durationMs === undefined && startedAt !== undefined
-                ? { durationMs: Math.max(0, now - startedAt) }
-                : {}),
-        };
-        const timing = Object.keys(timingValues).length > 0
-            ? { ...priorTiming, ...timingValues }
-            : priorTiming
-                ? { ...priorTiming }
-                : undefined;
-        const lifecycleOutcome = resolveSubagentTelemetryOutcome({
-            state: statusStep.status,
-            timedOut: statusStep.timedOut,
-            terminationReason: statusStep.terminationReason,
-            acceptanceStatus: statusStep.acceptance?.status,
-        });
-        const outcome = lifecycleOutcome &&
-            lifecycleOutcome.state !== "queued" &&
-            lifecycleOutcome.state !== "running"
-            ? lifecycleOutcome
-            : runOutcome;
-        return {
+const validPid = (value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+const staleMessage = (pid) => boundChildError(`${STALE_MESSAGE_PREFIX} ${pid} ${STALE_MESSAGE_SUFFIX}`);
+const staleAlivePidMessage = (pid, ageMs) => boundChildError(`Async runner process ${pid} still has a live PID, but status has not updated for ${ageMs}ms. Marked run failed by stale-run reconciliation because PID ownership cannot be verified.`);
+function failedStatus(status, now, message) {
+    const steps = status.steps?.map((step) => isCompletedLifecycleStepState(step.status) ||
+        step.status === "failed" ||
+        step.status === "cancelled"
+        ? step
+        : {
             ...step,
-            ...(statusStep.modelIdentity && !step.model
-                ? { model: { ...statusStep.modelIdentity } }
-                : {}),
-            ...(timing ? { timing } : {}),
-            ...(outcome ? { outcome } : {}),
-        };
-    });
-    const priorTiming = telemetry.timing;
-    const startedAt = priorTiming?.startedAt;
-    const timing = priorTiming
-        ? {
-            ...priorTiming,
-            ...(priorTiming.endedAt === undefined ? { endedAt: now } : {}),
-            ...(priorTiming.durationMs === undefined && startedAt !== undefined
-                ? { durationMs: Math.max(0, now - startedAt) }
-                : {}),
-        }
-        : undefined;
-    return {
-        ...telemetry,
-        steps,
-        ...(timing ? { timing } : {}),
-        ...(runOutcome ? { outcome: { ...runOutcome } } : {}),
-    };
-}
-function terminalStatusFromResult(status, resultPath, now) {
-    const repair = readResultRepairData(resultPath);
-    if (!repair)
-        return undefined;
-    const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, status.telemetry);
-    const runOutcome = copyTerminalTelemetryOutcome(mergedTelemetry?.outcome) ??
-        resolveSubagentTelemetryOutcome({
-            state: repair.state,
-            success: repair.state === "complete",
-            terminationReason: repair.state === "failed" ? "process_exit" : undefined,
-        });
-    const steps = (status.steps ?? []).map((step, index) => {
-        const sanitizedStep = sanitizeStatusStep(step);
-        const child = repair.results?.[index];
-        const persistedActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-        const persistedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
-        const childActiveRuntimeMs = normalizeActiveRuntimeMs(child?.activeRuntimeMs);
-        const childActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(child?.activeRuntimeCheckpointAt);
-        const tkTicketId = resolvePersistedDeveloperTkTicketId(step, child);
-        const durableAttentionReasons = [
-            ...new Set([
-                ...(sanitizedStep.durableAttentionReasons ?? []),
-                ...(child?.durableAttentionReasons ?? []),
-            ]),
-        ];
-        const durableHealth = durableAttentionReasons.length > 0 ? { durableAttentionReasons } : {};
-        if (step.status !== "running" && step.status !== "pending" && step.status !== "pausing") {
-            return {
-                ...sanitizedStep,
-                ...(tkTicketId ? { tkTicketId } : {}),
-                ...durableHealth,
-                ...(persistedActiveRuntimeMs !== undefined || childActiveRuntimeMs !== undefined
-                    ? {
-                        activeRuntimeMs: Math.max(persistedActiveRuntimeMs ?? 0, childActiveRuntimeMs ?? 0),
-                    }
-                    : {}),
-                ...(persistedActiveRuntimeCheckpointAt !== undefined ||
-                    childActiveRuntimeCheckpointAt !== undefined
-                    ? {
-                        activeRuntimeCheckpointAt: Math.max(persistedActiveRuntimeCheckpointAt ?? 0, childActiveRuntimeCheckpointAt ?? 0),
-                    }
-                    : {}),
-            };
-        }
-        const state = childState(repair.state, child);
-        return {
-            ...sanitizedStep,
-            ...(tkTicketId ? { tkTicketId } : {}),
-            activityState: undefined,
-            idleEpisodeId: undefined,
-            compaction: undefined,
-            ...durableHealth,
-            status: state === "complete"
-                ? "complete"
-                : state === "continued"
-                    ? "continued"
-                    : state === "pausing"
-                        ? "pausing"
-                        : state,
-            endedAt: step.endedAt ?? now,
-            durationMs: step.startedAt !== undefined && step.durationMs === undefined
-                ? Math.max(0, now - step.startedAt)
-                : step.durationMs,
-            activeRuntimeMs: [persistedActiveRuntimeMs, childActiveRuntimeMs].filter((value) => value !== undefined).length > 0
-                ? Math.max(persistedActiveRuntimeMs ?? 0, childActiveRuntimeMs ?? 0)
-                : undefined,
-            activeRuntimeCheckpointAt: childActiveRuntimeMs !== undefined
-                ? Math.max(persistedActiveRuntimeCheckpointAt ?? 0, childActiveRuntimeCheckpointAt ?? now)
-                : (persistedActiveRuntimeCheckpointAt ??
-                    normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt)),
-            exitCode: step.exitCode ?? (state === "complete" || state === "paused" ? 0 : 1),
-            error: state === "failed" ? (step.error ?? child?.error) : step.error,
-            sessionFile: step.sessionFile ?? child?.sessionFile,
-            model: step.model ?? child?.model,
-            modelIdentity: sanitizedStep.modelIdentity ?? child?.modelIdentity,
-            modelResolution: sanitizedStep.modelResolution ?? child?.modelResolution,
-            attemptedModels: step.attemptedModels ?? child?.attemptedModels,
-            modelAttempts: step.modelAttempts ?? child?.modelAttempts,
-            contextUsage: step.contextUsage ?? child?.contextUsage,
-            contextPressure: step.contextPressure ?? child?.contextPressure,
-            contextPressureCrossedThresholds: step.contextPressureCrossedThresholds ?? child?.contextPressureCrossedThresholds,
-            terminationReason: step.terminationReason ??
-                child?.terminationReason ??
-                (state === "failed" ? "process_exit" : undefined),
-            ...((step.projectAgent ?? child?.projectAgent)
-                ? { projectAgent: step.projectAgent ?? child?.projectAgent }
-                : {}),
-        };
-    });
-    const telemetry = telemetryForRepairedSteps(mergedTelemetry, steps, now, runOutcome);
-    const stepActiveRuntimeMs = steps
-        .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
-        .filter((value) => value !== undefined);
-    const reconciledActiveRuntimeMs = [
-        normalizeActiveRuntimeMs(status.activeRuntimeMs),
-        repair.activeRuntimeMs,
-        ...(stepActiveRuntimeMs.length > 0
-            ? [stepActiveRuntimeMs.reduce((sum, value) => sum + value, 0)]
-            : []),
-    ].filter((value) => value !== undefined);
-    const stepActiveRuntimeCheckpointAt = steps
-        .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
-        .filter((value) => value !== undefined);
-    const reconciledActiveRuntimeCheckpointAt = [
-        normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt),
-        repair.activeRuntimeCheckpointAt,
-        ...(stepActiveRuntimeCheckpointAt.length > 0
-            ? [Math.max(...stepActiveRuntimeCheckpointAt)]
-            : []),
-    ].filter((value) => value !== undefined);
-    return {
-        ...status,
-        state: repair.state,
-        activityState: undefined,
-        lastUpdate: now,
-        endedAt: status.endedAt ?? now,
-        steps,
-        ...(repair.projectAgents ? { projectAgents: repair.projectAgents } : {}),
-        ...(telemetry ? { telemetry } : {}),
-        ...(reconciledActiveRuntimeMs.length > 0
-            ? { activeRuntimeMs: Math.max(...reconciledActiveRuntimeMs) }
-            : {}),
-        ...(reconciledActiveRuntimeCheckpointAt.length > 0
-            ? { activeRuntimeCheckpointAt: Math.max(...reconciledActiveRuntimeCheckpointAt) }
-            : {}),
-    };
-}
-function buildStartedStatus(asyncDir, startedRun, now) {
-    const startedAt = startedRun.startedAt ?? now;
-    const agents = startedRun.agents?.length ? startedRun.agents : ["subagent"];
-    return {
-        runId: startedRun.runId || path.basename(asyncDir),
-        ...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
-        mode: normalizeSubagentRunMode(startedRun.mode),
-        state: "running",
-        pid: startedRun.pid,
-        startedAt,
-        lastUpdate: now,
-        currentStep: 0,
-        ...(startedRun.projectAgents ? { projectAgents: startedRun.projectAgents } : {}),
-        ...(startedRun.telemetry ? { telemetry: startedRun.telemetry } : {}),
-        steps: agents.map((agent) => ({
-            agent,
-            status: "running",
-            startedAt,
-        })),
-        ...(startedRun.sessionFile ? { sessionFile: startedRun.sessionFile } : {}),
-    };
-}
-function buildFailedRepair(status, asyncDir, now, reason) {
-    const runId = status.runId || path.basename(asyncDir);
-    const pid = typeof status.pid === "number" ? status.pid : "unknown";
-    const baseMessage = reason ??
-        `Async runner process ${pid} exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.`;
-    const diagnostics = readRunnerStartupDiagnostics(asyncDir);
-    const message = diagnostics
-        ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}`
-        : baseMessage;
-    const steps = (status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" }]).map(sanitizeStatusStep);
-    const repairedSteps = steps
-        .map((step) => {
-        if (step.status !== "running" && step.status !== "pending" && step.status !== "pausing") {
-            return step;
-        }
-        return {
-            ...step,
-            activityState: undefined,
-            idleEpisodeId: undefined,
-            compaction: undefined,
             status: "failed",
             endedAt: step.endedAt ?? now,
-            durationMs: step.startedAt !== undefined && step.durationMs === undefined
-                ? Math.max(0, now - step.startedAt)
-                : step.durationMs,
-            ...(normalizeActiveRuntimeMs(step.activeRuntimeMs) !== undefined
-                ? { activeRuntimeMs: normalizeActiveRuntimeMs(step.activeRuntimeMs) }
-                : {}),
-            ...(normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) !== undefined
-                ? {
-                    activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt),
-                }
-                : {}),
+            durationMs: step.durationMs ??
+                (step.startedAt === undefined ? undefined : Math.max(0, now - step.startedAt)),
             exitCode: step.exitCode ?? 1,
-            error: step.error ?? message,
+            error: message,
             terminationReason: step.terminationReason ?? "process_exit",
-        };
-    })
-        .map((step) => step.status === "failed" && !step.terminationReason
-        ? { ...step, terminationReason: "process_exit" }
-        : step);
-    const repairedRuntimeValues = repairedSteps
-        .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
-        .filter((value) => value !== undefined);
-    const repairedCheckpointValues = repairedSteps
-        .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
-        .filter((value) => value !== undefined);
-    const repairedTelemetry = telemetryForRepairedSteps(status.telemetry, repairedSteps, now, {
-        state: "failed",
-        terminationReason: "process_exit",
-    });
-    const repairedActiveRuntimeMs = [
-        normalizeActiveRuntimeMs(status.activeRuntimeMs),
-        ...(repairedRuntimeValues.length > 0
-            ? [repairedRuntimeValues.reduce((sum, value) => sum + value, 0)]
-            : []),
-    ].filter((value) => value !== undefined);
-    const repairedActiveRuntimeCheckpointAt = [
-        normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt),
-        ...(repairedCheckpointValues.length > 0 ? [Math.max(...repairedCheckpointValues)] : []),
-    ].filter((value) => value !== undefined);
-    const repairedStatus = {
+            terminalResult: terminalResultForStatusStep(step, "failed"),
+        });
+    const existingTelemetry = normalizeSubagentRunTelemetry(status.telemetry);
+    const repairedTelemetry = existingTelemetry
+        ? finalizeSubagentRunTelemetry(existingTelemetry, existingTelemetry.outcome?.state !== undefined &&
+            !["queued", "running"].includes(existingTelemetry.outcome.state)
+            ? existingTelemetry.outcome
+            : { state: "failed", terminationReason: "process_exit" }, now)
+        : undefined;
+    return {
         ...status,
         state: "failed",
-        activityState: undefined,
+        pid: undefined,
+        pause: undefined,
+        error: message,
+        endedAt: status.endedAt ?? now,
         lastUpdate: now,
-        endedAt: now,
-        steps: repairedSteps,
+        ...(steps ? { steps } : {}),
         ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
-        ...(repairedActiveRuntimeMs.length > 0
-            ? { activeRuntimeMs: Math.max(...repairedActiveRuntimeMs) }
-            : {}),
-        ...(repairedActiveRuntimeCheckpointAt.length > 0
-            ? { activeRuntimeCheckpointAt: Math.max(...repairedActiveRuntimeCheckpointAt) }
-            : {}),
-    };
-    const resultAgent = repairedSteps[status.currentStep ?? 0]?.agent ?? repairedSteps[0]?.agent ?? "subagent";
-    return {
-        status: repairedStatus,
-        message,
-        result: {
-            id: runId,
-            agent: resultAgent,
-            mode: status.mode,
-            success: false,
-            state: "failed",
-            summary: message,
-            ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
-            results: repairedSteps.map((step) => ({
-                agent: step.agent,
-                ...(typeof step.cwd === "string" && step.cwd.length > 0 ? { cwd: step.cwd } : {}),
-                ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
-                ...(step.tkTicketId ? { tkTicketId: step.tkTicketId } : {}),
-                output: step.status === "complete" || step.status === "completed" ? "" : message,
-                error: step.status === "complete" || step.status === "completed"
-                    ? undefined
-                    : (step.error ?? message),
-                success: step.status === "complete" || step.status === "completed",
-                model: step.model,
-                modelIdentity: step.modelIdentity,
-                modelResolution: step.modelResolution,
-                attemptedModels: step.attemptedModels,
-                modelAttempts: step.modelAttempts,
-                contextUsage: step.contextUsage,
-                contextPressure: step.contextPressure,
-                contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
-                activityState: step.activityState,
-                idleEpisodeId: step.idleEpisodeId,
-                durableAttentionReasons: step.durableAttentionReasons,
-                compaction: step.compaction,
-                ...(step.terminationReason
-                    ? { terminationReason: step.terminationReason }
-                    : step.status !== "complete" && step.status !== "completed"
-                        ? { terminationReason: "process_exit" }
-                        : {}),
-                sessionFile: step.sessionFile,
-                activeRuntimeMs: step.activeRuntimeMs,
-                activeRuntimeCheckpointAt: step.activeRuntimeCheckpointAt,
-            })),
-            exitCode: 1,
-            timestamp: now,
-            durationMs: Math.max(0, now - status.startedAt),
-            ...(repairedStatus.activeRuntimeMs !== undefined
-                ? { activeRuntimeMs: repairedStatus.activeRuntimeMs }
-                : {}),
-            ...(repairedStatus.activeRuntimeCheckpointAt !== undefined
-                ? { activeRuntimeCheckpointAt: repairedStatus.activeRuntimeCheckpointAt }
-                : {}),
-            asyncDir,
-            sessionId: status.sessionId,
-            ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
-            sessionFile: status.sessionFile,
-        },
     };
 }
-function writeFailedRepair(asyncDir, status, resultPath, now, reason) {
-    const repair = buildFailedRepair(status, asyncDir, now, reason);
-    writeAtomicJson(resultPath, repair.result);
-    writeAtomicJson(path.join(asyncDir, "status.json"), repair.status);
-    appendJsonlBestEffort(path.join(asyncDir, "events.jsonl"), {
+function resultStep(step, message) {
+    const complete = isCompletedLifecycleStepState(step.status);
+    return {
+        agent: step.agent,
+        ...(typeof step.cwd === "string" && step.cwd.length > 0 ? { cwd: step.cwd } : {}),
+        output: "",
+        success: complete,
+        ...(complete ? {} : { error: message }),
+        ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
+        ...(step.ticketId ? { ticketId: step.ticketId } : {}),
+        ...(step.exitCode !== undefined ? { exitCode: step.exitCode } : {}),
+        ...(step.exitSignal ? { exitSignal: step.exitSignal } : {}),
+        ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
+        ...(step.model ? { model: step.model } : {}),
+        ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
+        ...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
+        ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
+        ...(step.modelAttempts ? { modelAttempts: step.modelAttempts } : {}),
+        ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
+        ...(step.terminalResult ? { terminalResult: step.terminalResult } : {}),
+    };
+}
+function resultArtifact(status, asyncDir, now, message) {
+    const steps = status.steps ?? [];
+    return {
+        id: status.runId || path.basename(asyncDir),
+        agent: steps[status.currentStep ?? 0]?.agent ?? steps[0]?.agent ?? "subagent",
+        mode: status.mode,
+        generation: lifecycleGeneration(status),
+        success: false,
+        state: "failed",
+        summary: message,
+        error: message,
+        results: steps.map((step) => resultStep(step, message)),
+        exitCode: 1,
+        timestamp: now,
+        durationMs: Math.max(0, now - status.startedAt),
+        asyncDir,
+        ...(status.sessionId ? { sessionId: status.sessionId } : {}),
+        ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
+        ...(status.telemetry ? { telemetry: status.telemetry } : {}),
+    };
+}
+const protectedLifecycle = (status) => status.state === "pausing" || status.pause?.kind === "awaiting_supervisor";
+function commitStaleFailure(asyncDir, observed, resultPath, now, message, guard) {
+    let committed;
+    try {
+        committed = transitionLifecycleStatus({
+            asyncDir,
+            expectedGeneration: lifecycleGeneration(observed),
+            carryMalformedAccounting: true,
+            mutate: (current) => {
+                if (guard && !guard(current))
+                    throw STALE_REPAIR_GUARD_FAILED;
+                return failedStatus(current, now, message);
+            },
+        }).status;
+    }
+    catch {
+        const latest = safeStatus(asyncDir);
+        return {
+            status: latest,
+            repaired: false,
+            resultPath,
+            protectedLifecycle: latest ? protectedLifecycle(latest) : protectedLifecycle(observed),
+        };
+    }
+    const artifact = resultArtifact(committed, asyncDir, now, message);
+    if (!fs.existsSync(resultPath))
+        try {
+            writeAtomicJson(resultPath, artifact);
+        }
+        catch {
+        }
+    appendRepairEvent(path.join(asyncDir, "events.jsonl"), {
         type: "subagent.run.repaired_stale",
         ts: now,
-        runId: repair.status.runId,
-        pid: status.pid,
+        runId: committed.runId,
+        pid: observed.pid,
         resultPath,
-        message: repair.message,
+        message,
     });
-    return { status: repair.status, repaired: true, resultPath, message: repair.message };
+    return {
+        status: committed,
+        repaired: true,
+        resultPath,
+        message,
+        protectedLifecycle: protectedLifecycle(observed),
+    };
 }
 export { checkPidLiveness };
-function isStoppedLifecycleState(state) {
-    return (state === "paused" || state === "cancelled" || state === "continued" || state === "pausing");
+function readResultForRepair(resultPath) {
+    try {
+        if (!fs.existsSync(resultPath))
+            return undefined;
+        const parsed = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+            return undefined;
+        const rec = parsed;
+        if (typeof rec.state !== "string")
+            return undefined;
+        return {
+            id: typeof rec.id === "string" ? rec.id : undefined,
+            generation: typeof rec.generation === "number" && Number.isSafeInteger(rec.generation)
+                ? rec.generation
+                : undefined,
+            state: rec.state,
+            success: typeof rec.success === "boolean" ? rec.success : undefined,
+            results: Array.isArray(rec.results)
+                ? rec.results
+                : undefined,
+            telemetry: normalizeSubagentRunTelemetry(rec.telemetry),
+        };
+    }
+    catch {
+        return undefined;
+    }
+}
+function repairStatusFromResult(asyncDir, observed, resultPath, now) {
+    const repair = readResultForRepair(resultPath);
+    if (!repair)
+        return undefined;
+    const expectedRunId = observed.runId || path.basename(asyncDir);
+    if (repair.id !== undefined && repair.id !== expectedRunId)
+        return undefined;
+    const isComplete = repair.state === "complete" || repair.state === "completed";
+    const isFailed = repair.state === "failed";
+    if (!isComplete && !isFailed)
+        return undefined;
+    const observedGeneration = lifecycleGeneration(observed);
+    if (typeof repair.generation === "number" && repair.generation !== observedGeneration)
+        return undefined;
+    const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, observed.telemetry);
+    const isTerminalTelemetryState = (state) => state === "completed" || state === "failed" || state === "cancelled" || state === "paused";
+    const resultOutcome = mergedTelemetry?.outcome;
+    const runOutcome = resultOutcome && isTerminalTelemetryState(resultOutcome.state)
+        ? resultOutcome
+        : resolveSubagentTelemetryOutcome({
+            state: repair.state,
+            success: isComplete,
+            terminationReason: isFailed ? "process_exit" : undefined,
+        });
+    let repairedTelemetry = mergedTelemetry;
+    if (repairedTelemetry) {
+        const updatedSteps = repairedTelemetry.steps.map((step) => {
+            if (step.outcome && isTerminalTelemetryState(step.outcome.state))
+                return step;
+            const child = repair.results?.[step.index];
+            if (!child)
+                return { ...step, ...(runOutcome ? { outcome: runOutcome } : {}) };
+            const childOutcome = resolveSubagentTelemetryOutcome({
+                success: child.success === true,
+                terminationReason: typeof child.terminationReason === "string"
+                    ? child.terminationReason
+                    : isFailed
+                        ? "process_exit"
+                        : undefined,
+            });
+            return { ...step, ...(childOutcome ? { outcome: childOutcome } : {}) };
+        });
+        const aggregateOutcome = updatedSteps.length > 1
+            ? (resolveParallelSubagentTelemetryOutcome(updatedSteps.map((s) => (s.outcome ? { ...s.outcome } : {}))) ?? runOutcome)
+            : runOutcome;
+        repairedTelemetry = {
+            ...repairedTelemetry,
+            steps: updatedSteps,
+            ...(aggregateOutcome ? { outcome: aggregateOutcome } : {}),
+        };
+    }
+    const repairedSteps = observed.steps?.map((step) => {
+        if (isCompletedLifecycleStepState(step.status) || step.status === "failed")
+            return step;
+        const child = repair.results?.[observed.steps.indexOf(step)];
+        const childSuccess = child?.success === true;
+        return {
+            ...step,
+            status: childSuccess ? "complete" : "failed",
+            endedAt: step.endedAt ?? now,
+            exitCode: childSuccess ? (step.exitCode ?? 0) : (step.exitCode ?? 1),
+            ...(typeof child?.error === "string" ? { error: child.error } : {}),
+            terminationReason: step.terminationReason ?? (childSuccess ? undefined : "process_exit"),
+            terminalResult: terminalResultForStatusStep(step, childSuccess ? "complete" : "failed"),
+        };
+    });
+    const observedPid = observed.pid;
+    let committed;
+    try {
+        committed = transitionLifecycleStatus({
+            asyncDir,
+            expectedGeneration: observedGeneration,
+            carryMalformedAccounting: true,
+            mutate: (current) => {
+                if (isTerminalLifecycleState(current.state))
+                    throw STALE_REPAIR_GUARD_FAILED;
+                if (current.pid !== observedPid)
+                    throw STALE_REPAIR_GUARD_FAILED;
+                return {
+                    ...current,
+                    state: isComplete ? "complete" : "failed",
+                    pid: undefined,
+                    error: isFailed ? (current.error ?? "Async run failed.") : undefined,
+                    endedAt: current.endedAt ?? now,
+                    lastUpdate: now,
+                    ...(repairedSteps ? { steps: repairedSteps } : {}),
+                    ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
+                };
+            },
+        }).status;
+    }
+    catch {
+        const latest = safeStatus(asyncDir);
+        return { status: latest ?? observed, repaired: false, resultPath };
+    }
+    appendRepairEvent(path.join(asyncDir, "events.jsonl"), {
+        type: "subagent.run.repaired_stale",
+        ts: now,
+        runId: committed.runId,
+        resultPath,
+        message: `Stale run repaired from existing result artifact (state=${committed.state}).`,
+    });
+    return { status: committed, repaired: true, resultPath };
 }
 export function reconcileAsyncRun(asyncDir, options = {}) {
-    const now = options.now?.() ?? Date.now();
-    const status = readStatusFile(asyncDir);
-    const startedStatus = !status && options.startedRun
-        ? buildStartedStatus(asyncDir, options.startedRun, now)
-        : undefined;
-    let effectiveStatus = status ?? startedStatus;
-    if (!effectiveStatus)
+    const observed = safeStatus(asyncDir, options.statusRead);
+    if (!observed)
         return { status: null, repaired: false };
-    const runId = effectiveStatus.runId || path.basename(asyncDir);
+    const runId = observed.runId || path.basename(asyncDir);
     const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
-    if (isStoppedLifecycleState(effectiveStatus.state)) {
-        let recovered;
-        if (status) {
-            let locked;
-            try {
-                locked = withLifecycleStatusLock(asyncDir, (current) => {
-                    if (!current || !isStoppedLifecycleState(current.state))
-                        return { current };
-                    const result = recoverStoppedLifecycleOwnership(current, {
-                        kill: options.kill,
-                        now: options.now,
-                    });
-                    if (result.repaired)
-                        writeAtomicJson(path.join(asyncDir, "status.json"), result.status);
-                    return { current, recovered: result };
-                }, { kill: options.kill, now: options.now });
-            }
-            catch {
-                return { status: effectiveStatus, repaired: false };
-            }
-            if (!locked.recovered)
-                return { status: locked.current ?? effectiveStatus, repaired: false };
-            effectiveStatus = locked.current;
-            recovered = locked.recovered;
+    if (isTerminalLifecycleState(observed.state) || !validPid(observed.pid)) {
+        if (!isTerminalLifecycleState(observed.state) && !validPid(observed.pid)) {
+            const resultRepair = repairStatusFromResult(asyncDir, observed, resultPath, options.now?.() ?? Date.now());
+            if (resultRepair)
+                return resultRepair;
         }
-        else {
-            recovered = recoverStoppedLifecycleOwnership(effectiveStatus, {
-                kill: options.kill,
-                now: options.now,
-            });
-            if (recovered.repaired)
-                writeAtomicJson(path.join(asyncDir, "status.json"), recovered.status);
-        }
-        if (recovered.repaired) {
-            return {
-                status: recovered.status,
-                repaired: true,
-                resultPath,
-                message: effectiveStatus.state === "pausing"
-                    ? `Stale pausing lifecycle finalized to paused after child pid ${effectiveStatus.pid} exited.`
-                    : recovered.pidLiveness === "alive"
-                        ? `Stopped lifecycle state discarded persisted pid ${effectiveStatus.pid} because ownership could not be verified after pause/cancel recovery.`
-                        : recovered.pidLiveness === "unknown"
-                            ? `Stopped lifecycle state discarded persisted pid ${effectiveStatus.pid} because ownership could not be verified.`
-                            : `Stopped lifecycle state cleared dead persisted pid ${effectiveStatus.pid}.`,
-            };
-        }
-        if (effectiveStatus.state === "pausing" && recovered.pidLiveness === "dead") {
-            const terminalFromResult = terminalStatusFromResult(effectiveStatus, resultPath, now);
-            if (terminalFromResult) {
-                writeAtomicJson(path.join(asyncDir, "status.json"), terminalFromResult);
-                return {
-                    status: terminalFromResult,
-                    repaired: true,
-                    resultPath,
-                    message: "Existing async result file was used to finalize a stale pausing status.",
-                };
-            }
-            return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, `Persisted pausing run '${runId}' could not be finalized to paused because safe resume metadata was incomplete.`);
-        }
+        return { status: observed, repaired: false, resultPath };
     }
-    if (fs.existsSync(resultPath)) {
-        const terminalStatus = effectiveStatus.state === "running" || effectiveStatus.state === "queued"
-            ? terminalStatusFromResult(effectiveStatus, resultPath, now)
-            : undefined;
-        if (terminalStatus) {
-            writeAtomicJson(path.join(asyncDir, "status.json"), terminalStatus);
-            return {
-                status: terminalStatus,
-                repaired: true,
-                resultPath,
-                message: "Existing async result file was used to repair stale running status.",
-            };
-        }
-        return { status: effectiveStatus, repaired: false, resultPath };
-    }
-    if (effectiveStatus.state !== "running" || typeof effectiveStatus.pid !== "number") {
-        return { status: status ? effectiveStatus : null, repaired: false, resultPath };
-    }
-    if (!status) {
-        const startedAt = options.startedRun?.startedAt ?? effectiveStatus.startedAt;
-        if (now - startedAt < (options.missingStatusGraceMs ?? 1000)) {
-            return { status: null, repaired: false, resultPath };
-        }
-    }
-    const liveness = checkPidLiveness(effectiveStatus.pid, options.kill);
+    const liveness = checkPidLiveness(observed.pid, options.kill);
+    if (liveness !== "dead" && observed.state !== "running")
+        return { status: observed, repaired: false, resultPath };
+    const now = options.now?.() ?? Date.now();
     if (liveness !== "dead") {
-        const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
-        const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
-        if (now - lastUpdate <= staleAfterMs)
-            return { status: status ?? null, repaired: false, resultPath };
-        const message = `Async runner process ${effectiveStatus.pid} still has a live PID, but status has not updated for ${now - lastUpdate}ms. Marked run failed by stale-run reconciliation because PID ownership cannot be verified.`;
-        return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, message);
+        const staleAfterMs = options.staleAlivePidMs ?? DEFAULT_STALE_ALIVE_PID_MS;
+        const lastUpdate = observed.lastUpdate ?? observed.startedAt;
+        const ageMs = now - lastUpdate;
+        if (ageMs <= staleAfterMs)
+            return { status: observed, repaired: false, resultPath };
+        return commitStaleFailure(asyncDir, observed, resultPath, now, staleAlivePidMessage(observed.pid, ageMs), (current) => current.state === "running" &&
+            current.pid === observed.pid &&
+            lifecycleGeneration(current) === lifecycleGeneration(observed) &&
+            now - (current.lastUpdate ?? current.startedAt) > staleAfterMs);
     }
-    return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now);
+    return commitStaleFailure(asyncDir, observed, resultPath, now, staleMessage(observed.pid));
 }

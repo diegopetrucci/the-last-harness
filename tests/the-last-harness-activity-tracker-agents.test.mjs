@@ -132,3 +132,62 @@ test("known names are not erased by a later nameless record", () => {
     tracker.dispose();
   });
 });
+
+test("awaited runs (run.execution foreground) get no OSC child record or msg count", async () => {
+  await withTemp(async (dir) => {
+    writeStatus(dir, "w1", {
+      runId: "w1",
+      state: "running",
+      pid: 11,
+      sessionId: "s1",
+      telemetry: { run: { id: "w1", execution: "foreground", mode: "single" } },
+      steps: [{ agent: "awaitedworker" }],
+    });
+    writeStatus(dir, "d1", {
+      runId: "d1",
+      state: "running",
+      pid: 12,
+      sessionId: "s1",
+      telemetry: { run: { id: "d1", execution: "async", mode: "single" } },
+      steps: [{ agent: "detached" }],
+    });
+    const tracker = newTracker(dir);
+    tracker.rehydrateFromArtifacts(ctx);
+    // Rehydrated jobs are replaced by the restored snapshot; live events win.
+    tracker.handleAsyncStarted({
+      id: "w2",
+      asyncDir: dir,
+      pid: 13,
+      agent: "awaited2",
+      telemetry: { run: { id: "w2", execution: "foreground", mode: "single" } },
+    });
+    tracker.handleAsyncStarted({ id: "d2", asyncDir: dir, pid: 14, agent: "detached2" });
+    tracker.handleAsyncRestored({
+      sessionId: "s1",
+      jobs: [
+        { runId: "w1", asyncDir: join(dir, "w1"), sessionId: "s1", pid: 5 },
+        { runId: "d1", asyncDir: join(dir, "d1"), sessionId: "s1", pid: 6 },
+      ],
+    });
+    const snapshot = tracker.getSnapshot();
+    assert.deepEqual(snapshot.awaitedAsyncJobIds, ["w1", "w2"]);
+    assert.ok(snapshot.activeAsyncJobIds.includes("d1"));
+
+    const writes = [];
+    const reporter = createProgramStatusActivityReporter({
+      env: {},
+      output: { isTTY: true, write: (d) => writes.push(d) },
+      idleDebounceMs: 0,
+    });
+    reporter.handleSessionStart({ mode: "tui", sessionManager: ctx.sessionManager });
+    reporter.handleSnapshot(snapshot);
+    await new Promise((r) => setTimeout(r, 10));
+    const output = writes.join("");
+    assert.match(output, /id=subagent\/d1/);
+    assert.match(output, /id=subagent\/d2/);
+    assert.doesNotMatch(output, /subagent\/w[12]/);
+    assert.ok(output.includes(b64("2 subagents running")));
+    reporter.dispose();
+    tracker.dispose();
+  });
+});

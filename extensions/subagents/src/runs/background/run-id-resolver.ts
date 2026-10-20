@@ -4,9 +4,7 @@ import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../shared/types.t
 import { findAsyncRunPrefixMatches, type AsyncRunLocation } from "./async-resume.ts";
 import { assertSafeNestedId } from "../shared/nested-events.ts";
 
-export type ResolvedSubagentRunId =
-  | { kind: "foreground"; id: string }
-  | { kind: "async"; id: string; location: AsyncRunLocation };
+export type ResolvedSubagentRunId = { kind: "async"; id: string; location: AsyncRunLocation };
 
 interface ResolveSubagentRunIdDeps {
   state?: SubagentState;
@@ -29,13 +27,6 @@ function exactAsyncLocation(
   };
 }
 
-function foregroundIds(state: SubagentState | undefined): string[] {
-  if (!state) return [];
-  return [
-    ...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])]),
-  ];
-}
-
 export function resolveSubagentRunId(
   id: string,
   deps: ResolveSubagentRunIdDeps = {},
@@ -43,17 +34,10 @@ export function resolveSubagentRunId(
   assertSafeNestedId("id", id);
   const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
   const resultsDir = deps.resultsDir ?? RESULTS_DIR;
-  if (deps.state?.foregroundControls.has(id) || deps.state?.foregroundRuns?.has(id))
-    return { kind: "foreground", id };
   const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
   if (exactAsync) return { kind: "async", id, location: exactAsync };
 
   const matches: ResolvedSubagentRunId[] = [];
-  for (const foregroundId of foregroundIds(deps.state).filter((candidate) =>
-    candidate.startsWith(id),
-  )) {
-    matches.push({ kind: "foreground", id: foregroundId });
-  }
   for (const match of findAsyncRunPrefixMatches(id, asyncDirRoot, resultsDir)) {
     matches.push({ kind: "async", id: match.id, location: match.location });
   }

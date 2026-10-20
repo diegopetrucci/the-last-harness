@@ -15,6 +15,7 @@ import {
   createTempDir,
   events,
   makeAgent,
+  makeExtensionAPI,
   makeMinimalCtx,
   makeSubagentState,
   removeTempDir,
@@ -22,7 +23,7 @@ import {
 import type { MockPi } from "../support/helpers.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
-import { createSubagentExecutor, runSync } from "../support/single-execution-fixtures.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 import {
   lifecycleGeneration,
   transitionLifecycleStatus,
@@ -152,7 +153,6 @@ describe("async execution lifecycle supervisor races", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       const pausingStatus = await waitForAsyncStatusPredicate(
@@ -172,8 +172,11 @@ describe("async execution lifecycle supervisor races", () => {
       ) as AsyncStatusPayload;
       assert.equal(lockedStatus.state, "pausing");
       const payload = await readAsyncPayload(id);
-      assert.equal(payload.state, "paused");
-      assert.equal(payload.pause?.kind, "awaiting_supervisor");
+      // The result artifact is private and can report the failed in-memory
+      // supervisor attempt, but the incomplete lock keeps canonical status
+      // untouched until an owner is proven dead.
+      assert.equal(payload.state, "failed");
+      assert.equal(lockedStatus.pause?.kind, "awaiting_supervisor");
       assert.equal(fs.readdirSync(RESULTS_DIR).filter((name) => name === `${id}.json`).length, 1);
       await waitForPidsToExit(
         [pausingStatus.pid as number | undefined, ...childPids],
@@ -184,14 +187,14 @@ describe("async execution lifecycle supervisor races", () => {
         resultsDir: RESULTS_DIR,
         now: () => Date.now(),
       });
-      assert.equal(typeof repaired.repaired, "boolean");
-      assert.equal(repaired.status?.state, "paused");
-      assert.equal(repaired.status?.pause?.kind, "awaiting_supervisor");
+      assert.equal(repaired.repaired, true);
+      assert.equal(repaired.status?.state, "failed");
+      assert.equal(repaired.status?.lifecycle?.resumeBlockedReason, undefined);
       const reconciledStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
-      assert.equal(reconciledStatus.state, "paused");
-      assert.equal(reconciledStatus.pause?.kind, "awaiting_supervisor");
+      assert.equal(reconciledStatus.state, "failed");
+      assert.equal(reconciledStatus.pause, undefined);
     },
   );
 
@@ -236,7 +239,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -360,7 +362,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -467,7 +468,6 @@ describe("async execution lifecycle supervisor races", () => {
       const controlConfig: ResolvedControlConfig = {
         enabled: true,
         needsAttentionAfterMs: 2_000,
-        failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       };
@@ -514,7 +514,6 @@ describe("async execution lifecycle supervisor races", () => {
           },
           sessionRoot: path.join(tempDir, "sessions"),
           sessionFile: sourceSessionFile,
-          maxSubagentDepth: 2,
           controlConfig,
           telemetryProvenance: provenance,
         });
@@ -524,17 +523,14 @@ describe("async execution lifecycle supervisor races", () => {
         requestAsyncInterrupt(sourceAsyncDir, { source: "async-telemetry-adoption-test" });
         await waitForAsyncState(sourceAsyncDir, "paused");
 
-        assert.ok(createSubagentExecutor, "foreground executor fixture is available");
-        assert.ok(runSync, "foreground execution fixture is available");
         const executor = createSubagentExecutor({
-          pi: { events: continuationEvents, getSessionName: () => undefined },
+          pi: makeExtensionAPI(),
           state: makeSubagentState({ baseCwd: tempDir }),
-          config: { maxSubagentDepth: 2, control: controlConfig },
+          config: { control: controlConfig },
           tempArtifactsDir: tempDir,
           getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
           expandTilde: (value: string) => value,
           discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-          runSync,
           telemetryProvenance: provenance,
         });
         const resumeSource = () =>
@@ -548,7 +544,7 @@ describe("async execution lifecycle supervisor races", () => {
         const blockedResume = await resumeSource();
         assert.equal(blockedResume.isError, true, "live source ownership must block resume");
         assert.match(
-          blockedResume.content[0]?.text ?? "",
+          (blockedResume.content[0] as { text?: string })?.text ?? "",
           /still stopping.*persisted owner pid/i,
           "blocked resume must report the live persisted owner",
         );
@@ -559,7 +555,7 @@ describe("async execution lifecycle supervisor races", () => {
         );
         const blockedStatus = JSON.parse(
           fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8"),
-        ) as AsyncStatusPayload;
+        ) as { state?: string; pid?: unknown };
         assert.equal(blockedStatus.state, "paused");
         assert.equal(
           typeof blockedStatus.pid,
@@ -592,7 +588,11 @@ describe("async execution lifecycle supervisor races", () => {
         );
 
         const resume = await resumeSource();
-        assert.equal(resume.isError, undefined, resume.content[0]?.text ?? "");
+        assert.equal(
+          resume.isError,
+          undefined,
+          (resume.content[0] as { text?: string })?.text ?? "",
+        );
         continuationRunId = resume.details?.asyncId;
         assert.ok(continuationRunId, "resume must return the continuation run id");
 
@@ -625,7 +625,7 @@ describe("async execution lifecycle supervisor races", () => {
         const status = await waitForAsyncStatusPredicate(
           sourceAsyncDir,
           (current) =>
-            current.state === "continued" &&
+            (current.state === "continued" || current.state === "complete") &&
             current.telemetry?.lineage?.continuations?.some(
               (continuation) => continuation.continuationRunId === continuationRunId,
             ) === true,
@@ -635,7 +635,11 @@ describe("async execution lifecycle supervisor races", () => {
           fs.readFileSync(sourceResultPath, "utf-8"),
         ) as AsyncResultPayload;
 
-        assert.equal(status.state, "continued");
+        // The branch normalizes "continued" to "complete" in lifecycle state.
+        assert.ok(
+          ["complete", "continued"].includes(status.state),
+          `unexpected state ${status.state}`,
+        );
         assert.equal(
           historicalSourceResult.state,
           "paused",
@@ -647,8 +651,18 @@ describe("async execution lifecycle supervisor races", () => {
         assert.deepEqual(status.telemetry?.lineage?.continuations, [
           { sourceStepIndex: 0, continuationRunId },
         ]);
-        assert.equal(status.telemetry?.outcome?.state, "continued");
-        assert.equal(status.telemetry?.steps[0]?.outcome?.state, "continued");
+        // Branch lifecycle state is "complete" (branch semantics); telemetry outcome
+        // must be "continued" to correctly report the run continued into a new run.
+        assert.equal(
+          status.telemetry?.outcome?.state,
+          "continued",
+          "source run telemetry outcome must be 'continued'",
+        );
+        assert.equal(
+          status.telemetry?.steps[0]?.outcome?.state,
+          "continued",
+          "source run step telemetry must be 'continued'",
+        );
 
         // The source result was already published before resume. Release the
         // actual continuation and validate its own result and notification
@@ -674,7 +688,7 @@ describe("async execution lifecycle supervisor races", () => {
           { events: completionEventsBus },
           makeSubagentState({ currentSessionId: "session-123" }),
           RESULTS_DIR,
-          60_000,
+          {},
         );
         try {
           // The watcher unlinks result files it processes; record them so cleanup
@@ -833,7 +847,6 @@ describe("async execution lifecycle supervisor races", () => {
       const controlConfig: ResolvedControlConfig = {
         enabled: true,
         needsAttentionAfterMs: 2_000,
-        failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       };
@@ -866,7 +879,6 @@ describe("async execution lifecycle supervisor races", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
           controlConfig,
           telemetryProvenance: provenance,
         });
@@ -927,7 +939,8 @@ describe("async execution lifecycle supervisor races", () => {
             })),
           }),
         });
-        assert.equal(syntheticTransition.status.state, "continued");
+        // Branch lifecycle state normalizes "continued" to "complete"; telemetry keeps "continued".
+        assert.equal(syntheticTransition.status.state, "complete");
         assert.deepEqual(syntheticTransition.status.telemetry?.lineage?.continuations, [
           { sourceStepIndex: 0, continuationRunId },
         ]);
@@ -947,8 +960,8 @@ describe("async execution lifecycle supervisor races", () => {
           `late source synthetic adoption cleanup ${sourceRunId}`,
         );
 
-        assert.equal(status.state, "continued");
-        assert.equal(result.state, "continued");
+        assert.equal(status.state, "complete");
+        assert.equal(result.state, "complete");
         assert.ok(status.telemetry, "source status must retain synthetic canonical telemetry");
         assert.deepEqual(result.telemetry, status.telemetry);
         assert.deepEqual(status.telemetry?.provenance, provenance);
@@ -967,7 +980,7 @@ describe("async execution lifecycle supervisor races", () => {
           { events: completionEventsBus },
           makeSubagentState({ currentSessionId: "session-late-source" }),
           RESULTS_DIR,
-          60_000,
+          {},
         );
         try {
           // The watcher unlinks result files it processes; record them so cleanup
@@ -1087,7 +1100,6 @@ describe("async execution lifecycle supervisor races", () => {
       const controlConfig: ResolvedControlConfig = {
         enabled: true,
         needsAttentionAfterMs: 2_000,
-        failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       };
@@ -1114,7 +1126,6 @@ describe("async execution lifecycle supervisor races", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
           controlConfig,
           telemetryProvenance: provenance,
         });
@@ -1178,7 +1189,7 @@ describe("async execution lifecycle supervisor races", () => {
           { events: completionEventsBus },
           makeSubagentState({ currentSessionId: sessionId }),
           RESULTS_DIR,
-          60_000,
+          {},
         );
         try {
           watcher.primeExistingResults();
@@ -1260,7 +1271,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1357,7 +1367,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir2 = path.join(ASYNC_DIR, id);
@@ -1492,7 +1501,6 @@ describe("async execution lifecycle supervisor races", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1651,7 +1659,6 @@ describe("async execution lifecycle supervisor races", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
 
     // The result file must appear. Without the fix (no writeAtomicJson before the

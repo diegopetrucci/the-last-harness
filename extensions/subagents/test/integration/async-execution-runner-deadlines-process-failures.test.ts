@@ -32,23 +32,6 @@ import type {
   SubagentRunPlan,
 } from "../../src/runs/shared/parallel-utils.ts";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readEventTypes(asyncDir: string): string[] {
-  const eventPath = path.join(asyncDir, "events.jsonl");
-  assert.ok(fs.existsSync(eventPath), "runner should persist an event log");
-  const text = fs.readFileSync(eventPath, "utf-8").trim();
-  assert.ok(text.length > 0, "event log should contain lifecycle records");
-  return text.split("\n").map((line, index) => {
-    const parsed: unknown = JSON.parse(line);
-    if (!isRecord(parsed)) throw new Error(`event ${index} should be a JSON object`);
-    if (typeof parsed.type !== "string") throw new Error(`event ${index} should have a type`);
-    return parsed.type;
-  });
-}
-
 describe("async execution runner deadlines and process failures", () => {
   let tempDir: string;
   let previousAgentDir: string | undefined;
@@ -304,8 +287,6 @@ describe("async execution runner deadlines and process failures", () => {
       inheritSkills: false,
       timeoutMs: 1_000,
       timeoutOwner: "role",
-      activeRuntimeMs: 1.5,
-      activeRuntimeCheckpointAt: 0,
     };
     const validPlan: SubagentRunPlan = { kind: "single", task: validStep };
     const omittedFieldsStep: RunnerSubagentStep = {
@@ -369,19 +350,6 @@ describe("async execution runner deadlines and process failures", () => {
       [
         "timeout-unsafe",
         { ...validPlan, task: { ...validStep, timeoutMs: Number.MAX_SAFE_INTEGER + 1 } },
-      ],
-      ["active-negative", { ...validPlan, task: { ...validStep, activeRuntimeMs: -1 } }],
-      ["active-string", { ...validPlan, task: { ...validStep, activeRuntimeMs: "1" } }],
-      [
-        "checkpoint-negative",
-        { ...validPlan, task: { ...validStep, activeRuntimeCheckpointAt: -1 } },
-      ],
-      [
-        "checkpoint-unsafe",
-        {
-          ...validPlan,
-          task: { ...validStep, activeRuntimeCheckpointAt: Number.MAX_SAFE_INTEGER + 1 },
-        },
       ],
       [
         "owner-without-timeout",
@@ -452,11 +420,6 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(valid.runner.status, 0, valid.runner.stderr);
     assert.equal(valid.payload?.state, "complete");
     assert.equal(valid.payload?.success, true);
-    assert.ok(
-      (valid.payload?.results[0]?.activeRuntimeMs ?? 0) >= 2,
-      "trusted runtime evidence must not reset consumed budget",
-    );
-
     mockPi.onCall({ output: "max-safe step accepted" });
     const maxSafeStep = runCase("max-safe-step-no-run-deadline", {
       kind: "single",
@@ -464,7 +427,6 @@ describe("async execution runner deadlines and process failures", () => {
         ...validStep,
         task: "Trusted max-safe step timeout without a run deadline should launch.",
         timeoutMs: Number.MAX_SAFE_INTEGER,
-        activeRuntimeMs: 0,
       },
     });
     assert.equal(maxSafeStep.runner.status, 0, maxSafeStep.runner.stderr);
@@ -477,13 +439,15 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(mockPi.callCount(), 3, "only compatible plans should launch children");
   });
 
-  it("normalizes fractional continuation runtime before deriving runner policy", async () => {
-    const id = `async-fractional-continuation-${Date.now().toString(36)}`;
-    mockPi.onCall({ output: "fractional continuation accepted" });
+  it("bounds the role deadline by the per-instance remaining budget", async () => {
+    const roleTimeoutMs = scaleTestTimeout(500);
+    const id = `async-role-spawn-deadline-${Date.now().toString(36)}`;
+    mockPi.onCall({ delay: scaleTestTimeout(25), output: "fresh role deadline accepted" });
+    const dispatchStartedAt = Date.now();
     const result = executeAsyncSingle(id, {
       agent: "worker",
-      task: "Use the conservatively normalized continuation budget.",
-      agentConfig: makeAgent("worker", { maxExecutionTimeMs: 10_000 }),
+      task: "Use the fresh role deadline from this child spawn.",
+      agentConfig: makeAgent("worker", { maxExecutionTimeMs: roleTimeoutMs }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -495,21 +459,23 @@ describe("async execution runner deadlines and process failures", () => {
       },
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
-      activeRuntimeMs: 1.5,
-      activeRuntimeCheckpointAt: Number.MAX_SAFE_INTEGER + 1,
     });
 
     assert.equal(result.isError, undefined);
-    assert.equal(result.details.timeoutMs, 9_998);
+    assert.equal(result.details.timeoutMs, roleTimeoutMs);
     const payload = await readAsyncPayload(id);
     assert.equal(payload.success, true);
     const status = JSON.parse(
       fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
     ) as AsyncStatusPayload;
-    assert.equal(status.steps?.[0]?.timeoutMs, 9_998);
-    assert.ok((status.steps?.[0]?.activeRuntimeMs ?? 0) >= 2);
-    assert.equal(status.activeRuntimeCheckpointAt, Number.MAX_SAFE_INTEGER);
-    assert.ok(Number.isSafeInteger(status.activeRuntimeCheckpointAt));
+    const step = status.steps?.[0];
+    assert.ok(step?.startedAt !== undefined);
+    assert.ok(step.startedAt >= dispatchStartedAt);
+    assert.equal(step?.timeoutMs, roleTimeoutMs);
+    // The deadline is the remaining active-time budget (a fresh instance has all
+    // of it), anchored no earlier than dispatch and no later than the child spawn.
+    assert.ok((step?.deadlineAt ?? 0) >= dispatchStartedAt + roleTimeoutMs);
+    assert.ok((step?.deadlineAt ?? 0) <= (step?.startedAt ?? 0) + roleTimeoutMs);
   });
 
   it("rejects retired timeout plans before launching a child", () => {
@@ -585,6 +551,7 @@ describe("async execution runner deadlines and process failures", () => {
         "Async runner config contains retired timeoutMs execution control. Remove timeoutMs and restart with a new direct single or parallel run; per-role execution budgets are applied automatically.";
       assert.equal(payload.state, "failed", testCase.label);
       assert.equal(payload.success, false, testCase.label);
+      assert.equal(payload.generation, status.lifecycle?.generation, testCase.label);
       assert.equal(payload.error, expectedError, testCase.label);
       assert.equal(
         payload.timeoutMs,
@@ -688,12 +655,12 @@ describe("async execution runner deadlines and process failures", () => {
     );
   });
 
-  it("persists bounded active-runtime checkpoints without event or projection spam", async () => {
-    mockPi.onCall({ delay: 2_500, output: "checkpointed result" });
-    const id = `async-runtime-checkpoints-${Date.now().toString(36)}`;
+  it("persists per-instance active runtime for a fresh run", async () => {
+    mockPi.onCall({ output: "fresh run without a runtime ledger" });
+    const id = `async-no-runtime-ledger-${Date.now().toString(36)}`;
     executeAsyncSingle(id, {
       agent: "worker",
-      task: "Remain active long enough to checkpoint.",
+      task: "Complete without writing cumulative runtime fields.",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
@@ -708,27 +675,22 @@ describe("async execution runner deadlines and process failures", () => {
     });
 
     const asyncDir = path.join(ASYNC_DIR, id);
-    const payload = await readAsyncPayload(id);
-    assert.equal(payload.state, "complete");
+    await readAsyncPayload(id);
+    const payload = JSON.parse(
+      fs.readFileSync(path.join(RESULTS_DIR, `${id}.json`), "utf-8"),
+    ) as Record<string, unknown>;
     const status = JSON.parse(
       fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.ok((status.activeRuntimeMs ?? 0) > 0, "final status should persist active runtime");
-    assert.equal(
-      typeof status.activeRuntimeCheckpointAt,
-      "number",
-      "final status should persist its authoritative checkpoint timestamp",
-    );
-    const eventTypes = readEventTypes(asyncDir);
-    assert.equal(
-      eventTypes.filter((type) => type.includes("runtime") || type.includes("checkpoint")).length,
-      0,
-      "accounting checkpoints must not append lifecycle events",
-    );
-    assert.equal(
-      eventTypes.filter((type) => type === "subagent.nested.updated").length,
-      0,
-      "accounting checkpoints must not publish nested projections",
+    ) as Record<string, unknown>;
+    assert.equal(payload.state, "complete");
+    const steps = payload.results as Array<Record<string, unknown>> | undefined;
+    const stepRuntime = steps?.[0]?.activeRuntimeMs;
+    assert.ok(typeof stepRuntime === "number" && stepRuntime > 0, "step carries active runtime");
+    const statusSteps = status.steps as Array<Record<string, unknown>> | undefined;
+    const statusRuntime = statusSteps?.[0]?.activeRuntimeMs;
+    assert.ok(
+      typeof statusRuntime === "number" && statusRuntime > 0,
+      "status carries active runtime",
     );
   });
 
@@ -760,8 +722,8 @@ describe("async execution runner deadlines and process failures", () => {
     // misleading polling failure.
     const payload = await readAsyncPayload(id);
     assert.equal(payload.state, "failed");
-    assert.equal(payload.timedOut, true);
     assert.equal(payload.results[0]?.timedOut, true);
+    assert.equal(payload.results[0]?.terminalResult?.state, "failed");
     assert.equal(payload.results[0]?.timeoutOwner, "role");
     assert.equal(payload.results[0]?.error, `Subagent timed out after ${roleTimeoutMs}ms.`);
   });
@@ -813,6 +775,7 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(payload.state, "failed");
     assert.equal(payload.timedOut, true);
     assert.equal(payload.results[0]?.timedOut, true);
+    assert.equal(payload.results[0]?.terminalResult?.state, "failed");
     assert.equal(payload.results[0]?.timeoutOwner, "role");
     assert.equal(payload.results[0]?.error, `Subagent timed out after ${timeoutMs}ms.`);
     assert.equal(status.timedOut, true);

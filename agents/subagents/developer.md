@@ -17,7 +17,6 @@ tlhModelDefaults:
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-acceptanceRole: writer
 ---
 You are the TLH developer, a senior engineer implementing tasks assigned by the TLH architect.
 

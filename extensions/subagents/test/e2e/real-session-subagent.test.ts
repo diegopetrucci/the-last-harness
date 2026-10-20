@@ -3,10 +3,11 @@
  *
  * Spawns an actual child `pi` subprocess (a repo-local child CLI that runs a
  * real `AgentSession` backed by a faux provider) and exercises the extension's
- * real foreground execution path: the parent session calls the `subagent` tool,
- * the tool spawns the child, the child streams jsonl events, the extension's
- * real stdout parser extracts the result, and the marker flows back as a tool
- * result that the parent relays. No real API keys are used.
+ * default awaited execution path: the parent session calls the `subagent` tool,
+ * the tool spawns the child, the awaited owner waits for terminal completion,
+ * the child streams jsonl events, the extension's real stdout parser extracts
+ * the result, and the marker flows back as a tool result that the parent
+ * relays. No real API keys are used.
  *
  * Pi runtime packages are required test dependencies; import failures fail the suite.
  */
@@ -51,7 +52,7 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
     run = undefined;
   });
 
-  it("boots the extension in a real parent session and delivers a faux child result", async () => {
+  it("uses the default awaited route in a real parent session", async () => {
     const {
       routeParentThroughSubagent,
       runRealSubagentSession,
@@ -102,12 +103,22 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
           provenance?: Record<string, unknown>;
           steps?: Array<Record<string, unknown>>;
         };
+        asyncDir?: unknown;
+        awaited?: boolean;
       };
+      // Awaited runs carry telemetry with execution="foreground" in the tool result.
       assert.equal(details.telemetry?.run?.execution, "foreground");
       assert.equal(details.telemetry?.run?.mode, "single");
       assert.ok(details.telemetry?.provenance);
       assert.ok(details.telemetry?.schemaVersion);
       assert.doesNotMatch(JSON.stringify(details.telemetry), /CHILD_REAL_SESSION_OK/);
+      // The run directory is exposed in structured details.
+      assert.equal(
+        typeof details.asyncDir,
+        "string",
+        "awaited dispatch should expose its run directory",
+      );
+      assert.equal(details.awaited, true, "awaited dispatch should persist awaited ownership");
       assert.match(run.responseText, new RegExp(CHILD_MARKER));
       assert.doesNotMatch(run.responseText, /CHILD_MISSING/);
       assert.ok(

@@ -14,11 +14,9 @@ tlhModelDefaults:
     effort: medium
   - provider: openrouter
     effort: high
-toolBudget: {"soft":20,"hard":30}
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-acceptanceRole: read-only
 ---
 You are the TLH repo scout. Your job is to quickly inspect the current repository and return a concise, evidence-backed report so the architect and developer avoid wrong-stack assumptions.
 

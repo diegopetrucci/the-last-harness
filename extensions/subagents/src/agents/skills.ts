@@ -782,3 +782,36 @@ export function clearSkillCache(): void {
   skillCache.clear();
   loadSkillsCache = null;
 }
+
+/**
+ * Normalise the `skill` parameter of a subagent tool call into a string array,
+ * false (disable all skills), or undefined (inherit caller defaults).
+ */
+export function normalizeSkillInput(
+  input: string | string[] | boolean | undefined,
+): string[] | false | undefined {
+  if (input === false) return false;
+  if (input === true || input === undefined) return undefined;
+  if (Array.isArray(input)) {
+    return [...new Set(input.map((s) => s.trim()).filter((s) => s.length > 0))];
+  }
+  const trimmed = input.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return normalizeSkillInput(parsed);
+      }
+    } catch {
+      // Not valid JSON - fall through to comma-split
+    }
+  }
+  return [
+    ...new Set(
+      input
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    ),
+  ];
+}

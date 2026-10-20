@@ -1175,7 +1175,7 @@ EOF_MIGRATED_NPM
   write_tlh_install_state "${migrated_foreign_agent}" true
   write_tlh_pi_runtime "${migrated_foreign_runtime}"
   write_tlh_runtime_marker "${migrated_foreign_runtime}" migrated
-  # Foreign lib/package.json with a different name 
+  # Foreign lib/package.json with a different name
   printf '{"name":"some-other-shared-runtime"}\n' >"${foreign_lib_pkg_json}"
   mkdir -p "${migrated_foreign_fakebin}"
   cat >"${migrated_foreign_fakebin}/npm" <<EOF_MIGRATED_FOREIGN_NPM

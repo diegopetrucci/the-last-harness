@@ -22,13 +22,7 @@ import { discoverAgents } from "../../src/agents/agents.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
-import {
-  createProjectAgentRunCapture,
-  getProjectAgentSnapshotProvenance,
-  registerProjectAgentSnapshot,
-  resolveProjectAgentSnapshot,
-  revokeProjectAgentSnapshot,
-} from "../../src/agents/project-agent-snapshot.ts";
+import type { ProjectAgentIdentity } from "../../src/agents/project-agent-loader.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
@@ -91,8 +85,6 @@ describe("async execution supervisor", () => {
         baseCwd: tempDir,
         currentSessionId: null,
         asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
       config: {},
       tempArtifactsDir: tempDir,
@@ -111,25 +103,17 @@ describe("async execution supervisor", () => {
       systemPrompt: "Captured project prompt",
       tools: ["read"],
     });
-    const capability = registerProjectAgentSnapshot({
-      projectRoot: tempDir,
-      sessionId: "session-1",
-      generationId: "generation-async-provenance",
-      entries: [
-        { agent: projectAgent, digest: "digest-async-provenance", frontmatterFields: ["tools"] },
-      ],
-    });
-    const manifest = resolveProjectAgentSnapshot(
-      capability,
-      getProjectAgentSnapshotProvenance(capability),
-    );
-    const capture = createProjectAgentRunCapture(manifest, projectAgent);
+    const identity: ProjectAgentIdentity = {
+      slug: "worker",
+      root: tempDir,
+      cwd: tempDir,
+    };
     mockPi.onCall({ output: "captured async result" });
     executeAsyncSingle!(id, {
       agent: projectAgent.name,
       task: "capture this run",
       agentConfig: projectAgent,
-      projectAgent: capture,
+      projectAgent: identity,
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -150,12 +134,11 @@ describe("async execution supervisor", () => {
     );
     const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as any;
     const payload = await readAsyncPayload(id);
-    assert.deepEqual(status.steps?.[0]?.projectAgent, capture);
-    assert.deepEqual(payload.results?.[0]?.projectAgent, capture);
-    assert.deepEqual(payload.projectAgents, [capture]);
+    assert.deepEqual(status.steps?.[0]?.projectAgent, identity);
+    assert.deepEqual(payload.results?.[0]?.projectAgent, identity);
+    assert.deepEqual(payload.projectAgents, [identity]);
     assert.equal(JSON.stringify(status).includes("capability"), false);
     assert.equal(JSON.stringify(payload).includes("capability"), false);
-    revokeProjectAgentSnapshot(capability);
   });
 
   it(
@@ -175,7 +158,6 @@ describe("async execution supervisor", () => {
       process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
       const canonicalDeveloper = makeAgent("developer", {
         maxExecutionTimeMs: 5_000,
-        acceptanceRole: "writer",
         filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
       });
       process.env.MOCK_PI_SESSION_DIR_FILE = "1";
@@ -246,9 +228,6 @@ describe("async execution supervisor", () => {
         assert.equal(status.pause?.request?.tool, "contact_supervisor");
         assert.equal(status.steps?.[0]?.status, "paused");
         assert.equal(status.steps?.[0]?.pause?.kind, "awaiting_supervisor");
-        assert.equal(status.steps?.[0]?.acceptance?.status, "skipped");
-        assert.ok((status.steps?.[0]?.activeRuntimeMs ?? 0) > 0);
-        const pausedActiveRuntimeMs = status.steps?.[0]?.activeRuntimeMs;
         const payload = (await readAsyncPayload(id)) as any;
         assert.equal(payload.state, "paused");
         assert.equal(payload.pause?.kind, "awaiting_supervisor");
@@ -275,12 +254,12 @@ describe("async execution supervisor", () => {
           makeMinimalCtx(tempDir),
         );
         await waitForMockPiCall(mockPi, 1);
-        await waitForAsyncState(asyncDir, "continued");
+        await waitForAsyncState(asyncDir, "complete");
         assert.equal(mockPi.callCount(), 2);
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
         ) as any;
-        assert.equal(continuedStatus.state, "continued");
+        assert.equal(continuedStatus.state, "complete");
         assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
         assert.equal(continuedStatus.pid, undefined);
         const continuationPayload = await readAsyncPayload(
@@ -292,7 +271,6 @@ describe("async execution supervisor", () => {
           [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
         });
         assert.equal(continuationPayload.timeoutMs, undefined);
-        assert.ok((continuationPayload.results[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
         const continuationStatus = JSON.parse(
           fs.readFileSync(
             path.join(
@@ -308,9 +286,6 @@ describe("async execution supervisor", () => {
             continuationStatus.steps[0].timeoutMs > 0 &&
             continuationStatus.steps[0].timeoutMs <= (canonicalDeveloper.maxExecutionTimeMs ?? 0),
         );
-        assert.ok((continuationStatus.steps?.[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
-        assert.notEqual(continuationPayload.results[0]?.acceptance?.status, "skipped");
-        assert.equal(continuationPayload.results[0]?.acceptance?.status, "checked");
 
         const duplicate = await reloaded.execute(
           "async-supervisor-resume-duplicate",
@@ -467,7 +442,6 @@ describe("async execution supervisor", () => {
             pi: { events: { emit() {} } },
             cwd: tempDir,
             currentSessionId: "session-1",
-            currentModelProvider: "anthropic",
             currentModel: { provider: "anthropic", id: "claude-sonnet-4" },
           },
           availableModels,
@@ -511,7 +485,7 @@ describe("async execution supervisor", () => {
           },
         );
         assert.equal(resumed.isError, undefined);
-        await waitForAsyncState(asyncDir, "continued", scaleTestTimeout(10_000));
+        await waitForAsyncState(asyncDir, "complete", scaleTestTimeout(10_000));
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
         ) as any;
@@ -542,7 +516,7 @@ describe("async execution supervisor", () => {
   );
 
   it(
-    "resumes paused async supervisor runs unchanged after disk reload and evaluates continuation acceptance once",
+    "resumes paused async supervisor runs unchanged after disk reload",
     {
       skip:
         process.platform === "win32"
@@ -585,17 +559,12 @@ describe("async execution supervisor", () => {
         });
         const asyncDir = path.join(ASYNC_DIR, id);
         await waitForAsyncState(asyncDir, "paused");
-        const pausedPayload = await readAsyncPayload(id);
-        assert.equal(pausedPayload.results[0]?.acceptance?.status, "skipped");
         const resumeTarget = resolveAsyncResumeTarget({ id });
         assert.equal(resumeTarget.kind, "revive");
         assert.equal(resumeTarget.state, "paused");
         assert.equal(resumeTarget.agent, "worker");
         assert.equal(resumeTarget.index, 0);
         assert.equal(resumeTarget.pauseKind, "awaiting_supervisor");
-        assert.equal(resumeTarget.successfulCompletion, false);
-        assert.ok(resumeTarget.activeRuntimeMs !== undefined);
-        assert.equal(resumeTarget.continuationAcceptance?.level, "checked");
         mockPi.onCall({ output: "resumed unchanged after reload" });
         const reloaded = makeAsyncExecutor([makeAgent("worker")]);
         const resumed = await reloaded.execute(
@@ -606,7 +575,7 @@ describe("async execution supervisor", () => {
           makeMinimalCtx(tempDir),
         );
         assert.equal(resumed.isError, undefined);
-        await waitForAsyncState(asyncDir, "continued");
+        await waitForAsyncState(asyncDir, "complete");
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
         ) as any;
@@ -615,8 +584,6 @@ describe("async execution supervisor", () => {
         const continuationPayload = await readAsyncPayload(continuationRunId);
         assert.equal(continuationPayload.state, "complete");
         assert.equal(continuationPayload.results[0]?.output, "resumed unchanged after reload");
-        assert.notEqual(continuationPayload.results[0]?.acceptance?.status, "skipped");
-        assert.equal(continuationPayload.results[0]?.acceptance?.status, "checked");
       } finally {
         if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
         else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
@@ -760,11 +727,11 @@ describe("async execution supervisor", () => {
           makeMinimalCtx(tempDir),
         );
         assert.equal(resumed.isError, undefined);
-        await waitForAsyncState(asyncDir, "continued");
+        await waitForAsyncState(asyncDir, "complete");
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
         ) as any;
-        assert.equal(continuedStatus.state, "continued");
+        assert.equal(continuedStatus.state, "complete");
         assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
         // Wait for the continuation mock-pi call record to appear (the
         // "continued" status is written before the continuation runner spawns
@@ -917,7 +884,7 @@ describe("async execution supervisor", () => {
       const settledStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as any;
-      assert.ok(["continued", "cancelled"].includes(settledStatus.state));
+      assert.ok(["complete", "cancelled"].includes(settledStatus.state));
       assert.ok(
         mockPi.callCount() <= 2,
         `expected at most one continuation spawn, saw ${mockPi.callCount()}`,
@@ -926,7 +893,7 @@ describe("async execution supervisor", () => {
         (entry) => entry.status === "fulfilled" && entry.value.isError === undefined,
       ).length;
       assert.equal(successCount, 1);
-      if (settledStatus.state === "continued") {
+      if (settledStatus.state === "complete") {
         assert.equal(mockPi.callCount(), 2);
         assert.equal(typeof settledStatus.lifecycle?.continuation?.continuationRunId, "string");
         const continuationPayload = await readAsyncPayload(
@@ -1099,12 +1066,19 @@ describe("async execution supervisor", () => {
       const lockedStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
+      // The contender only created the lock directory; without a complete
+      // owner record, lock exhaustion must not rewrite the active status.
+      // The result artifact captures the failed in-memory attempt; status.json
+      // remains the authoritative running snapshot while the lock is unknown.
       assert.equal(payload.state, "failed");
-      assert.equal(lockedStatus.state, "failed");
-      assert.equal((lockedStatus as AsyncStatusPayload & { pid?: number }).pid, undefined);
-      assert.equal(lockedStatus.pause, undefined);
+      assert.equal(lockedStatus.state, "running");
       assert.match(payload.error ?? "", /supervisor lifecycle update failed/i);
+      assert.equal(typeof (lockedStatus as AsyncStatusPayload & { pid?: number }).pid, "number");
+      assert.equal(lockedStatus.pause, undefined);
+      assert.equal(lockedStatus.lifecycle?.resumeBlockedReason, undefined);
       assert.equal(payload.pause, undefined);
+      const resumeTarget = resolveAsyncResumeTarget({ id });
+      assert.equal(resumeTarget.kind, "live");
       assert.equal(fs.readdirSync(RESULTS_DIR).filter((name) => name === `${id}.json`).length, 1);
       await waitForPidsToExit(
         [runningStatus.pid as number | undefined, ...childPids],
@@ -1339,7 +1313,7 @@ describe("async execution supervisor", () => {
       executeAsyncSingle!(progressId, {
         agent: "worker",
         task: "Provide a short non-blocking status update only. Do not edit files.",
-        agentConfig: makeAgent("worker", { acceptanceRole: "read-only" }),
+        agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
           enabled: false,
@@ -1355,6 +1329,39 @@ describe("async execution supervisor", () => {
       const progressPayload = (await readAsyncPayload(progressId)) as any;
       assert.equal(progressPayload.state, "complete");
       assert.equal(progressPayload.pause, undefined);
+
+      mockPi.onCall({
+        steps: [
+          {
+            jsonl: [
+              events.toolStart("contact_supervisor", { reason: "progress_update", message: "FYI" }),
+              events.toolResult("contact_supervisor", "sent"),
+              events.toolEnd("contact_supervisor"),
+            ],
+          },
+          { jsonl: [events.assistantMessage("native update finished")] },
+        ],
+      });
+      const nativeUpdateId = `async-non-blocking-native-${Date.now().toString(36)}`;
+      executeAsyncSingle!(nativeUpdateId, {
+        agent: "worker",
+        task: "Provide a short non-blocking status update only. Do not edit files.",
+        agentConfig: makeAgent("worker"),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+      });
+      const nativeUpdatePayload = (await readAsyncPayload(nativeUpdateId)) as any;
+      assert.equal(nativeUpdatePayload.state, "complete");
+      assert.equal(nativeUpdatePayload.pause, undefined);
     },
   );
 
@@ -1368,26 +1375,27 @@ describe("async execution supervisor", () => {
     },
     async () => {
       const existingPids = new Set(startedMockPiPids(mockPi));
+      const existingCalls = mockPi.callCount();
       const cohortId = `async-supervisor-parallel-cohort-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, cohortId);
+      const supervisorRequestGate = path.join(tempDir, `${cohortId}-supervisor-request`);
+      const siblingHoldGate = path.join(tempDir, `${cohortId}-sibling-hold`);
       let runnerPid: number | undefined;
+      let childPids: number[] = [];
       mockPi.onCall({
         matchArgIncludes: "ask supervisor",
-        steps: [
-          {
-            delay: 200,
-            jsonl: [
-              events.toolStart("contact_supervisor", {
-                reason: "need_decision",
-                message: "Need direction",
-              }),
-            ],
-          },
+        waitForMarker: supervisorRequestGate,
+        jsonl: [
+          events.toolStart("contact_supervisor", {
+            reason: "need_decision",
+            message: "Need direction",
+          }),
         ],
         keepAliveAfterFinalMessageMs: 5_000,
       });
       mockPi.onCall({
         matchArgIncludes: "work in parallel",
-        delay: 2_000,
+        waitForMarker: siblingHoldGate,
         jsonl: [events.assistantMessage("parallel sibling should be interrupted")],
       });
       const started = executeAsyncParallel!(cohortId, {
@@ -1427,31 +1435,60 @@ describe("async execution supervisor", () => {
         maxSubagentDepth: 2,
       });
       assert.equal(started.isError, undefined);
-      const asyncDir = path.join(ASYNC_DIR, cohortId);
-      assert.ok(runnerPid, "expected async runner pid from started event");
-      await waitForMockPiCall(mockPi, 1);
-      const childPids = startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid));
-      assert.equal(childPids.length, 2);
-      await waitForAsyncState(asyncDir, "paused");
-      const status = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as any;
-      assert.deepEqual(
-        status.steps?.map((step: any) => step.status),
-        ["paused", "paused"],
-      );
-      const requesterIndex =
-        status.steps?.findIndex((step: any) => step.pause?.kind === "awaiting_supervisor") ?? -1;
-      assert.ok(requesterIndex >= 0);
-      const siblingIndex =
-        status.steps?.findIndex(
-          (step: any, index: number) =>
-            index !== requesterIndex && step.pause?.kind === "cohort_pause",
-        ) ?? -1;
-      assert.ok(siblingIndex >= 0);
-      assert.equal(status.pid, undefined);
-      await readAsyncPayload(cohortId);
-      await waitForPidsToExit([runnerPid, ...childPids], `paused async cohort ${cohortId}`);
+      const resultPromise = readAsyncPayload(cohortId);
+      const resultDrain = resultPromise.catch(() => undefined);
+      try {
+        assert.ok(runnerPid, "expected async runner pid from started event");
+        await waitForMockPiCall(mockPi, existingCalls + 1);
+        childPids = startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid));
+        assert.equal(mockPi.callCount() - existingCalls, 2);
+        assert.equal(childPids.length, 2);
+        fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+
+        await waitForAsyncState(asyncDir, "paused");
+        const status = JSON.parse(
+          fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+        ) as any;
+        assert.deepEqual(
+          status.steps?.map((step: any) => step.status),
+          ["paused", "paused"],
+        );
+        const requesterIndex =
+          status.steps?.findIndex((step: any) => step.pause?.kind === "awaiting_supervisor") ?? -1;
+        assert.ok(requesterIndex >= 0);
+        const siblingIndex =
+          status.steps?.findIndex(
+            (step: any, index: number) =>
+              index !== requesterIndex && step.pause?.kind === "cohort_pause",
+          ) ?? -1;
+        assert.ok(siblingIndex >= 0);
+        assert.equal(status.pid, undefined);
+        await resultPromise;
+        await waitForPidsToExit([runnerPid, ...childPids], `paused async cohort ${cohortId}`);
+      } finally {
+        fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+        fs.writeFileSync(siblingHoldGate, "", "utf-8");
+        if (runnerPid === undefined) {
+          try {
+            const status = JSON.parse(
+              fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+            ) as { pid?: number };
+            runnerPid = status.pid;
+          } catch {
+            // The runner may have failed before writing its status file.
+          }
+        }
+        childPids = [
+          ...new Set([
+            ...childPids,
+            ...startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid)),
+          ]),
+        ];
+        await Promise.allSettled([
+          resultDrain,
+          waitForPidsToExit([runnerPid, ...childPids], `draining async cohort ${cohortId}`),
+        ]);
+      }
     },
   );
 });

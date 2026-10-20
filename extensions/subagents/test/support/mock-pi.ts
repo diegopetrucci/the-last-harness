@@ -15,6 +15,8 @@ interface MockPiResponse {
   keepAliveAfterFinalMessageMs?: number;
   ignoreSigterm?: boolean;
   ignoreSigint?: boolean;
+  /** Cooperative child: write this marker on SIGTERM, then exit. */
+  flushMarkerOnSigterm?: string;
   spawnStubbornDescendants?: boolean;
   /** Wait for this marker before spawning stubborn descendants. */
   stubbornDescendantStartMarker?: string;

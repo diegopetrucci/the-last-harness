@@ -3,13 +3,13 @@ import {
   controlNotificationKey,
   formatControlNoticeMessage,
 } from "../runs/shared/subagent-control.ts";
-import type { ControlEvent, SubagentState } from "../shared/types.ts";
+import type { ControlEvent } from "../shared/types.ts";
 
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
 
 export interface SubagentControlMessageDetails {
   event: ControlEvent;
-  source?: "foreground" | "async";
+  source?: "async";
   asyncDir?: string;
   noticeText?: string;
   /** True exactly when the notice was sent with { triggerTurn: true }. */
@@ -23,27 +23,12 @@ export function formatSubagentControlNotice(
   return details.noticeText ?? content ?? formatControlNoticeMessage(details.event);
 }
 
-function noticeTimerKey(details: SubagentControlMessageDetails): string {
-  return `${details.event.runId}:${controlNotificationKey(details.event)}`;
-}
-
-export function clearPendingForegroundControlNotices(state: SubagentState, runId?: string): void {
-  const pending = state.pendingForegroundControlNotices;
-  if (!pending) return;
-  for (const [key, timer] of pending) {
-    if (runId !== undefined && !key.startsWith(`${runId}:`)) continue;
-    clearTimeout(timer);
-    pending.delete(key);
-  }
-}
-
 function deliverControlNotice(input: {
   pi: Pick<ExtensionAPI, "sendMessage">;
   visibleControlNotices: Set<string>;
   details: SubagentControlMessageDetails;
   isIdle?: () => boolean;
 }): void {
-  if (input.details.event.reason === "completion_guard") return;
   const key = controlNotificationKey(input.details.event);
   if (input.visibleControlNotices.has(key)) return;
   input.visibleControlNotices.add(key);
@@ -51,10 +36,10 @@ function deliverControlNotice(input: {
   // Async notices wake an idle parent natively: with { triggerTurn: true } Pi starts a
   // run from the custom message (before_agent_start fires, so the TLH system prompt
   // applies) and steers an active turn when streaming. Idleness is read live at send
-  // time; when no session context has been captured yet, assume idle. Foreground
-  // notices and non-wake sends pass no options (never triggerTurn:false, which defers
+  // time; when no session context has been captured yet, assume idle.
+  // Non-wake sends pass no options (never triggerTurn:false, which defers
   // delivery while streaming).
-  const wake = input.details.source !== "foreground" && (input.isIdle?.() ?? true);
+  const wake = input.isIdle?.() ?? true;
   input.pi.sendMessage(
     {
       customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
@@ -66,54 +51,12 @@ function deliverControlNotice(input: {
   );
 }
 
-function isForegroundNoticeStillActionable(
-  state: SubagentState,
-  details: SubagentControlMessageDetails,
-): boolean {
-  const control = state.foregroundControls.get(details.event.runId);
-  if (!control) return false;
-  if (control.currentAgent && control.currentAgent !== details.event.agent) return false;
-  if (details.event.index !== undefined && control.currentIndex !== details.event.index)
-    return false;
-  if (control.currentActivityState !== "needs_attention") return false;
-
-  // An idle timer belongs to the episode that scheduled it. A later durable
-  // warning may keep the aggregate state at needs_attention, but it must not
-  // resurrect a stale idle notice after that episode recovered.
-  const isIdleNotice = details.event.reason === undefined || details.event.reason === "idle";
-  if (!isIdleNotice) return true;
-  if (details.event.idleEpisodeId !== undefined)
-    return control.idleEpisodeId === details.event.idleEpisodeId;
-  // Legacy idle events have no episode identity. They remain deliverable only
-  // while the current snapshot is also legacy and has no durable warning.
-  return control.idleEpisodeId === undefined && !control.durableAttentionReasons?.length;
-}
-
 export function handleSubagentControlNotice(input: {
   pi: Pick<ExtensionAPI, "sendMessage">;
-  state: SubagentState;
   visibleControlNotices: Set<string>;
   details: SubagentControlMessageDetails;
-  foregroundDelayMs?: number;
   isIdle?: () => boolean;
 }): void {
   if (!input.details?.event) return;
-  if (input.details.source !== "foreground") {
-    deliverControlNotice(input);
-    return;
-  }
-
-  const pending =
-    input.state.pendingForegroundControlNotices ?? new Map<string, ReturnType<typeof setTimeout>>();
-  input.state.pendingForegroundControlNotices = pending;
-  const timerKey = noticeTimerKey(input.details);
-  const existing = pending.get(timerKey);
-  if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    pending.delete(timerKey);
-    if (!isForegroundNoticeStillActionable(input.state, input.details)) return;
-    deliverControlNotice(input);
-  }, input.foregroundDelayMs ?? 1000);
-  timer.unref?.();
-  pending.set(timerKey, timer);
+  deliverControlNotice(input);
 }

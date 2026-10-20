@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildDoctorReport } from "../extension/doctor.ts";
+import type { ProjectAgentTrustOptions } from "../agents/project-agent-loader.ts";
+import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "../extension/doctor.ts";
 import {
   SLASH_TEXT_RESULT_TYPE,
   type ExtensionConfig,
@@ -10,12 +11,13 @@ function sendSlashText(pi: ExtensionAPI, text: string): void {
   pi.sendMessage({ customType: SLASH_TEXT_RESULT_TYPE, content: text, display: true });
 }
 
-function doctorReportForContext(
+async function doctorReportForContext(
   pi: ExtensionAPI,
   state: SubagentState,
   config: ExtensionConfig,
   ctx: ExtensionContext,
-): string {
+  getProjectAgentTrustOptions?: (cwd: string) => ProjectAgentTrustOptions,
+): Promise<string> {
   let currentSessionFile: string | null = null;
   let currentSessionId = state.currentSessionId;
   let sessionError: string | undefined;
@@ -26,6 +28,10 @@ function doctorReportForContext(
     sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   }
 
+  const projectAgentTrust = await resolveProjectAgentDoctorTrust(
+    ctx.cwd,
+    getProjectAgentTrustOptions?.(ctx.cwd),
+  );
   return buildDoctorReport({
     cwd: ctx.cwd,
     config,
@@ -33,6 +39,7 @@ function doctorReportForContext(
     currentSessionFile,
     currentSessionId,
     sessionError,
+    projectAgentTrust,
   });
 }
 
@@ -40,11 +47,15 @@ export function registerSlashCommands(
   pi: ExtensionAPI,
   state: SubagentState,
   config: ExtensionConfig,
+  getProjectAgentTrustOptions?: (cwd: string) => ProjectAgentTrustOptions,
 ): void {
   pi.registerCommand("subagents-doctor", {
     description: "Show subagent diagnostics",
     handler: async (_args, ctx) => {
-      sendSlashText(pi, doctorReportForContext(pi, state, config, ctx));
+      sendSlashText(
+        pi,
+        await doctorReportForContext(pi, state, config, ctx, getProjectAgentTrustOptions),
+      );
     },
   });
 }

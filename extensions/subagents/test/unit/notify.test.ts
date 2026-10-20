@@ -4,25 +4,103 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-  isSubagentCompletionBatchDetails,
-  MAX_COMPLETION_BATCH_ENTRIES,
-  MAX_COMPLETION_BATCH_CHUNKS,
-  MAX_COMPLETION_MESSAGE_CHARS,
+  MAX_COMPLETION_FACTS_CHARS,
   MAX_DISPLAY_SUMMARY_CHARS,
-  MAX_GROUPED_ENTRIES,
-  type SubagentCompletionBatchDetails,
-  type SubagentNotifyDetails,
+  buildCompletionDetails,
+  formatSingleCompletion,
 } from "../../src/runs/background/notify.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import {
-  completionResult,
-  createBatchingPi,
-  createFakeClock,
-  createPi,
-} from "../support/notify-fixtures.ts";
+  registerAwaitedRun,
+  unregisterAwaitedRun,
+} from "../../src/runs/background/awaited-run-registry.ts";
+import {
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+  type SubagentTerminalResult,
+} from "../../src/shared/types.ts";
+import { createPi } from "../support/notify-fixtures.ts";
+
+function terminalResult(): SubagentTerminalResult {
+  return {
+    state: "completed",
+    facts: {
+      attempts: [
+        {
+          attempt: 1,
+          exit: { code: 0, signal: null },
+          durationMs: 12,
+          providerTokens: { status: "unavailable" },
+          requestedToolCalls: { edit: 1, write: 0, bash: 2 },
+          workspace: {
+            baseline: { status: "unavailable", reason: "not_git_repository" },
+            post: { status: "unavailable", reason: "not_git_repository" },
+            attribution: "unknown",
+          },
+        },
+      ],
+    },
+  };
+}
 
 describe("registerSubagentNotify", () => {
-  it("uses a fallback summary when a background completion is empty", () => {
+  it("recovers an awaited marker when no live owner remains", () => {
+    const { events, sentMessages, wakes } = createPi();
+
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "awaited-completion",
+      awaited: true,
+      agent: "worker",
+      success: true,
+      summary: "recoverable awaited result",
+      exitCode: 0,
+      timestamp: 123,
+      sessionId: "session-1",
+    });
+
+    assert.equal(sentMessages.length, 1);
+    assert.match(
+      (sentMessages[0]!.message as { content: string }).content,
+      /Summary:\n  recoverable awaited result/,
+    );
+    assert.equal(wakes.length, 1);
+  });
+
+  it("suppresses a completion generation owned by a live awaited run", () => {
+    const { events, sentMessages, wakes } = createPi();
+    const id = `notify-generation-${Date.now().toString(36)}`;
+    registerAwaitedRun(
+      id,
+      () => true,
+      2,
+      undefined,
+      () => true,
+    );
+    try {
+      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+        id,
+        agent: "worker",
+        success: true,
+        summary: "owned generation",
+        timestamp: 123,
+        generation: 2,
+        sessionId: "session-1",
+      });
+      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+        id,
+        agent: "worker",
+        success: true,
+        summary: "later owned generation",
+        timestamp: 124,
+        generation: 3,
+        sessionId: "session-1",
+      });
+      assert.deepEqual(sentMessages, []);
+      assert.deepEqual(wakes, []);
+    } finally {
+      unregisterAwaitedRun(id, 2);
+    }
+  });
+
+  it("uses a fixed shape and fallback summary for an empty completion", () => {
     const { events, sentMessages, wakes } = createPi();
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -35,30 +113,23 @@ describe("registerSubagentNotify", () => {
       sessionId: "session-1",
     });
 
-    // Native wake: one sendMessage carrying { triggerTurn: true } (idle path), no user message
     assert.equal(sentMessages.length, 1);
+    const message = sentMessages[0]!.message as {
+      content: string;
+      details: Record<string, unknown>;
+    };
+    assert.equal(
+      message.content,
+      "Background task completed: **worker**\n\nSummary:\n  (no output)\n\nAsync id: notify-empty-1",
+    );
+    assert.equal(message.details.resultPreview, "(no output)");
     assert.equal(wakes.length, 1);
-    assert.deepEqual(sentMessages[0], {
-      message: {
-        customType: "subagent-notify",
-        content: "Background task completed: **worker**\n\nAsync id: notify-empty-1\n\n(no output)",
-        display: true,
-        details: {
-          agent: "worker",
-          status: "completed",
-          triggersTurn: true,
-          resultPreview: "",
-          asyncId: "notify-empty-1",
-        },
-      },
-      options: { triggerTurn: true },
-    });
     assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
   });
 
-  it("preserves non-empty completion summaries", () => {
+  it("preserves a multiline summary and task position without exposing raw event fields", () => {
     const { events, sentMessages, wakes } = createPi();
-    const summary = "  Done streaming\nAll clear  ";
+    const summary = "Done streaming\nAll clear";
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
       id: "notify-summary-1",
@@ -69,35 +140,31 @@ describe("registerSubagentNotify", () => {
       timestamp: 456,
       taskIndex: 1,
       totalTasks: 3,
+      body: "raw body must not be serialized",
+      status: "secret status must not be serialized",
       sessionId: "session-1",
     });
 
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(sentMessages[0], {
-      message: {
-        customType: "subagent-notify",
-        content: `Background task completed: **worker** (2/3)\n\nAsync id: notify-summary-1\n\n${summary}`,
-        display: true,
-        details: {
-          agent: "worker",
-          status: "completed",
-          triggersTurn: true,
-          taskInfo: " (2/3)",
-          resultPreview: summary,
-          asyncId: "notify-summary-1",
-        },
-      },
-      options: { triggerTurn: true },
+    const message = sentMessages[0]!.message as { content: string; details: unknown };
+    assert.match(message.content, /^Background task completed: \*\*worker\*\* \(2\/3\)/);
+    assert.match(message.content, /Summary:\n  Done streaming\n  All clear/);
+    assert.doesNotMatch(message.content, /raw body|secret status/);
+    assert.deepEqual(message.details, {
+      agent: "worker",
+      status: "completed",
+      taskInfo: " (2/3)",
+      resultPreview: summary,
+      asyncId: "notify-summary-1",
+      triggersTurn: true,
     });
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
+    assert.equal(wakes.length, 1);
   });
 
-  it("shows async id and top-level resume guidance only when the session file exists", () => {
-    const { events, sentMessages, wakes } = createPi();
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-single-session-"));
+  it("shows resume guidance only when the session file exists", () => {
+    const { events, sentMessages } = createPi();
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-notify-session-"));
     const sessionFile = path.join(resultsDir, "session.jsonl");
-    fs.writeFileSync(sessionFile, "session\n", "utf-8");
+    fs.writeFileSync(sessionFile, "session\n", "utf8");
 
     try {
       events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -111,393 +178,156 @@ describe("registerSubagentNotify", () => {
         sessionFile,
         sessionId: "session-1",
       });
-    } finally {
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(sentMessages[0], {
-      message: {
-        customType: "subagent-notify",
-        content: `Background task completed: **worker**\n\nAsync id: notify-event-1\nRevive: subagent({ action: "resume", id: "notify-event-1", message: "..." })\n\nDone\n\nSession file: ${sessionFile}`,
-        display: true,
-        details: {
-          agent: "worker",
-          status: "completed",
-          triggersTurn: true,
-          resultPreview: "Done",
-          asyncId: "notify-event-1",
-          resumeTarget: { sessionPath: sessionFile },
-          sessionLabel: "Session file",
-          sessionValue: sessionFile,
-        },
-      },
-      options: { triggerTurn: true },
-    });
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-  });
-
-  it("does not advertise resume guidance when the session file is missing", () => {
-    const { events, sentMessages, wakes } = createPi();
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-missing-session-"));
-    const missingSession = path.join(resultsDir, "missing-session.jsonl");
-
-    try {
-      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-        id: null,
-        runId: "notify-run-fallback",
-        agent: "worker",
-        success: true,
-        summary: "Done",
-        exitCode: 0,
-        timestamp: 456,
-        sessionFile: missingSession,
-        sessionId: "session-1",
-      });
-
-      assert.equal(sentMessages.length, 1);
-      assert.equal(wakes.length, 1);
-      assert.deepEqual(sentMessages[0], {
-        message: {
-          customType: "subagent-notify",
-          content: `Background task completed: **worker**\n\nAsync id: notify-run-fallback\n\nDone\n\nSession file: ${missingSession}`,
-          display: true,
-          details: {
-            agent: "worker",
-            status: "completed",
-            triggersTurn: true,
-            resultPreview: "Done",
-            asyncId: "notify-run-fallback",
-            sessionLabel: "Session file",
-            sessionValue: missingSession,
-          },
-        },
-        options: { triggerTurn: true },
-      });
-      assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
+      const content = (sentMessages[0]!.message as { content: string }).content;
+      assert.ok(content.indexOf("Summary:") < content.indexOf("Revive:"));
+      assert.match(
+        content,
+        /Revive: subagent\(\{ action: "resume", id: "notify-event-1", message: "\.\.\." \}\)/,
+      );
+      assert.match(
+        content,
+        new RegExp(`Session file: ${sessionFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      );
     } finally {
       fs.rmSync(resultsDir, { recursive: true, force: true });
     }
   });
 
-  it("labels paused completions as paused even without an exit code", () => {
-    const { events, sentMessages, wakes } = createPi();
-
-    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-      id: "notify-paused-1",
+  it("keeps validated child A1c facts while ignoring unvalidated top-level facts", () => {
+    const topLevelDetails = buildCompletionDetails({
+      id: "notify-top-level-facts",
       agent: "worker",
-      success: false,
-      state: "paused",
-      summary: "Paused after interrupt. Waiting for explicit next action.",
-      timestamp: 789,
-      sessionId: "session-1",
-    });
-
-    // Paused runs bypass grouping and emit immediately; idle path → wake
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(sentMessages[0], {
-      message: {
-        customType: "subagent-notify",
-        content:
-          "Background task paused: **worker**\n\nAsync id: notify-paused-1\n\nPaused after interrupt. Waiting for explicit next action.",
-        display: true,
-        details: {
-          agent: "worker",
-          status: "paused",
-          triggersTurn: true,
-          resultPreview: "Paused after interrupt. Waiting for explicit next action.",
-          asyncId: "notify-paused-1",
-        },
-      },
-      options: { triggerTurn: true },
-    });
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-  });
-
-  it("formats normalized child results into one native completion notice", () => {
-    const { events, sentMessages, wakes } = createPi();
-
-    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-      id: "notify-grouped-1",
-      agent: "parallel:a+b",
-      success: false,
-      state: "failed",
-      summary: "Combined summary",
+      success: true,
+      summary: "Done",
       timestamp: 100,
-      sessionId: "session-1",
+      terminalResult: terminalResult(),
+    });
+    assert.doesNotMatch(formatSingleCompletion(topLevelDetails), /Facts:/);
+
+    const childDetails = buildCompletionDetails({
+      id: "notify-child-facts",
+      agent: "worker",
+      success: true,
+      summary: "Done",
+      timestamp: 100,
       results: [
         {
-          agent: "a",
+          agent: "worker",
           status: "completed",
-          summary: "Result from a",
-          sessionPath: "/tmp/a-session.jsonl",
-          artifactPath: "/tmp/a-output.md",
-        },
-        {
-          agent: "b",
-          status: "failed",
-          summary: "B failed\n\nOutput:\nResult from b",
+          summary: "Done",
+          artifactPath: "/tmp/worker-output.md",
+          terminalResult: terminalResult(),
         },
       ],
     });
-
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    const content = (sentMessages[0]!.message as { content: string }).content;
-    assert.match(content, /^Background task failed: \*\*parallel:a\+b\*\*/);
-    assert.match(content, /Children: 1 completed, 1 failed/);
-    assert.match(
-      content,
-      /1\/2\. a — completed\nResult from a\nOutput artifact: \/tmp\/a-output\.md\nSession: \/tmp\/a-session\.jsonl/,
-    );
-    assert.match(content, /2\/2\. b — failed\nB failed\n\nOutput:\nResult from b/);
-    // sendMessage has no options (no triggerTurn)
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    // wake is sent once (idle path, fails bypass grouping)
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
+    const childNotice = formatSingleCompletion(childDetails);
+    assert.ok(childNotice.indexOf("Output artifact:") < childNotice.indexOf("Facts:"));
+    assert.match(childNotice, /Facts: #1 exit=0, duration=12ms, tokens=\?, tools=1\/0\/2/);
   });
 
-  it("prioritizes failed and paused children with original numbering and resumable indexes", () => {
-    const { events, sentMessages, wakes } = createPi();
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-urgent-children-"));
-    const completedSession = path.join(resultsDir, "child-1.jsonl");
-    const failedSession = path.join(resultsDir, "child-9.jsonl");
-    fs.writeFileSync(completedSession, "session\n", "utf-8");
-    fs.writeFileSync(failedSession, "session\n", "utf-8");
-    const results = Array.from({ length: 10 }, (_, index) => ({
-      agent: `worker-${index}`,
-      status: index === 8 ? "failed" : index === 9 ? "paused" : "completed",
-      // Sized above the per-child budget at this fan-out (8 displayed -> 4 000 each) so the
-      // notice still exercises a capped scenario, as it did against the original 1 200 cap.
-      summary: `${index}: ${"x".repeat(4_500)}`,
-      ...(index === 0
-        ? { sessionPath: completedSession, index }
-        : index === 8
-          ? { sessionPath: failedSession, index }
-          : { index }),
-    }));
-
+  it("redacts protected paused lifecycle paths and raw child output", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-notify-private-"));
+    const sessionPath = path.join(root, "private-session.jsonl");
+    fs.writeFileSync(sessionPath, "session\n", "utf8");
     try {
-      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-        id: "notify-urgent-1",
-        runId: "notify-urgent-run-1",
-        agent: "parallel:urgent",
-        success: true,
-        summary: "outer",
-        timestamp: 100,
-        sessionId: "session-1",
-        results,
-      });
-    } finally {
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    const content = (sentMessages[0]!.message as { content: string }).content;
-    assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
-    assert.match(content, /^Background task failed: \*\*parallel:urgent\*\*/);
-    assert.match(content, /Children: 8 completed, 1 failed, 1 paused/);
-    assert.match(content, /… \[2 child results omitted\]/);
-    assert.match(content, /9\/10\. worker-8 — failed/);
-    assert.match(content, /10\/10\. worker-9 — paused/);
-    assert.match(content, /Async id: notify-urgent-1/);
-    assert.match(
-      content,
-      /Revive child: subagent\({ action: "resume", id: "notify-urgent-1", index: 8, message: "\.\.\." }\)/,
-    );
-    assert.doesNotMatch(content, /Async id: notify-urgent-run-1/);
-    assert.ok(
-      content.indexOf("Async id: notify-urgent-1") <
-        content.indexOf("Children: 8 completed, 1 failed, 1 paused"),
-    );
-    assert.ok(
-      content.indexOf("9/10. worker-8 — failed") < content.indexOf("1/10. worker-0 — completed"),
-    );
-    assert.ok(
-      content.includes("9/10. worker-8 — failed"),
-      "urgent child details must survive the final completion cap",
-    );
-    // Tail-preserving truncation shrinks the preview body rather than end-cutting the
-    // assembled message, so the absolute backstop marker stays unreachable even at this
-    // fan-out. Per-summary truncation still applies (see marker below).
-    assert.ok(
-      !content.includes("… [completion message truncated]"),
-      "tail-preserving truncation must keep the absolute backstop unreachable",
-    );
-    assert.match(content, /… \[summary truncated\]/);
-    // sendMessage no options; wake once (idle, failed — immediate path)
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-  });
-
-  it("bounds oversized single-notice content and attached preview while retaining status and safe references", () => {
-    const { events, sentMessages, wakes } = createPi();
-    const results = Array.from({ length: 10 }, (_, index) => ({
-      agent: `worker-${index}`,
-      status: index === 9 ? "failed" : "completed",
-      summary: `${index}: ${"x".repeat(4_000)}`,
-      ...(index === 0
-        ? {
-            artifactPath: "/safe/artifacts/worker-0.md",
-            sessionPath: "/safe/sessions/worker-0.jsonl",
-            intercomTarget: "stale-target-must-not-appear",
-          }
-        : {}),
-    }));
-
-    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-      id: "notify-oversized-1",
-      agent: "parallel:oversized",
-      success: true,
-      summary: "outer",
-      timestamp: 100,
-      sessionId: "session-1",
-      intercomTarget: "stale-owner-target-must-not-appear",
-      results,
-    });
-
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    const message = sentMessages[0]!.message as {
-      content: string;
-      details?: SubagentNotifyDetails;
-    };
-    const content = message.content;
-    assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
-    assert.ok(message.details, "single notices must retain structured metadata");
-    assert.equal(message.details.asyncId, "notify-oversized-1");
-    assert.ok(message.details.resultPreview.length <= MAX_DISPLAY_SUMMARY_CHARS);
-    assert.match(message.details.resultPreview, /… \[summary truncated\]$/);
-    assert.match(content, /^Background task failed: \*\*parallel:oversized\*\*/);
-    assert.match(content, /Children: 9 completed, 1 failed/);
-    assert.match(content, /… \[2 child results omitted\]/);
-    assert.match(content, /… \[summary truncated\]/);
-    assert.match(content, /Output artifact: \/safe\/artifacts\/worker-0\.md/);
-    assert.match(content, /Session: \/safe\/sessions\/worker-0\.jsonl/);
-    // Oversized per-child summaries are clamped to the fixed per-child budget, so the
-    // assembled message fits the envelope without the backstop firing. This is what keeps the
-    // trailing recovery references (asserted above) from being truncated away.
-    assert.ok(
-      !content.includes("… [completion message truncated]"),
-      "per-child-budgeted summaries must leave envelope headroom so the backstop does not fire",
-    );
-    assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
-    assert.doesNotMatch(content, /stale-target/);
-    // wake sent once (idle, failed — immediate path)
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-  });
-
-  it("redacts protected paused lifecycle paths from content and structured details", () => {
-    const { events, sentMessages, wakes } = createPi();
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-paused-private-"));
-    const sessionPath = path.join(resultsDir, "private-session.jsonl");
-    fs.writeFileSync(sessionPath, "session\n", "utf-8");
-    try {
-      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      const details = buildCompletionDetails({
         id: "notify-paused-private",
-        agent: "parallel:a+b",
+        agent: "worker",
         success: false,
         state: "paused",
         pause: { kind: "awaiting_supervisor" },
-        summary: "Paused awaiting supervisor at /private/root/project after pid 43210.",
+        summary: "Paused at /private/root after pid 43210.",
         timestamp: 100,
-        sessionId: "session-1",
-        shareUrl: "https://share/private-run",
+        sessionFile: sessionPath,
         results: [
           {
-            agent: "a",
-            status: "completed",
-            summary: "done at /private/root/a.ts",
-            artifactPath: "/private/artifacts/a.md",
-            sessionPath,
-            index: 0,
-          },
-          {
-            agent: "b",
+            agent: "worker",
             status: "paused",
-            summary: "paused pgid 54321",
+            summary: "private child /private/root",
+            artifactPath: "/private/artifact.md",
             sessionPath,
-            index: 1,
-            children: [{ agent: "nested-b", state: "paused" }],
           },
         ],
       });
+      const content = formatSingleCompletion(details);
+      assert.match(content, /^Background task paused:/);
+      assert.match(content, /Paused awaiting supervisor\./);
+      assert.doesNotMatch(content, /\/private\/|pid 43210|Output artifact:|Session:/);
+      assert.match(
+        content,
+        /Resume unchanged: subagent\(\{ action: "resume", id: "notify-paused-private" \}\)/,
+      );
+      assert.equal(details.artifactPaths, undefined);
+      assert.equal(details.sessionPaths, undefined);
+      assert.equal(details.factsPreview, undefined);
+
+      const sentHarness = createPi();
+      sentHarness.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+        id: "notify-paused-private",
+        agent: "worker",
+        success: false,
+        state: "paused",
+        pause: { kind: "awaiting_supervisor" },
+        summary: "Paused at /private/root after pid 43210.",
+        timestamp: 100,
+        sessionFile: sessionPath,
+        results: [
+          {
+            agent: "worker",
+            status: "paused",
+            summary: "private child /private/root",
+            artifactPath: "/private/artifact.md",
+            sessionPath,
+          },
+        ],
+        sessionId: "session-1",
+      });
+      const sentDetails = sentHarness.sentMessages[0]!.message as { details?: unknown };
+      assert.doesNotMatch(JSON.stringify(sentDetails.details), /private-session|\/private\//);
     } finally {
-      fs.rmSync(resultsDir, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
     }
-
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    const message = sentMessages[0]!.message as {
-      content: string;
-      details?: SubagentNotifyDetails;
-    };
-    assert.match(message.content, /^Background task paused: \*\*parallel:a\+b\*\*/);
-    assert.match(message.content, /Async id: notify-paused-private/);
-    assert.match(
-      message.content,
-      /Resume unchanged: subagent\({ action: "resume", id: "notify-paused-private", index: 1 }\)/,
-    );
-    assert.doesNotMatch(
-      message.content,
-      /private-run|private-session|\/private\/|pid 43210|pgid 54321|Output artifact:|Session:/,
-    );
-    assert.equal(message.details?.sessionValue, undefined);
-    assert.deepEqual(message.details?.resumeTarget, { index: 1, childCount: 2 });
-    assert.equal("sessionPath" in (message.details?.resumeTarget ?? {}), false);
-    assert.doesNotMatch(
-      JSON.stringify(message.details),
-      /private-run|private-session|\/private\/|pid 43210|pgid 54321/,
-    );
-    assert.doesNotMatch(
-      message.details?.resultPreview ?? "",
-      /private-run|private-session|\/private\/|pid 43210|pgid 54321/,
-    );
-    assert.match(message.details?.resultPreview ?? "", /Children: 1 completed, 1 paused/);
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
   });
 
-  it("bounds oversized share errors from a normalized chain in content and attached details", () => {
-    const { events, sentMessages, wakes } = createPi();
-    const shareError = `share failed: ${"sensitive-detail-".repeat(400)}unbounded-tail`;
-
-    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-      id: "notify-oversized-share-error",
-      agent: "chain:a+b",
-      success: false,
-      summary: "Done with a share failure",
-      shareError,
-      results: [
-        { agent: "a", status: "completed", summary: "a done" },
-        { agent: "b", status: "failed", summary: "Done with a share failure" },
-      ],
+  it("bounds summaries and facts at their independent display limits", () => {
+    const details = buildCompletionDetails({
+      id: "notify-bounded",
+      agent: "worker",
+      success: true,
+      summary: "outer",
       timestamp: 100,
-      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "x".repeat(10_000),
+          terminalResult: {
+            state: "completed",
+            facts: {
+              attempts: Array.from({ length: 64 }, (_, index) => ({
+                attempt: index + 1,
+                exit: { code: 0, signal: null },
+                durationMs: 1,
+                providerTokens: { status: "unavailable" },
+                requestedToolCalls: { edit: 1, write: 1, bash: 1 },
+                workspace: {
+                  baseline: { status: "unavailable", reason: "not_git_repository" },
+                  post: { status: "unavailable", reason: "not_git_repository" },
+                  attribution: "unknown",
+                },
+              })),
+            },
+          },
+        },
+      ],
     });
-
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    const message = sentMessages[0]!.message as {
-      content: string;
-      details?: SubagentNotifyDetails;
-    };
-    assert.ok(message.details);
-    assert.equal(message.details.sessionLabel, "Session share error");
-    assert.ok((message.details.sessionValue?.length ?? 0) <= 500);
-    assert.match(message.details.sessionValue ?? "", /… \[reference truncated\]$/);
-    assert.doesNotMatch(message.details.sessionValue ?? "", /unbounded-tail/);
-    assert.match(message.content, /Session share error: .*… \[reference truncated\]$/);
-    assert.doesNotMatch(message.content, /unbounded-tail/);
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
+    assert.ok(details.resultPreview.length <= MAX_DISPLAY_SUMMARY_CHARS);
+    assert.ok((details.factsPreview?.length ?? 0) <= MAX_COMPLETION_FACTS_CHARS);
+    assert.match(details.resultPreview, /summary truncated/);
+    assert.match(details.factsPreview ?? "", /facts truncated/);
   });
 
-  it("ignores completions for other or missing session ids", () => {
+  it("ignores completions for another or missing session", () => {
     const { events, sentMessages, wakes } = createPi("session-owner");
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -521,11 +351,8 @@ describe("registerSubagentNotify", () => {
     assert.deepEqual(wakes, []);
   });
 
-  it("reads idleness live at send time and steers without triggerTurn while streaming", () => {
+  it("reads idleness live and sends no wake while streaming", () => {
     const { events, sentMessages, wakes, lifecycleHandlers } = createPi("session-1");
-
-    // Capture a session context whose isIdle() reads live state, mirroring
-    // how Pi context methods are closures over the runner.
     let idle = false;
     lifecycleHandlers.get("session_start")?.({}, { isIdle: () => idle });
 
@@ -534,769 +361,43 @@ describe("registerSubagentNotify", () => {
       agent: "worker",
       success: true,
       summary: "Done while streaming",
-      exitCode: 0,
       timestamp: 123,
       sessionId: "session-1",
     });
-
-    // Custom message sent without options (Pi steers the streaming turn)
     assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 0, "no triggerTurn while the session is streaming");
-    assert.equal(sentMessages[0]!.options, undefined);
-    assert.equal(
-      (sentMessages[0]!.message as { details: { triggersTurn?: boolean } }).details.triggersTurn,
-      false,
-    );
-    const content = (sentMessages[0]!.message as { content: string }).content;
-    assert.match(content, /^Background task completed: \*\*worker\*\*/);
+    assert.equal(wakes.length, 0);
 
-    // The same captured context reports idle again — no re-capture needed;
-    // the next completion must trigger a turn.
     idle = true;
-
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
       id: "notify-after-settle-1",
       agent: "worker",
       success: true,
       summary: "Done after settle",
-      exitCode: 0,
       timestamp: 124,
       sessionId: "session-1",
     });
-
     assert.equal(sentMessages.length, 2);
-    assert.equal(
-      wakes.length,
-      1,
-      "triggerTurn must be sent once the live idleness read reports idle",
-    );
-    assert.equal(
-      (sentMessages[1]!.message as { details: { triggersTurn?: boolean } }).details.triggersTurn,
-      true,
-    );
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
+    assert.equal(wakes.length, 1);
   });
 
-  it("wakes when no session context has been captured yet (assumed idle)", () => {
-    const { events, sentMessages, wakes } = createPi("session-1");
-
-    // No session_start fired — sendCompletion must assume idle and wake.
+  it("delivers failures immediately with the same single shape", () => {
+    const { events, sentMessages, wakes } = createPi();
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-      id: "notify-no-ctx-1",
+      id: "notify-failed-1",
       agent: "worker",
-      success: true,
-      summary: "Done",
-      exitCode: 0,
+      success: false,
+      state: "failed",
+      summary: "child failed",
+      exitCode: 1,
       timestamp: 123,
       sessionId: "session-1",
     });
 
     assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-  });
-
-  it("emits failed completions immediately even while successes are held", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock);
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({ id: "ok-1", agent: "ok-1", summary: "ok-1 done" }),
-    );
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "fail-1",
-        agent: "fail-1",
-        success: false,
-        summary: "boom",
-        exitCode: 1,
-      }),
-    );
-
-    // The failure must arrive immediately, and the held success must be
-    // flushed ahead of it rather than waiting on the debounce timer.
-    assert.equal(sentMessages.length, 2);
     assert.match(
       (sentMessages[0]!.message as { content: string }).content,
-      /Background task completed: \*\*ok-1\*\*/,
+      /^Background task failed: \*\*worker\*\*\n\nSummary:\n  child failed/,
     );
-    assert.match(
-      (sentMessages[1]!.message as { content: string }).content,
-      /Background task failed: \*\*fail-1\*\*/,
-    );
-    // The flushed success carries no options; only the trailing failure triggers the turn.
-    assert.equal(sentMessages[0]!.options, undefined);
-    assert.deepEqual(sentMessages[1]!.options, { triggerTurn: true });
-    assert.equal(
-      (sentMessages[0]!.message as { details: { triggersTurn?: boolean } }).details.triggersTurn,
-      false,
-    );
-    assert.equal(
-      (sentMessages[1]!.message as { details: { triggersTurn?: boolean } }).details.triggersTurn,
-      true,
-    );
-    // Exactly one wake for the whole synchronous burst (flush + failure)
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-
-    // No deferred emission should arrive later.
-    clock.advance(1000);
-    assert.equal(sentMessages.length, 2);
-    assert.equal(wakes.length, 1);
-  });
-
-  it("sends exactly one wake when a non-completion signal flushes held successes in one burst", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock);
-
-    // Two pending successes are held by the batcher.
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({ id: "held-1", agent: "held-1", summary: "held-1 done" }),
-    );
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({ id: "held-2", agent: "held-2", summary: "held-2 done" }),
-    );
-    assert.equal(sentMessages.length, 0);
-    assert.equal(wakes.length, 0);
-
-    // A paused signal bypasses grouping: it flushes the held successes and
-    // then emits itself, all in one synchronous burst.
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "paused-signal",
-        agent: "paused-worker",
-        success: false,
-        state: "paused",
-        summary: "Paused after interrupt.",
-      }),
-    );
-
-    // Both messages delivered: the grouped successes and the paused signal.
-    assert.equal(sentMessages.length, 2);
-    assert.match(
-      (sentMessages[0]!.message as { content: string }).content,
-      /^Background tasks completed \(2\): \*\*held-1\*\*, \*\*held-2\*\*/,
-    );
-    assert.match(
-      (sentMessages[1]!.message as { content: string }).content,
-      /^Background task paused: \*\*paused-worker\*\*/,
-    );
-    // Exactly one wake for the whole burst, carried by the trailing signal.
-    assert.equal(wakes.length, 1, "a flush+signal burst must produce exactly one wake");
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-
-    clock.advance(1000);
-    assert.equal(sentMessages.length, 2);
-    assert.equal(wakes.length, 1);
-  });
-
-  it("treats an outer-success grouped result with a failed child as an immediate failure", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock);
-    const groupedFailure = completionResult({
-      id: "grouped-child-failure-1",
-      agent: "parallel:a+b",
-      success: true,
-      summary: "Combined summary",
-      results: [
-        { agent: "a", status: "completed", summary: "a done" },
-        { agent: "b", status: "failed", summary: "b failed" },
-      ],
-    });
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({ id: "held-before-grouped-failure", agent: "held", summary: "held done" }),
-    );
-    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, groupedFailure);
-    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, groupedFailure);
-
-    assert.equal(sentMessages.length, 2);
-    assert.match(
-      (sentMessages[0]!.message as { content: string }).content,
-      /^Background task completed: \*\*held\*\*/,
-    );
-    const failureContent = (sentMessages[1]!.message as { content: string }).content;
-    assert.match(failureContent, /^Background task failed: \*\*parallel:a\+b\*\*/);
-    assert.match(failureContent, /Children: 1 completed, 1 failed/);
-    // The flushed success carries no options; only the trailing failure triggers the turn.
-    assert.equal(sentMessages[0]!.options, undefined);
-    assert.deepEqual(sentMessages[1]!.options, { triggerTurn: true });
-    assert.equal(
-      (sentMessages[0]!.message as { details: { triggersTurn?: boolean } }).details.triggersTurn,
-      false,
-    );
-    assert.equal(
-      (sentMessages[1]!.message as { details: { triggersTurn?: boolean } }).details.triggersTurn,
-      true,
-    );
-    // One wake for the whole burst: the flush's wake is suppressed and the
-    // immediate failure carries it.
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-
-    clock.advance(1000);
-    assert.equal(sentMessages.length, 2, "the grouped failed run must notify exactly once");
-    assert.equal(wakes.length, 1);
-  });
-
-  it("delivers an outer-failed grouped result immediately instead of success batching", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock);
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "outer-failed-completed-children",
-        agent: "parallel:a+b",
-        success: false,
-        state: "failed",
-        summary: "runner disappeared after children completed",
-        results: [
-          { agent: "a", status: "completed", summary: "a done" },
-          { agent: "b", status: "completed", summary: "b done" },
-        ],
-      }),
-    );
-
-    assert.equal(sentMessages.length, 1);
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    const content = (sentMessages[0]!.message as { content: string }).content;
-    assert.match(content, /^Background task failed: \*\*parallel:a\+b\*\*/);
-    assert.ok(
-      content.indexOf("runner disappeared after children completed") <
-        content.indexOf("Children: 2 completed"),
-    );
-    // Wake sent (idle, immediate path)
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-    clock.advance(1000);
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-  });
-
-  it("rechecks resumable session existence when a deferred success is delivered", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock);
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-deferred-session-"));
-    const sessionFile = path.join(resultsDir, "session.jsonl");
-    fs.writeFileSync(sessionFile, "session\n", "utf-8");
-
-    try {
-      events.emit(
-        SUBAGENT_ASYNC_COMPLETE_EVENT,
-        completionResult({
-          id: "deferred-session-check",
-          sessionFile,
-        }),
-      );
-      assert.equal(sentMessages.length, 0);
-      fs.unlinkSync(sessionFile);
-      clock.advance(150);
-    } finally {
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-
-    assert.equal(sentMessages.length, 1);
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    const content = (sentMessages[0]!.message as { content: string }).content;
-    assert.match(content, /Async id: deferred-session-check/);
-    assert.doesNotMatch(content, /subagent\({ action: "resume"/);
-    // Wake sent (idle path, deferred batch)
-    assert.equal(wakes.length, 1);
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-  });
-
-  it("accepts batch details with or without the wakeMode marker and rejects other values", () => {
-    const base = {
-      schemaVersion: 1,
-      kind: "subagent_completion_batch",
-      batchId: "marker-batch",
-      batchIndex: 0,
-      batchCount: 1,
-      triggersTurn: true,
-      completions: [{ agent: "worker", status: "completed", asyncId: "marker-run" }],
-    };
-    assert.equal(isSubagentCompletionBatchDetails(base), true, "older markerless batches validate");
-    assert.equal(isSubagentCompletionBatchDetails({ ...base, wakeMode: "native" }), true);
-    assert.equal(isSubagentCompletionBatchDetails({ ...base, wakeMode: "legacy" }), false);
-    assert.equal(isSubagentCompletionBatchDetails({ ...base, wakeMode: true }), false);
-  });
-
-  it("groups sibling successes and emits exactly one wake per flush", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock);
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "g-1",
-        agent: "alpha",
-        summary: "alpha done",
-        sessionId: "session-a",
-        shareUrl: "https://share/alpha",
-        results: [{ agent: "alpha", status: "completed", summary: "alpha done" }],
-      }),
-    );
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "g-2",
-        agent: "beta",
-        summary: "beta done",
-        sessionId: "session-a",
-        shareUrl: "https://share/beta",
-        results: [{ agent: "beta", status: "completed", summary: "beta done" }],
-      }),
-    );
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "g-3",
-        agent: "gamma",
-        summary: "gamma done",
-        sessionId: "session-a",
-      }),
-    );
-    assert.equal(sentMessages.length, 0);
-    assert.equal(wakes.length, 0);
-
-    clock.advance(150);
-    // One sendMessage for the grouped batch, one wake (idle, one per flush — not per subagent)
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1, "exactly one wake per flush for grouped completions");
-    const groupedMessage = sentMessages[0]!.message as {
-      content: string;
-      details?: SubagentCompletionBatchDetails;
-    };
-    const content = groupedMessage.content;
-    const groupedDetails = groupedMessage.details;
-    assert.ok(groupedDetails, "grouped messages must retain structured completion metadata");
-    assert.equal(groupedDetails.schemaVersion, 1);
-    assert.equal(groupedDetails.kind, "subagent_completion_batch");
-    assert.equal(groupedDetails.batchIndex, 0);
-    assert.equal(groupedDetails.batchCount, 1);
-    assert.equal(groupedDetails.triggersTurn, true);
-    assert.equal(groupedDetails.wakeMode, "native");
-    assert.equal(groupedDetails.completions.length, 3);
-    assert.deepEqual(
-      groupedDetails.completions.map(({ agent, status, asyncId }) => ({ agent, status, asyncId })),
-      [
-        { agent: "alpha", status: "completed", asyncId: "g-1" },
-        { agent: "beta", status: "completed", asyncId: "g-2" },
-        { agent: "gamma", status: "completed", asyncId: "g-3" },
-      ],
-    );
-    for (const completion of groupedDetails.completions) {
-      assert.deepEqual(Object.keys(completion).sort(), ["agent", "asyncId", "status"]);
-      for (const forbiddenField of [
-        "taskInfo",
-        "resultPreview",
-        "resumeTarget",
-        "sessionLabel",
-        "sessionValue",
-        "awaitingSupervisor",
-        "_reformatPreview",
-      ]) {
-        assert.equal(
-          forbiddenField in completion,
-          false,
-          `${forbiddenField} must stay out of batches`,
-        );
-      }
-    }
-    assert.match(
-      content,
-      /^Background tasks completed \(3\): \*\*alpha\*\*, \*\*beta\*\*, \*\*gamma\*\*/,
-    );
-    assert.match(content, /1\. alpha\nAsync id: g-1\nalpha done\nSession: https:\/\/share\/alpha/);
-    assert.match(content, /2\. beta\nAsync id: g-2\nbeta done\nSession: https:\/\/share\/beta/);
-    assert.match(content, /3\. gamma\nAsync id: g-3\ngamma done/);
-    assert.deepEqual(sentMessages[0]!.options, { triggerTurn: true });
-    // One wake for the whole grouped flush
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-  });
-
-  it("chunks large mixed telemetry batches without dropping order or wakeups", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock);
-    const telemetryFor = (runId: string) => ({
-      schemaVersion: 1,
-      run: { id: runId, execution: "async", mode: "single" },
-      steps: [{ index: 0, agent: "worker", outcome: { state: "completed" } }],
-      provenance: { tlhVersion: "0.41.0", piVersion: "0.85.1", loadedAt: 123 },
-      controls: {
-        needsAttentionAfterMs: 10_000,
-        failedToolAttemptsBeforeAttention: 3,
-        notifyOn: ["needs_attention"],
-        notifyChannels: ["async"],
-      },
-    });
-
-    for (let index = 0; index < MAX_GROUPED_ENTRIES + 1; index++) {
-      events.emit(
-        SUBAGENT_ASYNC_COMPLETE_EVENT,
-        completionResult({
-          id: `chunk-${index}`,
-          agent: `worker-${index}`,
-          summary: `worker-${index} done`,
-          ...(index === 0 || index === MAX_GROUPED_ENTRIES + 1 - 1
-            ? { telemetry: telemetryFor(`telemetry-${index}`) }
-            : {}),
-          ...(index === 0
-            ? {
-                prompt: "prompt-secret",
-                output: "output-secret",
-                cwd: "/private/cwd",
-                args: ["args-secret"],
-                error: "error-secret",
-              }
-            : {}),
-        }),
-      );
-    }
-
-    assert.equal(sentMessages.length, 0);
-    clock.advance(150);
-
-    assert.equal(sentMessages.length, 2);
-    assert.equal(wakes.length, 1, "all chunks must share one coalesced wakeup");
-    const batches = sentMessages.map(
-      ({ message }) =>
-        message as {
-          content: string;
-          display: boolean;
-          details: SubagentCompletionBatchDetails;
-        },
-    );
-    assert.deepEqual(
-      batches.map(({ details }) => ({
-        batchId: details.batchId,
-        batchIndex: details.batchIndex,
-        batchCount: details.batchCount,
-        triggersTurn: details.triggersTurn,
-        wakeMode: details.wakeMode,
-      })),
-      [
-        {
-          batchId: batches[0]!.details.batchId,
-          batchIndex: 0,
-          batchCount: 2,
-          triggersTurn: false,
-          wakeMode: "native",
-        },
-        {
-          batchId: batches[0]!.details.batchId,
-          batchIndex: 1,
-          batchCount: 2,
-          triggersTurn: true,
-          wakeMode: "native",
-        },
-      ],
-    );
-    assert.equal(batches[0]!.display, true);
-    assert.equal(batches[1]!.display, false);
-    assert.equal(batches[1]!.content, "");
-    assert.ok(batches[0]!.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
-    assert.ok(batches[1]!.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
-
-    const completions = batches.flatMap(({ details }) => details.completions);
-    assert.equal(batches[0]!.details.completions.length, MAX_GROUPED_ENTRIES);
-    assert.equal(batches[1]!.details.completions.length, 1);
-    assert.deepEqual(
-      completions.map(({ agent, asyncId }) => ({ agent, asyncId })),
-      Array.from({ length: MAX_GROUPED_ENTRIES + 1 }, (_, index) => ({
-        agent: `worker-${index}`,
-        asyncId: `chunk-${index}`,
-      })),
-    );
-    assert.equal(completions[0]!.telemetry?.run.id, "telemetry-0");
-    assert.equal(completions[MAX_GROUPED_ENTRIES]!.telemetry?.run.id, "telemetry-8");
-    assert.equal(completions[1]!.telemetry, undefined, "legacy entries retain absent telemetry");
-    const allowedFields = new Set(["agent", "status", "durationMs", "asyncId", "telemetry"]);
-    const forbiddenFields = [
-      "taskInfo",
-      "resultPreview",
-      "resumeTarget",
-      "sessionLabel",
-      "sessionValue",
-      "awaitingSupervisor",
-      "_reformatPreview",
-      "prompt",
-      "output",
-      "cwd",
-      "path",
-      "args",
-      "error",
-    ];
-    for (const completion of completions) {
-      assert.ok(Object.keys(completion).every((field) => allowedFields.has(field)));
-      for (const forbiddenField of forbiddenFields) {
-        assert.equal(
-          forbiddenField in completion,
-          false,
-          `${forbiddenField} must stay out of every batch chunk`,
-        );
-      }
-    }
-    const serialized = JSON.stringify(batches);
-    assert.doesNotMatch(
-      serialized,
-      /prompt-secret|output-secret|\/private\/cwd|args-secret|error-secret/,
-    );
-    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-    // Only the final chunk triggers the turn; earlier chunks carry no options.
-    assert.equal(wakes[0]?.message, sentMessages[sentMessages.length - 1]!.message);
-    assert.equal(sentMessages[0]!.options, undefined);
-  });
-
-  for (const entryCount of [MAX_COMPLETION_BATCH_ENTRIES, MAX_COMPLETION_BATCH_ENTRIES + 1]) {
-    it(`bounds a ${entryCount}-entry flush into coherent logical batches`, () => {
-      const clock = createFakeClock();
-      const { events, sentMessages, wakes } = createBatchingPi(clock);
-      for (let index = 0; index < entryCount; index++) {
-        events.emit(
-          SUBAGENT_ASYNC_COMPLETE_EVENT,
-          completionResult({
-            id: `boundary-${entryCount}-${index}`,
-            agent: `worker-${index}`,
-            summary: `worker-${index} done`,
-          }),
-        );
-      }
-
-      clock.advance(150);
-
-      const messages = sentMessages.map(
-        ({ message }) =>
-          message as {
-            content: string;
-            display: boolean;
-            details: SubagentCompletionBatchDetails;
-          },
-      );
-      const expectedBatchCounts =
-        entryCount === MAX_COMPLETION_BATCH_ENTRIES
-          ? [MAX_COMPLETION_BATCH_CHUNKS]
-          : [MAX_COMPLETION_BATCH_CHUNKS, 1];
-      assert.equal(messages.length, Math.ceil(entryCount / MAX_GROUPED_ENTRIES));
-      assert.equal(wakes.length, 1, "one wake must cover the overall flush");
-      assert.equal(messages.filter(({ display }) => display).length, 1);
-      assert.equal(messages.filter(({ details }) => details.triggersTurn).length, 1);
-      assert.equal(messages[0]!.content.length > 0, true);
-      assert.ok(messages.slice(1).every(({ content }) => content === ""));
-
-      const batchIds = [...new Set(messages.map(({ details }) => details.batchId))];
-      assert.equal(batchIds.length, expectedBatchCounts.length);
-      assert.equal(new Set(batchIds).size, batchIds.length, "logical batches need unique IDs");
-      assert.deepEqual(
-        batchIds.map((batchId) => {
-          const chunks = messages.filter(({ details }) => details.batchId === batchId);
-          return {
-            batchCount: chunks[0]!.details.batchCount,
-            batchIndices: chunks.map(({ details }) => details.batchIndex),
-            flushId: chunks[0]!.details.flushId,
-            flushIndex: chunks[0]!.details.flushIndex,
-            flushCount: chunks[0]!.details.flushCount,
-          };
-        }),
-        expectedBatchCounts.map((batchCount, flushIndex) => ({
-          batchCount,
-          batchIndices: Array.from({ length: batchCount }, (_, index) => index),
-          flushId: messages[0]!.details.flushId,
-          flushIndex,
-          flushCount: expectedBatchCounts.length,
-        })),
-      );
-      assert.ok(
-        messages.every(
-          ({ details }) =>
-            details.batchCount <= MAX_COMPLETION_BATCH_CHUNKS &&
-            isSubagentCompletionBatchDetails(details),
-        ),
-      );
-
-      const completions = messages.flatMap(({ details }) => details.completions);
-      assert.deepEqual(
-        completions.map(({ asyncId }) => asyncId),
-        Array.from({ length: entryCount }, (_, index) => `boundary-${entryCount}-${index}`),
-      );
-      assert.equal(messages.at(-1)!.details.triggersTurn, true);
-      assert.ok(messages.every(({ details }) => details.wakeMode === "native"));
-      assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
-    });
-  }
-
-  it("retains the owner batcher so late siblings use the shorter straggler debounce", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock, "session-a");
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({ id: "first-group", agent: "alpha", sessionId: "session-a" }),
-    );
-    clock.advance(150);
-    assert.equal(sentMessages.length, 1);
-    assert.equal(wakes.length, 1);
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({ id: "late-sibling", agent: "beta", sessionId: "session-a" }),
-    );
-    clock.advance(74);
-    assert.equal(
-      sentMessages.length,
-      1,
-      "the straggler must remain held before the shorter debounce expires",
-    );
-    assert.equal(wakes.length, 1);
-    clock.advance(1);
-
-    assert.equal(sentMessages.length, 2);
-    assert.match(
-      (sentMessages[1]!.message as { content: string }).content,
-      /^Background task completed: \*\*beta\*\*/,
-    );
-    // triggerTurn sent (idle)
-    assert.deepEqual(sentMessages[1]!.options, { triggerTurn: true });
-    assert.equal(wakes.length, 2);
-    assert.deepEqual(wakes[1]?.options, { triggerTurn: true });
-  });
-
-  it("drops a deferred success batch when its owning session is no longer current", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes, state } = createBatchingPi(clock, "session-a");
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "stale-owner-success",
-        agent: "session-a-worker",
-        summary: "session A done",
-        sessionId: "session-a",
-      }),
-    );
-    assert.equal(sentMessages.length, 0);
-
-    state.currentSessionId = "session-b";
-    clock.advance(150);
-
-    assert.equal(
-      sentMessages.length,
-      0,
-      "a stale owner batch must neither send nor trigger a turn in the new session",
-    );
-    assert.equal(wakes.length, 0);
-  });
-
-  it("flushes a deferred owner success during session shutdown without triggering a new turn or duplicating it later", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes, state, lifecycleHandlers } = createBatchingPi(
-      clock,
-      "session-a",
-    );
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "shutdown-flush-success",
-        agent: "session-a-worker",
-        summary: "session A done",
-        sessionId: "session-a",
-      }),
-    );
-    assert.equal(sentMessages.length, 0);
-
-    lifecycleHandlers.get("session_shutdown")?.({ reason: "switch" });
-    assert.equal(sentMessages.length, 1);
-    assert.match(
-      (sentMessages[0]!.message as { content: string }).content,
-      /^Background task completed: \*\*session-a-worker\*\*/,
-    );
-    // Shutdown flush: no triggerTurn
-    assert.equal(sentMessages[0]!.options, undefined);
-    assert.equal(wakes.length, 0, "no wake must be sent during session shutdown flush");
-    assert.equal(
-      (sentMessages[0]!.message as { details: { triggersTurn?: boolean } }).details.triggersTurn,
-      false,
-    );
-
-    state.currentSessionId = "session-b";
-    clock.advance(1000);
-    assert.equal(
-      sentMessages.length,
-      1,
-      "the shutdown flush must persist exactly once and never re-deliver into the replacement session",
-    );
-    assert.equal(wakes.length, 0);
-  });
-
-  it("ignores successes from other sessions instead of grouping them", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock, "session-a");
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "s-1",
-        agent: "alpha",
-        summary: "alpha done",
-        sessionId: "session-a",
-      }),
-    );
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({ id: "s-2", agent: "beta", summary: "beta done", sessionId: "session-b" }),
-    );
-    clock.advance(150);
-
-    assert.equal(sentMessages.length, 1);
-    assert.match(
-      (sentMessages[0]!.message as { content: string }).content,
-      /^Background task completed: \*\*alpha\*\*/,
-    );
-    assert.doesNotMatch((sentMessages[0]!.message as { content: string }).content, /beta done/);
-    assert.equal(wakes.length, 1);
-  });
-
-  it("does not let another session failure flush held successes", () => {
-    const clock = createFakeClock();
-    const { events, sentMessages, wakes } = createBatchingPi(clock, "session-a");
-
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "held-a-1",
-        agent: "alpha",
-        summary: "alpha done",
-        sessionId: "session-a",
-      }),
-    );
-    events.emit(
-      SUBAGENT_ASYNC_COMPLETE_EVENT,
-      completionResult({
-        id: "fail-b-1",
-        agent: "beta",
-        success: false,
-        summary: "boom",
-        exitCode: 1,
-        sessionId: "session-b",
-      }),
-    );
-    assert.equal(sentMessages.length, 0);
-
-    clock.advance(150);
-    assert.equal(sentMessages.length, 1);
-    assert.match(
-      (sentMessages[0]!.message as { content: string }).content,
-      /^Background task completed: \*\*alpha\*\*/,
-    );
-    assert.doesNotMatch((sentMessages[0]!.message as { content: string }).content, /boom/);
     assert.equal(wakes.length, 1);
   });
 });

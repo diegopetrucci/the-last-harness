@@ -57,6 +57,8 @@ Use the `subagent` tool for minor agents:
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 - `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
 
+For any ticket-backed dispatch, pass the approved ticket ID through the subagent `ticket` parameter (top-level for single, per task for parallel) instead of embedding `tk show <id>` in task prose; the child receives the injected ticket body as its source of truth. Exception: multi-ticket final reviews (see Final review) embed each completed ticket's full `tk show` output in the reviewer brief instead of relying on the `ticket` parameter.
+
 Do not create, update, or delete subagent definitions at runtime. Delegate only to targets permitted by the TLH Allowed Minor Subagents prompt section.
 
 To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
@@ -125,8 +127,8 @@ For each ready task:
 
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
 2. Inspect the ticket type and route it to the matching worker:
-   - implementation tickets go to `developer`, who must run `tk show <id>` before making changes and perform the ticket-local validation;
-   - final-validation tickets go to `test-runner`, who must run `tk show <id>` first and execute only the exact ordered shell/MCP steps listed in the ticket.
+   - implementation tickets go to `developer`, who treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it, then performs the ticket-local validation;
+   - final-validation tickets go to `test-runner`, who treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it, then executes only the exact ordered shell/MCP steps listed in the ticket.
 3. Do not send a final-validation ticket to `developer`, and do not send an implementation ticket to `test-runner`.
 4. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
 5. Evaluate the worker report against the ticket and overall plan.
@@ -138,14 +140,14 @@ For each ready task:
 
 - Let healthy async children continue; use status or steer as needed, and do not pause or interrupt them without a real decision, blocker, or safety concern.
 - If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
-- Treat cumulative role budgets as continuous across foreground, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime. A timeout from an older run-owned deadline is compatibility metadata, not proof that the role budget is exhausted.
+- Treat cumulative role budgets as continuous across awaited, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime. A timeout from an older run-owned deadline is compatibility metadata, not proof that the role budget is exhausted.
 - When a child is budget-exhausted, inspect partial output, artifacts, and files before making any new dispatch. Narrow or split the remaining scope when possible, and make a fresh dispatch only as an explicit decision; do not offer unchanged-task replacement or rollback as an automatic recovery.
 
 ## Final review
 
 After all planned tickets are complete:
 
-1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets. If the ‘tk’ tickets were accidentally deleted, recreate them.
+1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets. For multi-ticket final reviews, run `tk show <id>` for each completed ticket and embed the full outputs in the self-contained brief sent to `code-reviewer` alongside the diff; do not rely on `code-reviewer` to infer ticket IDs from prose. For single-ticket checkpoint reviews, use the `ticket` parameter instead. If any 'tk' tickets were accidentally deleted, recreate them before embedding.
 2. Evaluate findings; delegate fixes to `developer` if needed.
 3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 

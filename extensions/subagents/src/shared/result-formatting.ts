@@ -1,11 +1,15 @@
 import {
+  type Details,
   type SubagentResultChild,
   type SubagentResultStatus,
+  type SingleResult,
   type SubagentRunMode,
+  type SubagentTerminalResult,
   normalizeSubagentRunMode,
 } from "./types.ts";
 import { truncateWithMarker } from "./string-utils.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "./display-text.ts";
+import { getSingleResultOutput } from "./utils.ts";
 
 export function resolveSubagentResultStatus(input: {
   exitCode?: number;
@@ -57,7 +61,7 @@ const MAX_NATIVE_FOREGROUND_LABEL_CHARS = 160;
 const MAX_NATIVE_FOREGROUND_REFERENCE_CHARS = 500;
 const MAX_NATIVE_FOREGROUND_ERROR_CHARS = 1_200;
 
-function boundedNativeForegroundLabel(value: string): string {
+function boundedNativeAwaitedLabel(value: string): string {
   return truncateWithMarker(
     safeTerminalText(value),
     MAX_NATIVE_FOREGROUND_LABEL_CHARS,
@@ -65,7 +69,7 @@ function boundedNativeForegroundLabel(value: string): string {
   );
 }
 
-function boundedNativeForegroundReference(value: string): string {
+function boundedNativeAwaitedReference(value: string): string {
   return truncateWithMarker(
     safeTerminalText(value),
     MAX_NATIVE_FOREGROUND_REFERENCE_CHARS,
@@ -73,7 +77,7 @@ function boundedNativeForegroundReference(value: string): string {
   );
 }
 
-function boundedNativeForegroundError(value: string): string {
+function boundedNativeAwaitedError(value: string): string {
   return truncateWithMarker(
     safeTerminalText(value),
     MAX_NATIVE_FOREGROUND_ERROR_CHARS,
@@ -81,12 +85,30 @@ function boundedNativeForegroundError(value: string): string {
   );
 }
 
+function compactTerminalFacts(result: SubagentTerminalResult | undefined): string | undefined {
+  const attempts = result?.facts.attempts;
+  if (!attempts?.length) return undefined;
+  return `Facts: ${attempts
+    .slice(0, 64)
+    .map((attempt) => {
+      const exit = attempt.exit.signal
+        ? `signal=${safeTerminalText(attempt.exit.signal)}`
+        : `exit=${attempt.exit.code === null ? "?" : attempt.exit.code}`;
+      const tokens =
+        attempt.providerTokens.status === "available"
+          ? `tokens=${attempt.providerTokens.usage.total}`
+          : "tokens=?";
+      return `#${attempt.attempt} ${exit}, duration=${Math.round(attempt.durationMs)}ms, ${tokens}, tools=${attempt.requestedToolCalls.edit}/${attempt.requestedToolCalls.write}/${attempt.requestedToolCalls.bash}, workspace=${attempt.workspace.attribution}`;
+    })
+    .join("; ")}`;
+}
+
 /**
  * Bounds the per-child summary to maxChars, choosing the appropriate truncation marker.
  * Returns "" when the budget cannot hold a well-formed marker so that callers can suppress
  * the summary line entirely rather than emitting a sliced fragment.
  */
-function boundedNativeForegroundSummary(child: SubagentResultChild, maxChars: number): string {
+function boundedNativeAwaitedSummary(child: SubagentResultChild, maxChars: number): string {
   const raw = safeTerminalDocumentLeaf(child.summary).trim() || "(no output)";
   if (raw.length <= maxChars) return raw;
   // Select the marker first, then suppress when the budget cannot hold it.
@@ -101,15 +123,16 @@ function boundedNativeForegroundSummary(child: SubagentResultChild, maxChars: nu
   return truncateWithMarker(raw, maxChars, marker);
 }
 
-interface NativeForegroundChild extends SubagentResultChild {
+interface NativeAwaitedChild extends SubagentResultChild {
   displayIndex?: number;
   displayTotal?: number;
-  nativeForegroundPriority?: number;
+  nativeAwaitedPriority?: number;
+  terminalResult?: import("./types.ts").SubagentTerminalResult;
 }
 
-function prioritizedNativeForegroundChildren(
-  children: NativeForegroundChild[],
-): Array<{ child: NativeForegroundChild; originalIndex: number }> {
+function prioritizedNativeAwaitedChildren(
+  children: NativeAwaitedChild[],
+): Array<{ child: NativeAwaitedChild; originalIndex: number }> {
   const statusPriority = new Map<SubagentResultStatus, number>([
     ["failed", 0],
     ["paused", 1],
@@ -119,7 +142,7 @@ function prioritizedNativeForegroundChildren(
     .map((child, index) => ({ child, originalIndex: child.index ?? index, inputOrder: index }))
     .sort((a, b) => {
       const priorityDelta =
-        (b.child.nativeForegroundPriority ?? 0) - (a.child.nativeForegroundPriority ?? 0);
+        (b.child.nativeAwaitedPriority ?? 0) - (a.child.nativeAwaitedPriority ?? 0);
       if (priorityDelta !== 0) return priorityDelta;
       const statusDelta =
         (statusPriority.get(a.child.status) ?? 99) - (statusPriority.get(b.child.status) ?? 99);
@@ -144,7 +167,7 @@ function joinedLineCost(lines: string[]): number {
  * lines) before the division ensures summary text receives only the
  * space that remains after every recovery pointer is guaranteed.
  */
-function resolveNativeForegroundPerChildSummaryBudget(
+function resolveNativeAwaitedPerChildSummaryBudget(
   count: number,
   fixedCost: number,
   ceiling: number,
@@ -158,7 +181,7 @@ function formatForegroundNativeSubagentText(input: {
   runId: string;
   mode: SubagentRunMode;
   status: SubagentResultStatus;
-  children: NativeForegroundChild[];
+  children: NativeAwaitedChild[];
   errorSummary?: string;
 }): string {
   const counts = countStatuses(input.children);
@@ -167,17 +190,17 @@ function formatForegroundNativeSubagentText(input: {
   const outerLines: string[] = [
     "subagent results",
     "",
-    `Run: ${boundedNativeForegroundReference(input.runId)}`,
-    `Mode: ${boundedNativeForegroundLabel(input.mode)}`,
-    `Status: ${boundedNativeForegroundLabel(input.status)}`,
+    `Run: ${boundedNativeAwaitedReference(input.runId)}`,
+    `Mode: ${boundedNativeAwaitedLabel(input.mode)}`,
+    `Status: ${boundedNativeAwaitedLabel(input.status)}`,
     `Children: ${formatStatusCounts(counts)}`,
   ];
   if (input.errorSummary) {
-    outerLines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
+    outerLines.push("", "Error:", boundedNativeAwaitedError(input.errorSummary));
   }
 
   // Apply priority ordering and cap at MAX_NATIVE_FOREGROUND_CHILDREN.
-  const displayedChildren = prioritizedNativeForegroundChildren(input.children);
+  const displayedChildren = prioritizedNativeAwaitedChildren(input.children);
 
   // Top-level omission (children beyond the priority cap).
   const priorityOmittedCount = input.children.length - displayedChildren.length;
@@ -190,7 +213,7 @@ function formatForegroundNativeSubagentText(input: {
   // These carry the recovery pointers and must be reserved before the summary
   // budget is divided so end-truncation can never destroy them.
   interface ChildFixedData {
-    child: NativeForegroundChild;
+    child: NativeAwaitedChild;
     originalIndex: number;
     labelLine: string;
     refLines: string[];
@@ -200,12 +223,14 @@ function formatForegroundNativeSubagentText(input: {
   const childFixedData: ChildFixedData[] = displayedChildren.map(({ child, originalIndex }) => {
     const displayIndex = child.displayIndex ?? originalIndex + 1;
     const displayTotal = child.displayTotal ?? input.children.length;
-    const labelLine = `${displayIndex}/${displayTotal}. ${boundedNativeForegroundLabel(child.agent)} — ${boundedNativeForegroundLabel(child.status)}`;
+    const labelLine = `${displayIndex}/${displayTotal}. ${boundedNativeAwaitedLabel(child.agent)} — ${boundedNativeAwaitedLabel(child.status)}`;
     const refLines: string[] = [];
     if (child.artifactPath)
-      refLines.push(`Output artifact: ${boundedNativeForegroundReference(child.artifactPath)}`);
+      refLines.push(`Output artifact: ${boundedNativeAwaitedReference(child.artifactPath)}`);
+    const factsLine = compactTerminalFacts(child.terminalResult);
+    if (factsLine) refLines.push(factsLine);
     if (child.sessionPath)
-      refLines.push(`Session: ${boundedNativeForegroundReference(child.sessionPath)}`);
+      refLines.push(`Session: ${boundedNativeAwaitedReference(child.sessionPath)}`);
     // Fixed cost: blank separator + label + "Summary:" header + reference lines.
     // The summary body itself is NOT included here — it is conditional on the per-child
     // budget and must not be pre-counted, or the fit decision will drop children one char
@@ -262,7 +287,7 @@ function formatForegroundNativeSubagentText(input: {
     (budgetOmissionLine ? joinedLineCost(["", budgetOmissionLine]) : 0) +
     effectiveChildData.reduce((s, c) => s + c.fixedCost, 0);
 
-  const perChildSummaryBudget = resolveNativeForegroundPerChildSummaryBudget(
+  const perChildSummaryBudget = resolveNativeAwaitedPerChildSummaryBudget(
     effectiveCount,
     totalFixedCost + effectiveCount,
     MAX_NATIVE_FOREGROUND_CHARS,
@@ -278,7 +303,7 @@ function formatForegroundNativeSubagentText(input: {
     // Emit summary text with per-child budget. Suppress the 'Summary:' heading
     // entirely when the budget cannot hold a well-formed truncation marker — an
     // orphaned heading with nothing beneath it is worse than no heading at all.
-    const summaryText = boundedNativeForegroundSummary(child, perChildSummaryBudget);
+    const summaryText = boundedNativeAwaitedSummary(child, perChildSummaryBudget);
     if (summaryText) lines.push("Summary:", summaryText);
     lines.push(...refLines);
   }
@@ -286,15 +311,15 @@ function formatForegroundNativeSubagentText(input: {
   return lines.join("\n");
 }
 
-interface GroupedNativeForegroundMessageInput {
+interface GroupedNativeAwaitedMessageInput {
   runId: string;
   mode: SubagentRunMode;
-  children: NativeForegroundChild[];
+  children: NativeAwaitedChild[];
   statusOverride?: SubagentResultStatus;
   errorSummary?: string;
 }
 
-export function formatForegroundNativeSubagentResult(input: GroupedNativeForegroundMessageInput): {
+export function formatAwaitedNativeSubagentResult(input: GroupedNativeAwaitedMessageInput): {
   text: string;
   status: SubagentResultStatus;
   summary: string;
@@ -315,5 +340,105 @@ export function formatForegroundNativeSubagentResult(input: GroupedNativeForegro
       children,
       ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
     }),
+  };
+}
+
+const MAX_NATIVE_AWAITED_SAVE_ERROR_CHARS = 600;
+
+function boundedNativeAwaitedSaveError(error: string): string {
+  const marker = "… [save error truncated; full diagnostic is unavailable]";
+  if (error.length <= MAX_NATIVE_AWAITED_SAVE_ERROR_CHARS) return error;
+  return `${error.slice(0, MAX_NATIVE_AWAITED_SAVE_ERROR_CHARS - marker.length)}${marker}`;
+}
+
+function splitFinalizeSingleOutputSaveErrorBlock(
+  displayOutput: string,
+  saveError: string,
+): { output: string; header?: string } {
+  const saveErrorSuffix = `\n${saveError}`;
+  if (!displayOutput.endsWith(saveErrorSuffix)) return { output: displayOutput };
+  const prefix = "\n\nOutput file error: ";
+  const withoutSaveError = displayOutput.slice(0, -saveErrorSuffix.length);
+  const blockStart = withoutSaveError.lastIndexOf(prefix);
+  if (blockStart === -1) return { output: displayOutput };
+  const pathLine = withoutSaveError.slice(blockStart + prefix.length);
+  if (pathLine.includes("\n")) return { output: displayOutput };
+  return {
+    output: displayOutput.slice(0, blockStart),
+    header: `Output file error: ${pathLine}`,
+  };
+}
+
+export function resultSummaryForNativeAwaited(
+  result: SingleResult,
+  displayOutput?: string,
+): string {
+  const hasSavedOutputReference =
+    result.exitCode === 0 && Boolean(result.savedOutputPath && result.outputReference);
+  const rawOutput =
+    hasSavedOutputReference && result.outputMode === "file-only"
+      ? getSingleResultOutput(result)
+      : (displayOutput ?? result.truncation?.text) || getSingleResultOutput(result);
+  const singleSaveError = result.outputSaveError
+    ? splitFinalizeSingleOutputSaveErrorBlock(rawOutput, result.outputSaveError)
+    : undefined;
+  const output = singleSaveError?.output ?? rawOutput;
+  const lines: string[] = [];
+  if (result.outputSaveError) {
+    lines.push(
+      `${singleSaveError?.header ?? "Output file error:"}\n${boundedNativeAwaitedSaveError(result.outputSaveError)}`,
+    );
+  }
+  if (result.modelFallbackNotice) lines.push(`Notice: ${result.modelFallbackNotice}`);
+  if (result.exitCode !== 0 && result.error) {
+    const error = result.error.trim();
+    const selected = output.trim();
+    const summary =
+      selected === error || selected.startsWith(`${error}\n`)
+        ? selected
+        : selected
+          ? `${result.error}\n\nOutput:\n${output}`
+          : result.error;
+    lines.push(summary);
+  } else {
+    lines.push(output || result.error || "(no output)");
+  }
+  return lines.join("\n\n");
+}
+
+export function buildAwaitedNativeResult(input: {
+  runId: string;
+  mode: SubagentRunMode;
+  details: Details;
+  displayOutputs?: string[];
+  statusOverride?: SubagentResultStatus;
+  errorSummary?: string;
+}): { text: string; details: Details } | null {
+  const visibleResults = input.details.results.map((result, index) => ({ result, index }));
+  if (visibleResults.length === 0) return null;
+  const children = visibleResults.map(({ result, index }, visibleIndex) => ({
+    agent: result.agent,
+    status: resolveSubagentResultStatus({
+      exitCode: result.exitCode,
+      interrupted: result.interrupted,
+    }),
+    summary: resultSummaryForNativeAwaited(result, input.displayOutputs?.[index]),
+    index,
+    displayIndex: visibleIndex + 1,
+    displayTotal: visibleResults.length,
+    artifactPath: result.artifactPaths?.outputPath,
+    sessionPath: result.sessionFile,
+    ...(result.terminalResult ? { terminalResult: result.terminalResult } : {}),
+  }));
+  const grouped = formatAwaitedNativeSubagentResult({
+    runId: input.runId,
+    mode: input.mode,
+    children,
+    ...(input.statusOverride ? { statusOverride: input.statusOverride } : {}),
+    ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
+  });
+  return {
+    text: grouped.text,
+    details: input.details,
   };
 }

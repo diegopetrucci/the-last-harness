@@ -668,9 +668,12 @@ function programStatusChildId(runId) {
 }
 function resolveChildren(snapshot) {
     const children = new Map();
+    const awaited = new Set(snapshot.awaitedAsyncJobIds);
     for (const runId of [...snapshot.activeAsyncJobIds].sort()) {
         if (children.size >= PROGRAM_STATUS_MAX_CHILDREN)
             break;
+        if (awaited.has(runId))
+            continue;
         const id = programStatusChildId(runId);
         if (id === undefined || children.has(id))
             continue;
@@ -720,7 +723,10 @@ export function createProgramStatusActivityReporter(options = {}) {
                 msg = sessionName;
             else {
                 let count = 0;
+                const awaited = new Set(snapshot.awaitedAsyncJobIds);
                 for (const runId of snapshot.activeAsyncJobIds) {
+                    if (awaited.has(runId))
+                        continue;
                     const names = snapshot.activeAsyncJobAgents?.[runId];
                     count += names && names.length > 0 ? names.length : 1;
                 }

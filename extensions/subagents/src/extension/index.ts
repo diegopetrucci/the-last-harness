@@ -71,18 +71,15 @@ import {
   createSubagentExecutor,
   normalizeProjectAgentAccess,
   type SubagentParamsLike,
-} from "../runs/foreground/subagent-executor.ts";
+} from "./subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
-import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.ts";
+import { disposeAwaitedRuns } from "../runs/background/awaited-run-registry.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.ts";
 import registerSubagentNotify, {
   boundedReference,
-  isSubagentCompletionBatchDetails,
-  isSubagentNotifyDetails,
   MAX_DISPLAY_SUMMARY_CHARS,
-  type SubagentCompletionBatchDetails,
   type SubagentNotifyDetails,
 } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
@@ -106,7 +103,6 @@ import {
   WIDGET_KEY,
 } from "../shared/types.ts";
 import {
-  clearPendingForegroundControlNotices,
   formatSubagentControlNotice,
   handleSubagentControlNotice,
   SUBAGENT_CONTROL_MESSAGE_TYPE,
@@ -277,8 +273,8 @@ export function scheduleDetachedRuntimeCleanup(deps: DetachedRuntimeCleanupDeps 
   }
 }
 
-// Drives the inline running-indicator braille animation for foreground subagent
-// results. Foreground runs receive progress only on child events, so the glyph
+// Drives the inline running-indicator braille animation for awaited subagent
+// results. Awaited runs receive progress only on child events, so the glyph
 // (derived from progress fields) would freeze between events. While a result is
 // running we tick a frame counter + invalidate() every 80ms so renderSubagentResult
 // can blend the frame into runningGlyph and produce a smooth spinner.
@@ -327,28 +323,92 @@ function parseSubagentNotifyContent(content: string): ParsedSubagentNotifyConten
     /^Background task (completed|failed|paused): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/,
   );
   if (!match) return undefined;
+
   const body = lines.slice(2);
-  let sessionIndex = -1;
-  for (let i = body.length - 1; i >= 1; i--) {
-    if (
-      body[i - 1]?.trim() === "" &&
-      /^(Session|Session file|Session share error):\s+/.test(body[i]!)
+  const summaryHeading = body.indexOf("Summary:");
+  const factsIndex = body.findIndex((line) => /^Facts:\s*/.test(line));
+  const artifactLines = body.filter((line) => /^Output artifact:\s+\S/.test(line));
+  const childSessionLines = body.filter((line) => /^Session:\s+\S/.test(line));
+  const metadataLines = body.filter((line) =>
+    /^(Async id:\s+\S|Revive(?: child)?:\s+subagent\(|No child process is running\.|Resume(?: unchanged| with guidance):\s+subagent\(|Cancel:\s+subagent\()/.test(
+      line,
+    ),
+  );
+
+  let resultPreview: string;
+  let factsPreview: string | undefined;
+  if (summaryHeading >= 0) {
+    const summaryStart = summaryHeading + 1;
+    const summaryEnd =
+      [
+        factsIndex,
+        ...body
+          .map((line, index) => ({ line, index }))
+          .filter(
+            ({ line, index }) =>
+              index > summaryStart &&
+              /^(Session|Async id:|Revive(?: child)?:|No child process is running\.|Resume(?: unchanged| with guidance):|Cancel:)/.test(
+                line,
+              ),
+          )
+          .map(({ index }) => index),
+      ]
+        .filter((index) => index >= summaryStart)
+        .sort((a, b) => a - b)[0] ?? body.length;
+    resultPreview =
+      body
+        .slice(summaryStart, summaryEnd)
+        .map((line) => (line.startsWith("  ") ? line.slice(2) : line))
+        .join("\n")
+        .trim() || "(no output)";
+    if (factsIndex >= 0) {
+      const factsEnd =
+        body
+          .map((line, index) => ({ line, index }))
+          .filter(
+            ({ line, index }) =>
+              index > factsIndex &&
+              /^(Session|Async id:|Revive(?: child)?:|No child process is running\.|Resume(?: unchanged| with guidance):|Cancel:)/.test(
+                line,
+              ),
+          )
+          .map(({ index }) => index)
+          .sort((a, b) => a - b)[0] ?? body.length;
+      const factsLine = body[factsIndex]!.replace(/^Facts:\s*/, "");
+      const trailingFacts = body
+        .slice(factsIndex + 1, factsEnd)
+        .join("\n")
+        .trim();
+      factsPreview = [factsLine, trailingFacts].filter(Boolean).join("\n") || undefined;
+    }
+  } else {
+    // Read the pre-E1 single shape for persisted transcripts and extension
+    // reloads. New notifications always use the explicit Summary: section.
+    const resultLines = [...body];
+    while (
+      resultLines[0] &&
+      (/^Async id:\s+\S/.test(resultLines[0]) ||
+        /^Revive(?: child)?:\s+subagent\(/.test(resultLines[0]) ||
+        resultLines[0].trim() === "")
     ) {
-      sessionIndex = i;
-      break;
+      resultLines.shift();
     }
+    resultPreview =
+      resultLines
+        .filter(
+          (line) =>
+            !/^Output artifact:\s+/.test(line) &&
+            !/^Facts:\s*/.test(line) &&
+            !/^Session(?: file| share error)?:\s+/.test(line),
+        )
+        .join("\n")
+        .trim() || "(no output)";
   }
-  const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
-  const resultLines = sessionIndex >= 0 ? body.slice(0, sessionIndex) : body;
-  const referenceLines: string[] = [];
-  if (/^Async id:\s+\S/.test(resultLines[0] ?? "")) {
-    referenceLines.push(resultLines.shift()!);
-    if (/^Revive(?: child)?:\s+subagent\(/.test(resultLines[0] ?? "")) {
-      referenceLines.push(resultLines.shift()!);
-    }
-    if (resultLines[0]?.trim() === "") resultLines.shift();
-  }
-  const resultPreview = resultLines.join("\n").trim() || "(no output)";
+
+  const sessionLines = body.filter((line) =>
+    /^(Session file|Session share error):\s+\S/.test(line),
+  );
+  const sessionLine = sessionLines.at(-1);
   let sessionLabel: string | undefined;
   let sessionValue: string | undefined;
   if (sessionLine) {
@@ -356,16 +416,112 @@ function parseSubagentNotifyContent(content: string): ParsedSubagentNotifyConten
     sessionLabel = sessionLine.slice(0, separator).toLowerCase();
     sessionValue = boundedReference(sessionLine.slice(separator + 1).trim());
   }
+
   return {
     details: {
       agent: match[2]!,
       status: match[1] as SubagentNotifyDetails["status"],
       ...(match[3] ? { taskInfo: match[3] } : {}),
       resultPreview,
+      ...(factsPreview ? { factsPreview } : {}),
+      ...(artifactLines.length > 0
+        ? {
+            artifactPaths: artifactLines.map((line) =>
+              boundedReference(line.slice("Output artifact:".length).trim()),
+            ),
+          }
+        : {}),
+      ...(childSessionLines.length > 0
+        ? {
+            sessionPaths: childSessionLines.map((line) =>
+              boundedReference(line.slice("Session:".length).trim()),
+            ),
+          }
+        : {}),
       ...(sessionLabel && sessionValue ? { sessionLabel, sessionValue } : {}),
     },
-    referenceLines,
+    referenceLines: [
+      ...artifactLines,
+      ...(factsIndex >= 0 ? [body[factsIndex]!] : []),
+      ...metadataLines,
+      ...childSessionLines,
+    ],
   };
+}
+
+function isSafeNotifyAsyncId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.length <= 200 &&
+    !/[\\/]/.test(value) &&
+    !value.includes("..") &&
+    ![...value].some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || code === 0x7f || code === 0x2028 || code === 0x2029;
+    })
+  );
+}
+
+function structuredNotifyReferenceLines(details: SubagentNotifyDetails): string[] {
+  const lines: string[] = [];
+  if (Array.isArray(details.artifactPaths)) {
+    for (const value of details.artifactPaths) {
+      if (typeof value === "string" && value.length > 0)
+        lines.push(`Output artifact: ${boundedReference(value)}`);
+    }
+  }
+  if (typeof details.factsPreview === "string" && details.factsPreview.length > 0) {
+    const facts = details.factsPreview.split("\n");
+    lines.push(`Facts: ${facts.shift()!}`, ...facts.map((line) => `  ${line}`));
+  }
+  if (Array.isArray(details.sessionPaths)) {
+    for (const value of details.sessionPaths) {
+      if (typeof value === "string" && value.length > 0)
+        lines.push(`Session: ${boundedReference(value)}`);
+    }
+  }
+  const asyncId = isSafeNotifyAsyncId(details.asyncId) ? details.asyncId : undefined;
+  if (!asyncId) return lines;
+  lines.push(`Async id: ${asyncId}`);
+  const target = details.resumeTarget as
+    | { sessionPath?: unknown; index?: unknown; childCount?: unknown }
+    | undefined;
+  if (!target) return lines;
+  const hasIndex = target.index !== undefined;
+  const validIndex =
+    typeof target.index === "number" &&
+    Number.isInteger(target.index) &&
+    target.index >= 0 &&
+    typeof target.childCount === "number" &&
+    Number.isInteger(target.childCount) &&
+    target.index < target.childCount;
+  if (hasIndex && !validIndex) return lines;
+  if (!details.awaitingSupervisor && !target.sessionPath) return lines;
+  const idLiteral = JSON.stringify(asyncId);
+  if (details.awaitingSupervisor) {
+    lines.push("No child process is running.");
+    if (!hasIndex) {
+      lines.push(
+        `Resume unchanged: subagent({ action: "resume", id: ${idLiteral} })`,
+        `Resume with guidance: subagent({ action: "resume", id: ${idLiteral}, message: "Supervisor replied: ..." })`,
+        `Cancel: subagent({ action: "interrupt", id: ${idLiteral} })`,
+      );
+    } else {
+      lines.push(
+        `Resume unchanged: subagent({ action: "resume", id: ${idLiteral}, index: ${target.index} })`,
+        `Resume with guidance: subagent({ action: "resume", id: ${idLiteral}, index: ${target.index}, message: "Supervisor replied: ..." })`,
+        `Cancel: subagent({ action: "interrupt", id: ${idLiteral}, index: ${target.index} })`,
+      );
+    }
+  } else if (!hasIndex) {
+    lines.push(`Revive: subagent({ action: "resume", id: ${idLiteral}, message: "..." })`);
+  } else {
+    lines.push(
+      `Revive child: subagent({ action: "resume", id: ${idLiteral}, index: ${target.index}, message: "..." })`,
+    );
+  }
+  return lines;
 }
 
 class SubagentControlNoticeComponent implements Component {
@@ -457,15 +613,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     currentSessionId: null,
     subagentInProgress: false,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     liveDetailController,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {
@@ -508,18 +659,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     pi,
     state,
     RESULTS_DIR,
-    PROJECT_AGENT_TERMINAL_RETENTION_MS,
   );
   startResultWatcher();
   primeExistingResults();
 
   const runtimeCleanup = () => {
+    // Extension reload must release any awaited tool calls and request cleanup
+    // for their still-owned child processes before stopping the watcher.
+    disposeAwaitedRuns();
     removeLiveDetailTerminalInput();
     liveDetailController.clearToolRows();
     toolResultBridge.clear();
     stopResultWatcher();
     supervisorChannel.dispose();
-    clearPendingForegroundControlNotices(state);
     if (state.poller) {
       clearInterval(state.poller);
       state.poller = null;
@@ -554,52 +706,46 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     return new Text(content, 0, 0);
   });
 
-  pi.registerMessageRenderer<SubagentNotifyDetails | SubagentCompletionBatchDetails>(
+  pi.registerMessageRenderer<SubagentNotifyDetails>(
     "subagent-notify",
     (message, options, theme) => {
       const content = typeof message.content === "string" ? message.content : "";
       const parsedContent = parseSubagentNotifyContent(content);
-      const rawStructuredDetails = message.details as unknown;
-      const structuredDetails = isSubagentCompletionBatchDetails(rawStructuredDetails)
-        ? undefined
-        : isSubagentNotifyDetails(rawStructuredDetails)
-          ? rawStructuredDetails
-          : undefined;
-      const parsedSession =
-        parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
-          ? {
-              sessionLabel: parsedContent.details.sessionLabel,
-              sessionValue: parsedContent.details.sessionValue,
-            }
-          : undefined;
+      const structuredDetails = message.details as SubagentNotifyDetails | undefined;
       // Bound the parsed content preview at render time so that a larger content
-      // string (model-facing) does not produce a wall of text in the TUI.
+      // string (model-facing) does not produce a wall of text in the TUI. When
+      // structured details are present they are authoritative: content parsing
+      // is only a legacy fallback and must never overwrite trusted pointers or
+      // the trusted summary with forged label-looking text.
       const rawParsedPreview = parsedContent?.details.resultPreview;
-      const displayPreview =
+      const displayParsedPreview =
         rawParsedPreview !== undefined
           ? rawParsedPreview.length <= MAX_DISPLAY_SUMMARY_CHARS
             ? rawParsedPreview
             : `${rawParsedPreview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`
           : undefined;
+      const boundStructuredPreview = (value: unknown): string => {
+        const preview = typeof value === "string" ? value : "(no output)";
+        return preview.length <= MAX_DISPLAY_SUMMARY_CHARS
+          ? preview
+          : `${preview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
+      };
       const details = structuredDetails
         ? {
             ...structuredDetails,
-            resultPreview: displayPreview ?? structuredDetails.resultPreview,
+            resultPreview: boundStructuredPreview(structuredDetails.resultPreview),
             ...(structuredDetails.sessionValue
               ? { sessionValue: boundedReference(structuredDetails.sessionValue) }
               : {}),
-            ...parsedSession,
           }
         : parsedContent?.details
           ? {
               ...parsedContent.details,
-              resultPreview: displayPreview ?? parsedContent.details.resultPreview,
+              resultPreview: displayParsedPreview ?? parsedContent.details.resultPreview,
             }
           : undefined;
-      // Fallback for content the parser cannot handle (e.g. grouped notices whose
-      // header does not match the singular-completion regex, or future header shapes).
-      // Bound display to MAX_DISPLAY_SUMMARY_CHARS so any unparsed content—regardless of
-      // the model-facing envelope size—does not produce a wall of text in the TUI.
+      // Bound display to MAX_DISPLAY_SUMMARY_CHARS so an unparsed or future
+      // notification shape cannot produce a wall of text in the TUI.
       if (!details) {
         const displayContent =
           content.length <= MAX_DISPLAY_SUMMARY_CHARS
@@ -607,7 +753,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
             : `${content.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
         return new Text(displayContent, 0, 0);
       }
-      const referenceLines = parsedContent?.referenceLines ?? [];
+      const referenceLines = structuredDetails
+        ? structuredNotifyReferenceLines(details)
+        : (parsedContent?.referenceLines ?? []);
       const icon =
         details.status === "completed"
           ? theme.fg("success", "✓")
@@ -740,7 +888,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     },
   });
 
-  registerSlashCommands(pi, state, config);
+  registerSlashCommands(pi, state, config, (cwd) => {
+    const access = normalizeProjectAgentAccess(
+      getTlhProjectAgentAccess({ cwd, sessionId: null, targetNames: [] }),
+    );
+    return {
+      ...(access?.agentDir ? { agentDir: access.agentDir } : {}),
+      ...(access?.trustStore ? { trustStore: access.trustStore } : {}),
+      ...(access?.createProjectTrustStore
+        ? { createProjectTrustStore: access.createProjectTrustStore }
+        : {}),
+    };
+  });
   registerCacheWarmingDecision(pi, state);
 
   const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
@@ -756,7 +915,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       }
     }
   }
-  registerSubagentNotify(pi, state, {});
+  registerSubagentNotify(pi, state);
 
   const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
   const visibleControlNotices =
@@ -773,7 +932,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   const controlEventHandler = (payload: unknown) => {
     handleSubagentControlNotice({
       pi,
-      state,
       visibleControlNotices,
       details: payload as SubagentControlMessageDetails,
       isIdle: isControlNoticeIdle,
@@ -841,7 +999,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       }
       state.lastUiContext = ctx;
       cleanupSessionArtifacts(ctx);
-      clearPendingForegroundControlNotices(state);
       liveDetailController.clearToolRows();
       resetJobs(ctx);
       restoreAttempted = true;
@@ -874,6 +1031,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", () => {
+    // Session teardown uses the same owner disposer as extension reload so an
+    // awaited call cannot remain pending or orphan its child process.
+    disposeAwaitedRuns();
     removeLiveDetailTerminalInput();
     toolResultBridge.clear();
     delete process.env[SUBAGENT_PARENT_SESSION_ENV];
@@ -890,7 +1050,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     stopResultWatcher();
     if (state.poller) clearInterval(state.poller);
     state.poller = null;
-    clearPendingForegroundControlNotices(state);
     for (const timer of state.cleanupTimers.values()) {
       clearTimeout(timer);
     }

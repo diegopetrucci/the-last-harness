@@ -1,14 +1,16 @@
 // Generated from extensions/subagents/src/runs/background/terminal-persistence.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { writeAtomicJson } from "../../shared/atomic-json.js";
+import { lifecycleGeneration } from "../shared/lifecycle-state.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { resolveSubagentTelemetryOutcome, telemetryFromRunnerResults, } from "../../shared/telemetry.js";
-import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.js";
 export function buildPausedRunnerTelemetry(input) {
     const provenance = input.config.telemetry?.provenance;
     if (!provenance)
         return undefined;
     return telemetryFromRunnerResults({
         runId: input.config.id,
+        execution: input.config.awaited ? "foreground" : "async",
         mode: input.plan.kind,
         results: input.results,
         provenance,
@@ -45,13 +47,13 @@ function timeoutWonRun(input) {
 function buildRunnerTelemetry(input, state, endedAt, success) {
     return telemetryFromRunnerResults({
         runId: input.config.id,
+        execution: input.config.awaited ? "foreground" : "async",
         mode: input.plan.kind,
         results: input.results,
         provenance: input.config.telemetry?.provenance,
         controls: input.controlConfig,
         startedAt: input.overallStartTime,
         endedAt,
-        activeRuntimeMs: input.statusPayload.activeRuntimeMs,
         statusSteps: input.statusPayload.steps,
         lineage: input.config.telemetry?.lineage,
         outcome: resolveSubagentTelemetryOutcome({
@@ -162,6 +164,11 @@ function resultSummary(input, state, paused) {
         return input.pausedOutputForIndex(requesterIndex, requesterAgent);
     }
     if (state === "failed") {
+        if (input.config.awaited) {
+            return input.statusOwner.supervisorPauseTransitionFailed
+                ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
+                : input.summary;
+        }
         return (input.statusPayload.error ??
             (input.statusOwner.supervisorPauseTransitionFailed
                 ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
@@ -192,7 +199,7 @@ function resultItems(results, clearPauseOwnerPids = false) {
     return results.map((result) => ({
         agent: result.agent,
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
-        tkTicketId: result.tkTicketId,
+        ticketId: result.ticketId,
         output: result.output,
         error: result.error,
         stderr: result.stderr,
@@ -205,8 +212,7 @@ function resultItems(results, clearPauseOwnerPids = false) {
         interrupted: result.interrupted || undefined,
         timedOut: result.timedOut || undefined,
         timeoutOwner: result.timeoutOwner,
-        toolBudget: result.toolBudget,
-        toolBudgetBlocked: result.toolBudgetBlocked || undefined,
+        activeRuntimeMs: result.activeRuntimeMs,
         contextUsage: result.contextUsage,
         contextPressure: result.contextPressure,
         contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
@@ -224,14 +230,18 @@ function resultItems(results, clearPauseOwnerPids = false) {
         truncated: result.truncated,
         transcriptPath: result.transcriptPath,
         transcriptError: result.transcriptError,
-        acceptance: result.acceptance,
+        skills: result.skills,
+        skillsWarning: result.skillsWarning,
+        outputMode: result.outputMode,
+        savedOutputPath: result.savedOutputPath,
+        outputReference: result.outputReference,
+        outputSaveError: result.outputSaveError,
+        childLocation: result.childLocation,
+        finalOutput: result.finalOutput,
         pause: clearPauseOwnerPids ? clearPauseOwnerPid(result.pause) : result.pause,
-        activeRuntimeMs: result.activeRuntimeMs,
-        activeRuntimeCheckpointAt: result.activeRuntimeCheckpointAt,
+        ...(result.cancel ? { cancel: result.cancel } : {}),
         activityState: result.activityState,
-        idleEpisodeId: result.idleEpisodeId,
-        durableAttentionReasons: result.durableAttentionReasons,
-        compaction: result.compaction,
+        ...(result.terminalResult ? { terminalResult: result.terminalResult } : {}),
         ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
     }));
 }
@@ -253,15 +263,15 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
     const result = {
         lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
         id: input.config.id,
+        generation: lifecycleGeneration(input.statusPayload),
         agent: input.agentName,
         mode: input.statusPayload.mode,
         success: state === "complete",
         state,
         summary: resultSummary(input, state, paused),
+        ...(input.config.awaited ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         ...(deadlineAt !== undefined ? { deadlineAt } : {}),
-        ...(input.statusPayload.toolBudget ? { toolBudget: input.statusPayload.toolBudget } : {}),
-        ...(input.statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
         ...(timedOut ? { timedOut: true } : {}),
         ...(state === "failed"
             ? {
@@ -272,17 +282,8 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
             }
             : {}),
         ...(paused ? { pause: paused } : {}),
-        ...(normalizeActiveRuntimeMs(input.statusPayload.activeRuntimeMs) !== undefined
-            ? { activeRuntimeMs: normalizeActiveRuntimeMs(input.statusPayload.activeRuntimeMs) }
-            : {}),
-        ...(normalizeActiveRuntimeCheckpointAt(input.statusPayload.activeRuntimeCheckpointAt) !==
-            undefined
-            ? {
-                activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(input.statusPayload.activeRuntimeCheckpointAt),
-            }
-            : {}),
         results: resultItems(input.results, clearPauseOwnerPids),
-        exitCode: state === "failed" ? 1 : 0,
+        exitCode: state === "failed" || state === "cancelled" ? 1 : 0,
         timestamp: endedAt,
         durationMs: Math.max(0, endedAt - startedAt),
         totalTokens: input.statusPayload.totalTokens,
@@ -333,6 +334,7 @@ export function persistContinuationGateRejection(input) {
     }));
     const gateTelemetry = telemetryFromRunnerResults({
         runId: input.config.id,
+        execution: input.config.awaited ? "foreground" : "async",
         mode: input.plan.kind,
         results: gateResults.length > 0
             ? gateResults
@@ -360,6 +362,7 @@ export function persistContinuationGateRejection(input) {
         writeAtomicJson(input.resultPath, {
             lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
             id: input.config.id,
+            generation: lifecycleGeneration(statusPayload),
             agent,
             mode: statusPayload.mode,
             success: false,
@@ -371,7 +374,7 @@ export function persistContinuationGateRejection(input) {
                 {
                     agent,
                     ...(firstStep?.projectAgent ? { projectAgent: firstStep.projectAgent } : {}),
-                    tkTicketId: firstStep?.tkTicketId,
+                    ticketId: firstStep?.ticketId,
                     output: statusPayload.error,
                     error: statusPayload.error,
                     success: false,
@@ -408,7 +411,7 @@ export function persistRunnerTerminalRun(input) {
         finalTelemetry &&
         !input.statusOwner.concurrentTerminalStatusAdopted) {
         input.statusPayload.telemetry = finalTelemetry;
-        input.statusOwner.writeStatusPayload({ lifecycleLocked: true });
+        input.statusOwner.writeStatusPayload();
     }
     const resultPaused = resultPauseFromCanonicalStatus(input, preWritePaused);
     state = resultState(input, resultPaused);

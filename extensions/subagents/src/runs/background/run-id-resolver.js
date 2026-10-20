@@ -15,26 +15,14 @@ function exactAsyncLocation(id, asyncDirRoot, resultsDir) {
         resolvedId: id,
     };
 }
-function foregroundIds(state) {
-    if (!state)
-        return [];
-    return [
-        ...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])]),
-    ];
-}
 export function resolveSubagentRunId(id, deps = {}) {
     assertSafeNestedId("id", id);
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
     const resultsDir = deps.resultsDir ?? RESULTS_DIR;
-    if (deps.state?.foregroundControls.has(id) || deps.state?.foregroundRuns?.has(id))
-        return { kind: "foreground", id };
     const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
     if (exactAsync)
         return { kind: "async", id, location: exactAsync };
     const matches = [];
-    for (const foregroundId of foregroundIds(deps.state).filter((candidate) => candidate.startsWith(id))) {
-        matches.push({ kind: "foreground", id: foregroundId });
-    }
     for (const match of findAsyncRunPrefixMatches(id, asyncDirRoot, resultsDir)) {
         matches.push({ kind: "async", id: match.id, location: match.location });
     }

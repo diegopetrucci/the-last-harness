@@ -10,12 +10,8 @@ import {
   steerRequestsDir,
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
-import {
-  buildSkippedAcceptanceLedger,
-  resolveEffectiveAcceptance,
-} from "../../src/runs/shared/acceptance.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
-import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -28,14 +24,9 @@ import {
   makeNativeResultLifecycleExecutor,
   readAsyncStatusJson,
   readMockCallArgs as readMockCallArgsFor,
-  waitForAsyncStatusPredicate,
-  waitForFile,
-  waitForMockPiCall as waitForMockPiCallFor,
   waitForRevivedAsyncResult,
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
-import { scaleTestTimeout, type ScaledMs } from "../support/scale-timeout.ts";
-import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 
 describe("completed-run revival", () => {
   let tempDir: string;
@@ -65,63 +56,6 @@ describe("completed-run revival", () => {
 
   function readMockCallArgs(index: number): Promise<string[]> {
     return readMockCallArgsFor(mockPi, index);
-  }
-
-  function waitForMockPiCall(index: number, timeoutMs?: ScaledMs): Promise<void> {
-    return waitForMockPiCallFor(mockPi, index, timeoutMs);
-  }
-
-  function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-  }
-
-  function requireRecord(value: unknown, label: string): Record<string, unknown> {
-    if (!isRecord(value)) throw new Error(`${label} must be an object.`);
-    return value;
-  }
-
-  function requireRecordArray(value: unknown, label: string): Record<string, unknown>[] {
-    if (!Array.isArray(value) || !value.every(isRecord))
-      throw new Error(`${label} must be an array of objects.`);
-    return value;
-  }
-
-  function requireStringArray(value: unknown, label: string): string[] {
-    if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
-      throw new Error(`${label} must be an array of strings.`);
-    return value;
-  }
-
-  function readResultAcceptance(value: unknown): {
-    status: unknown;
-    effectiveAcceptance: Record<string, unknown>;
-  } {
-    const payload = requireRecord(value, "result payload");
-    const results = requireRecordArray(payload.results, "result payload.results");
-    const result = results[0];
-    if (!result) throw new Error("result payload.results must contain an entry.");
-    const acceptance = requireRecord(result.acceptance, "result acceptance");
-    return {
-      status: acceptance.status,
-      effectiveAcceptance: requireRecord(
-        acceptance.effectiveAcceptance,
-        "result effective acceptance",
-      ),
-    };
-  }
-
-  function pausedAcceptanceLedger() {
-    return buildSkippedAcceptanceLedger({
-      acceptance: resolveEffectiveAcceptance({
-        agentName: "worker",
-        task: "Resume the paused child.",
-        mode: "single",
-      }),
-      ledgerStatus: "skipped",
-      runtimeCheckStatus: "not-applicable",
-      id: "paused",
-      message: "Acceptance will run after resume.",
-    });
   }
 
   it("resume action queues a live async follow-up in the native inbox", async () => {
@@ -835,365 +769,6 @@ describe("completed-run revival", () => {
     }
   });
 
-  it("preserves paused-ledger provenance despite read-only resume wording", async () => {
-    mockPi.onCall({ delay: 10_000, output: "paused before acceptance" });
-    mockPi.onCall({
-      output: [
-        "resume complete",
-        "```acceptance-report",
-        JSON.stringify({
-          criteriaSatisfied: [
-            {
-              id: "criterion-1",
-              status: "satisfied",
-              evidence: "Preserved the inferred checked contract after the read-only resume.",
-            },
-          ],
-          changedFiles: ["src/example.ts"],
-          testsAddedOrUpdated: ["test/integration/native-result-lifecycle.test.ts"],
-          commandsRun: [
-            { command: "npm test -- --runInBand", result: "passed", summary: "mocked" },
-          ],
-          validationOutput: [],
-          residualRisks: ["none"],
-          noStagedFiles: true,
-          diffSummary: "resumed fix only",
-          reviewFindings: ["no blockers"],
-        }),
-        "```",
-      ].join("\n"),
-    });
-    const { executor } = makeExecutor();
-    const started = await executor.execute(
-      "resume-paused-acceptance-start",
-      {
-        agent: "worker",
-        task: "Implement the paused acceptance fix",
-        async: true,
-      },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    const asyncId = started.details?.asyncId;
-    assert.ok(asyncId, "expected async id");
-    const pausedResumeWaitMs = scaleTestTimeout(process.platform === "win32" ? 30_000 : 15_000);
-    await waitForAsyncStatusPredicate(
-      asyncId,
-      (status) =>
-        status.state === "running" &&
-        status.steps?.[0]?.status === "running" &&
-        !!(status.steps?.[0]?.sessionFile ?? status.sessionFile),
-      "running child session",
-      pausedResumeWaitMs,
-    );
-    await waitForMockPiCall(0);
-
-    const interrupted = await executor.execute(
-      "resume-paused-acceptance-interrupt",
-      { action: "interrupt", id: asyncId },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    assert.equal(interrupted.isError, undefined);
-    await waitForAsyncStatusPredicate(
-      asyncId,
-      (status) =>
-        status.state === "paused" &&
-        status.steps?.[0]?.status === "paused" &&
-        status.steps?.[0]?.acceptance?.status === "skipped" &&
-        !!(status.steps?.[0]?.sessionFile ?? status.sessionFile),
-      "paused skipped acceptance ledger",
-      pausedResumeWaitMs,
-    );
-    // Resume immediately after the first paused status write, before the
-    // results payload lands: the paused status itself must already carry the
-    // skipped acceptance ledger so the revival keeps the original contract.
-    const resumed = await executor.execute(
-      "resume-paused-acceptance-resume",
-      {
-        action: "resume",
-        id: asyncId,
-        message: "Inspect the result and summarize the resume note, read-only.",
-      },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    assert.equal(
-      resumed.isError,
-      undefined,
-      `resume returned isError; text=${JSON.stringify(resumed.content?.[0]?.text)} details=${JSON.stringify(resumed.details)}`,
-    );
-    const revivedId = resumed.details?.asyncId;
-    assert.ok(revivedId, "expected revived async id");
-    await waitForFile(path.join(RESULTS_DIR, `${asyncId}.json`), pausedResumeWaitMs);
-    const pausedPayload: unknown = JSON.parse(
-      fs.readFileSync(path.join(RESULTS_DIR, `${asyncId}.json`), "utf-8"),
-    );
-    const pausedAcceptance = readResultAcceptance(pausedPayload);
-    const pausedEffectiveAcceptance = pausedAcceptance.effectiveAcceptance;
-    assert.equal(pausedAcceptance.status, "skipped");
-    assert.equal(pausedEffectiveAcceptance.explicit, false);
-    assert.equal(pausedEffectiveAcceptance.level, "checked");
-    assert.deepEqual(pausedEffectiveAcceptance.inferredReason, [
-      "async write-capable or risky run",
-    ]);
-    assert.deepEqual(
-      requireRecordArray(pausedEffectiveAcceptance.criteria, "paused acceptance criteria").map(
-        (criterion) => criterion.id,
-      ),
-      ["criterion-1"],
-    );
-    assert.ok(
-      requireStringArray(pausedEffectiveAcceptance.evidence, "paused acceptance evidence").includes(
-        "changed-files",
-      ),
-    );
-    assert.deepEqual(
-      requireStringArray(pausedEffectiveAcceptance.stopRules, "paused stop rules"),
-      [],
-    );
-    await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`), pausedResumeWaitMs);
-    const revivedPayload: unknown = JSON.parse(
-      fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
-    );
-    const revivedAcceptance = readResultAcceptance(revivedPayload);
-    assert.equal(revivedAcceptance.status, "checked");
-    assert.deepEqual(revivedAcceptance.effectiveAcceptance, pausedEffectiveAcceptance);
-  });
-
-  it("resume action revives a non-currentStep paused parallel child with its skipped acceptance contract intact", async () => {
-    mockPi.onCall({ delay: 10_000, output: "parallel child a paused before acceptance" });
-    mockPi.onCall({ delay: 10_000, output: "parallel child b paused before acceptance" });
-    mockPi.onCall({
-      output: [
-        "parallel child a resumed",
-        "```acceptance-report",
-        JSON.stringify({
-          criteriaSatisfied: [
-            {
-              id: "criterion-1",
-              status: "satisfied",
-              evidence: "Preserved the inferred checked contract after the read-only resume.",
-            },
-          ],
-          changedFiles: ["test/integration/native-result-lifecycle.test.ts"],
-          testsAddedOrUpdated: ["test/integration/native-result-lifecycle.test.ts"],
-          commandsRun: [
-            { command: "npm test -- --runInBand", result: "passed", summary: "mocked" },
-          ],
-          validationOutput: [],
-          residualRisks: ["none"],
-          noStagedFiles: true,
-          diffSummary: "resumed child only",
-          reviewFindings: ["no blockers"],
-        }),
-        "```",
-      ].join("\n"),
-    });
-    const { executor } = makeExecutor({
-      agents: [makeAgent("a"), makeAgent("b")],
-    });
-    const started = await executor.execute(
-      "resume-paused-parallel-acceptance-start",
-      {
-        tasks: [
-          { agent: "a", task: "Implement child a changes" },
-          { agent: "b", task: "Implement child b changes" },
-        ],
-        async: true,
-      },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    const asyncId = started.details?.asyncId;
-    assert.ok(asyncId, "expected async id");
-    const pausedResumeWaitMs = scaleTestTimeout(process.platform === "win32" ? 30_000 : 15_000);
-    await waitForAsyncStatusPredicate(
-      asyncId,
-      (status) =>
-        status.state === "running" &&
-        status.currentStep === 1 &&
-        status.steps?.[0]?.status === "running" &&
-        status.steps?.[1]?.status === "running",
-      "running parallel children with last-started currentStep",
-      pausedResumeWaitMs,
-    );
-    const runningStatus: unknown = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, asyncId, "status.json"), "utf-8"),
-    );
-    const runningRecord = requireRecord(runningStatus, "running status");
-    assert.equal(runningRecord.currentStep, 1);
-    const runningSteps = requireRecordArray(runningRecord.steps, "running status steps");
-    assert.equal(runningSteps[0]?.acceptance, undefined);
-    assert.equal(runningSteps[1]?.acceptance, undefined);
-    await waitForMockPiCall(1);
-
-    const interrupted = await executor.execute(
-      "resume-paused-parallel-acceptance-interrupt",
-      { action: "interrupt", id: asyncId },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    assert.equal(interrupted.isError, undefined);
-    await waitForAsyncStatusPredicate(
-      asyncId,
-      (status) =>
-        status.state === "paused" &&
-        status.steps?.[0]?.status === "paused" &&
-        status.steps?.[1]?.status === "paused" &&
-        status.steps?.[0]?.acceptance?.status === "skipped" &&
-        status.steps?.[1]?.acceptance?.status === "skipped",
-      "paused parallel skipped acceptance ledgers",
-      pausedResumeWaitMs,
-    );
-    const pausedStatus: unknown = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, asyncId, "status.json"), "utf-8"),
-    );
-    const pausedRecord = requireRecord(pausedStatus, "paused status");
-    const pausedSteps = requireRecordArray(pausedRecord.steps, "paused status steps");
-    const pausedNonCurrentAcceptance = readResultAcceptance({
-      results: [{ acceptance: pausedSteps[0]?.acceptance }],
-    });
-    const pausedCurrentAcceptance = readResultAcceptance({
-      results: [{ acceptance: pausedSteps[1]?.acceptance }],
-    });
-    assert.equal(pausedNonCurrentAcceptance.status, "skipped");
-    assert.equal(pausedCurrentAcceptance.status, "skipped");
-    const pausedEffectiveAcceptance = pausedNonCurrentAcceptance.effectiveAcceptance;
-    assert.equal(pausedEffectiveAcceptance.explicit, false);
-    assert.equal(pausedEffectiveAcceptance.level, "checked");
-    assert.deepEqual(pausedEffectiveAcceptance.inferredReason, [
-      "async write-capable or risky run",
-    ]);
-    assert.deepEqual(
-      requireRecordArray(pausedEffectiveAcceptance.criteria, "paused acceptance criteria").map(
-        (criterion) => criterion.id,
-      ),
-      ["criterion-1"],
-    );
-    assert.ok(
-      requireStringArray(pausedEffectiveAcceptance.evidence, "paused acceptance evidence").includes(
-        "changed-files",
-      ),
-    );
-    assert.deepEqual(
-      requireStringArray(pausedEffectiveAcceptance.stopRules, "paused stop rules"),
-      [],
-    );
-    assert.deepEqual(
-      pausedCurrentAcceptance.effectiveAcceptance,
-      pausedEffectiveAcceptance,
-      "both paused children retain the same inferred contract",
-    );
-
-    const resumed = await executor.execute(
-      "resume-paused-parallel-acceptance-resume",
-      {
-        action: "resume",
-        id: asyncId,
-        index: 0,
-        message: "Inspect child a and summarize the resume note, read-only.",
-      },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    assert.equal(
-      resumed.isError,
-      undefined,
-      `resume returned isError; text=${JSON.stringify(resumed.content?.[0]?.text)} details=${JSON.stringify(resumed.details)}`,
-    );
-    const revivedId = resumed.details?.asyncId;
-    assert.ok(revivedId, "expected revived async id");
-    await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`), pausedResumeWaitMs);
-    const revivedPayload: unknown = JSON.parse(
-      fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
-    );
-    const revivedAcceptance = readResultAcceptance(revivedPayload);
-    assert.equal(revivedAcceptance.status, "checked");
-    assert.deepEqual(revivedAcceptance.effectiveAcceptance, pausedEffectiveAcceptance);
-  });
-
-  it("blocks paused revival until delayed source-runner exit is proven", async () => {
-    const runId = `resume-delayed-exit-${Date.now()}`;
-    const asyncDir = path.join(ASYNC_DIR, runId);
-    const sessionFile = path.join(tempDir, "delayed-exit-session.jsonl");
-    let sourceStopped = false;
-    let launches = 0;
-    const acceptance = pausedAcceptanceLedger();
-    const observedExecuteAsyncSingle: typeof executeAsyncSingle = (continuedId) => {
-      launches += 1;
-      return {
-        content: [{ type: "text", text: "queued continuation" }],
-        details: { mode: "management", results: [], asyncId: continuedId },
-      };
-    };
-    try {
-      fs.mkdirSync(asyncDir, { recursive: true });
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      fs.writeFileSync(
-        path.join(asyncDir, "status.json"),
-        JSON.stringify(
-          {
-            runId,
-            mode: "single",
-            state: "paused",
-            pid: 4242,
-            sessionId: "session-123",
-            startedAt: 100,
-            lastUpdate: 200,
-            cwd: tempDir,
-            sessionFile,
-            steps: [{ agent: "worker", status: "paused", sessionFile, acceptance }],
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      const { executor } = makeExecutor({
-        kill: (pid, signal) => {
-          assert.equal(pid, 4242);
-          assert.equal(signal, 0);
-          if (!sourceStopped) return true;
-          const error = new Error("delayed source exit") as NodeJS.ErrnoException;
-          error.code = "ESRCH";
-          throw error;
-        },
-        executeAsyncSingle: observedExecuteAsyncSingle,
-      });
-
-      const blocked = await executor.execute(
-        "resume-before-source-exit",
-        { action: "resume", id: runId, message: "Continue after cleanup." },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-      assert.equal(blocked.isError, true);
-      assert.match(blocked.content[0]?.text ?? "", /still stopping/);
-      assert.equal(launches, 0);
-
-      sourceStopped = true;
-      const resumed = await executor.execute(
-        "resume-after-source-exit",
-        { action: "resume", id: runId, message: "Continue after cleanup." },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-      assert.equal(resumed.isError, undefined, resumed.content[0]?.text ?? "");
-      assert.equal(launches, 1);
-    } finally {
-      fs.rmSync(asyncDir, { recursive: true, force: true });
-    }
-  });
-
   it("resume action revives completed async runs with concise status receipts", async () => {
     mockPi.onCall({ output: "revived answer" });
     const runId = `resume-revive-${Date.now()}`;
@@ -1220,11 +795,7 @@ describe("completed-run revival", () => {
         ),
         "utf-8",
       );
-      const observedExecuteAsyncSingle: typeof executeAsyncSingle = (id, params) => {
-        assert.equal(params.maxOutput, undefined);
-        return executeAsyncSingle(id, params);
-      };
-      const { executor } = makeExecutor({ executeAsyncSingle: observedExecuteAsyncSingle });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "resume-revive",
@@ -1248,7 +819,13 @@ describe("completed-run revival", () => {
       assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
       const revivedId = result.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
-      await waitForAsyncResultFile(revivedId, scaleTestTimeout(10_000));
+      const resultPath608 = path.join(RESULTS_DIR, `${revivedId}.json`);
+      const deadline608 = Date.now() + 10_000;
+      while (!fs.existsSync(resultPath608)) {
+        if (Date.now() > deadline608)
+          assert.fail(`Timed out waiting for revived result file: ${resultPath608}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
     } finally {
       fs.rmSync(asyncDir, { recursive: true, force: true });
     }
@@ -1279,30 +856,44 @@ describe("completed-run revival", () => {
       const runId = `resume-pressure-${currentCase.label}-${Date.now().toString(36)}`;
       const sessionFile = path.join(tempDir, `${runId}.jsonl`);
       const asyncDir = path.join(ASYNC_DIR, runId);
-      const { executor, state } = makeExecutor();
+      const { executor } = makeExecutor();
       let revivedId: string | undefined;
       fs.writeFileSync(sessionFile, "", "utf-8");
-      state.foregroundRuns.set(runId, {
-        runId,
-        mode: "single",
-        cwd: tempDir,
-        updatedAt: 1,
-        children: [
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
           {
-            agent: "worker",
-            index: 0,
-            status: "completed",
+            runId,
+            mode: "single",
+            state: "complete",
+            startedAt: 1,
+            lastUpdate: 1,
+            cwd: tempDir,
             sessionFile,
-            contextUsage,
-            ...("contextPressure" in currentCase
-              ? { contextPressure: currentCase.contextPressure }
-              : {}),
-            ...("contextPressureCrossedThresholds" in currentCase
-              ? { contextPressureCrossedThresholds: currentCase.contextPressureCrossedThresholds }
-              : {}),
+            steps: [
+              {
+                agent: "worker",
+                status: "complete",
+                sessionFile,
+                contextUsage,
+                ...("contextPressure" in currentCase
+                  ? { contextPressure: currentCase.contextPressure }
+                  : {}),
+                ...("contextPressureCrossedThresholds" in currentCase
+                  ? {
+                      contextPressureCrossedThresholds:
+                        currentCase.contextPressureCrossedThresholds,
+                    }
+                  : {}),
+              },
+            ],
           },
-        ],
-      });
+          null,
+          2,
+        ),
+        "utf-8",
+      );
       mockPi.onCall({ output: `revived ${currentCase.label}` });
       try {
         const result = await executor.execute(
@@ -1363,7 +954,6 @@ describe("completed-run revival", () => {
       warnedAt: 123,
     };
     const contextPressureCrossedThresholds = ["warning", "critical"] as const;
-    const acceptance = pausedAcceptanceLedger();
     let revivedId: string | undefined;
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
@@ -1389,7 +979,6 @@ describe("completed-run revival", () => {
                 contextUsage,
                 contextPressure,
                 contextPressureCrossedThresholds,
-                acceptance,
               },
             ],
           },
@@ -1398,26 +987,7 @@ describe("completed-run revival", () => {
         ),
         "utf-8",
       );
-      const { executor, state } = makeExecutor();
-      state.foregroundRuns.set(runId, {
-        runId,
-        mode: "single",
-        cwd: tempDir,
-        updatedAt: 1,
-        children: [
-          {
-            agent: "worker",
-            index: 0,
-            status: "paused",
-            sessionFile,
-            pause: { kind: "awaiting_supervisor" },
-            contextUsage,
-            contextPressure,
-            contextPressureCrossedThresholds,
-            acceptance,
-          },
-        ],
-      });
+      const { executor } = makeExecutor();
       mockPi.onCall({ output: "revived claimed continuation" });
 
       const result = await executor.execute(
@@ -1448,82 +1018,6 @@ describe("completed-run revival", () => {
         fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
         fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
       }
-      fs.rmSync(asyncDir, { recursive: true, force: true });
-      fs.rmSync(sessionFile, { force: true });
-    }
-  });
-
-  it("resume of a completed foreground child tolerates missing lifecycle status without mutation", async () => {
-    mockPi.onCall({ output: "revived from remembered foreground state" });
-    const runId = `resume-foreground-missing-status-${Date.now()}`;
-    const asyncDir = path.join(ASYNC_DIR, runId);
-    const sessionFile = path.join(tempDir, `${runId}.jsonl`);
-    const { executor, state } = makeExecutor();
-    fs.mkdirSync(asyncDir, { recursive: true });
-    fs.writeFileSync(sessionFile, "", "utf-8");
-    state.foregroundRuns.set(runId, {
-      runId,
-      mode: "single",
-      cwd: tempDir,
-      updatedAt: 1,
-      children: [{ agent: "worker", index: 0, status: "completed", sessionFile }],
-    });
-    try {
-      const result = await executor.execute(
-        "resume-foreground-missing-status",
-        { action: "resume", id: runId, message: "Continue the completed child." },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-
-      assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
-      await waitForRevivedAsyncResult(result);
-      assert.deepEqual(fs.readdirSync(asyncDir), []);
-    } finally {
-      fs.rmSync(asyncDir, { recursive: true, force: true });
-      fs.rmSync(sessionFile, { force: true });
-    }
-  });
-
-  it("resume of a paused foreground child rejects missing lifecycle status without mutation", async () => {
-    const runId = `resume-foreground-paused-missing-status-${Date.now()}`;
-    const asyncDir = path.join(ASYNC_DIR, runId);
-    const sessionFile = path.join(tempDir, `${runId}.jsonl`);
-    const acceptance = pausedAcceptanceLedger();
-    const { executor, state } = makeExecutor();
-    fs.mkdirSync(asyncDir, { recursive: true });
-    fs.writeFileSync(sessionFile, "", "utf-8");
-    state.foregroundRuns.set(runId, {
-      runId,
-      mode: "single",
-      cwd: tempDir,
-      updatedAt: 1,
-      children: [
-        {
-          agent: "worker",
-          index: 0,
-          status: "paused",
-          sessionFile,
-          pause: { kind: "awaiting_supervisor" },
-          acceptance,
-        },
-      ],
-    });
-    try {
-      const result = await executor.execute(
-        "resume-foreground-paused-missing-status",
-        { action: "resume", id: runId },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-
-      assert.equal(result.isError, true);
-      assert.match(result.content[0]?.text ?? "", /Paused run .* was not found/);
-      assert.deepEqual(fs.readdirSync(asyncDir), []);
-      assert.equal(mockPi.callCount(), 0);
-    } finally {
       fs.rmSync(asyncDir, { recursive: true, force: true });
       fs.rmSync(sessionFile, { force: true });
     }
@@ -1760,11 +1254,14 @@ describe("completed-run revival", () => {
       assert.equal(fs.existsSync(asyncDir), false);
       assert.equal(fs.existsSync(resultPath), true);
       const { executor } = makeExecutor();
+      // Explicit `dir` preserves the missing lifecycle path on the target;
+      // id-only result lookup would normalize asyncDir to null and skip the guard.
       const result = await executor.execute(
         "resume-background-result-only",
         {
           action: "resume",
           id: runId,
+          dir: asyncDir,
           message: "Continue from the saved result.",
         },
         new AbortController().signal,
@@ -1782,16 +1279,16 @@ describe("completed-run revival", () => {
     }
   });
 
-  it("resume action revives a completed foreground child by index", async () => {
+  it("resume action revives a completed awaited child by index", async () => {
     mockPi.onCall({ output: "first child done" });
     mockPi.onCall({ output: "second child done" });
-    mockPi.onCall({ output: "revived foreground answer" });
+    mockPi.onCall({ output: "revived awaited answer" });
     const { executor } = makeExecutor({
       agents: [makeAgent("a"), makeAgent("b")],
     });
 
     const original = await executor.execute(
-      "foreground-resume-original",
+      "awaited-resume-original",
       {
         tasks: [
           { agent: "a", task: "task-a" },
@@ -1803,10 +1300,10 @@ describe("completed-run revival", () => {
       makeMinimalCtx(tempDir),
     );
     const runId = original.details?.runId;
-    assert.ok(runId, "expected foreground run id");
+    assert.ok(runId, "expected awaited run id");
 
     const revived = await executor.execute(
-      "foreground-resume",
+      "awaited-resume",
       { action: "resume", id: runId, index: 1, message: "Follow up with b" },
       new AbortController().signal,
       undefined,
@@ -1814,7 +1311,7 @@ describe("completed-run revival", () => {
     );
 
     assert.equal(revived.isError, undefined);
-    assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
+    assert.match(revived.content[0]?.text ?? "", /Revived async subagent from/);
     assert.match(revived.content[0]?.text ?? "", /Agent: b/);
     const reviveArgs = await readMockCallArgs(2);
     const selectedSession = original.details?.results?.[1]?.sessionFile;
@@ -1822,6 +1319,12 @@ describe("completed-run revival", () => {
     assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
     const revivedId = revived.details?.asyncId;
     assert.ok(revivedId, "expected revived async id");
-    await waitForAsyncResultFile(revivedId, scaleTestTimeout(10_000));
+    const resultPath898 = path.join(RESULTS_DIR, `${revivedId}.json`);
+    const deadline898 = Date.now() + 10_000;
+    while (!fs.existsSync(resultPath898)) {
+      if (Date.now() > deadline898)
+        assert.fail(`Timed out waiting for revived result file: ${resultPath898}`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   });
 });

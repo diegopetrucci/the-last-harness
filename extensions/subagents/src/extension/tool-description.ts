@@ -2,9 +2,11 @@ export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the
 
 EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
-• SINGLE: { agent, task? }.
-• PARALLEL: { tasks:[{ agent, task, cwd?, output?, outputMode?, model? }, ...] }.
-• Optional execution fields: async:true, cwd, artifacts.
+• SINGLE: { agent, task?, ticket? }.
+• PARALLEL: { tasks:[{ agent, task, ticket?, cwd?, output?, outputMode?, model? }, ...] }.
+• ticket is an optional ticket ID. TLH runs tk show <id> in the effective task cwd before launch, injects the exact body under ## Ticket <id>, and records only the ID in status/results.
+• Sync (default): the parent awaits the run and receives its terminal result; ordinary single/parallel calls use the TLH-tracked awaited runner.
+• Optional execution fields: async:true, cwd, artifacts. async:true keeps the detached background behavior.
 • artifacts controls whether per-child run artifacts are written; diagnostic detail is profile-configured.
 
 OUTPUT / MODELS
@@ -12,7 +14,6 @@ OUTPUT / MODELS
 • PARALLEL tasks accept cwd, output, outputMode, and model. Relative task cwd values resolve against the run cwd.
 • Agent definitions control defaultReads, defaultProgress, and fallbackModels; configured parallel settings control concurrency.
 • output can be a path string or false. outputMode can be "inline" or "file-only".
-• Agent acceptanceRole may be "read-only" or "writer" when configured through management or frontmatter. It affects inferred acceptance only, never tools; explicit task intent wins, omission keeps name heuristics, and false clears the override.
 
 
 ACTIONS

@@ -343,7 +343,6 @@ function parseAgentPrompt(filePath) {
         return undefined;
     }
     const modelDefaults = normalizeAgentModelDefaults(frontmatter, tlhModelDefaults);
-    const completionGuard = parseBooleanValue(frontmatter.completionGuard);
     return {
         name,
         description,
@@ -352,7 +351,6 @@ function parseAgentPrompt(filePath) {
         preferOppositeProvider: parseBooleanValue(frontmatter.preferOppositeProvider),
         applyModel: parseBooleanValue(frontmatter.applyModel),
         applyThinking: parseBooleanValue(frontmatter.applyThinking),
-        ...(completionGuard !== undefined ? { completionGuard } : {}),
         tools: splitCommaList(frontmatter.tools),
         systemPrompt: body,
         filePath,
@@ -384,7 +382,6 @@ export function loadSubagentMetadata() {
         tlhModelDefaultsSource: agent.tlhModelDefaultsSource,
         thinking: agent.thinking,
         preferOppositeProvider: agent.preferOppositeProvider,
-        ...(agent.completionGuard !== undefined ? { completionGuard: agent.completionGuard } : {}),
     }))
         .sort((a, b) => a.name.localeCompare(b.name));
 }

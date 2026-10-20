@@ -46,9 +46,12 @@ describe("async job tracker", () => {
     }
   });
 
-  it("honors continued and cancelled completion-event states before polling", async () => {
-    for (const terminalState of ["continued", "cancelled"] as const) {
-      const asyncRoot = createTempDir(`pi-async-job-event-${terminalState}-`);
+  it("canonicalizes historical completion events before polling", async () => {
+    for (const [eventState, expectedState] of [
+      ["continued", "complete"],
+      ["cancelled", "cancelled"],
+    ] as const) {
+      const asyncRoot = createTempDir(`pi-async-job-event-${eventState}-`);
       let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
       try {
         const state = createState();
@@ -59,18 +62,18 @@ describe("async job tracker", () => {
           { completionRetentionMs: 50 },
         );
         tracker.handleStarted({
-          id: `run-${terminalState}`,
-          asyncDir: path.join(asyncRoot, `run-${terminalState}`),
+          id: `run-${eventState}`,
+          asyncDir: path.join(asyncRoot, `run-${eventState}`),
           agent: "worker",
         });
         tracker.handleComplete({
-          id: `run-${terminalState}`,
+          id: `run-${eventState}`,
           success: false,
-          state: terminalState,
+          state: eventState,
         });
 
-        assert.equal(state.asyncJobs.get(`run-${terminalState}`)?.status, terminalState);
-        assert.equal(state.cleanupTimers.has(`run-${terminalState}`), true);
+        assert.equal(state.asyncJobs.get(`run-${eventState}`)?.status, expectedState);
+        assert.equal(state.cleanupTimers.has(`run-${eventState}`), true);
       } finally {
         tracker?.resetJobs();
         removeTempDir(asyncRoot);
@@ -135,8 +138,8 @@ describe("async job tracker", () => {
         "utf-8",
       );
       await waitForCondition(
-        () => state.asyncJobs.get("run-restore-continued")?.status === "continued",
-        "continued poll projection",
+        () => state.asyncJobs.get("run-restore-continued")?.status === "complete",
+        "canonical completion poll projection",
       );
       assert.equal(state.asyncJobs.get("run-restore-continued")?.completedSteps, 1);
     } finally {
@@ -160,16 +163,15 @@ describe("async job tracker", () => {
           startedAt: 1000,
           lastUpdate: 2000,
           currentStep: 1,
-          tkTicket: { id: "psr-raw4", title: "Show active tk title" },
           steps: [
             { agent: "scout", status: "complete" },
             {
               agent: "reviewer",
               status: "running",
+              ticketId: "psr-raw4",
               currentTool: "read",
               activityState: "needs_attention",
               idleEpisodeId: "restored-attempt~idle~2",
-              durableAttentionReasons: ["context_pressure"],
               compaction: { reason: "threshold" },
             },
             { agent: "worker", status: "running" },
@@ -209,7 +211,6 @@ describe("async job tracker", () => {
       assert.ok(job);
       assert.equal(job.status, "running");
       assert.equal(job.sessionId, "session-restored");
-      assert.deepEqual(job.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
       assert.deepEqual(job.agents, ["scout", "reviewer", "worker", "writer"]);
       assert.deepEqual(
         job.steps?.map((step: { index?: number }) => step.index),
@@ -218,9 +219,9 @@ describe("async job tracker", () => {
       assert.equal(job.stepsTotal, 4);
       assert.equal(job.runningSteps, 2);
       assert.equal(job.completedSteps, 1);
+      assert.equal(job.steps?.[1]?.ticketId, "psr-raw4");
       assert.equal(job.steps?.[1]?.activityState, "needs_attention");
       assert.equal(job.steps?.[1]?.idleEpisodeId, "restored-attempt~idle~2");
-      assert.deepEqual(job.steps?.[1]?.durableAttentionReasons, ["context_pressure"]);
       assert.deepEqual(job.steps?.[1]?.compaction, { reason: "threshold" });
       assert.ok(state.poller, "expected restored active jobs to start polling");
       assert.ok(ui.widgets.length >= 2, "expected reset and restore to replace the widget");
@@ -328,70 +329,6 @@ describe("async job tracker", () => {
       ]);
     } finally {
       removeTempDir(emptyRoot);
-    }
-  });
-
-  it("keeps observed runtime evidence monotonic across status polls", async () => {
-    const asyncRoot = createTempDir("pi-async-job-runtime-monotonic-");
-    let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
-    try {
-      const runDir = path.join(asyncRoot, "run-runtime-monotonic");
-      fs.mkdirSync(runDir, { recursive: true });
-      const statusPath = path.join(runDir, "status.json");
-      const writeStatus = (activeRuntimeMs: number, activeRuntimeCheckpointAt: number) =>
-        fs.writeFileSync(
-          statusPath,
-          JSON.stringify({
-            runId: "run-runtime-monotonic",
-            mode: "single",
-            state: "running",
-            sessionId: "session-runtime-monotonic",
-            startedAt: 1000,
-            lastUpdate: activeRuntimeCheckpointAt,
-            activeRuntimeMs,
-            activeRuntimeCheckpointAt,
-            steps: [
-              {
-                agent: "worker",
-                status: "running",
-                activeRuntimeMs,
-                activeRuntimeCheckpointAt,
-              },
-            ],
-          }),
-          "utf-8",
-        );
-      writeStatus(100, 2_000);
-
-      const state = createState();
-      state.currentSessionId = "session-runtime-monotonic";
-      tracker = trackerMod.createAsyncJobTracker(
-        createEventRecorder().pi,
-        state as never,
-        asyncRoot,
-        { pollIntervalMs: 10 },
-      );
-      tracker.restoreActiveJobs();
-      await waitForCondition(
-        () => state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs === 100,
-        "initial runtime evidence poll",
-      );
-
-      writeStatus(600, 3_000);
-      await waitForCondition(
-        () => state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs === 600,
-        "higher runtime evidence poll",
-      );
-      writeStatus(250, 2_500);
-      await waitForCondition(
-        () => state.asyncJobs.get("run-runtime-monotonic")?.updatedAt === 2_500,
-        "regressed status write poll",
-      );
-      assert.equal(state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs, 600);
-      assert.equal(state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeCheckpointAt, 3_000);
-    } finally {
-      tracker?.resetJobs();
-      removeTempDir(asyncRoot);
     }
   });
 
@@ -555,7 +492,10 @@ describe("async job tracker", () => {
     }
   });
 
-  it("sanitizes restored tk ticket metadata from persisted status", () => {
+  it("parses historical status files that contain a tkTicket field without error", () => {
+    // Regression: status files written by older versions carry a tkTicket field.
+    // The projection chain is retired; the field must be silently ignored so that
+    // history files still parse correctly and the job is restored as active.
     const asyncRoot = createTempDir("pi-async-job-restore-ticket-");
     try {
       const runDir = path.join(asyncRoot, "run-restored-ticket");
@@ -583,10 +523,22 @@ describe("async job tracker", () => {
       );
       tracker.restoreActiveJobs();
 
-      assert.deepEqual(state.asyncJobs.get("run-restored-ticket")?.tkTicket, {
-        id: "psr-raw4",
-        title: "Restored title now",
-      });
+      // The job must be restored despite carrying the retired tkTicket field.
+      assert.ok(
+        state.asyncJobs.has("run-restored-ticket"),
+        "historical status file with tkTicket must still restore the job",
+      );
+      assert.equal(
+        state.asyncJobs.get("run-restored-ticket")?.status,
+        "running",
+        "restored job must reflect the persisted lifecycle state",
+      );
+      // The retired tkTicket field must not be projected into AsyncJobState.
+      assert.equal(
+        (state.asyncJobs.get("run-restored-ticket") as Record<string, unknown>).tkTicket,
+        undefined,
+        "tkTicket must be ignored and must not appear in AsyncJobState",
+      );
     } finally {
       removeTempDir(asyncRoot);
     }
@@ -693,7 +645,7 @@ describe("async job tracker", () => {
     }
   });
 
-  it("restores matching active runs, quarantines startup corruption before session filtering, and keeps polling valid jobs", async () => {
+  it("restores matching active runs, leaves unreadable statuses untouched, and keeps polling valid jobs", async () => {
     const root = createTempDir("pi-async-job-restore-bad-status-");
     const asyncRoot = path.join(root, "async-subagent-runs");
     const warnings: string[] = [];
@@ -759,7 +711,6 @@ describe("async job tracker", () => {
       const recorder = createEventRecorder();
       const tracker = trackerMod.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
         pollIntervalMs: 10,
-        quarantine: { createUniqueSuffix: () => "fixed-suffix" },
       });
       tracker.resetJobs(ui.ctx as never);
       assert.doesNotThrow(() => tracker.restoreActiveJobs(ui.ctx as never));
@@ -767,59 +718,20 @@ describe("async job tracker", () => {
       assert.equal(state.asyncJobs.get("run-owner")?.status, "running");
       assert.ok(state.poller, "expected restored matching jobs to start polling");
       assert.ok(ui.widgets.length >= 2, "expected reset and restore to replace the widget");
-      assert.equal(fs.existsSync(badJsonDir), false);
-      assert.equal(fs.existsSync(badSessionDir), false);
+      assert.equal(fs.existsSync(badJsonDir), true);
+      assert.equal(fs.existsSync(badSessionDir), true);
+      assert.equal(fs.readFileSync(path.join(badJsonDir, "status.json"), "utf-8"), "{bad json");
+      assert.equal(
+        fs.readFileSync(path.join(badSessionDir, "status.json"), "utf-8").includes('"value"'),
+        true,
+      );
+      assert.equal(fs.existsSync(path.join(root, "quarantined-async-subagent-runs")), false);
       assert.equal(warnings.length, 1);
       assert.match(warnings[0] ?? "", /restored 1 valid active job/);
-      assert.match(warnings[0] ?? "", /quarantined 1 malformed JSON, 1 invalid persisted status/);
+      assert.match(warnings[0] ?? "", /left unreadable statuses in place/);
       assert.doesNotMatch(
         warnings[0] ?? "",
         /status\.json|run-bad|private|bad json|session-owner|\//,
-      );
-      const quarantineRoot = path.join(root, "quarantined-async-subagent-runs");
-      assert.equal(
-        fs.readFileSync(
-          path.join(quarantineRoot, "run-bad-json.fixed-suffix", "status.json"),
-          "utf-8",
-        ),
-        "{bad json",
-      );
-      assert.equal(
-        fs.readFileSync(
-          path.join(quarantineRoot, "run-bad-json.fixed-suffix", "events.jsonl"),
-          "utf-8",
-        ),
-        '{"type":"event"}\n',
-      );
-      assert.equal(
-        fs.readFileSync(
-          path.join(quarantineRoot, "run-bad-json.fixed-suffix", "output.log"),
-          "utf-8",
-        ),
-        "private output\n",
-      );
-      assert.equal(
-        fs.readFileSync(
-          path.join(quarantineRoot, "run-bad-json.fixed-suffix", "session.jsonl"),
-          "utf-8",
-        ),
-        '{"private":true}\n',
-      );
-      assert.equal(
-        fs.readFileSync(
-          path.join(quarantineRoot, "run-bad-json.fixed-suffix", "extra.txt"),
-          "utf-8",
-        ),
-        "extra artifact\n",
-      );
-      assert.equal(
-        JSON.parse(
-          fs.readFileSync(
-            path.join(quarantineRoot, "run-bad-session.fixed-suffix", "status.json"),
-            "utf-8",
-          ),
-        ).runId,
-        "run-bad-session",
       );
 
       fs.writeFileSync(
@@ -842,191 +754,6 @@ describe("async job tracker", () => {
     } finally {
       console.warn = originalWarn;
       removeTempDir(root);
-    }
-  });
-
-  it("warns once for unchanged quarantine failures and counts distinct dirs separately", () => {
-    const root = createTempDir("pi-async-job-restore-quarantine-warning-");
-    const asyncRoot = path.join(root, "async-subagent-runs");
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (message?: unknown) => {
-      warnings.push(String(message ?? ""));
-    };
-    try {
-      const ownerDir = path.join(asyncRoot, "run-owner");
-      const badDirA = path.join(asyncRoot, "run-bad-a");
-      const badDirB = path.join(asyncRoot, "run-bad-b");
-      fs.mkdirSync(ownerDir, { recursive: true });
-      fs.mkdirSync(badDirA, { recursive: true });
-      fs.mkdirSync(badDirB, { recursive: true });
-      fs.writeFileSync(
-        path.join(ownerDir, "status.json"),
-        JSON.stringify({
-          runId: "run-owner",
-          mode: "single",
-          state: "running",
-          sessionId: "session-owner",
-          startedAt: 1000,
-          steps: [{ agent: "worker", status: "running" }],
-        }),
-        "utf-8",
-      );
-      fs.writeFileSync(path.join(badDirA, "status.json"), "{bad json", "utf-8");
-      fs.writeFileSync(path.join(badDirB, "status.json"), "{bad json", "utf-8");
-
-      const state = createState();
-      state.currentSessionId = "session-owner";
-      const tracker = trackerMod.createAsyncJobTracker(
-        createEventRecorder().pi,
-        state as never,
-        asyncRoot,
-        {
-          pollIntervalMs: 10,
-          quarantine: {
-            createUniqueSuffix: () => "rename-failure",
-            fs: {
-              statSync: fs.statSync,
-              readFileSync(filePath: string, encoding: BufferEncoding) {
-                return fs.readFileSync(filePath, encoding);
-              },
-              mkdirSync: fs.mkdirSync,
-              renameSync() {
-                const error = new Error("blocked") as NodeJS.ErrnoException;
-                error.code = "EACCES";
-                throw error;
-              },
-            },
-          },
-        },
-      );
-
-      tracker.restoreActiveJobs();
-      assert.deepEqual([...state.asyncJobs.keys()], ["run-owner"]);
-      assert.equal(fs.existsSync(badDirA), true);
-      assert.equal(fs.existsSync(badDirB), true);
-      assert.equal(warnings.length, 1);
-      assert.match(warnings[0] ?? "", /restored 1 valid active job/);
-      assert.match(warnings[0] ?? "", /left 2 malformed JSON in place/);
-      assert.doesNotMatch(
-        warnings[0] ?? "",
-        /status\.json|run-bad|SyntaxError|private|bad json|stack|\//,
-      );
-
-      tracker.resetJobs();
-      tracker.restoreActiveJobs();
-      assert.equal(warnings.length, 1, "unchanged failed fingerprints should not warn again");
-    } finally {
-      console.warn = originalWarn;
-      removeTempDir(root);
-    }
-  });
-
-  it("warns once for unchanged deferred quarantine outcomes", () => {
-    const root = createTempDir("pi-async-job-restore-quarantine-deferred-");
-    const asyncRoot = path.join(root, "async-subagent-runs");
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (message?: unknown) => {
-      warnings.push(String(message ?? ""));
-    };
-    try {
-      const ownerDir = path.join(asyncRoot, "run-owner");
-      const changedDir = path.join(asyncRoot, "run-bad-changed");
-      const unstableDir = path.join(asyncRoot, "run-bad-unstable");
-      fs.mkdirSync(ownerDir, { recursive: true });
-      fs.mkdirSync(changedDir, { recursive: true });
-      fs.mkdirSync(unstableDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(ownerDir, "status.json"),
-        JSON.stringify({
-          runId: "run-owner",
-          mode: "single",
-          state: "running",
-          sessionId: "session-owner",
-          startedAt: 1000,
-          steps: [{ agent: "worker", status: "running" }],
-        }),
-        "utf-8",
-      );
-      fs.writeFileSync(path.join(changedDir, "status.json"), "{bad json", "utf-8");
-      fs.writeFileSync(path.join(unstableDir, "status.json"), "{bad json", "utf-8");
-
-      const stableChangedStat = fs.statSync(path.join(changedDir, "status.json"));
-      const unstableBefore = fs.statSync(path.join(unstableDir, "status.json"));
-      const unstableAfter = {
-        ...unstableBefore,
-        mtimeMs: unstableBefore.mtimeMs + 1,
-      } as fs.Stats;
-      let unstableStatCalls = 0;
-      const state = createState();
-      state.currentSessionId = "session-owner";
-      const tracker = trackerMod.createAsyncJobTracker(
-        createEventRecorder().pi,
-        state as never,
-        asyncRoot,
-        {
-          pollIntervalMs: 10,
-          quarantine: {
-            createUniqueSuffix: () => "deferred",
-            fs: {
-              statSync(filePath: string) {
-                if (filePath === path.join(changedDir, "status.json")) return stableChangedStat;
-                if (filePath === path.join(unstableDir, "status.json"))
-                  return (
-                    ++unstableStatCalls % 2 === 1 ? unstableBefore : unstableAfter
-                  ) as fs.Stats;
-                return fs.statSync(filePath);
-              },
-              readFileSync(filePath: string, encoding: BufferEncoding) {
-                if (filePath === path.join(changedDir, "status.json")) return "{bad jzon";
-                return fs.readFileSync(filePath, encoding);
-              },
-              mkdirSync: fs.mkdirSync,
-              renameSync: fs.renameSync,
-            },
-          },
-        },
-      );
-
-      tracker.restoreActiveJobs();
-      assert.deepEqual([...state.asyncJobs.keys()], ["run-owner"]);
-      assert.equal(fs.existsSync(changedDir), true);
-      assert.equal(fs.existsSync(unstableDir), true);
-      assert.equal(warnings.length, 1);
-      assert.match(warnings[0] ?? "", /restored 1 valid active job/);
-      assert.match(warnings[0] ?? "", /deferred 2 malformed JSON/);
-      assert.doesNotMatch(warnings[0] ?? "", /status\.json|run-bad|bad json|\//);
-
-      tracker.resetJobs();
-      tracker.restoreActiveJobs();
-      assert.equal(warnings.length, 1, "unchanged deferred fingerprints should not warn again");
-    } finally {
-      console.warn = originalWarn;
-      removeTempDir(root);
-    }
-  });
-
-  it("normalizes tk ticket metadata from async-start events", () => {
-    const asyncRoot = createTempDir("pi-async-job-tracker-");
-    try {
-      const state = createState();
-      const recorder = createEventRecorder();
-      const tracker = trackerMod.createAsyncJobTracker(recorder.pi, state as never, asyncRoot);
-
-      tracker.handleStarted({
-        id: "run-ticketed-start",
-        asyncDir: path.join(asyncRoot, "run-ticketed-start"),
-        agent: "worker",
-        tkTicket: { id: "psr-raw4", title: "Show\u009b active\u001b[31m tk\u001b[0m title" },
-      });
-
-      assert.deepEqual(state.asyncJobs.get("run-ticketed-start")?.tkTicket, {
-        id: "psr-raw4",
-        title: "Show active tk title",
-      });
-    } finally {
-      removeTempDir(asyncRoot);
     }
   });
 
@@ -1145,8 +872,8 @@ describe("async job tracker", () => {
     }
   });
 
-  it("retains continued and cancelled terminal jobs only for the standard completion window", async () => {
-    for (const terminalState of ["continued", "cancelled"] as const) {
+  it("retains complete and cancelled terminal jobs only for the standard completion window", async () => {
+    for (const terminalState of ["complete", "cancelled"] as const) {
       const asyncRoot = createTempDir(`pi-async-job-${terminalState}-retention-`);
       try {
         const runDir = path.join(asyncRoot, `run-${terminalState}`);
@@ -1240,12 +967,13 @@ describe("async job tracker", () => {
     }
   });
 
-  it("repairs started jobs whose runner dies before writing status", async () => {
+  it("does not synthesize status when a started job dies before writing status", async () => {
     const asyncRoot = createTempDir("pi-async-job-no-status-");
     let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
     try {
       const resultsDir = path.join(asyncRoot, "results");
       const runDir = path.join(asyncRoot, "run-no-status");
+      let pollClockReads = 0;
       const state = createState();
       const ui = createUiContext();
       const recorder = createEventRecorder();
@@ -1254,7 +982,12 @@ describe("async job tracker", () => {
         pollIntervalMs: 10,
         resultsDir,
         kill: pidGone,
-        now: () => Date.now() + 2000,
+        now: () => {
+          // Called synchronously from each poll tick (and its reconciliation),
+          // so a growing count proves polls ran to completion.
+          pollClockReads += 1;
+          return Date.now() + 2000;
+        },
       });
       tracker.resetJobs(ui.ctx as never);
       tracker.handleStarted({
@@ -1266,31 +999,18 @@ describe("async job tracker", () => {
         agents: ["scout", "reviewer", "worker"],
       });
 
-      await waitForCondition(() => state.asyncJobs.size === 0, "startup-crash repair cleanup");
+      // Negative assertion: wait until several poll ticks have completed
+      // (each reads the clock at least once), so the absence of synthesis is proven.
+      await waitForCondition(() => pollClockReads >= 4, "status polls to run");
 
-      assert.equal(state.asyncJobs.size, 0);
-      const status = JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8"));
-      const result = JSON.parse(
-        fs.readFileSync(path.join(resultsDir, "run-no-status.json"), "utf-8"),
-      );
-      assert.equal(status.state, "failed");
-      assert.equal(status.sessionId, "session-current");
-      assert.equal(status.mode, "parallel");
-      assert.equal(status.currentStep, 0);
-      assert.deepEqual(
-        status.steps.map((step: { agent: string; status: string }) => [step.agent, step.status]),
-        [
-          ["scout", "failed"],
-          ["reviewer", "failed"],
-          ["worker", "failed"],
-        ],
-      );
-      assert.equal(result.success, false);
-      assert.equal(result.sessionId, "session-current");
-      assert.ok(
-        ui.widgets.length > 0,
-        "expected startup-crash repair cleanup to replace the widget",
-      );
+      // The lifecycle boundary requires a persisted status document before
+      // reconciliation can make a terminal claim. The start event alone is
+      // not enough to synthesize one after a runner dies.
+      assert.equal(state.asyncJobs.has("run-no-status"), true);
+      assert.equal(fs.existsSync(path.join(runDir, "status.json")), false);
+      assert.equal(fs.existsSync(path.join(resultsDir, "run-no-status.json")), false);
+      tracker.resetJobs();
+      assert.ok(ui.widgets.length > 0, "expected reset to replace the widget");
     } finally {
       tracker?.resetJobs();
       removeTempDir(asyncRoot);

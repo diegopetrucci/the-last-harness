@@ -1,5 +1,3 @@
-import type { RunSyncOptions } from "../../src/shared/types.ts";
-import * as executionImport from "../../src/runs/foreground/execution.ts";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -32,50 +30,8 @@ import {
 import { resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import type { AsyncResultArtifact } from "../../src/shared/types.ts";
 
-interface ForegroundExecutionModule {
-  runSync(
-    runtimeCwd: string,
-    agents: ReturnType<typeof makeAgent>[],
-    agentName: string,
-    task: string,
-    options: RunSyncOptions | Record<string, unknown>,
-  ): Promise<{
-    exitCode: number;
-    exitSignal?: NodeJS.Signals;
-    error?: string;
-    finalOutput?: string;
-    stderr?: string;
-    stderrTruncated?: boolean;
-    protocolOutputLimit?: { code?: string; stream?: string };
-    terminationReason?: string;
-    timedOut?: boolean;
-    interrupted?: boolean;
-    progress: { status: string };
-    transcriptPath?: string;
-    artifactPaths?: { outputPath: string; metadataPath: string };
-    acceptance?: {
-      status?: string;
-      runtimeChecks?: Array<{ id?: string; status?: string }>;
-    };
-  }>;
-}
-
-const execution = executionImport as ForegroundExecutionModule;
-
-function readTranscriptText(transcriptPath: string, recordType?: string): string {
-  return fs
-    .readFileSync(transcriptPath, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const record: unknown = JSON.parse(line);
-      if (!record || typeof record !== "object" || Array.isArray(record)) return "";
-      const typed = record as { recordType?: unknown; text?: unknown };
-      if (recordType !== undefined && typed.recordType !== recordType) return "";
-      return typeof typed.text === "string" ? typed.text : "";
-    })
-    .join("");
-}
+// Note: the foreground runner (execution.ts) was removed from this branch.
+// All foreground-specific tests from upstream have been dropped from this merge.
 
 function readAsyncEventTypes(asyncDir: string): string[] {
   const eventPath = path.join(asyncDir, "events.jsonl");
@@ -94,20 +50,6 @@ function readAsyncEventTypes(asyncDir: string): string[] {
 
 function compactArtifactConfig() {
   return resolveArtifactConfig({ mode: "compact" });
-}
-
-async function within<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 async function killMockChildren(mockPi: MockPi): Promise<void> {
@@ -147,99 +89,6 @@ describe("real child process protocol hardening", () => {
     removeTempDir(tempDir);
   });
 
-  it("accepts a normal validated protocol event", async () => {
-    mockPi.onCall({ jsonl: [events.assistantMessage("normal child output")] });
-    const result = await within(
-      execution.runSync(tempDir, [makeAgent("worker")], "worker", "Read the result", {
-        runId: "foreground-normal-protocol",
-      }),
-      10_000,
-      "foreground normal protocol run",
-    );
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.finalOutput, "normal child output");
-    assert.equal(result.protocolOutputLimit, undefined);
-  });
-
-  it("retains malformed and unknown protocol lines without changing state", async () => {
-    const artifactsDir = path.join(tempDir, "artifacts");
-    const malformedEvent = {
-      type: "message_end",
-      message: { role: "assistant", content: "not an array" },
-    };
-    const unknownEvent = { type: "unknown_future_event", message: { injected: true } };
-    mockPi.onCall({
-      jsonl: [malformedEvent, unknownEvent, events.assistantMessage("valid after malformed lines")],
-    });
-    const result = await within(
-      execution.runSync(tempDir, [makeAgent("worker")], "worker", "Read the result", {
-        runId: "foreground-malformed-protocol",
-        artifactsDir,
-        artifactConfig: {
-          enabled: true,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: true,
-          includeTranscript: true,
-          includeMetadata: false,
-        },
-      }),
-      10_000,
-      "foreground malformed protocol run",
-    );
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.finalOutput, "valid after malformed lines");
-    assert.equal(result.progress.status, "completed");
-    assert.ok(result.transcriptPath);
-    const transcript = readTranscriptText(result.transcriptPath, "stdout");
-    assert.equal(transcript, `${JSON.stringify(malformedEvent)}${JSON.stringify(unknownEvent)}`);
-    const jsonl = fs.readFileSync(
-      path.join(artifactsDir, "foreground-malformed-protocol_worker.jsonl"),
-      "utf8",
-    );
-    assert.match(jsonl, /not an array/);
-    assert.match(jsonl, /unknown_future_event/);
-  });
-
-  it("retains unknown protocol envelopes when JSONL is disabled", async () => {
-    const artifactsDir = path.join(tempDir, "transcript-only");
-    const unknownEvent = {
-      type: "future_transcript_event",
-      nested: { retained: true },
-    };
-    mockPi.onCall({
-      jsonl: [unknownEvent, events.assistantMessage("valid transcript-only output")],
-    });
-
-    const result = await within(
-      execution.runSync(tempDir, [makeAgent("worker")], "worker", "Read the result", {
-        runId: "foreground-transcript-only",
-        artifactsDir,
-        artifactConfig: {
-          enabled: true,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeTranscript: true,
-          includeMetadata: false,
-        },
-      }),
-      10_000,
-      "foreground transcript-only run",
-    );
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.finalOutput, "valid transcript-only output");
-    assert.ok(result.transcriptPath);
-    assert.equal(readTranscriptText(result.transcriptPath, "stdout"), JSON.stringify(unknownEvent));
-    assert.equal(
-      fs.existsSync(path.join(artifactsDir, "foreground-transcript-only_worker.jsonl")),
-      false,
-    );
-  });
-
   it("uses a bounded raw stdout prefix with a visible truncation marker", async () => {
     const id = `background-raw-stdout-prefix-${Date.now().toString(36)}`;
     const prefixStart = "RAW_STDOUT_PREFIX_BEGIN_";
@@ -250,7 +99,7 @@ describe("real child process protocol hardening", () => {
     const start = executeAsyncSingle(id, {
       agent: "worker",
       task: "Capture the startup diagnostic",
-      agentConfig: makeAgent("worker", { completionGuard: false }),
+      agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -273,116 +122,6 @@ describe("real child process protocol hardening", () => {
     assert.doesNotMatch(child?.output ?? "", new RegExp(suffix));
     assert.ok(Buffer.byteLength(child?.output ?? "", "utf8") <= MAX_CHILD_RAW_STDOUT_BYTES + 128);
   });
-
-  it(
-    "terminates foreground stdout protocol overflow with SIGTERM then bounded SIGKILL escalation",
-    { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
-    async () => {
-      const oversizedLine = `FG_PROTOCOL_BEGIN_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}_FG_PROTOCOL_END`;
-      const artifactsDir = path.join(tempDir, "foreground-protocol-artifacts");
-      mockPi.onCall({
-        rawStdout: oversizedLine,
-        keepAliveAfterFinalMessageMs: 60_000,
-        ignoreSigterm: true,
-      });
-      const result = await within(
-        execution.runSync(
-          tempDir,
-          [makeAgent("worker", { fallbackModels: ["mock/fallback"] })],
-          "worker",
-          "Trigger overflow",
-          {
-            runId: "foreground-protocol-overflow",
-            artifactsDir,
-            artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
-            acceptance: { level: "checked", criteria: ["The overflow is reported"] },
-          },
-        ),
-        10_000,
-        "foreground protocol overflow run",
-      );
-
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.exitSignal, "SIGKILL");
-      assert.equal(result.progress.status, "failed");
-      assert.match(result.error ?? "", /protocol_output_limit/);
-      assert.match(result.finalOutput ?? "", /protocol_output_limit/);
-      assert.equal(result.acceptance?.status, "rejected");
-      assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "attestation");
-      assert.ok(result.artifactPaths, "expected protocol overflow artifacts");
-      assert.equal(
-        fs.readFileSync(result.artifactPaths.outputPath, "utf-8"),
-        `${result.error}\n\nOutput:\n${result.finalOutput}`,
-      );
-      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
-        exitCode?: number;
-        terminationReason?: string;
-      };
-      assert.equal(metadata.exitCode, result.exitCode);
-      assert.equal(metadata.terminationReason, result.terminationReason);
-      const pid = startedMockPiPids(mockPi)[0];
-      assert.ok(pid);
-      const signals = fs.readFileSync(path.join(mockPi.dir, `signals-${pid}.jsonl`), "utf8");
-      assert.match(signals, /"signal":"SIGTERM"/);
-      assert.equal(mockPi.callCount(), 1);
-    },
-  );
-
-  it(
-    "preserves timeout precedence when stdout overflow arrives later",
-    { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
-    async () => {
-      const oversizedLine = `TIMEOUT_WON_FIRST_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
-      const releaseMarker = path.join(tempDir, "foreground-timeout-release");
-      const artifactsDir = path.join(tempDir, "foreground-timeout-artifacts");
-      let resolveTimeout!: () => void;
-      const timeoutObserved = new Promise<void>((resolve) => {
-        resolveTimeout = resolve;
-      });
-      mockPi.onCall({
-        waitForMarker: releaseMarker,
-        rawStdout: oversizedLine,
-        keepAliveAfterFinalMessageMs: 10_000,
-        ignoreSigint: true,
-        ignoreSigterm: true,
-      });
-      const resultPromise = execution.runSync(
-        tempDir,
-        [makeAgent("worker")],
-        "worker",
-        "Timeout first",
-        {
-          runId: "foreground-timeout-before-overflow",
-          timeoutMs: 50,
-          artifactsDir,
-          artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
-          acceptance: { level: "checked", criteria: ["The timeout remains authoritative"] },
-          onUpdate: (update: { details?: { results?: Array<{ timedOut?: boolean }> } }) => {
-            if (update.details?.results?.[0]?.timedOut) resolveTimeout();
-          },
-        },
-      );
-      await within(timeoutObserved, 10_000, "foreground timeout observation");
-      fs.writeFileSync(releaseMarker, "", "utf-8");
-      const result = await within(resultPromise, 10_000, "foreground timeout precedence run");
-
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.timedOut, true);
-      assert.equal(result.terminationReason, "timed_out");
-      assert.equal(result.protocolOutputLimit, undefined);
-      assert.equal(result.acceptance?.status, "rejected");
-      assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "timeout");
-      assert.match(result.error ?? "", /timed out/i);
-      assert.ok(result.artifactPaths, "expected timeout precedence artifacts");
-      assert.equal(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), result.finalOutput);
-      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
-        exitCode?: number;
-        terminationReason?: string;
-      };
-      assert.equal(metadata.exitCode, result.exitCode);
-      assert.equal(metadata.terminationReason, result.terminationReason);
-    },
-  );
 
   it(
     "preserves async timeout precedence when stdout overflow arrives later",
@@ -410,9 +149,12 @@ describe("real child process protocol hardening", () => {
       assert.equal(start.isError, undefined);
       await waitForMockPiCall(mockPi, 0);
       const asyncDir = path.join(ASYNC_DIR, id);
+      // Gate on step-level timeout evidence. The role-derived root deadline may
+      // publish the terminal timeout (clearing pid) before the child exits, so
+      // the child's liveness is not part of the gate.
       const timedOutStatus = await waitForAsyncStatusPredicate(
         asyncDir,
-        (status) => status.timedOut === true && status.steps?.[0]?.timedOut === true,
+        (status) => status.steps?.[0]?.timedOut === true,
         "async step timeout",
       );
       assert.equal(timedOutStatus.steps?.[0]?.terminationReason, "timed_out");
@@ -497,43 +239,6 @@ describe("real child process protocol hardening", () => {
     },
   );
 
-  it("bounds stderr tails, reports overflow, and keeps raw transcript bytes", async () => {
-    const beginning = Buffer.from("FG_STDERR_BEGIN_", "utf8");
-    const filler = Buffer.alloc(MAX_CHILD_STDERR_BYTES, 0x78);
-    const splitCharacter = Buffer.from("😀", "utf8");
-    const ending = Buffer.from("_FG_STDERR_END\n", "utf8");
-    const first = Buffer.concat([beginning, filler, splitCharacter.subarray(0, 2)]);
-    const second = Buffer.concat([splitCharacter.subarray(2), ending]);
-    const artifactsDir = path.join(tempDir, "stderr-artifacts");
-    mockPi.onCall({ stderrByteChunks: [Array.from(first), Array.from(second)], exitCode: 1 });
-
-    const result = await within(
-      execution.runSync(tempDir, [makeAgent("worker")], "worker", "Capture stderr", {
-        runId: "foreground-stderr-overflow",
-        artifactsDir,
-        artifactConfig: {
-          enabled: true,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeTranscript: true,
-          includeMetadata: false,
-        },
-      }),
-      10_000,
-      "foreground stderr overflow run",
-    );
-
-    assert.equal(result.exitCode, 1);
-    assert.equal(result.stderrTruncated, true);
-    assert.match(result.error ?? "", /stderr truncated/i);
-    assert.match(result.error ?? "", /_FG_STDERR_END/);
-    assert.doesNotMatch(result.error ?? "", /FG_STDERR_BEGIN_/);
-    assert.ok(result.transcriptPath);
-    const transcript = readTranscriptText(result.transcriptPath, "stderr");
-    assert.equal(transcript, Buffer.concat([first, second]).toString("utf8"));
-  });
-
   it("bounds async stderr tails and reports overflow in the result and event log", async () => {
     const id = `background-stderr-overflow-${Date.now().toString(36)}`;
     const beginning = "BG_STDERR_BEGIN_";
@@ -578,33 +283,139 @@ describe("real child process protocol hardening", () => {
   });
 
   it(
-    "preserves interrupt precedence when stdout overflow arrives later",
+    "preserves interrupt precedence when stdout overflow arrives after interrupt",
     { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
     async () => {
-      const interrupt = new AbortController();
-      const oversizedLine = `INTERRUPT_WON_FIRST_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
+      const id = `background-interrupt-before-overflow-${Date.now().toString(36)}`;
+      const releaseMarker = path.join(tempDir, "interrupt-then-overflow-release");
+      const oversizedLine = `INTERRUPT_WON_BEFORE_OVERFLOW_${"-".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
       mockPi.onCall({
-        delay: 100,
+        waitForMarker: releaseMarker,
         rawStdout: oversizedLine,
         keepAliveAfterFinalMessageMs: 10_000,
-        ignoreSigint: true,
         ignoreSigterm: true,
       });
-      const resultPromise = execution.runSync(
-        tempDir,
-        [makeAgent("worker")],
-        "worker",
-        "Interrupt first",
-        { runId: "foreground-interrupt-before-overflow", interruptSignal: interrupt.signal },
+      const start = executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Interrupt before overflow",
+        agentConfig: makeAgent("worker"),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: compactArtifactConfig(),
+        maxSubagentDepth: 2,
+      });
+      assert.equal(start.isError, undefined);
+      // Wait for the child process to be alive before interrupting.
+      await waitForMockPiCall(mockPi, 0);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      requestAsyncInterrupt(asyncDir, { source: "interrupt-before-overflow-test" });
+      // Wait for the interrupt to be acknowledged (step enters pausing/paused state or
+      // interruptRequestedAt is set, indicating the runner has registered the interrupt).
+      await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) =>
+          status.steps?.[0]?.status === "paused" ||
+          status.steps?.[0]?.status === "pausing" ||
+          status.steps?.[0]?.interruptRequestedAt != null,
+        "step pausing or interrupt registered",
       );
-      setTimeout(() => interrupt.abort(), 50);
-      const result = await within(resultPromise, 10_000, "foreground interrupt precedence run");
-
-      assert.equal(result.interrupted, true);
-      assert.equal(result.terminationReason, "interrupted");
-      assert.equal(result.protocolOutputLimit, undefined);
+      // Now release the child so it emits the oversized line during teardown.
+      fs.writeFileSync(releaseMarker, "", "utf-8");
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+      const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+      // Interrupt must win: state should be paused, not a protocol overflow failure.
+      assert.equal(result.state, "paused");
+      assert.equal(result.results[0]?.protocolOutputLimit, undefined);
+      assert.doesNotMatch(result.results[0]?.error ?? "", /protocol_output_limit/);
     },
   );
+
+  it("retains malformed protocol lines in result output regardless of artifact JSONL config", async () => {
+    const id = `background-malformed-protocol-${Date.now().toString(36)}`;
+    const malformedLine = "NOT_JSON_AT_ALL_{{{{ malformed protocol line";
+    mockPi.onCall({ jsonl: [malformedLine] });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Emit malformed protocol line",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      // Use artifact config with JSONL disabled to confirm output retention is independent.
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+    const child = result.results[0];
+    // A malformed (non-JSON) line is treated as raw stdout and retained in output.
+    assert.ok(
+      child?.output.includes(malformedLine),
+      `malformed line should be retained in output; got: ${child?.output}`,
+    );
+  });
+
+  it("retains unknown protocol objects in events when projections are enabled", async () => {
+    const id = `background-unknown-protocol-${Date.now().toString(36)}`;
+    const unknownEvent = { type: "tlh_unknown_xyz_test", diagnostic: "test-value" };
+    // Include a proper message_end so the run completes successfully.
+    mockPi.onCall({ jsonl: [unknownEvent, events.assistantMessage("done")] });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Emit unknown protocol object",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      // Use debug mode so includeChildEventProjections is true.
+      artifactConfig: resolveArtifactConfig({ mode: "debug" }),
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+    assert.equal(result.success, true);
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8");
+    // Unknown objects are appended as diagnostic events when projections are enabled.
+    assert.match(
+      eventText,
+      /tlh_unknown_xyz_test/,
+      "unknown protocol object should be retained in events when projections enabled",
+    );
+  });
+
+  it("drops unknown protocol objects silently when child event projections are disabled", async () => {
+    const id = `background-unknown-protocol-noprojections-${Date.now().toString(36)}`;
+    const unknownEvent = { type: "tlh_unknown_xyz_suppressed", diagnostic: "suppressed-value" };
+    // Include a proper message_end so the run completes successfully.
+    mockPi.onCall({ jsonl: [unknownEvent, events.assistantMessage("done")] });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Emit unknown protocol object with projections off",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      // compact mode: includeChildEventProjections is false
+      artifactConfig: compactArtifactConfig(),
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+    // Run completes successfully; unknown lines do not cause errors or overflow.
+    assert.equal(result.success, true);
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8");
+    // Unknown objects are silently dropped when projections are disabled.
+    assert.doesNotMatch(
+      eventText,
+      /tlh_unknown_xyz_suppressed/,
+      "unknown protocol object should be dropped when projections disabled",
+    );
+  });
 
   it("preserves the async startup interrupt trampoline when an interrupt arrives immediately", async () => {
     const id = `background-startup-interrupt-${Date.now().toString(36)}`;

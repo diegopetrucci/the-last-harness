@@ -4,10 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
-import {
-  pausedCheckedAcceptance,
-  skippedPausedAcceptanceLedger,
-} from "../support/async-resume-fixtures.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import type {
   ContextPressureProjection,
@@ -35,6 +31,7 @@ describe("async resume lookup", () => {
           {
             agent: "worker",
             status: "complete",
+            terminationReason: "legacy-retired-reason" as never,
             contextPressureCrossedThresholds: ["warning", "critical"],
           },
         ],
@@ -50,95 +47,88 @@ describe("async resume lookup", () => {
       assert.equal(target.agent, "worker");
       assert.equal(target.sessionFile, sessionFile);
       assert.equal(target.cwd, root);
-      assert.equal(target.continuationAcceptance, undefined);
+      assert.equal(target.terminationReason, undefined);
       assert.deepEqual(target.contextPressureCrossedThresholds, ["warning", "critical"]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("restores normalized per-child health projections without inventing legacy fields", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-health-"));
+  it("gates follow-up resume from continuation metadata, not canonical completion labels", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-lifecycle-projection-"));
     try {
       const asyncRoot = path.join(root, "runs");
+      const resultsDir = path.join(root, "results");
       const sessionFile = path.join(root, "session.jsonl");
       fs.writeFileSync(sessionFile, "", "utf-8");
-      writeJson(path.join(asyncRoot, "run-health", "status.json"), {
-        runId: "run-health",
+      writeJson(path.join(asyncRoot, "run-completed-alias", "status.json"), {
+        runId: "run-completed-alias",
         mode: "single",
-        state: "complete",
+        state: "completed",
         startedAt: 100,
-        endedAt: 200,
-        lastUpdate: 200,
-        cwd: root,
-        steps: [
-          {
-            agent: "worker",
-            status: "complete",
-            sessionFile,
-            activityState: "needs_attention",
-            idleEpisodeId: "  attempt-1~idle~1  ",
-            durableAttentionReasons: [
-              "tool_failures",
-              "context_pressure",
-              "tool_failures",
-              "unknown" as never,
-            ],
-            compaction: { reason: "threshold" },
-          },
-        ],
+        steps: [{ agent: "worker", status: "completed", sessionFile }],
       });
+      const ordinary = resolveAsyncResumeTarget(
+        { id: "run-completed-alias" },
+        { asyncDirRoot: asyncRoot, resultsDir },
+      );
+      assert.equal(ordinary.kind, "revive");
+      assert.equal(ordinary.state, "complete");
 
-      const target = resolveAsyncResumeTarget(
-        { id: "run-health" },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-        { readOnly: true },
+      writeJson(path.join(asyncRoot, "run-continued-alias", "status.json"), {
+        runId: "run-continued-alias",
+        mode: "single",
+        state: "continued",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "continued", sessionFile }],
+      });
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-continued-alias" },
+            { asyncDirRoot: asyncRoot, resultsDir },
+          ),
+        /already launched continuation 'unknown'/,
       );
 
-      assert.equal(target.activityState, "needs_attention");
-      assert.equal(target.idleEpisodeId, "attempt-1~idle~1");
-      assert.deepEqual(target.durableAttentionReasons, ["tool_failures", "context_pressure"]);
-      assert.deepEqual(target.compaction, { reason: "threshold" });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("drops retired active-long-running state from persisted resume metadata", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-retired-health-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const sessionFile = path.join(root, "session.jsonl");
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      writeJson(path.join(asyncRoot, "run-retired-health", "status.json"), {
-        runId: "run-retired-health",
-        mode: "single",
+      writeJson(path.join(asyncRoot, "run-continued-step", "status.json"), {
+        runId: "run-continued-step",
+        mode: "parallel",
         state: "complete",
         startedAt: 100,
-        endedAt: 200,
-        lastUpdate: 200,
-        cwd: root,
         steps: [
-          {
-            agent: "worker",
-            status: "complete",
-            sessionFile,
-            activityState: "active_long_running" as never,
-            idleEpisodeId: "retired-health~idle~1",
-            durableAttentionReasons: ["context_pressure"],
-          },
+          { agent: "worker", status: "continued", sessionFile },
+          { agent: "reviewer", status: "complete", sessionFile },
         ],
       });
-
-      const target = resolveAsyncResumeTarget(
-        { id: "run-retired-health" },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-        { readOnly: true },
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-continued-step", index: 0 },
+            { asyncDirRoot: asyncRoot, resultsDir },
+          ),
+        /already launched continuation 'unknown'/,
       );
+      const sibling = resolveAsyncResumeTarget(
+        { id: "run-continued-step", index: 1 },
+        { asyncDirRoot: asyncRoot, resultsDir },
+      );
+      assert.equal(sibling.kind, "revive");
 
-      assert.equal(target.activityState, undefined);
-      assert.equal(target.idleEpisodeId, "retired-health~idle~1");
-      assert.deepEqual(target.durableAttentionReasons, ["context_pressure"]);
+      writeJson(path.join(asyncRoot, "run-failed-with-message", "status.json"), {
+        runId: "run-failed-with-message",
+        mode: "single",
+        state: "failed",
+        startedAt: 100,
+        error:
+          "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.",
+        steps: [{ agent: "worker", status: "failed", sessionFile }],
+      });
+      const failedTarget = resolveAsyncResumeTarget(
+        { id: "run-failed-with-message" },
+        { asyncDirRoot: asyncRoot, resultsDir },
+      );
+      assert.equal(failedTarget.kind, "revive");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -150,29 +140,7 @@ describe("async resume lookup", () => {
       const asyncRoot = path.join(root, "runs");
       const sessionFile = path.join(root, "session.jsonl");
       fs.writeFileSync(sessionFile, "", "utf-8");
-      const projectAgent = {
-        provenance: {
-          projectRoot: root,
-          sessionId: "session-project",
-          generationId: "generation-project",
-          processInstanceId: "process-project",
-          source: "project" as const,
-          agent: "embedded.worker",
-          digest: "digest-project",
-        },
-        config: {
-          name: "embedded.worker",
-          description: "Captured project agent",
-          systemPrompt: "Captured prompt",
-          systemPromptMode: "replace" as const,
-          inheritProjectContext: false,
-          inheritSkills: false,
-          source: "project" as const,
-          filePath: path.join(root, ".tlh", "agents", "worker.md"),
-          packageName: "embedded",
-          tools: ["read"],
-        },
-      };
+      const projectAgent = { slug: "worker", root, cwd: root };
       writeJson(path.join(asyncRoot, "run-project", "status.json"), {
         runId: "run-project",
         mode: "single",
@@ -187,7 +155,6 @@ describe("async resume lookup", () => {
             status: "paused",
             sessionFile,
             projectAgent,
-            acceptance: skippedPausedAcceptanceLedger(),
           },
         ],
       });
@@ -209,8 +176,7 @@ describe("async resume lookup", () => {
             agent: "embedded.worker",
             status: "paused",
             sessionFile,
-            projectAgent: { ...projectAgent, config: { ...projectAgent.config, source: "user" } },
-            acceptance: skippedPausedAcceptanceLedger(),
+            projectAgent: { ...projectAgent, slug: "Worker" },
           },
         ],
       });
@@ -221,7 +187,7 @@ describe("async resume lookup", () => {
             { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
             { readOnly: true },
           ),
-        /projectAgent is invalid|project-agent capture/i,
+        /projectAgent is invalid|project-agent identity/i,
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -289,10 +255,6 @@ describe("async resume lookup", () => {
             thinking: "high",
             modelIdentity: identity,
             modelResolution: resolution,
-            activityState: "needs_attention",
-            idleEpisodeId: "attempt-result~idle~1",
-            durableAttentionReasons: ["context_pressure", "context_pressure"],
-            compaction: { reason: "threshold" },
           },
         ],
       });
@@ -302,10 +264,6 @@ describe("async resume lookup", () => {
       );
       assert.deepEqual(resultTarget.modelIdentity, identity);
       assert.deepEqual(resultTarget.modelResolution, resolution);
-      assert.equal(resultTarget.activityState, "needs_attention");
-      assert.equal(resultTarget.idleEpisodeId, "attempt-result~idle~1");
-      assert.deepEqual(resultTarget.durableAttentionReasons, ["context_pressure"]);
-      assert.deepEqual(resultTarget.compaction, { reason: "threshold" });
 
       writeJson(path.join(resultsDir, "run-result-model-strings.json"), {
         id: "run-result-model-strings",
@@ -426,237 +384,6 @@ describe("async resume lookup", () => {
     }
   });
 
-  it("preserves cumulative active runtime without counting paused wall time", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-active-runtime-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const sessionFile = path.join(root, "paused.jsonl");
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      writeJson(path.join(asyncRoot, "run-paused", "status.json"), {
-        runId: "run-paused",
-        mode: "single",
-        state: "paused",
-        startedAt: 100,
-        endedAt: 200,
-        lastUpdate: 10_000_000,
-        cwd: root,
-        sessionFile,
-        pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-        steps: [
-          {
-            agent: "worker",
-            status: "paused",
-            sessionFile,
-            activeRuntimeMs: 75,
-            pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-            acceptance: skippedPausedAcceptanceLedger(),
-          },
-        ],
-      });
-
-      const target = resolveAsyncResumeTarget(
-        { id: "run-paused" },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), now: () => 20_000_000 },
-      );
-
-      assert.equal(target.activeRuntimeMs, 75);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("normalizes each runtime field before applying per-field status/result fallback", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-runtime-precedence-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const resultsDir = path.join(root, "results");
-      const statusSessionA = path.join(root, "status-a.jsonl");
-      const statusSessionB = path.join(root, "status-b.jsonl");
-      const resultSessionA = path.join(root, "result-a.jsonl");
-      const resultSessionB = path.join(root, "result-b.jsonl");
-      for (const sessionFile of [statusSessionA, statusSessionB, resultSessionA, resultSessionB]) {
-        fs.writeFileSync(sessionFile, "", "utf-8");
-      }
-      writeJson(path.join(asyncRoot, "run-runtime-precedence", "status.json"), {
-        runId: "run-runtime-precedence",
-        mode: "parallel",
-        state: "complete",
-        startedAt: 100,
-        cwd: root,
-        steps: [
-          {
-            agent: "status-runtime",
-            status: "complete",
-            sessionFile: statusSessionA,
-            activeRuntimeMs: 100.25,
-            activeRuntimeCheckpointAt: -1,
-          },
-          {
-            agent: "status-checkpoint",
-            status: "complete",
-            sessionFile: statusSessionB,
-            activeRuntimeCheckpointAt: 200.75,
-          },
-        ],
-      });
-      writeJson(path.join(resultsDir, "run-runtime-precedence.json"), {
-        id: "run-runtime-precedence",
-        agent: "result-runtime",
-        success: true,
-        state: "complete",
-        cwd: root,
-        results: [
-          {
-            agent: "result-checkpoint",
-            success: true,
-            sessionFile: resultSessionA,
-            activeRuntimeMs: 900.25,
-            activeRuntimeCheckpointAt: 800.75,
-          },
-          {
-            agent: "result-runtime",
-            success: true,
-            sessionFile: resultSessionB,
-            activeRuntimeMs: 700.25,
-            activeRuntimeCheckpointAt: 900.75,
-          },
-        ],
-      });
-
-      const statusRuntimeTarget = resolveAsyncResumeTarget(
-        { id: "run-runtime-precedence", index: 0 },
-        { asyncDirRoot: asyncRoot, resultsDir },
-        { readOnly: true },
-      );
-      assert.equal(statusRuntimeTarget.activeRuntimeMs, 101);
-      // The malformed status checkpoint is normalized away before the valid
-      // result checkpoint is selected as the per-field fallback.
-      assert.equal(statusRuntimeTarget.activeRuntimeCheckpointAt, 800);
-
-      const statusCheckpointTarget = resolveAsyncResumeTarget(
-        { id: "run-runtime-precedence", index: 1 },
-        { asyncDirRoot: asyncRoot, resultsDir },
-        { readOnly: true },
-      );
-      assert.equal(statusCheckpointTarget.activeRuntimeMs, 701);
-      assert.equal(statusCheckpointTarget.activeRuntimeCheckpointAt, 200);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("omits malformed result-only runtime checkpoints without weakening valid runtime evidence", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-checkpoint-"));
-    try {
-      const resultsDir = path.join(root, "results");
-      const sessionFile = path.join(root, "result-checkpoint.jsonl");
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      writeJson(path.join(resultsDir, "run-result-checkpoint.json"), {
-        id: "run-result-checkpoint",
-        agent: "worker",
-        success: true,
-        state: "complete",
-        cwd: root,
-        results: [
-          {
-            agent: "worker",
-            success: true,
-            sessionFile,
-            activeRuntimeMs: 125.25,
-            activeRuntimeCheckpointAt: -1,
-          },
-        ],
-      });
-
-      const target = resolveAsyncResumeTarget(
-        { id: "run-result-checkpoint" },
-        { asyncDirRoot: path.join(root, "runs"), resultsDir },
-      );
-      assert.equal(target.activeRuntimeMs, 126);
-      assert.equal(target.activeRuntimeCheckpointAt, undefined);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("reports selected-child success independently of aggregate cohort state", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-selected-success-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const successfulSession = path.join(root, "successful.jsonl");
-      const failedSession = path.join(root, "failed.jsonl");
-      fs.writeFileSync(successfulSession, "", "utf-8");
-      fs.writeFileSync(failedSession, "", "utf-8");
-      writeJson(path.join(asyncRoot, "run-selected-success", "status.json"), {
-        runId: "run-selected-success",
-        mode: "parallel",
-        state: "failed",
-        startedAt: 100,
-        cwd: root,
-        steps: [
-          { agent: "successful", status: "complete", sessionFile: successfulSession },
-          { agent: "failed", status: "failed", sessionFile: failedSession },
-        ],
-      });
-
-      const successfulTarget = resolveAsyncResumeTarget(
-        { id: "run-selected-success", index: 0 },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-        { readOnly: true },
-      );
-      assert.equal(successfulTarget.successfulCompletion, true);
-
-      const failedTarget = resolveAsyncResumeTarget(
-        { id: "run-selected-success", index: 1 },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-        { readOnly: true },
-      );
-      assert.equal(failedTarget.successfulCompletion, false);
-
-      writeJson(path.join(asyncRoot, "run-selected-failed-complete", "status.json"), {
-        runId: "run-selected-failed-complete",
-        mode: "parallel",
-        state: "complete",
-        startedAt: 100,
-        cwd: root,
-        steps: [{ agent: "failed", status: "failed", sessionFile: failedSession }],
-      });
-      const failedChildInCompleteRun = resolveAsyncResumeTarget(
-        { id: "run-selected-failed-complete", index: 0 },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-        { readOnly: true },
-      );
-      assert.equal(failedChildInCompleteRun.successfulCompletion, false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("uses result-only child success when no status artifact is available", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-success-"));
-    try {
-      const resultsDir = path.join(root, "results");
-      const sessionFile = path.join(root, "result-success.jsonl");
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      writeJson(path.join(resultsDir, "run-result-success.json"), {
-        id: "run-result-success",
-        agent: "worker",
-        success: false,
-        state: "failed",
-        cwd: root,
-        results: [{ agent: "worker", success: true, sessionFile }],
-      });
-
-      const target = resolveAsyncResumeTarget(
-        { id: "run-result-success" },
-        { asyncDirRoot: path.join(root, "runs"), resultsDir },
-      );
-      assert.equal(target.successfulCompletion, true);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("restores distinct per-child ticket ids from result-only artifacts", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-tickets-"));
     try {
@@ -676,13 +403,13 @@ describe("async resume lookup", () => {
             agent: "developer",
             success: true,
             sessionFile: firstSession,
-            tkTicketId: "tlhm-child-a",
+            ticketId: "tlhm-child-a",
           },
           {
             agent: "developer",
             success: true,
             sessionFile: secondSession,
-            tkTicketId: "tlhm-child-b",
+            ticketId: "tlhm-child-b",
           },
         ],
       });
@@ -696,8 +423,8 @@ describe("async resume lookup", () => {
         { asyncDirRoot: path.join(root, "runs"), resultsDir },
       );
 
-      assert.equal(firstTarget.tkTicketId, "tlhm-child-a");
-      assert.equal(secondTarget.tkTicketId, "tlhm-child-b");
+      assert.equal(firstTarget.ticketId, "tlhm-child-a");
+      assert.equal(secondTarget.ticketId, "tlhm-child-b");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -722,13 +449,13 @@ describe("async resume lookup", () => {
             agent: "developer",
             success: true,
             sessionFile: firstSession,
-            tkTicketId: "not a ticket",
+            ticketId: "not a ticket",
           },
           {
             agent: "developer",
             success: true,
             sessionFile: secondSession,
-            tkTicketId: 42,
+            ticketId: 42,
           },
         ],
       };
@@ -748,33 +475,8 @@ describe("async resume lookup", () => {
         { asyncDirRoot: path.join(root, "runs"), resultsDir },
       );
 
-      assert.equal(firstTarget.tkTicketId, undefined);
-      assert.equal(secondTarget.tkTicketId, undefined);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("falls back to aggregate completion for legacy single-child result artifacts", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-legacy-success-"));
-    try {
-      const resultsDir = path.join(root, "results");
-      const sessionFile = path.join(root, "legacy-success.jsonl");
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      writeJson(path.join(resultsDir, "run-legacy-success.json"), {
-        id: "run-legacy-success",
-        agent: "worker",
-        success: true,
-        state: "complete",
-        cwd: root,
-        sessionFile,
-      });
-
-      const target = resolveAsyncResumeTarget(
-        { id: "run-legacy-success" },
-        { asyncDirRoot: path.join(root, "runs"), resultsDir },
-      );
-      assert.equal(target.successfulCompletion, true);
+      assert.equal(firstTarget.ticketId, undefined);
+      assert.equal(secondTarget.ticketId, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -887,7 +589,6 @@ describe("async resume lookup", () => {
             agent: "worker-b",
             status: "paused",
             sessionFile: pausedSessionFile,
-            acceptance: { status: "skipped", effectiveAcceptance: { level: "checked" } },
           },
         ],
       });
@@ -900,6 +601,15 @@ describe("async resume lookup", () => {
           ),
         /session file does not exist/,
       );
+
+      const pausedTarget = resolveAsyncResumeTarget(
+        { id: "run-paused-terminal-missing-session", index: 1 },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+      assert.equal(pausedTarget.kind, "revive");
+      assert.equal(pausedTarget.state, "paused");
+      assert.equal(pausedTarget.index, 1);
+      assert.equal(pausedTarget.sessionFile, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -959,11 +669,15 @@ describe("async resume lookup", () => {
     }
   });
 
-  it("sanitizes malformed optional result diagnostics during result-only recovery", () => {
+  it("sanitizes malformed optional result diagnostics, including terminalResult, during recovery", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-diagnostics-"));
     try {
       const resultsDir = path.join(root, "results");
       const sessionFile = path.join(root, "legacy.jsonl");
+      const malformedTerminalResult = {
+        state: "completed" as const,
+        facts: { attempts: [] },
+      };
       fs.writeFileSync(sessionFile, "", "utf-8");
       writeJson(path.join(resultsDir, "run-legacy.json"), {
         id: "run-legacy",
@@ -981,7 +695,7 @@ describe("async resume lookup", () => {
             terminationReason: "legacy-invalid",
             modelIdentity: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
             modelResolution: { kind: "invalid", reason: 42 },
-            acceptance: skippedPausedAcceptanceLedger(),
+            terminalResult: malformedTerminalResult,
           },
         ],
       });
@@ -1001,7 +715,6 @@ describe("async resume lookup", () => {
         thinking: "high",
       });
       assert.equal(target.modelResolution, undefined);
-      assert.deepEqual(target.continuationAcceptance, pausedCheckedAcceptance);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1028,173 +741,6 @@ describe("async resume lookup", () => {
           ),
         /sessionId must be a string/,
       );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects malformed steps[].activeRuntimeMs in status (negative)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-neg-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      writeJson(path.join(asyncRoot, "run-bad-runtime-neg", "status.json"), {
-        runId: "run-bad-runtime-neg",
-        mode: "single",
-        state: "running",
-        startedAt: 100,
-        steps: [{ agent: "worker", status: "running", activeRuntimeMs: -1 }],
-      });
-
-      assert.throws(
-        () =>
-          resolveAsyncResumeTarget(
-            { id: "run-bad-runtime-neg" },
-            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-          ),
-        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects malformed steps[].activeRuntimeMs in status (string)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-str-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      // Write raw JSON directly: a string value is genuinely persistable and cannot
-      // be expressed through the typed fixture helper.
-      const dir = path.join(asyncRoot, "run-bad-runtime-str");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, "status.json"),
-        JSON.stringify({
-          runId: "run-bad-runtime-str",
-          mode: "single",
-          state: "running",
-          startedAt: 100,
-          steps: [{ agent: "worker", status: "running", activeRuntimeMs: "500ms" }],
-        }),
-        "utf-8",
-      );
-
-      assert.throws(
-        () =>
-          resolveAsyncResumeTarget(
-            { id: "run-bad-runtime-str" },
-            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-          ),
-        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects malformed steps[].activeRuntimeMs in status (null)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-null-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      // Write raw JSON directly: null is the persistable form produced by
-      // JSON.stringify for NaN/Infinity, covering the case where a corrupt writer
-      // emits an explicit null budget field.
-      const dir = path.join(asyncRoot, "run-bad-runtime-null");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, "status.json"),
-        JSON.stringify({
-          runId: "run-bad-runtime-null",
-          mode: "single",
-          state: "running",
-          startedAt: 100,
-          steps: [{ agent: "worker", status: "running", activeRuntimeMs: null }],
-        }),
-        "utf-8",
-      );
-
-      assert.throws(
-        () =>
-          resolveAsyncResumeTarget(
-            { id: "run-bad-runtime-null" },
-            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-          ),
-        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects malformed steps[].activeRuntimeMs in status (object)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-obj-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      // Write raw JSON directly: an object shape is a genuinely persistable
-      // non-integer value that a corrupt writer could produce.
-      const dir = path.join(asyncRoot, "run-bad-runtime-obj");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, "status.json"),
-        JSON.stringify({
-          runId: "run-bad-runtime-obj",
-          mode: "single",
-          state: "running",
-          startedAt: 100,
-          steps: [{ agent: "worker", status: "running", activeRuntimeMs: { ms: 500 } }],
-        }),
-        "utf-8",
-      );
-
-      assert.throws(
-        () =>
-          resolveAsyncResumeTarget(
-            { id: "run-bad-runtime-obj" },
-            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-          ),
-        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts valid steps[].activeRuntimeMs with malformed activeRuntimeCheckpointAt in status", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-valid-runtime-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const sessionFile = path.join(root, "valid-runtime.jsonl");
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      // activeRuntimeCheckpointAt: -999 is a malformed (negative) but persistable
-      // value. It must NOT be strictly rejected — it is only normalized away
-      // (checkpoint metadata cannot widen a budget). Resume must still succeed
-      // with activeRuntimeMs intact and the checkpoint omitted from the target.
-      writeJson(path.join(asyncRoot, "run-valid-runtime", "status.json"), {
-        runId: "run-valid-runtime",
-        mode: "single",
-        state: "complete",
-        startedAt: 100,
-        endedAt: 200,
-        lastUpdate: 200,
-        cwd: root,
-        sessionFile,
-        steps: [
-          {
-            agent: "worker",
-            status: "complete",
-            activeRuntimeMs: 500,
-            activeRuntimeCheckpointAt: -999,
-          },
-        ],
-      });
-
-      const target = resolveAsyncResumeTarget(
-        { id: "run-valid-runtime" },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-      );
-      assert.equal(target.kind, "revive");
-      assert.equal(target.activeRuntimeMs, 500);
-      // Malformed checkpoint is normalized to undefined, not strictly rejected.
-      assert.equal(target.activeRuntimeCheckpointAt, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1364,13 +910,11 @@ describe("async resume lookup", () => {
       });
 
       // Without a status file, a non-interrupted child must not be misidentified as paused.
-      // Since it is not paused, the fail-closed guard must not fire (no acceptance needed).
       const target = resolveAsyncResumeTarget(
         { id: "run-result-only-terminal" },
         { asyncDirRoot: path.join(root, "runs"), resultsDir },
       );
       assert.equal(target.kind, "revive");
-      assert.equal(target.continuationAcceptance, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

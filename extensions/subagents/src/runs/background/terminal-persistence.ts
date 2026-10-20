@@ -1,25 +1,14 @@
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { lifecycleGeneration } from "../shared/lifecycle-state.ts";
 import {
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-  type AcceptanceLedger,
-  type ArtifactPaths,
   type AsyncResultArtifact,
   type AsyncStatus,
   type ChildProcessCleanupResult,
-  type CompactionReason,
-  type ContextPressureProjection,
-  type ContextPressureThreshold,
-  type ContextUsageDiagnostics,
   type CostSummary,
-  type ModelAttempt,
-  type SubagentModelIdentity,
-  type SubagentModelResolution,
   type SubagentRunMode,
-  type SubagentTerminationReason,
-  type ToolBudgetState,
 } from "../../shared/types.ts";
-import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
-import type { ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import type { StepResult as CancellationStepResult } from "./cancellation-projection.ts";
 import {
   resolveSubagentTelemetryOutcome,
   telemetryFromRunnerResults,
@@ -31,66 +20,14 @@ import type {
   RunnerStatusPayload,
   RunnerStatusStep,
 } from "./run-status-owner.ts";
-import {
-  normalizeActiveRuntimeCheckpointAt,
-  normalizeActiveRuntimeMs,
-  writeNormalizedLifecycleStatus,
-} from "../shared/lifecycle-state.ts";
+import { writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.ts";
 
-/** The detached runner's per-child result, kept separate from terminal writing. */
-export interface RunnerStepResult {
-  /** Flat plan index retained for partial parallel telemetry artifacts. */
-  index?: number;
-  agent: string;
-  projectAgent?: ProjectAgentRunCapture;
-  /** Validated per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
-  output: string;
-  error?: string;
-  stderr?: string;
-  stderrTruncated?: boolean;
-  protocolOutputLimit?: ProtocolOutputLimit;
-  success: boolean;
-  exitCode?: number | null;
-  exitSignal?: NodeJS.Signals;
-  skipped?: boolean;
-  interrupted?: boolean;
-  timedOut?: boolean;
-  timeoutOwner?: "role" | "run";
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
-  contextUsage?: ContextUsageDiagnostics;
-  contextPressure?: ContextPressureProjection;
-  contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  terminationReason?: SubagentTerminationReason;
-  sessionFile?: string;
-  model?: string;
-  modelIdentity?: SubagentModelIdentity;
-  modelResolution?: SubagentModelResolution;
-  attemptedModels?: string[];
-  modelAttempts?: ModelAttempt[];
-  modelFallbackNotice?: string;
-  totalCost?: CostSummary;
-  artifactPaths?: ArtifactPaths;
-  processCleanup?: ChildProcessCleanupResult;
-  truncated?: boolean;
-  transcriptPath?: string;
-  transcriptError?: string;
-  acceptance?: AcceptanceLedger;
-  pause?: AsyncStatus["pause"];
-  activeRuntimeMs?: number;
-  activeRuntimeCheckpointAt?: number;
-  activityState?: RunnerStatusStep["activityState"];
-  idleEpisodeId?: RunnerStatusStep["idleEpisodeId"];
-  durableAttentionReasons?: RunnerStatusStep["durableAttentionReasons"];
-  compaction?: { reason: CompactionReason };
-  /**
-   * Resolved per-child dispatch cwd taken from the status step. Carried
-   * through to the result.json so result-only revival can prefer it over the
-   * run-level cwd.
-   */
-  cwd?: string;
-}
+/**
+ * The detached runner's per-child result, kept separate from terminal writing.
+ * Aliases the branch's StepResult from cancellation-projection; all fields
+ * are defined there.
+ */
+export type RunnerStepResult = CancellationStepResult;
 
 type RunnerLogInput = {
   id: string;
@@ -175,6 +112,7 @@ export function buildPausedRunnerTelemetry(input: {
   if (!provenance) return undefined;
   return telemetryFromRunnerResults({
     runId: input.config.id,
+    execution: input.config.awaited ? "foreground" : "async",
     mode: input.plan.kind,
     results: input.results,
     provenance,
@@ -227,13 +165,13 @@ function buildRunnerTelemetry(
 ): SubagentRunTelemetry | undefined {
   return telemetryFromRunnerResults({
     runId: input.config.id,
+    execution: input.config.awaited ? "foreground" : "async",
     mode: input.plan.kind,
     results: input.results,
     provenance: input.config.telemetry?.provenance,
     controls: input.controlConfig,
     startedAt: input.overallStartTime,
     endedAt,
-    activeRuntimeMs: input.statusPayload.activeRuntimeMs,
     statusSteps: input.statusPayload.steps,
     lineage: input.config.telemetry?.lineage,
     outcome: resolveSubagentTelemetryOutcome({
@@ -358,6 +296,14 @@ function resultSummary(
     return input.pausedOutputForIndex(requesterIndex, requesterAgent);
   }
   if (state === "failed") {
+    if (input.config.awaited) {
+      // Awaited runs use the (possibly truncated) run summary so the awaited owner
+      // can reconstruct the per-child display with the Output: section intact.
+      // Non-awaited runs expose statusPayload.error for the result watcher / notify path.
+      return input.statusOwner.supervisorPauseTransitionFailed
+        ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
+        : input.summary;
+    }
     return (
       input.statusPayload.error ??
       (input.statusOwner.supervisorPauseTransitionFailed
@@ -406,7 +352,7 @@ function resultItems(
   return results.map((result) => ({
     agent: result.agent,
     ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
-    tkTicketId: result.tkTicketId,
+    ticketId: result.ticketId,
     output: result.output,
     error: result.error,
     stderr: result.stderr,
@@ -419,8 +365,7 @@ function resultItems(
     interrupted: result.interrupted || undefined,
     timedOut: result.timedOut || undefined,
     timeoutOwner: result.timeoutOwner,
-    toolBudget: result.toolBudget,
-    toolBudgetBlocked: result.toolBudgetBlocked || undefined,
+    activeRuntimeMs: result.activeRuntimeMs,
     contextUsage: result.contextUsage,
     contextPressure: result.contextPressure,
     contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
@@ -438,14 +383,18 @@ function resultItems(
     truncated: result.truncated,
     transcriptPath: result.transcriptPath,
     transcriptError: result.transcriptError,
-    acceptance: result.acceptance,
+    skills: result.skills,
+    skillsWarning: result.skillsWarning,
+    outputMode: result.outputMode,
+    savedOutputPath: result.savedOutputPath,
+    outputReference: result.outputReference,
+    outputSaveError: result.outputSaveError,
+    childLocation: result.childLocation,
+    finalOutput: result.finalOutput,
     pause: clearPauseOwnerPids ? clearPauseOwnerPid(result.pause) : result.pause,
-    activeRuntimeMs: result.activeRuntimeMs,
-    activeRuntimeCheckpointAt: result.activeRuntimeCheckpointAt,
+    ...(result.cancel ? { cancel: result.cancel } : {}),
     activityState: result.activityState,
-    idleEpisodeId: result.idleEpisodeId,
-    durableAttentionReasons: result.durableAttentionReasons,
-    compaction: result.compaction,
+    ...(result.terminalResult ? { terminalResult: result.terminalResult } : {}),
     ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
   }));
 }
@@ -500,15 +449,15 @@ function writeResultArtifact(
   const result: AsyncResultArtifact = {
     lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
     id: input.config.id,
+    generation: lifecycleGeneration(input.statusPayload),
     agent: input.agentName,
     mode: input.statusPayload.mode,
     success: state === "complete",
     state,
     summary: resultSummary(input, state, paused),
+    ...(input.config.awaited ? { awaited: true } : {}),
     ...(telemetry ? { telemetry } : {}),
     ...(deadlineAt !== undefined ? { deadlineAt } : {}),
-    ...(input.statusPayload.toolBudget ? { toolBudget: input.statusPayload.toolBudget } : {}),
-    ...(input.statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
     ...(timedOut ? { timedOut: true } : {}),
     ...(state === "failed"
       ? {
@@ -519,19 +468,8 @@ function writeResultArtifact(
         }
       : {}),
     ...(paused ? { pause: paused } : {}),
-    ...(normalizeActiveRuntimeMs(input.statusPayload.activeRuntimeMs) !== undefined
-      ? { activeRuntimeMs: normalizeActiveRuntimeMs(input.statusPayload.activeRuntimeMs) }
-      : {}),
-    ...(normalizeActiveRuntimeCheckpointAt(input.statusPayload.activeRuntimeCheckpointAt) !==
-    undefined
-      ? {
-          activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
-            input.statusPayload.activeRuntimeCheckpointAt,
-          ),
-        }
-      : {}),
     results: resultItems(input.results, clearPauseOwnerPids),
-    exitCode: state === "failed" ? 1 : 0,
+    exitCode: state === "failed" || state === "cancelled" ? 1 : 0,
     timestamp: endedAt,
     durationMs: Math.max(0, endedAt - startedAt),
     totalTokens: input.statusPayload.totalTokens,
@@ -565,7 +503,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
   statusPayload.endedAt = endedAt;
   statusPayload.lastUpdate = endedAt;
   statusPayload.error = `Continuation launch gate rejected for source run '${input.sourceRunId}' child ${input.sourceIndex}.`;
-  statusPayload.steps = statusPayload.steps.map((step, index) =>
+  statusPayload.steps = statusPayload.steps.map((step: RunnerStatusStep, index: number) =>
     index === 0
       ? {
           ...step,
@@ -578,13 +516,14 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
       : step,
   );
   const firstStep = statusPayload.steps[0];
-  const gateResults = statusPayload.steps.map((step, index) => ({
+  const gateResults = statusPayload.steps.map((step: RunnerStatusStep, index: number) => ({
     index,
     agent: step.agent,
     ...(index === 0 ? { success: false, terminationReason: "process_exit" as const } : {}),
   }));
   const gateTelemetry = telemetryFromRunnerResults({
     runId: input.config.id,
+    execution: input.config.awaited ? "foreground" : "async",
     mode: input.plan.kind,
     results:
       gateResults.length > 0
@@ -612,6 +551,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
     writeAtomicJson(input.resultPath, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id: input.config.id,
+      generation: lifecycleGeneration(statusPayload),
       agent,
       mode: statusPayload.mode,
       success: false,
@@ -623,7 +563,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
         {
           agent,
           ...(firstStep?.projectAgent ? { projectAgent: firstStep.projectAgent } : {}),
-          tkTicketId: firstStep?.tkTicketId,
+          ticketId: firstStep?.ticketId,
           output: statusPayload.error,
           error: statusPayload.error,
           success: false,
@@ -670,7 +610,7 @@ export function persistRunnerTerminalRun(input: TerminalPersistenceInput): void 
     !input.statusOwner.concurrentTerminalStatusAdopted
   ) {
     input.statusPayload.telemetry = finalTelemetry;
-    input.statusOwner.writeStatusPayload({ lifecycleLocked: true });
+    input.statusOwner.writeStatusPayload();
   }
 
   // The locked write above may adopt a concurrent terminal resume. Recompute
@@ -717,7 +657,7 @@ export function persistRunnerTerminalRun(input: TerminalPersistenceInput): void 
     cwd,
     startedAt,
     endedAt,
-    steps: input.statusPayload.steps.map((step) => ({
+    steps: input.statusPayload.steps.map((step: RunnerStatusStep) => ({
       agent: step.agent,
       status: step.status,
       durationMs: step.durationMs,

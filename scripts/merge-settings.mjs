@@ -551,6 +551,19 @@ function pruneVoiceTranscribeDisabledDefaultExtension(settings, changes) {
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale voice/transcribe opt-out from tlh.disabledDefaultExtensions");
 }
+function scrubRetiredSubagentToolBudgets(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.subagents))
+        return;
+    const overrides = settings.subagents.agentOverrides;
+    if (!isPlainObject(overrides))
+        return;
+    for (const [name, value] of Object.entries(overrides)) {
+        if (!isPlainObject(value) || !Object.hasOwn(value, "toolBudget"))
+            continue;
+        delete value.toolBudget;
+        changes.push(`remove subagents.agentOverrides.${name}.toolBudget (one-time cleanup)`);
+    }
+}
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
@@ -923,6 +936,7 @@ function main() {
     applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
     applyRetiredTlhDefaultPackageCleanup(next, changes, withLegacyRetiredDefaultPackageIdentities(next, readDefaultExtensionProvenance(next).managedPackageIdentities));
     removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
+    scrubRetiredSubagentToolBudgets(next, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
     applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);

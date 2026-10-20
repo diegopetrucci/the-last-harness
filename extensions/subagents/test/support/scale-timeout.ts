@@ -38,3 +38,11 @@ export function scaleTestTimeout(ms: number): ScaledMs {
   if (!Number.isFinite(factor) || factor <= 0) return ms as ScaledMs;
   return Math.round(ms * factor) as ScaledMs;
 }
+
+/**
+ * Return a branded ScaledMs without applying the scale factor.
+ * Use when a fixed, unscaled budget is intentional (e.g. a test that measures timeout behaviour).
+ */
+export function unscaledMs(ms: number): ScaledMs {
+  return ms as ScaledMs;
+}

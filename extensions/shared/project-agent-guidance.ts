@@ -4,11 +4,9 @@ import {
   findValidatedGitWorktree,
   type ValidatedGitWorktreeSearch,
 } from "./project-agent-worktree.js";
-import {
-  getAgentDir,
-  ProjectTrustStore,
-  type ProjectTrustDecision,
-} from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore, type ProjectTrustDecision } from "@earendil-works/pi-coding-agent";
+
+export { isCanonicalPackagedMinorAgent } from "./project-agent-provenance.js";
 
 /** Maximum UTF-8 bytes accepted from one project-agent guidance file. */
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
@@ -875,32 +873,6 @@ function addSkippedSourceDiagnostic(
     role: candidate.role,
   });
   return true;
-}
-
-/**
- * Return whether an agent config is the installer-managed TLH minor-agent file.
- *
- * The loader intentionally reports copied TLH prompts as `source: "user"`, so
- * source metadata cannot establish first-party provenance. Require both the
- * exact unqualified packaged role and the exact profile-relative path instead;
- * this keeps same-name user/project/package/extra agents out while allowing
- * settings overrides to clone the canonical config without losing provenance.
- */
-export function isCanonicalPackagedMinorAgent(agent: unknown): boolean {
-  if (typeof agent !== "object" || agent === null || Array.isArray(agent)) return false;
-  const candidate = agent as { name?: unknown; filePath?: unknown };
-  if (typeof candidate.name !== "string" || typeof candidate.filePath !== "string") return false;
-
-  const role = PACKAGED_MINOR_AGENT_ROLES.find((packagedRole) => packagedRole === candidate.name);
-  if (!role) return false;
-
-  let canonicalPath: string;
-  try {
-    canonicalPath = resolve(getAgentDir(), "tlh", "agents", "subagents", `${role}.md`);
-    return resolve(candidate.filePath) === canonicalPath;
-  } catch {
-    return false;
-  }
 }
 
 /**

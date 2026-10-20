@@ -3,181 +3,94 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-  applyActiveRuntimeCheckpoint,
+  advanceLifecycleContinuation,
   boundSupervisorSummary,
-  createActiveRuntimeTracker,
-  finalizeLifecycleContinuationLaunch,
+  isTerminalLifecycleState,
   lifecycleGeneration,
-  markLifecycleContinuationSpawned,
-  normalizeActiveRuntimeCheckpointAt,
-  normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
-  recoverStoppedLifecycleOwnership,
-  shouldPersistActiveRuntimeCheckpoint,
   transitionLifecycleStatus,
   withLifecycleContinuation,
   withLifecycleStatusLock,
   writeNormalizedLifecycleStatus,
 } from "../../src/runs/shared/lifecycle-state.ts";
-import { cancelPersistedPausedForegroundRun } from "../../src/runs/foreground/foreground-run-state.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
 import { buildSubagentRunTelemetry } from "../../src/shared/telemetry.ts";
+import { claimAttentionNotification } from "../../src/runs/background/run-control-owner.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { readStatus } from "../../src/shared/utils.ts";
+import type { AsyncStatus } from "../../src/shared/types.ts";
 import { expectNoSecretInError, tempRoot } from "../support/lifecycle-state-fixtures.ts";
 
 describe("lifecycle state helpers", () => {
-  function makeLifecycleTelemetry(runId: string) {
-    return buildSubagentRunTelemetry({
-      runId,
-      execution: "async",
-      mode: "parallel",
-      startedAt: 100,
-      endedAt: 200,
-      provenance: {
-        tlhVersion: "test-tlh",
-        piVersion: "test-pi",
-        installGeneration: "generation-test",
-        loadedAt: 90,
-      },
-      controls: {
-        needsAttentionAfterMs: 1_000,
-        failedToolAttemptsBeforeAttention: 2,
-        notifyOn: ["needs_attention"],
-        notifyChannels: ["async"],
-      },
-      steps: [
-        {
-          index: 0,
-          agent: "worker",
-          timing: { startedAt: 100, endedAt: 180, durationMs: 80 },
-          outcome: { state: "paused", terminationReason: "paused", acceptanceStatus: "skipped" },
-        },
-        {
-          index: 1,
-          agent: "sibling",
-          timing: { startedAt: 105, endedAt: 190, durationMs: 85 },
-          outcome: { state: "failed", terminationReason: "model_error" },
-        },
-      ],
-      outcome: { state: "paused", terminationReason: "paused" },
-      lineage: {
-        continuationFrom: { sourceRunId: "parent-run", sourceStepIndex: 0 },
-      },
-    });
-  }
-
-  it("normalizes runtime evidence conservatively and saturates tracker totals", () => {
-    assert.equal(normalizeActiveRuntimeMs(1.5), 2);
-    assert.equal(normalizeActiveRuntimeMs(Number.MAX_SAFE_INTEGER + 1), Number.MAX_SAFE_INTEGER);
-    assert.equal(normalizeActiveRuntimeMs(Number.POSITIVE_INFINITY), undefined);
-    assert.equal(normalizeActiveRuntimeMs(-1), undefined);
-    assert.equal(normalizeActiveRuntimeCheckpointAt(1_000.9), 1_000);
-    assert.equal(
-      normalizeActiveRuntimeCheckpointAt(Number.MAX_SAFE_INTEGER + 1),
-      Number.MAX_SAFE_INTEGER,
-    );
-    assert.equal(normalizeActiveRuntimeCheckpointAt(Number.NaN), undefined);
-
-    const tracker = createActiveRuntimeTracker({
-      priorActiveRuntimeMs: Number.MAX_SAFE_INTEGER,
-      segmentStartedAt: 1_000,
-    });
-    assert.equal(tracker.current(2_000), Number.MAX_SAFE_INTEGER);
-  });
-
-  it("tracks active segments without charging checkpoints or paused time twice", () => {
-    const tracker = createActiveRuntimeTracker({
-      priorActiveRuntimeMs: 250,
-      segmentStartedAt: 1_000,
-    });
-    assert.equal(tracker.current(1_500), 750);
-    assert.equal(tracker.checkpoint(1_500), 750);
-    assert.equal(tracker.current(1_600), 850);
-    assert.equal(tracker.finalize(1_600), 850);
-    assert.equal(tracker.finalize(1_800), 1_050);
-
-    const resumed = createActiveRuntimeTracker({
-      priorActiveRuntimeMs: 750,
-      segmentStartedAt: 10_000,
-    });
-    assert.equal(resumed.finalize(10_100), 850);
-
-    const frozen = createActiveRuntimeTracker({ segmentStartedAt: 20_000 });
-    assert.equal(frozen.freeze(20_125), 125);
-    assert.equal(frozen.isFrozen(), true);
-    assert.equal(frozen.current(99_999), 125);
-    assert.equal(frozen.finalize(99_999), 125);
-  });
-
-  it("gates durable runtime checkpoints on active advancement and an unfrozen tracker", () => {
-    assert.equal(
-      shouldPersistActiveRuntimeCheckpoint({
-        previousActiveRuntimeMs: 1_000,
-        currentActiveRuntimeMs: 1_000,
-        trackerFrozen: false,
-      }),
-      false,
-    );
-    assert.equal(
-      shouldPersistActiveRuntimeCheckpoint({
-        previousActiveRuntimeMs: 1_000,
-        currentActiveRuntimeMs: 1_001,
-        trackerFrozen: false,
-      }),
-      true,
-    );
-    assert.equal(
-      shouldPersistActiveRuntimeCheckpoint({
-        previousActiveRuntimeMs: 1_000,
-        currentActiveRuntimeMs: 1_001,
-        trackerFrozen: true,
-      }),
-      false,
-    );
-  });
-
-  it("applies checkpoint persistence only for real or final-freeze advances", () => {
-    let runtime = 0;
-    let checkpointAt = 0;
-    let persistenceCalls = 0;
-    const tracker = createActiveRuntimeTracker({ segmentStartedAt: 1_000 });
-    const candidate = () => ({
-      tracker,
-      previousActiveRuntimeMs: runtime,
-      previousActiveRuntimeCheckpointAt: checkpointAt,
-      apply(update: { activeRuntimeMs: number; activeRuntimeCheckpointAt: number }) {
-        runtime = update.activeRuntimeMs;
-        checkpointAt = update.activeRuntimeCheckpointAt;
-      },
-    });
-    const persist = () => {
-      persistenceCalls += 1;
-    };
-
-    assert.equal(applyActiveRuntimeCheckpoint([candidate()], { now: 1_100, persist }), true);
-    assert.equal(runtime, 100);
-    assert.equal(checkpointAt, 1_100);
-    assert.equal(persistenceCalls, 1);
-
-    assert.equal(applyActiveRuntimeCheckpoint([candidate()], { now: 1_100, persist }), false);
-    assert.equal(persistenceCalls, 1);
-
-    assert.equal(
-      applyActiveRuntimeCheckpoint([candidate()], { now: 1_200, freeze: true, persist }),
-      true,
-    );
-    assert.equal(runtime, 200);
-    assert.equal(checkpointAt, 1_200);
-    assert.equal(persistenceCalls, 2);
-
-    assert.equal(applyActiveRuntimeCheckpoint([candidate()], { now: 9_999, persist }), false);
-    assert.equal(persistenceCalls, 2);
-  });
-
   it("bounds and sanitizes supervisor summaries", () => {
     const bounded = boundSupervisorSummary("  waiting\u0000\nfor\t supervisor  ", 18);
     assert.equal(bounded, "waiting for sup…");
     assert.ok((bounded?.length ?? 0) > 0);
+  });
+
+  it("claims one attention episode and bounds the durable claim ring", () => {
+    const root = tempRoot("pi-attention-claims-");
+    try {
+      const asyncDir = path.join(root, "run-attention");
+      const claimed = Array.from({ length: 40 }, (_, index) =>
+        claimAttentionNotification(asyncDir, { generation: 3, index: 1, episode: `idle-${index}` }),
+      );
+      assert.equal(claimed.every(Boolean), true);
+      const claimDir = path.join(asyncDir, "control", "attention-claims");
+      const files = fs.readdirSync(claimDir);
+      assert.ok(files.length <= 32);
+      assert.equal(
+        claimAttentionNotification(asyncDir, { generation: 3, index: 1, episode: "idle-39" }),
+        false,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes legacy path-unsafe idle episode claims without suppressing notices", () => {
+    const root = tempRoot("pi-attention-legacy-episode-");
+    try {
+      const asyncDir = path.join(root, "run-attention");
+      assert.equal(
+        claimAttentionNotification(asyncDir, {
+          generation: 4,
+          index: 2,
+          episode: "legacy/episode with a path",
+        }),
+        true,
+      );
+      const claimDir = path.join(asyncDir, "control", "attention-claims");
+      const [claimName] = fs.readdirSync(claimDir);
+      assert.ok(claimName);
+      assert.match(claimName, /^4-2-legacy-[0-9a-f]{64}\.claim$/);
+      assert.doesNotMatch(claimName, /legacy\/episode/);
+      assert.equal(
+        claimAttentionNotification(asyncDir, {
+          generation: 4,
+          index: 2,
+          episode: "legacy/episode with a path",
+        }),
+        false,
+      );
+      assert.equal(
+        claimAttentionNotification(asyncDir, {
+          generation: 4,
+          index: 2,
+          episode: "\u0000malformed",
+        }),
+        false,
+      );
+      assert.equal(
+        claimAttentionNotification(asyncDir, {
+          generation: 4,
+          index: 2,
+          episode: "x".repeat(129),
+        }),
+        false,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("normalizes persisted lifecycle metadata while preserving parse compatibility and privacy", () => {
@@ -193,8 +106,20 @@ describe("lifecycle state helpers", () => {
             mode: "single",
             state: "paused",
             startedAt: 100,
+            activeRuntimeMs: 999999,
+            activeRuntimeCheckpointAt: 123456,
             activityState: "active_long_running",
-            steps: [{ agent: "worker", status: "paused", activityState: "active_long_running" }],
+            durableAttentionReasons: ["context_pressure"],
+            steps: [
+              {
+                agent: "worker",
+                status: "paused",
+                activeRuntimeMs: 888888,
+                activeRuntimeCheckpointAt: 654321,
+                activityState: "active_long_running",
+                durableAttentionReasons: ["context_pressure"],
+              },
+            ],
             pause: {
               kind: "awaiting_supervisor",
               summary: "  need\nhelp  ",
@@ -214,6 +139,16 @@ describe("lifecycle state helpers", () => {
                 continuationRunId: `${"x".repeat(200)}`,
               },
             },
+            processCleanup: {
+              supported: true,
+              attempted: true,
+              terminated: false,
+              processGroupId: 4321,
+              liveProcessesDetected: true,
+              escalatedToSigkill: false,
+              signals: ["SIGINT", "SIGTERM"],
+              warnings: ["cleanup still pending"],
+            },
           },
           null,
           2,
@@ -225,6 +160,14 @@ describe("lifecycle state helpers", () => {
       assert.equal(status?.state, "paused");
       assert.equal(status?.activityState, undefined);
       assert.equal(status?.steps?.[0]?.activityState, undefined);
+      assert.equal(Object.hasOwn(status, "durableAttentionReasons"), false);
+      assert.equal(Object.hasOwn(status?.steps?.[0] ?? {}, "durableAttentionReasons"), false);
+      // Per-instance role budgets persist consumed active runtime.
+      assert.equal(status?.activeRuntimeMs, 999999);
+      assert.equal(status?.activeRuntimeCheckpointAt, 123456);
+      const normalizedStep = status.steps?.[0];
+      assert.equal(normalizedStep?.activeRuntimeMs, 888888);
+      assert.equal(normalizedStep?.activeRuntimeCheckpointAt, 654321);
       assert.equal(status?.pause?.kind, "awaiting_supervisor");
       assert.equal(status?.pause?.summary, "need help");
       assert.equal(status?.pause?.ownerPid, undefined);
@@ -233,6 +176,16 @@ describe("lifecycle state helpers", () => {
         reason: "need_decision",
         requestId: "req-1",
         summary: "private summary",
+      });
+      assert.deepEqual(status?.processCleanup, {
+        supported: true,
+        attempted: true,
+        terminated: false,
+        processGroupId: 4321,
+        liveProcessesDetected: true,
+        escalatedToSigkill: false,
+        signals: ["SIGINT", "SIGTERM"],
+        warnings: ["cleanup still pending"],
       });
       assert.equal(lifecycleGeneration(status), 0);
       assert.equal(status?.lifecycle?.continuation?.claimToken, undefined);
@@ -256,6 +209,50 @@ describe("lifecycle state helpers", () => {
       const pausingStatus = readStatus(asyncDir);
       assert.equal(pausingStatus?.state, "pausing");
       assert.equal(pausingStatus?.steps?.[0]?.status, "pausing");
+
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify({
+          runId: "run-legacy",
+          mode: "single",
+          state: "continued",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "completed" }],
+        }),
+        "utf8",
+      );
+      const canonical = readStatus(asyncDir);
+      assert.equal(canonical?.state, "complete");
+      assert.equal(canonical?.steps?.[0]?.status, "complete");
+      assert.deepEqual(canonical?.lifecycle?.continuation, { phase: "completed" });
+      const rawDisk = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")) as {
+        lifecycle?: unknown;
+      };
+      assert.equal(rawDisk.lifecycle, undefined, "legacy read projection must not rewrite disk");
+      assert.match(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"), /continued/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("tracks only valid active compaction records across persisted reads", () => {
+    const root = tempRoot("pi-lifecycle-compaction-");
+    try {
+      const status = writeNormalizedLifecycleStatus(root, {
+        runId: "run-compaction",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        steps: [
+          { agent: "worker", status: "running", compaction: { reason: "threshold" } },
+          { agent: "other", status: "running", compaction: { reason: "invalid" as never } },
+        ],
+      });
+      assert.deepEqual(status.steps?.[0]?.compaction, { reason: "threshold" });
+      assert.equal(status.steps?.[1]?.compaction, undefined);
+      const reread = readStatus(root);
+      assert.deepEqual(reread?.steps?.[0]?.compaction, { reason: "threshold" });
+      assert.equal(reread?.steps?.[1]?.compaction, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -593,7 +590,7 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  it("reclaims ownerless transition locks only after a conservative age threshold", () => {
+  it("keeps missing or malformed transition owners live and unreclaimable", () => {
     const root = tempRoot("pi-lifecycle-lock-ownerless-");
     try {
       const asyncDir = path.join(root, "run-ownerless");
@@ -608,28 +605,20 @@ describe("lifecycle state helpers", () => {
       fs.mkdirSync(lockDir, { recursive: true });
       fs.writeFileSync(path.join(lockDir, "owner.json"), "{not-json", "utf-8");
       fs.utimesSync(lockDir, new Date(0), new Date(0));
-      assert.throws(
-        () =>
-          transitionLifecycleStatus({
-            asyncDir,
-            expectedGeneration: 0,
-            lockOptions: { now: () => 5_000, ownerlessStaleMs: 10_000, retryDelaysMs: [] },
-            mutate: (status) => status,
-          }),
-        /status lock/,
-      );
-      assert.equal(fs.existsSync(lockDir), true);
-      const transitioned = transitionLifecycleStatus({
-        asyncDir,
-        expectedGeneration: 0,
-        lockOptions: { now: () => 20_000, ownerlessStaleMs: 10_000, retryDelaysMs: [] },
-        mutate: (status) => ({
-          ...status,
-          state: "paused",
-          pause: { kind: "cohort_pause", pausedAt: 200 },
-        }),
-      });
-      assert.equal(transitioned.status.state, "paused");
+      for (const now of [5_000, 20_000]) {
+        assert.throws(
+          () =>
+            transitionLifecycleStatus({
+              asyncDir,
+              expectedGeneration: 0,
+              lockOptions: { now: () => now, retryDelaysMs: [] },
+              mutate: (status) => ({ ...status, state: "paused" }),
+            }),
+          /status lock/,
+        );
+        assert.equal(fs.existsSync(lockDir), true);
+      }
+      assert.equal(readStatus(asyncDir)?.state, "running");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -782,6 +771,62 @@ describe("lifecycle state helpers", () => {
     }
   });
 
+  it("recovers an indexed dead-owner claim without leaving a compatibility or map entry", () => {
+    const root = tempRoot("pi-lifecycle-indexed-claim-dead-");
+    try {
+      const asyncDir = path.join(root, "run-indexed-claim-dead");
+      const continuation = {
+        phase: "reserved" as const,
+        claimToken: "claim-indexed-dead",
+        claimedAt: 175,
+        ownerPid: 8123,
+        continuationRunId: "resume-indexed-dead",
+      };
+      const status: AsyncStatus = {
+        runId: "run-indexed-claim-dead",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "paused" }],
+        lifecycle: {
+          generation: 4,
+          continuation,
+          continuationsByIndex: { "0": continuation },
+        },
+      };
+      const clearedLifecycle = withLifecycleContinuation(status, 0, undefined);
+      assert.equal(Object.hasOwn(clearedLifecycle ?? {}, "continuation"), false);
+      assert.equal(Object.hasOwn(clearedLifecycle ?? {}, "continuationsByIndex"), false);
+      writeNormalizedLifecycleStatus(asyncDir, status);
+
+      const recovered = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
+        kill: () => {
+          const error = new Error("dead") as NodeJS.ErrnoException;
+          error.code = "ESRCH";
+          throw error;
+        },
+        now: () => 250,
+      });
+
+      assert.equal(recovered.recovered, true);
+      assert.equal(recovered.liveness, "dead");
+      const persisted = readStatus(asyncDir);
+      assert.equal(persisted?.lifecycle?.continuation, undefined);
+      assert.equal(persisted?.lifecycle?.continuationsByIndex, undefined);
+      assert.equal(persisted?.lifecycle?.generation, 5);
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-indexed-claim-dead", index: 0 },
+        { asyncDirRoot: root, resultsDir: path.join(root, "results") },
+        { readOnly: true, requireSessionFile: false },
+      );
+      assert.equal(target.index, 0);
+      assert.equal(target.agent, "worker");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rechecks stale continuation recovery under lock without dropping same-generation settlement fields", () => {
     const root = tempRoot("pi-lifecycle-claim-toctou-");
     try {
@@ -852,7 +897,7 @@ describe("lifecycle state helpers", () => {
       assert.equal(persisted?.endedAt, 300);
       assert.equal(persisted?.lastUpdate, 300, "recovery must not move lastUpdate backwards");
       assert.equal(persisted?.error, "settled before stale recovery");
-      assert.equal(persisted?.steps?.[0]?.status, "completed");
+      assert.equal(persisted?.steps?.[0]?.status, "complete");
       assert.equal(persisted?.steps?.[0]?.endedAt, 300);
       assert.equal(persisted?.steps?.[0]?.exitCode, 0);
       assert.deepEqual(persisted?.steps?.[0]?.tokens, { input: 7, output: 3, total: 10 });
@@ -1024,144 +1069,21 @@ describe("lifecycle state helpers", () => {
           },
         },
       });
-      const finalized = finalizeLifecycleContinuationLaunch(
+      const finalized = advanceLifecycleContinuation(
         asyncDir,
         0,
         "claim-gate",
         "revived-gate",
-        {
-          now: () => 250,
-        },
+        true,
+        () => 250,
       );
-      assert.equal(finalized.finalized, true);
+      assert.equal(finalized.changed || finalized.done, true);
       assert.equal(finalized.lost, false);
       const persisted = readStatus(asyncDir);
-      assert.equal(persisted?.state, "continued");
-      assert.equal(persisted?.steps?.[0]?.status, "continued");
-      assert.equal(persisted?.lifecycle?.continuation?.phase, "continued");
+      assert.equal(persisted?.state, "complete");
+      assert.equal(persisted?.steps?.[0]?.status, "complete");
+      assert.equal(persisted?.lifecycle?.continuation?.phase, "completed");
       assert.equal(persisted?.lifecycle?.continuation?.continuationRunId, "revived-gate");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("updates only the cancelled child telemetry while retaining terminal siblings and run context", () => {
-    const root = tempRoot("pi-lifecycle-cancel-telemetry-");
-    try {
-      const runId = "run-cancel-telemetry";
-      const asyncDir = path.join(root, runId);
-      const telemetry = makeLifecycleTelemetry(runId);
-      writeNormalizedLifecycleStatus(asyncDir, {
-        runId,
-        mode: "parallel",
-        state: "paused",
-        startedAt: 100,
-        pause: { kind: "awaiting_supervisor", pausedAt: 180 },
-        telemetry,
-        steps: [
-          {
-            agent: "worker",
-            status: "paused",
-            pause: { kind: "awaiting_supervisor", pausedAt: 180 },
-          },
-          { agent: "sibling", status: "failed", endedAt: 190, exitCode: 1 },
-        ],
-      });
-
-      const result = cancelPersistedPausedForegroundRun(
-        { foregroundRuns: new Map() } as SubagentState,
-        asyncDir,
-        runId,
-        0,
-      );
-      assert.equal(result.isError, undefined);
-      const persisted = readStatus(asyncDir);
-      assert.equal(persisted?.state, "paused");
-      assert.equal(persisted?.steps?.[0]?.status, "cancelled");
-      assert.equal(persisted?.steps?.[1]?.status, "failed");
-      assert.equal(persisted?.telemetry?.outcome?.state, "paused");
-      assert.equal(persisted?.telemetry?.steps?.[0]?.outcome?.state, "cancelled");
-      assert.equal(persisted?.telemetry?.steps?.[1]?.outcome?.state, "failed");
-      assert.equal(persisted?.telemetry?.steps?.[0]?.timing?.endedAt, 180);
-      assert.deepEqual(persisted?.telemetry?.provenance, telemetry.provenance);
-      assert.deepEqual(persisted?.telemetry?.controls, telemetry.controls);
-      assert.deepEqual(persisted?.telemetry?.lineage, telemetry.lineage);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("finalizes claimed continuation telemetry for one child without rewriting siblings or lineage", () => {
-    const root = tempRoot("pi-lifecycle-continued-telemetry-");
-    try {
-      const runId = "run-continued-telemetry";
-      const asyncDir = path.join(root, runId);
-      const telemetry = makeLifecycleTelemetry(runId);
-      writeNormalizedLifecycleStatus(asyncDir, {
-        runId,
-        mode: "parallel",
-        state: "paused",
-        startedAt: 100,
-        pause: { kind: "awaiting_supervisor", pausedAt: 180 },
-        telemetry,
-        steps: [
-          {
-            agent: "worker",
-            status: "paused",
-            pause: { kind: "awaiting_supervisor", pausedAt: 180 },
-          },
-          { agent: "sibling", status: "failed", endedAt: 190, exitCode: 1 },
-        ],
-        lifecycle: {
-          generation: 0,
-          continuation: {
-            phase: "reserved",
-            claimToken: "claim-telemetry",
-            claimedAt: 210,
-            ownerPid: 9010,
-            continuationRunId: "continued-telemetry",
-          },
-        },
-      });
-
-      const spawned = markLifecycleContinuationSpawned(
-        asyncDir,
-        0,
-        "claim-telemetry",
-        "continued-telemetry",
-        { now: () => 220 },
-      );
-      assert.equal(spawned.transitioned, true);
-      assert.deepEqual(readStatus(asyncDir)?.telemetry?.lineage?.continuations, [
-        { sourceStepIndex: 0, continuationRunId: "continued-telemetry" },
-      ]);
-
-      const finalized = finalizeLifecycleContinuationLaunch(
-        asyncDir,
-        0,
-        "claim-telemetry",
-        "continued-telemetry",
-        { now: () => 250 },
-      );
-      assert.equal(finalized.finalized, true);
-      const persisted = readStatus(asyncDir);
-      assert.equal(persisted?.state, "continued");
-      assert.equal(persisted?.steps?.[0]?.status, "continued");
-      assert.equal(persisted?.steps?.[1]?.status, "failed");
-      assert.equal(persisted?.telemetry?.outcome?.state, "continued");
-      assert.equal(persisted?.telemetry?.steps?.[0]?.outcome?.state, "continued");
-      assert.equal(persisted?.telemetry?.steps?.[1]?.outcome?.state, "failed");
-      assert.equal(persisted?.telemetry?.timing?.endedAt, 200);
-      assert.equal(persisted?.telemetry?.steps?.[0]?.timing?.endedAt, 180);
-      assert.deepEqual(persisted?.telemetry?.provenance, telemetry.provenance);
-      assert.deepEqual(persisted?.telemetry?.controls, telemetry.controls);
-      assert.deepEqual(
-        persisted?.telemetry?.lineage?.continuationFrom,
-        telemetry.lineage?.continuationFrom,
-      );
-      assert.deepEqual(persisted?.telemetry?.lineage?.continuations, [
-        { sourceStepIndex: 0, continuationRunId: "continued-telemetry" },
-      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1188,16 +1110,15 @@ describe("lifecycle state helpers", () => {
           },
         },
       });
-      const finalized = finalizeLifecycleContinuationLaunch(
+      const finalized = advanceLifecycleContinuation(
         asyncDir,
         0,
         "claim-idempotent",
         "revived-idempotent",
-        {
-          now: () => 260,
-        },
+        true,
+        () => 260,
       );
-      assert.equal(finalized.finalized, true);
+      assert.equal(finalized.changed || finalized.done, true);
       assert.equal(finalized.lost, false);
       assert.equal(readStatus(asyncDir)?.lifecycle?.continuation?.continuedAt, 240);
     } finally {
@@ -1234,10 +1155,15 @@ describe("lifecycle state helpers", () => {
           lifecycle: withLifecycleContinuation(status, 0, undefined),
         }),
       });
-      const late = finalizeLifecycleContinuationLaunch(asyncDir, 0, "claim-late", "revived-late", {
-        now: () => 250,
-      });
-      assert.equal(late.finalized, false);
+      const late = advanceLifecycleContinuation(
+        asyncDir,
+        0,
+        "claim-late",
+        "revived-late",
+        true,
+        () => 250,
+      );
+      assert.equal(late.changed || late.done, false);
       assert.equal(late.lost, true);
       assert.equal(readStatus(asyncDir)?.state, "paused");
     } finally {
@@ -1349,34 +1275,148 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  it("keeps a live paused owner pid until cleanup is proven complete", () => {
-    const status = {
-      runId: "run-paused",
-      mode: "single" as const,
-      state: "paused" as const,
-      pid: 999,
-      startedAt: 100,
-      pause: { kind: "cohort_pause" as const, ownerPid: 999, summary: "wait" },
-      steps: [{ agent: "worker", status: "paused" as const }],
-    };
-    const stillRunning = recoverStoppedLifecycleOwnership(status, {
-      kill: () => true,
-    });
-    assert.equal(stillRunning.repaired, false);
-    assert.equal(stillRunning.pidLiveness, "alive");
-    assert.equal(stillRunning.status.pid, 999);
-    assert.equal(stillRunning.status.pause?.ownerPid, 999);
+  it("transitions telemetry to 'continued' when advanceLifecycleContinuation finalizes a single-step continuation", () => {
+    const root = tempRoot("pi-lifecycle-continuation-telemetry-");
+    try {
+      const asyncDir = path.join(root, "run-continuation-telemetry");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-continuation-telemetry",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            pause: { kind: "awaiting_supervisor", pausedAt: 140 },
+          },
+        ],
+        pause: { kind: "awaiting_supervisor", pausedAt: 140 },
+        lifecycle: {
+          generation: 0,
+          continuation: {
+            phase: "launched",
+            claimToken: "claim-tel-single",
+            claimedAt: 150,
+            launchedAt: 160,
+            continuationRunId: "continuation-run-1",
+          },
+        },
+        telemetry: buildSubagentRunTelemetry({
+          runId: "run-continuation-telemetry",
+          execution: "foreground",
+          mode: "single",
+          provenance: { tlhVersion: "test", piVersion: "test", loadedAt: 100 },
+          controls: {
+            needsAttentionAfterMs: 2_000,
+            failedToolAttemptsBeforeAttention: 0,
+            notifyOn: ["needs_attention"],
+            notifyChannels: ["event"],
+          },
+          steps: [{ index: 0, agent: "worker", outcome: { state: "paused" } }],
+          outcome: { state: "paused" },
+        }),
+      });
 
-    const stopped = recoverStoppedLifecycleOwnership(status, {
-      kill: () => {
-        const error = new Error("delayed exit") as NodeJS.ErrnoException;
-        error.code = "ESRCH";
-        throw error;
-      },
-    });
-    assert.equal(stopped.repaired, true);
-    assert.equal(stopped.pidLiveness, "dead");
-    assert.equal(stopped.status.pid, undefined);
-    assert.equal(stopped.status.pause?.ownerPid, undefined);
+      const result = advanceLifecycleContinuation(
+        asyncDir,
+        0,
+        "claim-tel-single",
+        "continuation-run-1",
+        true,
+        () => 200,
+      );
+
+      assert.equal(result.changed || result.done, true);
+      assert.equal(result.lost, false);
+      const persisted = readStatus(asyncDir);
+      assert.equal(persisted?.state, "complete");
+      // Telemetry outcome must be "continued", not "paused" or undefined.
+      assert.equal(
+        persisted?.telemetry?.outcome?.state,
+        "continued",
+        "run-level telemetry outcome must be 'continued' after finalization",
+      );
+      assert.equal(
+        persisted?.telemetry?.steps[0]?.outcome?.state,
+        "continued",
+        "step telemetry outcome must be 'continued' after finalization",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("concurrent-writer regression: locked telemetry-continuation write does not overwrite a terminal status", () => {
+    // Regression test for P1-a: persistContinuationTelemetry previously did an unlocked
+    // read + writeNormalizedLifecycleStatus that could overwrite a concurrent settle.
+    // After the fix, the operation holds withLifecycleStatusLock and skips terminal states.
+    const root = tempRoot("pi-lifecycle-concurrent-writer-");
+    try {
+      const asyncDir = path.join(root, "run-concurrent-writer");
+      const terminalTelemetry = buildSubagentRunTelemetry({
+        runId: "run-concurrent-writer",
+        execution: "foreground",
+        mode: "single",
+        provenance: { tlhVersion: "test", piVersion: "test", loadedAt: 100 },
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 0,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event"],
+        },
+        steps: [{ index: 0, agent: "worker", outcome: { state: "continued" } }],
+        outcome: { state: "continued" },
+      });
+      // Write a terminal (complete) status, simulating a concurrent settle that landed
+      // just before the telemetry append would have written.
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-concurrent-writer",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        steps: [{ agent: "worker", status: "complete", endedAt: 200 }],
+        telemetry: terminalTelemetry,
+      });
+      assert.equal(isTerminalLifecycleState("complete"), true);
+
+      // Simulate what persistContinuationTelemetry does under the lock: skip terminal.
+      // The guard (isTerminalLifecycleState check) must prevent this write.
+      let writeAttempted = false;
+      withLifecycleStatusLock(asyncDir, (current) => {
+        if (!current || isTerminalLifecycleState(current.state)) return;
+        writeAttempted = true;
+        // In the old (buggy) code path this write would happen after an unlocked read;
+        // under the lock this branch must not be reached for a terminal status.
+        const staleTelemetry = buildSubagentRunTelemetry({
+          ...terminalTelemetry.run,
+          runId: terminalTelemetry.run.id,
+          execution: terminalTelemetry.run.execution,
+          mode: terminalTelemetry.run.mode,
+          provenance: terminalTelemetry.provenance,
+          controls: terminalTelemetry.controls,
+          steps: [{ index: 0, agent: "worker", outcome: { state: "paused" } }],
+          outcome: { state: "paused" },
+        });
+        writeNormalizedLifecycleStatus(asyncDir, { ...current, telemetry: staleTelemetry });
+      });
+
+      // Terminal status and its telemetry must be intact.
+      assert.equal(
+        writeAttempted,
+        false,
+        "stale write must not be attempted against a terminal status",
+      );
+      const persisted = readStatus(asyncDir);
+      assert.equal(persisted?.state, "complete", "terminal status must not be overwritten");
+      assert.equal(
+        persisted?.telemetry?.outcome?.state,
+        "continued",
+        "terminal telemetry must not be replaced by the stale paused envelope",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

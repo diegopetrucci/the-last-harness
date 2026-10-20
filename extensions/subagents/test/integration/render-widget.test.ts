@@ -33,7 +33,7 @@ function hintLines(lines: string[]): string[] {
 }
 
 describe("async widget detail column and live-detail hint", () => {
-  it("aligns single-job ticket, location, activity and hint at detail column 6", () => {
+  it("aligns single-job location, activity and hint at detail column 6", () => {
     const lines = buildWidgetLines(
       [
         {
@@ -42,7 +42,6 @@ describe("async widget detail column and live-detail hint", () => {
           status: "running",
           mode: "single",
           agents: ["worker"],
-          tkTicket: { id: "abc-1234", title: "Align detail lines" },
           steps: [
             { index: 0, agent: "worker", status: "running", currentTool: "read", childLocation },
           ],
@@ -54,7 +53,6 @@ describe("async widget detail column and live-detail hint", () => {
     );
 
     assert.equal(indentOf(lines, "worker"), 2);
-    assert.equal(indentOf(lines, "ticket: Align detail lines"), 6);
     assert.equal(indentOf(lines, "~/repos/app"), 6);
     assert.equal(indentOf(lines, /\bread\b/), 6);
     assert.equal(indentOf(lines, HINT), 6);

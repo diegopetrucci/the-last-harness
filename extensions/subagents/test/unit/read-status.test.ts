@@ -90,7 +90,7 @@ describe("readStatus", () => {
     }
   });
 
-  it("rejects a FIFO promptly without a writer and leaves it untouched", () => {
+  it("rejects a FIFO promptly without a writer, retries once, and leaves it untouched", () => {
     if (process.platform === "win32") return;
 
     const root = createTempDir("tlh-read-status-fifo-");
@@ -99,10 +99,28 @@ describe("readStatus", () => {
     fs.mkdirSync(asyncDir);
     try {
       execFileSync("mkfifo", [statusPath]);
+      const sleeps: number[] = [];
       const startedAt = Date.now();
-      assert.throws(() => readStatus(asyncDir), /Failed to read async status file/);
+      assert.throws(
+        () => readStatus(asyncDir, { sleep: (ms) => sleeps.push(ms), retryDelayMs: 0 }),
+        /Failed to read async status file/,
+      );
       assert.ok(Date.now() - startedAt < 1_000, "FIFO read should not block");
       assert.equal(fs.lstatSync(statusPath).isFIFO(), true);
+      // P2-a: non-regular paths must go through the bounded retry (one sleep).
+      assert.equal(sleeps.length, 1, "non-regular path should be retried once");
+      // P2-a: the status path must be visible in the error message.
+      assert.throws(
+        () => readStatus(asyncDir, { sleep: () => {}, retryDelayMs: 0 }),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.ok(
+            err.message.includes("status.json"),
+            `error message should contain the status path, got: ${err.message}`,
+          );
+          return true;
+        },
+      );
     } finally {
       removeTempDir(root);
     }

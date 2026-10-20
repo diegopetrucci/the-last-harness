@@ -8,7 +8,9 @@
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { tryImport } from "./helpers.ts";
 import type { MockPi } from "./helpers.ts";
@@ -94,7 +96,7 @@ interface ControlChannelModule {
 const asyncMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const typesMod = await tryImport<TypesModule>("./src/shared/types.ts");
-const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
+const executorMod = await tryImport<ExecutorModule>("./src/extension/subagent-executor.ts");
 const controlChannelMod = await tryImport<ControlChannelModule>(
   "./src/runs/background/control-channel.ts",
 );
@@ -433,4 +435,39 @@ export function removeLifecycleLock(asyncDir: string): void {
 export async function readAsyncPayload(id: string): Promise<AsyncResultPayload> {
   const resultPath = await waitForAsyncResultFile(id);
   return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+}
+
+function git(dir: string, args: string[]): void {
+  const result = spawnSync("git", args, { cwd: dir, encoding: "utf-8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+}
+
+export function createRepo(prefix: string): string {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(repoDir, ["init"]);
+  git(repoDir, ["config", "user.email", "tests@example.com"]);
+  git(repoDir, ["config", "user.name", "Async Tests"]);
+  fs.writeFileSync(path.join(repoDir, "input.md"), "input\n", "utf-8");
+  git(repoDir, ["add", "-A"]);
+  git(repoDir, ["commit", "-m", "initial commit"]);
+  return repoDir;
+}
+
+export function writePackageSkill(packageRoot: string, skillName: string): void {
+  const skillDir = path.join(packageRoot, "skills", skillName);
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify(
+      { name: `${skillName}-pkg`, version: "1.0.0", pi: { skills: [`./skills/${skillName}`] } },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
+    "utf-8",
+  );
 }

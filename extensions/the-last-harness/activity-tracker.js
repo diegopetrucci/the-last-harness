@@ -55,6 +55,12 @@ function isAsyncControlContext(data, event) {
     const source = (readNonEmptyStringField(data, "source") ?? readNonEmptyStringField(event, "source"))?.toLowerCase();
     return source === "async" || source === "background";
 }
+function isAwaitedRecord(raw) {
+    if (raw.awaited === true)
+        return true;
+    const run = isRecord(raw.telemetry) ? raw.telemetry.run : undefined;
+    return isRecord(run) && run.execution === "foreground";
+}
 function readAsyncAgentNames(data) {
     const valid = (value) => typeof value === "string" && value.trim().length > 0 ? [value.trim()] : [];
     if (Array.isArray(data.agents) && data.agents.length > 0) {
@@ -121,6 +127,15 @@ function readStatusStepAgents(raw) {
         return typeof agent === "string" && agent.trim().length > 0 ? [agent.trim()] : [];
     });
 }
+function readAsyncDirAwaited(asyncDir) {
+    try {
+        const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+        return isRecord(raw) && isAwaitedRecord(raw);
+    }
+    catch {
+        return false;
+    }
+}
 function readAsyncDirAgentNames(asyncDir) {
     try {
         const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
@@ -148,6 +163,7 @@ function readRestorableAsyncJob(asyncDir) {
         sessionId: raw.sessionId,
         ...(agents.length > 0 ? { agents } : {}),
         ...(pid !== undefined ? { pid } : {}),
+        ...(isAwaitedRecord(raw) ? { awaited: true } : {}),
     };
 }
 export function createTlhEffectiveActivityTracker(options = {}) {
@@ -259,8 +275,10 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
         const sessionId = incoming.sessionId ?? existing?.sessionId;
         const agents = incoming.agents && incoming.agents.length > 0 ? incoming.agents : existing?.agents;
+        const awaited = incoming.awaited ?? existing?.awaited;
         return {
             source: incoming.source,
+            ...(awaited ? { awaited } : {}),
             ...(agents && agents.length > 0 ? { agents } : {}),
             ...(asyncDir ? { asyncDir } : {}),
             ...(pid !== undefined ? { pid } : {}),
@@ -299,6 +317,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                 source: job.source,
                 asyncDir: job.asyncDir,
                 ...(job.agents && job.agents.length > 0 ? { agents: [...job.agents] } : {}),
+                ...(job.awaited ? { awaited: true } : {}),
                 ...(job.sessionId ? { sessionId: job.sessionId } : {}),
                 ...(pid !== undefined ? { pid } : {}),
             });
@@ -385,7 +404,10 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             : undefined;
         const compacting = [...primaryReasons.keys()].some((reason) => reason.startsWith("primary:compaction:"));
         const activeAsyncJobAgents = {};
+        const awaitedAsyncJobIds = [];
         for (const [runId, record] of [...activeAsyncJobs].sort(([a], [b]) => (a < b ? -1 : 1))) {
+            if (record.awaited)
+                awaitedAsyncJobIds.push(runId);
             if (record.agents && record.agents.length > 0)
                 activeAsyncJobAgents[runId] = [...record.agents];
         }
@@ -401,6 +423,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             ...(compacting ? { compacting: true } : {}),
             ...(lastRunOutcome === "error" && lastRunErrorLine !== undefined ? { lastRunErrorLine } : {}),
             ...(Object.keys(activeAsyncJobAgents).length > 0 ? { activeAsyncJobAgents } : {}),
+            ...(awaitedAsyncJobIds.length > 0 ? { awaitedAsyncJobIds } : {}),
         };
     };
     const snapshotKey = (snapshot) => [
@@ -413,6 +436,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         Object.entries(snapshot.activeAsyncJobAgents ?? {})
             .map(([runId, names]) => `${runId}=${names.join("+")}`)
             .join(","),
+        (snapshot.awaitedAsyncJobIds ?? []).join(","),
         snapshot.lastRunOutcome ?? "",
         snapshot.waitingForUserTitle ?? "",
         snapshot.lastRunErrorLine ?? "",
@@ -487,6 +511,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                             sessionId: status.sessionId,
                             ...(status.pid !== undefined ? { pid: status.pid } : {}),
                             ...(status.agents ? { agents: status.agents } : {}),
+                            ...(status.awaited ? { awaited: true } : {}),
                             source: "rehydrated",
                         });
                     }
@@ -632,12 +657,14 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                     continue;
                 const pid = toValidPid(candidate.pid);
                 const agents = readAsyncDirAgentNames(asyncDir);
+                const awaited = readAsyncDirAwaited(asyncDir);
                 restoredJobs.push({
                     runId,
                     asyncDir,
                     sessionId,
                     ...(pid !== undefined ? { pid } : {}),
                     ...(agents.length > 0 ? { agents } : {}),
+                    ...(awaited ? { awaited: true } : {}),
                     source: "restored",
                 });
             }
@@ -661,6 +688,8 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             const agents = readAsyncAgentNames(data);
             if (agents.length > 0)
                 record.agents = agents;
+            if (isAwaitedRecord(data))
+                record.awaited = true;
             setAsyncJobActive(data.id, record);
             notifyIfChanged();
         },

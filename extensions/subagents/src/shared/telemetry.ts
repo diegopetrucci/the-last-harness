@@ -731,7 +731,8 @@ function controlsFromResolved(
 ): SubagentTelemetryControls {
   return {
     needsAttentionAfterMs: value.needsAttentionAfterMs,
-    failedToolAttemptsBeforeAttention: value.failedToolAttemptsBeforeAttention,
+    failedToolAttemptsBeforeAttention:
+      (value as Partial<SubagentTelemetryControls>).failedToolAttemptsBeforeAttention ?? 0,
     notifyOn: [...value.notifyOn].filter(
       (entry): entry is "needs_attention" => entry === "needs_attention",
     ),
@@ -1136,7 +1137,9 @@ export function telemetryFromSingleResults(input: {
           interrupted: result.interrupted,
           timedOut: result.timedOut,
           terminationReason: result.terminationReason,
-          acceptanceStatus: result.acceptance?.status,
+          acceptanceStatus: result.acceptance?.status as
+            | import("./types.ts").AcceptanceLedgerStatus
+            | undefined,
         }),
       };
     }),
@@ -1192,6 +1195,7 @@ function usageFromAttempts(attempts: RunnerTelemetryResult["modelAttempts"]): Us
 /** Convert authoritative async runner results into the allowlisted envelope. */
 export function telemetryFromRunnerResults(input: {
   runId: string;
+  execution?: SubagentTelemetryExecution;
   mode: SubagentRunMode;
   results: RunnerTelemetryResult[];
   provenance?: SubagentTelemetryProvenance;
@@ -1293,7 +1297,7 @@ export function telemetryFromRunnerResults(input: {
         ));
   return buildSubagentRunTelemetry({
     runId: input.runId,
-    execution: "async",
+    execution: input.execution ?? "async",
     mode: input.mode,
     steps,
     provenance: input.provenance,

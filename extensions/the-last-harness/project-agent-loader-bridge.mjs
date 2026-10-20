@@ -1,17 +1,13 @@
-/**
- * Runtime bridge from the TLH extension target to the generated subagent
- * loader. The dynamic URL keeps the two runtime TypeScript targets separate;
- * the subagent target owns compilation of its loader and generated JavaScript.
- */
+/** Runtime bridge to the generated embedded-agent loader. */
 
 const projectAgentLoaderModuleUrl = new URL(
   ["..", "subagents", "src", "agents", "project-agent-loader.js"].join("/"),
   import.meta.url,
 );
 
-export async function loadProjectAgentSnapshot(options) {
+export async function loadProjectAgent(options) {
   const module = await import(projectAgentLoaderModuleUrl.href);
-  return module.loadProjectAgentSnapshot(options);
+  return module.loadProjectAgent(options);
 }
 
 export async function reauthorizeTlhProjectAgentTrust(projectRoot, options = {}) {

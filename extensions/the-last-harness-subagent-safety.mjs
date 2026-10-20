@@ -166,30 +166,13 @@ function forceUserAgentScope(input, mode, { allowBoth = false } = {}) {
 }
 
 /**
- * Project custom agents are a separate, trusted execution scope. A request
- * containing one is run as a single project-scoped dispatch so the executor
- * can combine canonical packaged roles with the exact trusted snapshot. An
- * explicitly requested user/both scope is rejected rather than silently
- * downgrading the project target to an untrusted profile lookup.
+ * Keep ordinary primary-agent dispatches in the isolated user scope. Embedded
+ * targets are authorized independently by their fixed root file, so they do
+ * not need to widen the dispatch scope or force a mixed batch into project
+ * discovery.
  */
 function forceExecutionAgentScope(input) {
-  if (!isRecord(input) || !collectSubagentTargets(input).some(isEmbeddedSubagentTarget)) {
-    return forceUserAgentScope(input, "execution");
-  }
-
-  const rawScope = input.agentScope;
-  if (rawScope !== undefined) {
-    if (typeof rawScope !== "string") {
-      return 'TLH primary-agent subagent execution containing an embedded target must use agentScope: "project" or omit agentScope.';
-    }
-    const agentScope = rawScope.trim();
-    if (agentScope && agentScope !== "project") {
-      return `TLH primary-agent embedded execution may not use agentScope: "${agentScope}"; project scope is required for embedded targets.`;
-    }
-  }
-
-  input.agentScope = "project";
-  return undefined;
+  return forceUserAgentScope(input, "execution");
 }
 
 function validateExecutionBearingTargets(

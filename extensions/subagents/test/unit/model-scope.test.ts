@@ -100,6 +100,18 @@ describe("checkModelScope", () => {
     assert.equal(violation?.severity, "warn");
   });
 
+  it("keeps bare model scope checks raw while preserving explicit and inherited severity", () => {
+    const bareScope: ModelScopeConfig = { enforce: true, allow: ["openai/*"] };
+    const explicit = checkModelScope("gpt-5", bareScope, "explicit");
+    assert.equal(explicit?.model, "gpt-5");
+    assert.equal(explicit?.severity, "error");
+    assert.equal(checkModelScope("gpt-5", bareScope, "inherited")?.severity, "warn");
+    assert.equal(
+      checkModelScope("gpt-5", { enforce: true, allow: ["gpt-5"] }, "explicit"),
+      undefined,
+    );
+  });
+
   it("defaults to inherited (warn) severity when source is omitted-ish via inherited", () => {
     // Caller passes "inherited" for frontmatter/parent-inherited models.
     assert.equal(checkModelScope("meta/llama-4", scope, "inherited")?.severity, "warn");

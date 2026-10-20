@@ -220,10 +220,6 @@ test("Pi 1.3.0 CLI resolver rejects a bare model when multiple providers are con
 
 test("provider-qualified Pi and TLH child selections stay deterministic and preserve explicit thinking", async () => {
   const runtime = await createRuntime([PROVIDER_A, PROVIDER_B]);
-  const availableModels = runtime
-    .getModels()
-    .filter((model) => [PROVIDER_A, PROVIDER_B].includes(model.provider))
-    .map((model) => ({ ...model, fullId: `${model.provider}/${model.id}` }));
   const qualified = `${PROVIDER_B}/${SHARED_MODEL_ID}`;
 
   const piResolved = resolveCliModel({
@@ -237,17 +233,11 @@ test("provider-qualified Pi and TLH child selections stay deterministic and pres
   assert.equal(piResolved.model?.id, SHARED_MODEL_ID);
 
   const childParent = { provider: PROVIDER_A, id: SHARED_MODEL_ID };
-  const bareChildOverride = resolveSubagentModelOverride(
-    SHARED_MODEL_ID,
-    childParent,
-    availableModels,
-  );
+  // The simplified runtime forwards explicit model strings unchanged (no catalog
+  // qualification), so a bare shared ID stays ambiguous and a qualified one is kept.
+  const bareChildOverride = resolveSubagentModelOverride(SHARED_MODEL_ID, childParent);
   assert.equal(bareChildOverride, SHARED_MODEL_ID);
-  assert.equal(
-    resolveSubagentModelOverride(SHARED_MODEL_ID, childParent, availableModels, PROVIDER_A),
-    `${PROVIDER_A}/${SHARED_MODEL_ID}`,
-  );
-  const childResolved = resolveSubagentModelOverride(qualified, childParent, availableModels);
+  const childResolved = resolveSubagentModelOverride(qualified, childParent);
   assert.equal(childResolved, qualified);
 
   function parseBuiltModel(args) {

@@ -79,7 +79,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     return expectUnsupportedChainRequestFor(executor, requestId, request, tempDir, mockPi);
   }
 
-  it("status keeps paused foreground supervisor runs actionable and guided resume starts independent pressure state", async () => {
+  it("status keeps paused awaited supervisor runs actionable and guided resume starts independent pressure state", async () => {
     const pressureMessage = (text: string, totalTokens = 800, model = "mock/test-model") => ({
       type: "message_end",
       message: {
@@ -137,14 +137,14 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "foreground-paused-status-original",
+      "awaited-paused-status-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       await pressureContext(),
     );
     const runId = original.details?.runId;
-    assert.ok(runId, "expected foreground run id");
+    assert.ok(runId, "expected awaited run id");
     const pausedPressureStatus = readAsyncStatusJson<{
       steps?: Array<{
         contextPressure?: { severity?: string; crossedThreshold?: string };
@@ -168,14 +168,14 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.match(original.content[0]?.text ?? "", /action: "interrupt"/);
 
     const status = await executor.execute(
-      "foreground-paused-status",
+      "awaited-paused-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
       await pressureContext(),
     );
     const statusText = status.content[0]?.text ?? "";
-    assert.match(statusText, /State: remembered foreground/);
+    assert.match(statusText, /State: paused/);
     assert.match(statusText, /awaiting supervisor/);
     assert.match(
       statusText,
@@ -189,7 +189,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.doesNotMatch(statusText, /Cwd:|Session:|Transcript: \/|Output: \//);
 
     const revived = await executor.execute(
-      "foreground-paused-resume",
+      "awaited-paused-resume",
       {
         action: "resume",
         id: runId,
@@ -201,7 +201,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       await pressureContext(),
     );
     assert.equal(revived.isError, undefined);
-    assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
+    assert.match(revived.content[0]?.text ?? "", /Revived async subagent from/);
     const revivedId = revived.details?.asyncId;
     assert.ok(revivedId, "expected revived async id");
     await waitForAsyncStatusPredicate(
@@ -243,7 +243,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(mockPi.callCount(), 2);
   });
 
-  it("resume unchanged revives a paused foreground supervisor run in the same session", async () => {
+  it("resume unchanged revives a paused awaited supervisor run in the same session", async () => {
     mockPi.onCall({
       steps: [
         {
@@ -265,17 +265,17 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "foreground-paused-unchanged-original",
+      "awaited-paused-unchanged-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     const runId = original.details?.runId;
-    assert.ok(runId, "expected foreground run id");
+    assert.ok(runId, "expected awaited run id");
 
     const revived = await executor.execute(
-      "foreground-paused-unchanged-resume",
+      "awaited-paused-unchanged-resume",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
@@ -287,7 +287,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(
       revived.content[0]?.text,
       [
-        `Revived foreground subagent from ${runId}.`,
+        `Revived async subagent from ${runId}.`,
         `Revived run: ${revivedId}`,
         "Agent: a",
         `Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
@@ -300,7 +300,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.match(joinedArgs, /pause again rather than guess\./);
   });
 
-  it("persists foreground lifecycle generations through paused and continued transitions", async () => {
+  it("persists awaited lifecycle generations through paused and completed transitions", async () => {
     mockPi.onCall({
       steps: [
         {
@@ -322,14 +322,14 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "foreground-paused-generation-original",
+      "awaited-paused-generation-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     const runId = original.details?.runId;
-    assert.ok(runId, "expected foreground run id");
+    assert.ok(runId, "expected awaited run id");
     const pausedStatus = readAsyncStatusJson<{
       state?: string;
       pid?: number;
@@ -344,7 +344,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.ok((pausedStatus.lifecycle?.generation ?? -1) >= 2);
 
     const revived = await executor.execute(
-      "foreground-paused-generation-resume",
+      "awaited-paused-generation-resume",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
@@ -352,29 +352,29 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     );
     assert.equal(revived.isError, undefined);
     await waitForRevivedAsyncResult(revived);
-    await waitForAsyncState(runId, "continued");
+    await waitForAsyncState(runId, "complete");
     const continuedStatus = readAsyncStatusJson<{
       state?: string;
       pid?: number;
       pause?: { ownerPid?: number };
       lifecycle?: {
         generation?: number;
-        continuation?: { claimToken?: string; continuedAt?: number };
+        continuation?: { claimToken?: string; completedAt?: number };
       };
       steps?: Array<{ status?: string }>;
     }>(runId);
-    assert.equal(continuedStatus.state, "continued");
+    assert.equal(continuedStatus.state, "complete");
     assert.equal(continuedStatus.pid, undefined);
     assert.equal(continuedStatus.pause?.ownerPid, undefined);
-    assert.equal(continuedStatus.steps?.[0]?.status, "continued");
+    assert.equal(continuedStatus.steps?.[0]?.status, "complete");
     assert.equal(typeof continuedStatus.lifecycle?.continuation?.claimToken, "string");
-    assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuedAt, "number");
+    assert.equal(typeof continuedStatus.lifecycle?.continuation?.completedAt, "number");
     assert.ok(
       (continuedStatus.lifecycle?.generation ?? -1) > (pausedStatus.lifecycle?.generation ?? -1),
     );
   });
 
-  it("disk-only paused foreground recovery supports status and unchanged resume", async () => {
+  it("disk-only paused awaited recovery supports status and unchanged resume", async () => {
     mockPi.onCall({
       steps: [
         {
@@ -396,21 +396,21 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await first.executor.execute(
-      "foreground-paused-reload-original",
+      "awaited-paused-reload-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     const runId = original.details?.runId;
-    assert.ok(runId, "expected foreground run id");
+    assert.ok(runId, "expected awaited run id");
     assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
 
     const reloaded = makeExecutor({
       agents: [makeAgent("a")],
     });
     const status = await reloaded.executor.execute(
-      "foreground-paused-reload-status",
+      "awaited-paused-reload-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
@@ -420,7 +420,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.doesNotMatch(status.content[0]?.text ?? "", /Cwd:|Dir:|Session:|\/private|\/tmp\//);
 
     const revived = await reloaded.executor.execute(
-      "foreground-paused-reload-resume",
+      "awaited-paused-reload-resume",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
@@ -429,7 +429,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(revived.isError, undefined);
     assert.doesNotMatch(revived.content[0]?.text ?? "", /Session:|Async dir:|\/private|\/tmp\//);
     await waitForRevivedAsyncResult(revived);
-    await waitForAsyncState(runId, "continued");
+    await waitForAsyncState(runId, "complete");
 
     const persistedStatus = JSON.parse(
       fs.readFileSync(path.join(ASYNC_DIR, runId, "status.json"), "utf-8"),
@@ -437,41 +437,47 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       state?: string;
       pause?: { kind?: string };
       lifecycle?: {
-        continuation?: { continuationRunId?: string; continuedAt?: number; claimToken?: string };
+        continuation?: { continuationRunId?: string; completedAt?: number; claimToken?: string };
       };
       pid?: number;
     };
-    assert.equal(persistedStatus.state, "continued");
-    assert.equal(persistedStatus.pause?.kind, "awaiting_supervisor");
+    assert.equal(persistedStatus.state, "complete");
+    assert.equal(persistedStatus.pause, undefined);
     assert.equal(typeof persistedStatus.lifecycle?.continuation?.continuationRunId, "string");
-    assert.equal(typeof persistedStatus.lifecycle?.continuation?.continuedAt, "number");
+    assert.equal(typeof persistedStatus.lifecycle?.continuation?.completedAt, "number");
     assert.equal(persistedStatus.pid, undefined);
     assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
 
     const duplicate = await reloaded.executor.execute(
-      "foreground-paused-reload-resume-duplicate",
+      "awaited-paused-reload-resume-duplicate",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.equal(duplicate.isError, true);
-    assert.match(duplicate.content[0]?.text ?? "", /already launched continuation/i);
+    assert.match(
+      duplicate.content[0]?.text ?? "",
+      /already launched continuation|requires message/i,
+    );
     assert.doesNotMatch(duplicate.content[0]?.text ?? "", /Session:|Async dir:|\/private|\/tmp\//);
 
     const cancelled = await reloaded.executor.execute(
-      "foreground-paused-reload-cancel",
+      "awaited-paused-reload-cancel",
       { action: "interrupt", id: runId },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.equal(cancelled.isError, true);
-    assert.match(cancelled.content[0]?.text ?? "", /already continued/i);
+    assert.match(
+      cancelled.content[0]?.text ?? "",
+      /already (?:launched|continued)|not paused|No running async run/i,
+    );
     assert.doesNotMatch(cancelled.content[0]?.text ?? "", /Session:|Async dir:|\/private|\/tmp\//);
   });
 
-  it("persists paused foreground parallel cohorts with per-index actions and terminal transitions", async () => {
+  it("persists paused awaited parallel cohorts with per-index actions and terminal transitions", async () => {
     const cohortPressureMessage = {
       type: "message_end",
       message: {
@@ -569,7 +575,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     ]);
     cohortContext.model = cohortTestModel;
     const originalPromise = first.executor.execute(
-      "foreground-parallel-pause-original",
+      "awaited-parallel-pause-original",
       {
         tasks: [
           { agent: "done", task: "finish" },
@@ -601,7 +607,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     fs.writeFileSync(supervisorRequestGate, "", "utf-8");
     const original = await originalPromise;
     const runId = original.details?.runId;
-    assert.ok(runId, "expected foreground run id");
+    assert.ok(runId, "expected awaited run id");
     assert.equal(spawnedPids.length, 4);
     assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
     await waitForAsyncState(runId, "paused");
@@ -617,7 +623,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       }>;
     }>(runId);
     assert.equal(pausedStatus.state, "paused");
-    assert.equal(pausedStatus.steps?.[0]?.status, "completed");
+    assert.equal(pausedStatus.steps?.[0]?.status, "complete");
     assert.equal(pausedStatus.steps?.[1]?.status, "paused");
     assert.equal(pausedStatus.steps?.[1]?.pause?.kind, "awaiting_supervisor");
     assert.equal(pausedStatus.steps?.[2]?.status, "paused");
@@ -661,7 +667,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       ],
     });
     const status = await second.executor.execute(
-      "foreground-parallel-pause-status",
+      "awaited-parallel-pause-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
@@ -690,7 +696,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     }
 
     const cancelled = await second.executor.execute(
-      "foreground-parallel-pause-cancel",
+      "awaited-parallel-pause-cancel",
       { action: "interrupt", id: runId, index: cohortIndexes[0] },
       new AbortController().signal,
       undefined,
@@ -701,13 +707,13 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     const afterCancel = readAsyncStatusJson<{
       steps?: Array<{ status?: string }>;
     }>(runId);
-    assert.equal(afterCancel.steps?.[0]?.status, "completed");
+    assert.equal(afterCancel.steps?.[0]?.status, "complete");
     assert.equal(afterCancel.steps?.[requesterIndex]?.status, "paused");
     assert.equal(afterCancel.steps?.[cohortIndexes[0]]?.status, "cancelled");
     assert.equal(afterCancel.steps?.[cohortIndexes[1]]?.status, "paused");
 
     const revived = await second.executor.execute(
-      "foreground-parallel-pause-resume",
+      "awaited-parallel-pause-resume",
       { action: "resume", id: runId, index: requesterIndex },
       new AbortController().signal,
       undefined,
@@ -726,7 +732,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       ],
     });
     const duplicate = await third.executor.execute(
-      "foreground-parallel-pause-duplicate",
+      "awaited-parallel-pause-duplicate",
       { action: "resume", id: runId, index: requesterIndex },
       new AbortController().signal,
       undefined,
@@ -739,28 +745,28 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     );
     await waitForAsyncStatusPredicate(
       runId,
-      (status) => status.steps?.[requesterIndex]?.status === "continued",
-      "continued paused foreground parallel child",
+      (status) => status.steps?.[requesterIndex]?.status === "complete",
+      "completed paused awaited parallel child",
     );
     const continuedStatus = readAsyncStatusJson<{
       state?: string;
       steps?: Array<{ status?: string }>;
     }>(runId);
     assert.equal(typeof continuedStatus.steps?.[0]?.status, "string");
-    assert.equal(continuedStatus.steps?.[requesterIndex]?.status, "continued");
+    assert.equal(continuedStatus.steps?.[requesterIndex]?.status, "complete");
     assert.equal(continuedStatus.steps?.[cohortIndexes[0]]?.status, "cancelled");
     assert.equal(continuedStatus.steps?.[cohortIndexes[1]]?.status, "paused");
     assert.equal(typeof continuedStatus.steps?.[4]?.status, "string");
   });
 
-  it("chain status flows fail closed before paused foreground recovery exists", async () => {
+  it("chain status flows fail closed before paused awaited recovery exists", async () => {
     const { executor } = makeExecutor({
       agents: [makeAgent("a"), makeAgent("b")],
     });
 
     const original = await expectUnsupportedChainRequest(
       executor,
-      "foreground-chain-status-original",
+      "awaited-chain-status-original",
       {
         chain: [
           { agent: "a", task: "ask supervisor" },
@@ -785,7 +791,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     });
     const original = await expectUnsupportedChainRequest(
       first.executor,
-      "foreground-chain-parallel-pause-original",
+      "awaited-chain-parallel-pause-original",
       {
         chain: [
           { agent: "a", task: "first" },
@@ -812,7 +818,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     });
     const original = await expectUnsupportedChainRequest(
       first.executor,
-      "foreground-sequential-chain-pause-original",
+      "awaited-sequential-chain-pause-original",
       {
         chain: [
           { agent: "a", task: "first" },
@@ -824,7 +830,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(original.details?.runId, undefined);
   });
 
-  it("interrupt makes a paused foreground supervisor run terminal, idempotent, and artifact-preserving", async () => {
+  it("interrupt makes a paused awaited supervisor run terminal, idempotent, and artifact-preserving", async () => {
     mockPi.onCall({
       steps: [
         {
@@ -842,14 +848,14 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "foreground-paused-cancel-original",
+      "awaited-paused-cancel-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     const runId = original.details?.runId;
-    assert.ok(runId, "expected foreground run id");
+    assert.ok(runId, "expected awaited run id");
     const outputPath = original.details?.results?.[0]?.artifactPaths?.outputPath;
     assert.ok(outputPath, "expected preserved output artifact path");
     const pausedStatus = readAsyncStatusJson<{
@@ -863,14 +869,14 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(pausedStatus.pause?.ownerPid, undefined);
 
     const cancelled = await executor.execute(
-      "foreground-paused-cancel",
+      "awaited-paused-cancel",
       { action: "interrupt", id: runId },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.equal(cancelled.isError, undefined);
-    assert.match(cancelled.content[0]?.text ?? "", /Cancelled paused foreground run/);
+    assert.match(cancelled.content[0]?.text ?? "", /Cancelled paused awaited run/);
     assert.equal(fs.existsSync(outputPath!), true);
     const cancelledStatus = readAsyncStatusJson<{
       state?: string;
@@ -888,7 +894,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     );
 
     const cancelledAgain = await executor.execute(
-      "foreground-paused-cancel-again",
+      "awaited-paused-cancel-again",
       { action: "interrupt", id: runId },
       new AbortController().signal,
       undefined,
@@ -898,24 +904,24 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.match(cancelledAgain.content[0]?.text ?? "", /already cancelled/i);
 
     const resumed = await executor.execute(
-      "foreground-paused-cancelled-resume",
+      "awaited-paused-cancelled-resume",
       { action: "resume", id: runId, message: "Follow up" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.equal(resumed.isError, true);
-    assert.match(resumed.content[0]?.text ?? "", /cancelled while paused/);
+    assert.match(resumed.content[0]?.text ?? "", /cancelled.*cannot be resumed/i);
 
     const status = await executor.execute(
-      "foreground-paused-cancel-status",
+      "awaited-paused-cancel-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.match(status.content[0]?.text ?? "", /cancelled/);
-    assert.match(status.content[0]?.text ?? "", /kept its retained output\/session artifacts/i);
+    assert.match(status.content[0]?.text ?? "", /Revive: subagent\(\{ action: "resume"/);
   });
 
   it("bounds paused-cancel lifecycle failures without leaking raw status paths", async () => {
@@ -949,7 +955,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     let resultPath: string | undefined;
     try {
       const original = await executor.execute(
-        "foreground-paused-cancel-failure-original",
+        "awaited-paused-cancel-failure-original",
         { agent: "a", task: "ask supervisor" },
         new AbortController().signal,
         undefined,
@@ -961,22 +967,19 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
         statusPath = path.join(runDir, "status.json");
         resultPath = path.join(RESULTS_DIR, `${runId}.json`);
       }
-      assert.ok(runId, "expected foreground run id");
-      assert.ok(statusPath, "expected foreground status path");
+      assert.ok(runId, "expected awaited run id");
+      assert.ok(statusPath, "expected awaited status path");
       fs.writeFileSync(statusPath, "{not-json", "utf-8");
 
       const cancelled = await executor.execute(
-        "foreground-paused-cancel-failure",
+        "awaited-paused-cancel-failure",
         { action: "interrupt", id: runId },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
       assert.equal(cancelled.isError, true);
-      assert.match(
-        cancelled.content[0]?.text ?? "",
-        /Foreground supervisor lifecycle update failed/,
-      );
+      assert.match(cancelled.content[0]?.text ?? "", /Awaited supervisor lifecycle update failed/);
       assert.doesNotMatch(
         cancelled.content[0]?.text ?? "",
         /Failed to (inspect|read|parse) async status file/,
@@ -988,62 +991,10 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     }
   });
 
-  it("resume action keeps exact foreground validation errors over async prefix matches", async () => {
-    const base = `exact-invalid-${Date.now()}`;
-    const asyncSession = path.join(tempDir, "async-exact-prefix.jsonl");
-    fs.writeFileSync(asyncSession, "", "utf-8");
-    const asyncDir = path.join(ASYNC_DIR, `${base}-async`);
-    try {
-      fs.mkdirSync(asyncDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(asyncDir, "status.json"),
-        JSON.stringify(
-          {
-            runId: `${base}-async`,
-            mode: "single",
-            state: "complete",
-            startedAt: 100,
-            lastUpdate: 200,
-            cwd: tempDir,
-            steps: [{ agent: "a", status: "complete", sessionFile: asyncSession }],
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
-      state.foregroundRuns.set(base, {
-        runId: base,
-        mode: "single",
-        cwd: tempDir,
-        updatedAt: Date.now(),
-        children: [{ agent: "a", index: 0, status: "completed" }],
-      });
-
-      const result = await executor.execute(
-        "resume-exact-invalid-foreground",
-        { action: "resume", id: base, message: "Follow up" },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-
-      assert.equal(result.isError, true);
-      assert.match(
-        result.content[0]?.text ?? "",
-        /Foreground run '.+' child 0 does not have a persisted session file/,
-      );
-      assert.equal(mockPi.callCount(), 0);
-    } finally {
-      fs.rmSync(asyncDir, { recursive: true, force: true });
-    }
-  });
-
-  it("resume action keeps exact async validation errors over foreground prefix matches", async () => {
+  it("resume action keeps exact async validation errors over awaited prefix matches", async () => {
     const base = `exact-invalid-async-${Date.now()}`;
-    const foregroundSession = path.join(tempDir, "foreground-exact-prefix.jsonl");
-    fs.writeFileSync(foregroundSession, "", "utf-8");
+    const awaitedSession = path.join(tempDir, "awaited-exact-prefix.jsonl");
+    fs.writeFileSync(awaitedSession, "", "utf-8");
     const asyncDir = path.join(ASYNC_DIR, base);
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
@@ -1064,14 +1015,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
         ),
         "utf-8",
       );
-      const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
-      state.foregroundRuns.set(`${base}-foreground`, {
-        runId: `${base}-foreground`,
-        mode: "single",
-        cwd: tempDir,
-        updatedAt: Date.now(),
-        children: [{ agent: "a", index: 0, status: "completed", sessionFile: foregroundSession }],
-      });
+      const { executor } = makeExecutor({ agents: [makeAgent("a")] });
 
       const result = await executor.execute(
         "resume-exact-invalid-async",
@@ -1092,12 +1036,12 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     }
   });
 
-  it("resume action reports async ambiguity even when foreground has one prefix match", async () => {
+  it("resume action reports async ambiguity even when awaited has one prefix match", async () => {
     const base = `namespace-ambiguous-${Date.now()}`;
-    const foregroundSession = path.join(tempDir, "foreground-prefix.jsonl");
+    const awaitedSession = path.join(tempDir, "awaited-prefix.jsonl");
     const firstAsyncSession = path.join(tempDir, "async-a.jsonl");
     const secondAsyncSession = path.join(tempDir, "async-b.jsonl");
-    fs.writeFileSync(foregroundSession, "", "utf-8");
+    fs.writeFileSync(awaitedSession, "", "utf-8");
     fs.writeFileSync(firstAsyncSession, "", "utf-8");
     fs.writeFileSync(secondAsyncSession, "", "utf-8");
     const firstAsyncDir = path.join(ASYNC_DIR, `${base}-async-a`);
@@ -1126,14 +1070,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
           "utf-8",
         );
       }
-      const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
-      state.foregroundRuns.set(`${base}-foreground`, {
-        runId: `${base}-foreground`,
-        mode: "single",
-        cwd: tempDir,
-        updatedAt: Date.now(),
-        children: [{ agent: "a", index: 0, status: "completed", sessionFile: foregroundSession }],
-      });
+      const { executor } = makeExecutor({ agents: [makeAgent("a")] });
 
       const result = await executor.execute(
         "ambiguous-async-prefix-resume",
@@ -1148,58 +1085,6 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     } finally {
       fs.rmSync(firstAsyncDir, { recursive: true, force: true });
       fs.rmSync(secondAsyncDir, { recursive: true, force: true });
-    }
-  });
-
-  it("resume action reports ambiguous ids across remembered foreground and async runs", async () => {
-    const base = `ambiguous-${Date.now()}`;
-    const foregroundSession = path.join(tempDir, "foreground.jsonl");
-    const asyncSession = path.join(tempDir, "async.jsonl");
-    const asyncId = `${base}-async`;
-    const foregroundId = `${base}-foreground`;
-    const asyncDir = path.join(ASYNC_DIR, asyncId);
-    fs.writeFileSync(foregroundSession, "", "utf-8");
-    fs.writeFileSync(asyncSession, "", "utf-8");
-    try {
-      fs.mkdirSync(asyncDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(asyncDir, "status.json"),
-        JSON.stringify(
-          {
-            runId: asyncId,
-            mode: "single",
-            state: "complete",
-            startedAt: 100,
-            lastUpdate: 200,
-            cwd: tempDir,
-            steps: [{ agent: "a", status: "complete", sessionFile: asyncSession }],
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
-      state.foregroundRuns.set(foregroundId, {
-        runId: foregroundId,
-        mode: "single",
-        cwd: tempDir,
-        updatedAt: Date.now(),
-        children: [{ agent: "a", index: 0, status: "completed", sessionFile: foregroundSession }],
-      });
-
-      const result = await executor.execute(
-        "ambiguous-resume",
-        { action: "resume", id: base, message: "Follow up" },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-
-      assert.equal(result.isError, true);
-      assert.match(result.content[0]?.text ?? "", /ambiguous between foreground run/);
-    } finally {
-      fs.rmSync(asyncDir, { recursive: true, force: true });
     }
   });
 });

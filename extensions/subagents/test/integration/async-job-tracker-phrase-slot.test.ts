@@ -71,6 +71,7 @@ describe("async job tracker phrase-slot rerender", () => {
       fs.writeFileSync(
         path.join(runDir, "status.json"),
         JSON.stringify({
+          runId,
           state: "running",
           mode: "single",
           startedAt,

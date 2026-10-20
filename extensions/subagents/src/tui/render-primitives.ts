@@ -1,5 +1,5 @@
 /**
- * Stateless display primitives shared by the async widget and foreground result cards.
+ * Stateless display primitives shared by the async widget and awaited result cards.
  */
 
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";

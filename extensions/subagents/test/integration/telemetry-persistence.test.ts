@@ -11,6 +11,7 @@ import {
   createMockPi,
   createTempDir,
   makeAgent,
+  makeExtensionAPI,
   removeTempDir,
   type MockPi,
   makeMinimalCtx,
@@ -20,14 +21,14 @@ import { DEFAULT_ARTIFACT_CONFIG, type ResolvedControlConfig } from "../../src/s
 import type {
   SubagentRunTelemetry,
   SubagentTelemetryProvenance,
+  SubagentTelemetryStep,
 } from "../../src/shared/telemetry.ts";
 import { buildCompletionDetails } from "../../src/runs/background/notify.ts";
-import { createSubagentExecutor, runSync } from "../support/single-execution-fixtures.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 
 const controls: ResolvedControlConfig = {
   enabled: true,
   needsAttentionAfterMs: 2_000,
-  failedToolAttemptsBeforeAttention: 3,
   notifyOn: ["needs_attention"],
   notifyChannels: ["event", "async"],
 };
@@ -135,12 +136,10 @@ describe("subagent telemetry persistence", () => {
   it("persists the same provenance envelope through the real foreground executor", async () => {
     mockPi.onCall({ output: "foreground one done" });
     mockPi.onCall({ output: "foreground two done" });
-    assert.ok(createSubagentExecutor, "foreground executor fixture is available");
-    assert.ok(runSync, "foreground execution fixture is available");
     const state = makeSubagentState({ baseCwd: tempDir });
     const agents = [makeAgent("foreground-one"), makeAgent("foreground-two")];
     const executor = createSubagentExecutor({
-      pi: { events: { emit() {} } },
+      pi: makeExtensionAPI(),
       state,
       config: { maxSubagentDepth: 2 },
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
@@ -148,7 +147,6 @@ describe("subagent telemetry persistence", () => {
       getSubagentSessionRoot: () => tempDir,
       expandTilde: (value: string) => value,
       discoverAgents: () => ({ agents }),
-      runSync,
       telemetryProvenance: provenance,
     });
     const ctx = makeMinimalCtx(tempDir);
@@ -165,7 +163,7 @@ describe("subagent telemetry persistence", () => {
       undefined,
       ctx,
     );
-    assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+    assert.equal(result.isError, undefined, (result.content[0] as { text?: string })?.text ?? "");
     const details = result.details as
       | (NonNullable<typeof result.details> & { telemetry?: SubagentRunTelemetry })
       | undefined;
@@ -179,7 +177,7 @@ describe("subagent telemetry persistence", () => {
       mode: "parallel",
     });
     assert.deepEqual(
-      telemetry.steps.map((step) => [step.index, step.agent]),
+      telemetry.steps.map((step: SubagentTelemetryStep) => [step.index, step.agent]),
       [
         [0, "foreground-one"],
         [1, "foreground-two"],

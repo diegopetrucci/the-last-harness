@@ -8,11 +8,10 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
-import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
+import type { ProjectAgentIdentity } from "../../agents/project-agent-loader.ts";
 import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
 import {
   applyThinkingSuffix,
-  getThinkingLevelDropNote,
   validatePiToolPolicy,
   retiredNestedLaunchError,
 } from "../shared/pi-args.ts";
@@ -32,47 +31,41 @@ import {
   type StepOverrides,
 } from "../../shared/settings.ts";
 import { type RunnerSubagentStep, type SubagentRunPlan } from "../shared/parallel-utils.ts";
-import {
-  normalizeActiveRuntimeCheckpointAt,
-  normalizeActiveRuntimeMs,
-} from "../shared/lifecycle-state.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
+import {
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
+} from "../shared/active-runtime.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
 import {
   buildFallbackModelList,
   buildModelCandidatePlan,
   canonicalSubagentModelIdentity,
+  deduplicateModelCandidates,
   modelReferenceFromIdentity,
   resolveSubagentModelOverride,
-  type AvailableModelInfo,
-  type ModelRegistryEvidence,
   type ParentModel,
 } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig, ModelSource } from "../shared/model-scope.ts";
-import { contextWindowsForChildModels, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import {
-  mergeContinuationAcceptance,
-  resolveEffectiveAcceptance,
-  validateAcceptanceInput,
-  validateDispatchAcceptanceInput,
-} from "../shared/acceptance.ts";
+  contextWindowsForChildModels,
+  resolveEffectiveThinking,
+  type ModelInfo,
+} from "../../shared/model-info.ts";
 import {
-  type AcceptanceInput,
   type OutputMode,
   type ResolvedArtifactConfig,
-  type ToolBudgetConfig,
   type ContextPressureProjection,
   type ContextUsageDiagnostics,
   type Details,
   type MaxOutputConfig,
   type ResolvedControlConfig,
-  type TkTicketMetadata,
-  type ResolvedToolBudget,
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
+  type SubagentTerminalResult,
   ASYNC_DIR,
   RESULTS_DIR,
   SUBAGENT_ASYNC_STARTED_EVENT,
@@ -92,21 +85,18 @@ import {
   parseContextPressureProjection,
   parseContextUsageDiagnostics,
 } from "../../shared/context-diagnostics.ts";
-import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-import {
-  detectTkTicketId,
-  inspectTkTicketReference,
-  normalizeTkTicketId,
-  normalizeTkTicketMetadata,
-  resolveTkTicketMetadata,
-  resolveTkTicketTaskContext,
-} from "../shared/tk-ticket.ts";
+import { normalizeTicketId, readTicketBody, ticketLookupKey } from "../shared/ticket-context.ts";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 import {
   captureChildLocationSnapshot,
   makeParentGitFactsAccessor,
   type ChildLocationSnapshot,
 } from "../../shared/child-location.ts";
+import { createAwaitedRunOwner, type AwaitedRunResult } from "./awaited-run-owner.ts";
+import {
+  createOwnedProcessGroupOwner,
+  type OwnedProcessGroupOwner,
+} from "../shared/process-group-cleanup.ts";
 
 const piPackageRoot = resolvePiPackageRoot();
 
@@ -116,13 +106,16 @@ interface AsyncExecutionContext {
   currentSessionId: string;
   /** Parent session id used by permission-system ask forwarding. */
   parentSessionId?: string;
-  currentModelProvider?: string;
   currentModel?: ParentModel;
   /** Optional model-scope enforcement resolved from subagent settings. */
   modelScope?: ModelScopeConfig;
 }
 
 interface AsyncSingleParams {
+  /** Internal-only opt-in; public schemas intentionally do not expose this. */
+  awaited?: boolean;
+  signal?: AbortSignal;
+  onUpdate?: (result: AwaitedRunResult) => void;
   agent: string;
   task?: string;
   telemetryProvenance?: SubagentTelemetryProvenance;
@@ -135,13 +128,16 @@ interface AsyncSingleParams {
     runId: string;
     index: number;
     claimToken: string;
-    projectAgent?: ProjectAgentRunCapture;
+    projectAgent?: ProjectAgentIdentity;
   };
-  inheritedTkTicket?: TkTicketMetadata;
-  /** Persisted per-child ticket assignment used when a revived task has no literal reference. */
-  inheritedTkTicketId?: string;
+  /** Explicit ticket assignment; normalized by the model-facing boundary. */
+  ticket?: string;
+  /** Ticket body prepared by the parent dispatch, when available. */
+  ticketBody?: string;
+  /** Persisted ticket identity for a continuation; intentionally does not re-read the body. */
+  ticketId?: string;
   /** Exact approved project-agent config/provenance for this child. */
-  projectAgent?: ProjectAgentRunCapture;
+  projectAgent?: ProjectAgentIdentity;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
   artifactConfig: ResolvedArtifactConfig;
@@ -162,15 +158,13 @@ interface AsyncSingleParams {
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   providerFallbackModels?: string[];
   modelFallbackNotice?: string;
-  availableModels?: AvailableModelInfo[];
-  modelRegistry?: ModelRegistryEvidence;
+  availableModels?: ModelInfo[];
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
-  acceptance?: AcceptanceInput;
-  continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+  /** Prior persisted facts retained when this invocation revives a child. */
+  priorTerminalResult?: SubagentTerminalResult;
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
-  toolBudget?: ResolvedToolBudget;
 }
 
 interface AsyncExecutionResult {
@@ -191,19 +185,22 @@ interface AsyncParallelTaskParams {
   modelSource?: ModelSource;
   providerFallbackModels?: string[];
   modelFallbackNotice?: string;
-  acceptance?: AcceptanceInput;
-  toolBudget?: ToolBudgetConfig;
+  /** Explicit ticket assignment; normalized by the model-facing boundary. */
+  ticket?: string;
 }
 
 interface AsyncParallelParams {
+  /** Internal-only opt-in; public schemas intentionally do not expose this. */
+  awaited?: boolean;
+  signal?: AbortSignal;
+  onUpdate?: (result: AwaitedRunResult) => void;
   tasks: AsyncParallelTaskParams[];
   telemetryProvenance?: SubagentTelemetryProvenance;
   telemetryLineage?: SubagentTelemetryLineage;
   concurrency?: number;
   agents: AgentConfig[];
   ctx: AsyncExecutionContext;
-  availableModels?: AvailableModelInfo[];
-  modelRegistry?: ModelRegistryEvidence;
+  availableModels?: ModelInfo[];
   cwd?: string;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
@@ -213,9 +210,10 @@ interface AsyncParallelParams {
   progressDir?: string;
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
-  toolBudget?: ResolvedToolBudget;
   /** Exact approved project-agent captures for detached runner tasks. */
-  projectAgentCaptures?: readonly ProjectAgentRunCapture[];
+  projectAgentIdentities?: readonly ProjectAgentIdentity[];
+  /** Ticket bodies prepared once by the parent dispatch, keyed by cwd and ID. */
+  ticketBodies?: ReadonlyMap<string, string>;
 }
 
 /** The narrow config portion consumed when resolving detached-runner log paths. */
@@ -313,7 +311,7 @@ function spawnRunner(
   cfg: SubagentRunConfig,
   suffix: string,
   cwd: string,
-): { pid?: number; error?: string } {
+): { pid?: number; error?: string; ownership?: OwnedProcessGroupOwner } {
   const runner = resolveAsyncRunnerModulePath();
   if (!fs.existsSync(runner)) {
     return { error: `async runner module could not be found: ${runner}` };
@@ -363,8 +361,15 @@ function spawnRunner(
     if (typeof proc.pid !== "number") {
       return { error: `async runner did not produce a pid for cwd: ${cwd}` };
     }
+    const ownership = createOwnedProcessGroupOwner(proc);
+    if (ownership) {
+      const observedPid = proc.pid;
+      const observeExit = () => ownership.observeExit(observedPid);
+      proc.once("exit", observeExit);
+      proc.once("close", observeExit);
+    }
     proc.unref();
-    return { pid: proc.pid };
+    return { pid: proc.pid, ...(ownership ? { ownership } : {}) };
   } catch (error) {
     closeFd(stdoutFd);
     closeFd(stderrFd);
@@ -384,8 +389,11 @@ type AsyncSingleRuntimePolicy =
   | {
       activeRuntimeMs: number;
       activeRuntimeCheckpointAt?: number;
+      /** Remaining active-time budget for this launch, shown in status details. */
       effectiveTimeoutMs?: number;
-      timeoutOwner?: "role" | "run";
+      /** Full per-instance role budget carried in the plan; consumption is subtracted by the runner. */
+      roleBudgetMs?: number;
+      timeoutOwner?: "role";
       effectiveDeadlineAt?: number;
     }
   | { error: string };
@@ -411,10 +419,9 @@ function resolveAsyncSingleRuntimePolicy(
   );
   if (remainingAgentTimeMs === 0) {
     return {
-      error: `Agent '${agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
+      error: `Agent '${agent}' has exhausted its maxExecutionTimeMs budget after ${activeRuntimeMs}ms of active runtime.`,
     };
   }
-  const effectiveTimeoutMs = remainingAgentTimeMs;
   const effectiveDeadlineAt =
     remainingAgentTimeMs !== undefined
       ? saturatingAsyncDeadlineAt(Date.now(), remainingAgentTimeMs)
@@ -422,8 +429,13 @@ function resolveAsyncSingleRuntimePolicy(
   return {
     activeRuntimeMs,
     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-    ...(effectiveTimeoutMs !== undefined ? { effectiveTimeoutMs } : {}),
-    ...(effectiveTimeoutMs !== undefined ? { timeoutOwner: "role" as const } : {}),
+    ...(remainingAgentTimeMs !== undefined
+      ? {
+          effectiveTimeoutMs: remainingAgentTimeMs,
+          roleBudgetMs: params.agentConfig.maxExecutionTimeMs,
+          timeoutOwner: "role" as const,
+        }
+      : {}),
     ...(effectiveDeadlineAt !== undefined ? { effectiveDeadlineAt } : {}),
   };
 }
@@ -432,54 +444,6 @@ const UNAVAILABLE_SUBAGENT_SKILL_ERROR = "Skills not found: pi-subagents";
 
 class UnavailableSubagentSkillError extends Error {}
 class AsyncStartValidationError extends Error {}
-
-function appendThinkingDropNote(
-  notes: string[],
-  droppedModels: string[],
-  model: string | undefined,
-  thinking: string | false | undefined,
-  options: Parameters<typeof getThinkingLevelDropNote>[3],
-): void {
-  const note = getThinkingLevelDropNote(model, thinking, false, options);
-  if (!note) return;
-  if (!notes.includes(note)) notes.push(note);
-  // Per-candidate drop metadata stays on every step even when the duplicate
-  // human-facing note is deduplicated across direct parallel tasks.
-  if (model && !droppedModels.includes(model)) droppedModels.push(model);
-}
-
-function dedupeRunnerTaskAttemptNotes(tasks: RunnerSubagentStep[]): RunnerSubagentStep[] {
-  const emitted = new Set<string>();
-  return tasks.map((task) => {
-    if (!task.attemptNotes || task.attemptNotes.length === 0) return task;
-    const attemptNotes = task.attemptNotes.filter((note) => {
-      if (emitted.has(note)) return false;
-      emitted.add(note);
-      return true;
-    });
-    return attemptNotes.length > 0
-      ? { ...task, attemptNotes }
-      : { ...task, attemptNotes: undefined };
-  });
-}
-
-function validateAsyncExecutionAcceptance(
-  params: Pick<AsyncSingleParams, "acceptance"> | Pick<AsyncParallelParams, "tasks">,
-): string[] {
-  const errors: string[] = [];
-  if ("tasks" in params) {
-    for (const [taskIndex, task] of params.tasks.entries()) {
-      errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${taskIndex}].acceptance`));
-      errors.push(
-        ...validateDispatchAcceptanceInput(task.acceptance, `tasks[${taskIndex}].acceptance`),
-      );
-    }
-    return errors;
-  }
-  errors.push(...validateAcceptanceInput(params.acceptance, "acceptance"));
-  errors.push(...validateDispatchAcceptanceInput(params.acceptance, "acceptance"));
-  return errors;
-}
 
 interface AsyncRunnerPlanBuildResult {
   plan: Extract<SubagentRunPlan, { kind: "parallel" }>;
@@ -503,11 +467,31 @@ export function buildAsyncRunnerPlan(
     ? path.join(params.artifactsDir, "outputs", id)
     : undefined;
   const availableModels = params.availableModels;
-  const thinkingSuffixOptions = {
-    availableModels,
-    preferredModelProvider: ctx.currentModelProvider,
-  };
   const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
+  const preparedTicketBodies = params.ticketBodies;
+  const localTicketLookups = new Map<string, ReturnType<typeof readTicketBody>>();
+  const resolveTicket = (ticketId: string, stepCwd: string): ReturnType<typeof readTicketBody> => {
+    const normalized = normalizeTicketId(ticketId, "ticket");
+    if (!normalized.ticketId) {
+      return { ticketId, error: normalized.error ?? "ticket is invalid." };
+    }
+    const normalizedTicketId = normalized.ticketId;
+    const key = ticketLookupKey(stepCwd, normalizedTicketId);
+    if (preparedTicketBodies) {
+      const body = preparedTicketBodies.get(key);
+      return body === undefined
+        ? {
+            ticketId: normalizedTicketId,
+            error: `Unable to load ticket '${normalizedTicketId}' in '${stepCwd}': ticket body was not prepared.`,
+          }
+        : { ticketId: normalizedTicketId, body };
+    }
+    const cached = localTicketLookups.get(key);
+    if (cached) return cached;
+    const result = readTicketBody(normalizedTicketId, stepCwd, "ticket");
+    localTicketLookups.set(key, result);
+    return result;
+  };
   const progressDir = params.progressDir ?? runnerCwd;
 
   for (const task of tasks) {
@@ -538,13 +522,10 @@ export function buildAsyncRunnerPlan(
     precomputedChildLocation?: ChildLocationSnapshot,
   ): RunnerSubagentStep => {
     const agent = agents.find((candidate) => candidate.name === taskSpec.agent)!;
-    const toolBudgetInput = taskSpec.toolBudget ?? params.toolBudget ?? agent.toolBudget;
-    const resolvedToolBudget = validateToolBudgetConfig(
-      toolBudgetInput,
-      taskSpec.toolBudget ? "toolBudget" : agent.toolBudget ? "agent.toolBudget" : "toolBudget",
-    );
-    if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
     const stepCwd = resolveChildCwd(runnerCwd, taskSpec.cwd);
+    const ticket =
+      taskSpec.ticket === undefined ? undefined : resolveTicket(taskSpec.ticket, stepCwd);
+    if (ticket?.error) throw new AsyncStartValidationError(ticket.error);
     // Prefer the pre-computed snapshot (parent git invoked once per dispatch);
     // fall back to a fresh capture when called outside the tasks.map loop.
     const childLocation =
@@ -605,74 +586,43 @@ export function buildAsyncRunnerPlan(
     const modelSource: ModelSource =
       taskSpec.modelSource ??
       (taskSpec.model?.trim() && taskSpec.model.trim() !== "inherit" ? "explicit" : "inherited");
-    const primaryModel = resolveSubagentModelOverride(
-      requestedModel,
-      ctx.currentModel,
-      availableModels,
-      ctx.currentModelProvider,
-      { scope: ctx.modelScope, source: modelSource },
-    );
+    const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, {
+      scope: ctx.modelScope,
+      source: modelSource,
+    });
     const fallbackModels = buildFallbackModelList(
       taskSpec.providerFallbackModels,
       agent.fallbackModels,
     );
     const effectiveThinking = agent.thinking;
-    const attemptNotes: string[] = [];
-    const thinkingDroppedModels: string[] = [];
-    appendThinkingDropNote(
-      attemptNotes,
-      thinkingDroppedModels,
-      primaryModel,
-      effectiveThinking,
-      thinkingSuffixOptions,
-    );
-    const model = applyThinkingSuffix(
-      primaryModel,
-      effectiveThinking,
-      false,
-      thinkingSuffixOptions,
-    );
-    const primaryThinkingDropped = Boolean(
-      getThinkingLevelDropNote(primaryModel, effectiveThinking, false, thinkingSuffixOptions),
-    );
+    const model = applyThinkingSuffix(primaryModel, effectiveThinking);
     const modelIdentity = canonicalSubagentModelIdentity(
       model,
-      primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
+      resolveEffectiveThinking(model, effectiveThinking),
     );
     const modelThinking =
       modelIdentity?.thinking ??
       (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
-    const candidatePlan = buildModelCandidatePlan(
-      primaryModel,
-      fallbackModels,
-      availableModels,
-      ctx.currentModelProvider,
-      { scope: ctx.modelScope, registry: params.modelRegistry },
+    const candidatePlan = buildModelCandidatePlan(primaryModel, fallbackModels, {
+      scope: ctx.modelScope,
+    });
+    const modelCandidates = deduplicateModelCandidates(
+      candidatePlan.candidates
+        .map((candidate) => applyThinkingSuffix(candidate, effectiveThinking))
+        .filter((candidate): candidate is string => candidate !== undefined),
     );
-    const modelCandidates = candidatePlan.candidates
-      .map((candidate) => {
-        appendThinkingDropNote(
-          attemptNotes,
-          thinkingDroppedModels,
-          candidate,
-          effectiveThinking,
-          thinkingSuffixOptions,
-        );
-        return applyThinkingSuffix(candidate, effectiveThinking, false, thinkingSuffixOptions);
-      })
-      .filter((candidate): candidate is string => candidate !== undefined);
-    const projectAgent = params.projectAgentCaptures?.find(
-      (capture) => capture.provenance.agent === taskSpec.agent,
-    );
-    const taskReference =
-      agent.name === "developer" && isCanonicalPackagedMinorAgent(agent)
-        ? inspectTkTicketReference(taskSpec.task)
-        : undefined;
-    const tkTicketId = taskReference?.kind === "valid" ? taskReference.id : undefined;
+    const projectAgent =
+      params.projectAgentIdentities?.find(
+        (identity) => `embedded.${identity.slug}` === taskSpec.agent && identity.cwd === stepCwd,
+      ) ??
+      params.projectAgentIdentities?.find(
+        (identity) => `embedded.${identity.slug}` === taskSpec.agent,
+      );
     return {
       parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
       ...(projectAgent ? { projectAgent } : {}),
-      ...(tkTicketId ? { tkTicketId } : {}),
+      ...(ticket?.ticketId ? { ticketId: ticket.ticketId } : {}),
+      ...(ticket?.body !== undefined ? { ticketBody: ticket.body } : {}),
       agent: taskSpec.agent,
       projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
       task,
@@ -684,37 +634,23 @@ export function buildAsyncRunnerPlan(
       contextWindows: contextWindowsForChildModels(availableModels, {
         canonicalDeveloper: agent.name === "developer" && isCanonicalPackagedMinorAgent(agent),
       }),
-      ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
-      ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
-      ...(candidatePlan.filteringNotice
-        ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
-        : {}),
       modelFallbackNotice: behavior.modelFallbackNotice,
       tools: agent.tools,
       extensions: agent.extensions,
       subagentOnlyExtensions: agent.subagentOnlyExtensions,
-      completionGuard: agent.completionGuard,
       supervisorBridge: agent.supervisorBridge,
       systemPrompt,
       systemPromptMode: agent.systemPromptMode,
       inheritProjectContext: agent.inheritProjectContext,
       inheritSkills: agent.inheritSkills,
       skills: resolvedSkills.map((resolved) => resolved.name),
+      ...(missingSkills.length > 0
+        ? { skillsWarning: `Skills not found: ${missingSkills.join(", ")}` }
+        : {}),
       outputPath,
       outputMode: behavior.outputMode,
       sessionFile,
       maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agent.maxSubagentDepth),
-      effectiveAcceptance: resolveEffectiveAcceptance({
-        explicit: taskSpec.acceptance,
-        agentName: taskSpec.agent,
-        acceptanceRole: agent.acceptanceRole,
-        task,
-        mode: "parallel",
-        async: true,
-      }),
-      acceptanceInput: taskSpec.acceptance,
-      acceptanceRole: agent.acceptanceRole,
-      ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
       // The role ceiling is trusted policy, not caller input. Persist it on
       // every new task so the runner can enforce it independently per child.
       ...(agent.maxExecutionTimeMs !== undefined
@@ -766,10 +702,9 @@ export function buildAsyncRunnerPlan(
     }
     throw error;
   }
-  const directTasks = dedupeRunnerTaskAttemptNotes(builtTasks);
   const plan: SubagentRunPlan = {
     kind: "parallel",
-    tasks: directTasks,
+    tasks: builtTasks,
     ...(params.concurrency !== undefined ? { concurrency: params.concurrency } : {}),
   };
   return { plan, runnerCwd };
@@ -777,6 +712,7 @@ export function buildAsyncRunnerPlan(
 
 function initialAsyncTelemetry(input: {
   id: string;
+  execution?: import("../../shared/telemetry.ts").SubagentTelemetryExecution;
   mode: SubagentRunMode;
   plan: SubagentRunPlan;
   provenance?: SubagentTelemetryProvenance;
@@ -788,7 +724,7 @@ function initialAsyncTelemetry(input: {
   const planSteps = input.plan.kind === "single" ? [input.plan.task] : input.plan.tasks;
   return buildSubagentRunTelemetry({
     runId: input.id,
-    execution: "async",
+    execution: input.execution ?? "async",
     mode: input.mode,
     provenance: input.provenance,
     controls: input.controls,
@@ -810,7 +746,7 @@ function initialAsyncTelemetry(input: {
 export function executeAsyncParallel<T extends AsyncParallelParams>(
   id: string,
   params: T,
-): AsyncExecutionResult {
+): AsyncExecutionResult | Promise<AwaitedRunResult> {
   const {
     tasks,
     agents,
@@ -826,9 +762,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
   } = params;
   const retiredNestedError = retiredNestedLaunchError(params);
   if (retiredNestedError) return formatAsyncStartError("parallel", retiredNestedError);
-  const acceptanceErrors = validateAsyncExecutionAcceptance({ tasks });
-  if (acceptanceErrors.length > 0)
-    return formatAsyncStartError("parallel", acceptanceErrors.join(" "));
   const runStartedAt = Date.now();
   const asyncDir = path.join(ASYNC_DIR, id);
   try {
@@ -852,7 +785,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
       agents,
       ctx,
       availableModels: params.availableModels,
-      modelRegistry: params.modelRegistry,
       cwd,
       artifactsDir,
       artifactConfig,
@@ -861,8 +793,8 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
         params.progressDir ??
         (artifactsDir ? path.join(artifactsDir, "progress", id) : path.join(asyncDir, "progress")),
       maxSubagentDepth,
-      toolBudget: params.toolBudget,
-      projectAgentCaptures: params.projectAgentCaptures,
+      projectAgentIdentities: params.projectAgentIdentities,
+      ticketBodies: params.ticketBodies,
     });
   } catch (error) {
     try {
@@ -886,6 +818,7 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
   const { plan, runnerCwd } = built;
   const telemetry = initialAsyncTelemetry({
     id,
+    execution: params.awaited ? "foreground" : "async",
     mode: "parallel",
     plan,
     provenance: params.telemetryProvenance,
@@ -893,26 +826,45 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
     startedAt: runStartedAt,
     lineage: params.telemetryLineage,
   });
-  const tkTicketContext = resolveTkTicketTaskContext({
-    runnerCwd,
-    tasks: tasks.map((task) => ({ agent: task.agent, task: task.task ?? "", cwd: task.cwd })),
-  });
-  const tkTicket = tkTicketContext
-    ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
-    : undefined;
   const projectAgents = [
     ...new Map(
-      params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? [],
+      params.projectAgentIdentities?.map((identity) => [
+        `${identity.slug}\0${identity.root}\0${identity.cwd}`,
+        identity,
+      ]) ?? [],
     ).values(),
   ];
   const flatAgents = plan.kind === "parallel" ? plan.tasks.map((task) => task.agent) : [];
   const firstTask = plan.kind === "parallel" ? plan.tasks[0] : undefined;
+  const resultPath = path.join(RESULTS_DIR, `${id}.json`);
+  const awaitedOwner =
+    params.awaited === true
+      ? createAwaitedRunOwner({
+          id,
+          asyncDir,
+          resultPath,
+          mode: "parallel",
+          plan,
+          events: ctx.pi.events,
+          sessionId: ctx.currentSessionId,
+          cwd: runnerCwd,
+          expectedGeneration: 0,
+          signal: params.signal,
+          onUpdate: params.onUpdate,
+        })
+      : undefined;
 
-  let spawnResult: { pid?: number; error?: string };
+  if (awaitedOwner && params.signal?.aborted) {
+    void awaitedOwner.cancel();
+    return awaitedOwner.promise;
+  }
+
+  let spawnResult: { pid?: number; error?: string; ownership?: OwnedProcessGroupOwner };
   try {
     spawnResult = spawnRunner(
       {
         id,
+        ...(params.awaited === true ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         plan,
         resultPath: path.join(RESULTS_DIR, `${id}.json`),
@@ -926,8 +878,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
         piPackageRoot,
         piArgv1: process.argv[1],
         controlConfig,
-        toolBudget: params.toolBudget,
-        tkTicket,
         ...(projectAgents.length > 0 ? { projectAgents } : {}),
       },
       id,
@@ -935,17 +885,18 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return formatAsyncStartError("parallel", `Failed to start async parallel '${id}': ${message}`);
+    return awaitedOwner
+      ? awaitedOwner.fail(`Failed to start async parallel '${id}': ${message}`)
+      : formatAsyncStartError("parallel", `Failed to start async parallel '${id}': ${message}`);
   }
 
   if (spawnResult.error) {
-    return formatAsyncStartError(
-      "parallel",
-      `Failed to start async parallel '${id}': ${spawnResult.error}`,
-    );
+    const message = `Failed to start async parallel '${id}': ${spawnResult.error}`;
+    return awaitedOwner ? awaitedOwner.fail(message) : formatAsyncStartError("parallel", message);
   }
 
   if (spawnResult.pid) {
+    awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
     ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id,
@@ -958,10 +909,11 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
       task: firstTask?.task?.slice(0, 50),
       cwd: runnerCwd,
       asyncDir,
-      ...(tkTicket ? { tkTicket } : {}),
       ...(projectAgents.length > 0 ? { projectAgents } : {}),
     });
   }
+
+  if (awaitedOwner) return awaitedOwner.promise;
 
   return {
     content: [
@@ -977,24 +929,26 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
       ...(telemetry ? { telemetry } : {}),
       asyncId: id,
       asyncDir,
-      ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
     },
   };
 }
 
-interface AsyncSingleRunnerPlanInputs {
+/** @internal Exposed for unit tests; not a stable public API. */
+export interface AsyncSingleRunnerPlanInputs {
   task: string;
   taskWithOutputInstruction: string;
   runnerCwd: string;
   systemPrompt: string;
   resolvedSkillNames: string[];
+  skillsWarning?: string;
   outputPath?: string;
   outputMode: "inline" | "file-only";
   /** Dispatch-time child-location snapshot; absent when cwd matches parent. */
   childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
 }
 
-interface AsyncSingleRunnerPlanBuildResult {
+/** @internal Exposed for unit tests; not a stable public API. */
+export interface AsyncSingleRunnerPlanBuildResult {
   buildPlan: () => Extract<SubagentRunPlan, { kind: "single" }>;
   effectiveTimeoutMs?: number;
   effectiveDeadlineAt?: number;
@@ -1002,11 +956,12 @@ interface AsyncSingleRunnerPlanBuildResult {
 
 /**
  * Resolve the synchronous single-run plan before handing ownership to the
- * detached runner. This keeps model, budget, and runtime policy resolution in
- * one synchronous launch seam while leaving filesystem and lifecycle effects
+ * detached runner. This keeps model and runtime policy resolution in one
+ * synchronous launch seam while leaving filesystem and lifecycle effects
  * with the caller.
  */
-function buildAsyncSingleRunnerPlan(
+/** @internal Exposed for unit tests; not a stable public API. */
+export function buildAsyncSingleRunnerPlan(
   params: AsyncSingleParams,
   inputs: AsyncSingleRunnerPlanInputs,
 ): AsyncSingleRunnerPlanBuildResult | { error: string } {
@@ -1023,9 +978,7 @@ function buildAsyncSingleRunnerPlan(
     contextUsage,
     contextPressure,
     contextPressureCrossedThresholds,
-    continuationAcceptance,
-    acceptance,
-    toolBudget,
+    priorTerminalResult,
     activeRuntimeMs,
     activeRuntimeCheckpointAt,
     projectAgent,
@@ -1033,19 +986,15 @@ function buildAsyncSingleRunnerPlan(
     maxSubagentDepth,
   } = params;
   const {
-    task,
     taskWithOutputInstruction,
     runnerCwd,
     systemPrompt,
     resolvedSkillNames,
+    skillsWarning,
     outputPath,
     outputMode,
     childLocation,
   } = inputs;
-  const thinkingSuffixOptions = {
-    availableModels,
-    preferredModelProvider: ctx.currentModelProvider,
-  };
   const durableResume =
     persistedModelResolution !== undefined || restoredModelIdentity !== undefined;
   const explicitResumeModel =
@@ -1060,8 +1009,6 @@ function buildAsyncSingleRunnerPlan(
   const primaryModel = resolveSubagentModelOverride(
     requestedPrimaryModel,
     ctx.currentModel,
-    availableModels,
-    ctx.currentModelProvider,
     durableResume
       ? {
           scope: ctx.modelScope,
@@ -1072,57 +1019,20 @@ function buildAsyncSingleRunnerPlan(
   );
   const fallbackModels = buildFallbackModelList(providerFallbackModels, agentConfig.fallbackModels);
   const effectiveThinking = restoringModel ? restoredModelIdentity?.thinking : agentConfig.thinking;
-  const attemptNotes: string[] = [];
-  const thinkingDroppedModels: string[] = [];
-  const primaryThinkingDropped = Boolean(
-    getThinkingLevelDropNote(primaryModel, effectiveThinking, false, thinkingSuffixOptions),
-  );
-  appendThinkingDropNote(
-    attemptNotes,
-    thinkingDroppedModels,
-    primaryModel,
-    effectiveThinking,
-    thinkingSuffixOptions,
-  );
-  const model = applyThinkingSuffix(primaryModel, effectiveThinking, false, thinkingSuffixOptions);
-  if (
-    restoringModel &&
-    availableModels &&
-    availableModels.length > 0 &&
-    restoredModelIdentity &&
-    !availableModels.some((candidate) => candidate.fullId === primaryModel)
-  ) {
-    attemptNotes.push(
-      `Notice: Persisted model '${modelReferenceFromIdentity(restoredModelIdentity)}' was not present in the current model registry; retaining it so configured runtime fallback policy can apply.`,
-    );
-  }
+  const model = applyThinkingSuffix(primaryModel, effectiveThinking);
   const modelIdentity = canonicalSubagentModelIdentity(
     model,
-    primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
+    resolveEffectiveThinking(model, effectiveThinking),
   );
-  const candidatePlan = buildModelCandidatePlan(
-    primaryModel,
-    fallbackModels,
-    availableModels,
-    ctx.currentModelProvider,
-    {
-      scope: ctx.modelScope,
-      registry: params.modelRegistry,
-      ...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
-    },
+  const candidatePlan = buildModelCandidatePlan(primaryModel, fallbackModels, {
+    scope: ctx.modelScope,
+    ...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
+  });
+  const modelCandidates = deduplicateModelCandidates(
+    candidatePlan.candidates
+      .map((candidate) => applyThinkingSuffix(candidate, effectiveThinking))
+      .filter((candidate): candidate is string => candidate !== undefined),
   );
-  const modelCandidates = candidatePlan.candidates
-    .map((candidate) => {
-      appendThinkingDropNote(
-        attemptNotes,
-        thinkingDroppedModels,
-        candidate,
-        effectiveThinking,
-        thinkingSuffixOptions,
-      );
-      return applyThinkingSuffix(candidate, effectiveThinking, false, thinkingSuffixOptions);
-    })
-    .filter((candidate): candidate is string => candidate !== undefined);
   const modelThinking =
     modelIdentity?.thinking ??
     (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
@@ -1130,15 +1040,25 @@ function buildAsyncSingleRunnerPlan(
     ? {
         ...persistedModelResolution,
         ...(modelIdentity ? { resumed: modelIdentity } : {}),
-        reason: [persistedModelResolution.reason, ...scopeWarnings, ...attemptNotes].join(" "),
+        reason: [persistedModelResolution.reason, ...scopeWarnings].join(" "),
       }
     : undefined;
-  const toolBudgetInput = toolBudget ?? agentConfig.toolBudget;
-  const resolvedToolBudget = validateToolBudgetConfig(
-    toolBudgetInput,
-    toolBudget ? "toolBudget" : "agent.toolBudget",
-  );
-  if (resolvedToolBudget.error) return { error: resolvedToolBudget.error };
+  const normalizedTicketId = normalizeTicketId(params.ticketId, "ticketId");
+  if (normalizedTicketId.error) return { error: normalizedTicketId.error };
+  const normalizedInputTicket = normalizeTicketId(params.ticket, "ticket");
+  if (normalizedInputTicket.error) return { error: normalizedInputTicket.error };
+  let ticket: ReturnType<typeof readTicketBody> | undefined;
+  if (params.ticket !== undefined) {
+    const inputTicketId = normalizedInputTicket.ticketId;
+    if (!inputTicketId) return { error: "ticket is invalid." };
+    ticket =
+      params.ticketBody !== undefined
+        ? { ticketId: inputTicketId, body: params.ticketBody }
+        : readTicketBody(params.ticket, runnerCwd, "ticket");
+  }
+  if (ticket?.error) return { error: ticket.error };
+  const ticketId = ticket?.ticketId ?? normalizedTicketId.ticketId;
+
   const runtimePolicy = resolveAsyncSingleRuntimePolicy(agent, {
     activeRuntimeMs,
     activeRuntimeCheckpointAt,
@@ -1149,20 +1069,10 @@ function buildAsyncSingleRunnerPlan(
     activeRuntimeMs: resolvedActiveRuntimeMs,
     activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt,
     effectiveTimeoutMs,
+    roleBudgetMs,
     timeoutOwner,
     effectiveDeadlineAt,
   } = runtimePolicy;
-  const taskReference =
-    agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
-      ? inspectTkTicketReference(task)
-      : undefined;
-  const assignedTkTicketId =
-    taskReference?.kind === "valid"
-      ? taskReference.id
-      : taskReference?.kind === "absent"
-        ? (normalizeTkTicketId(params.inheritedTkTicketId) ??
-          normalizeTkTicketId(params.inheritedTkTicket?.id))
-        : undefined;
   return {
     buildPlan: () => ({
       kind: "single",
@@ -1171,7 +1081,8 @@ function buildAsyncSingleRunnerPlan(
         ...(projectAgent ? { projectAgent } : {}),
         agent,
         projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
-        ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : {}),
+        ...(ticketId ? { ticketId } : {}),
+        ...(ticket?.body !== undefined ? { ticketBody: ticket.body } : {}),
         task: taskWithOutputInstruction,
         cwd: runnerCwd,
         model,
@@ -1183,22 +1094,17 @@ function buildAsyncSingleRunnerPlan(
           canonicalDeveloper:
             agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig),
         }),
-        ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
-        ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
-        ...(candidatePlan.filteringNotice
-          ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
-          : {}),
         modelFallbackNotice,
         tools: agentConfig.tools,
         extensions: agentConfig.extensions,
         subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
-        completionGuard: agentConfig.completionGuard,
         supervisorBridge: agentConfig.supervisorBridge,
         systemPrompt,
         systemPromptMode: agentConfig.systemPromptMode,
         inheritProjectContext: agentConfig.inheritProjectContext,
         inheritSkills: agentConfig.inheritSkills,
         skills: resolvedSkillNames,
+        ...(skillsWarning ? { skillsWarning } : {}),
         outputPath,
         outputMode,
         sessionFile,
@@ -1222,25 +1128,14 @@ function buildAsyncSingleRunnerPlan(
           maxSubagentDepth,
           agentConfig.maxSubagentDepth,
         ),
-        effectiveAcceptance: continuationAcceptance
-          ? (mergeContinuationAcceptance(continuationAcceptance, acceptance) ??
-            continuationAcceptance)
-          : resolveEffectiveAcceptance({
-              explicit: acceptance,
-              agentName: agent,
-              acceptanceRole: agentConfig.acceptanceRole,
-              task,
-              mode: "single",
-              async: true,
-            }),
-        ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
-        ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
+        ...(roleBudgetMs !== undefined ? { timeoutMs: roleBudgetMs } : {}),
         ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(resolvedActiveRuntimeMs > 0 ? { activeRuntimeMs: resolvedActiveRuntimeMs } : {}),
         ...(resolvedActiveRuntimeCheckpointAt !== undefined
           ? { activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt }
           : {}),
         ...(childLocation ? { childLocation } : {}),
+        ...(priorTerminalResult ? { terminalResult: priorTerminalResult } : {}),
       },
     }),
     effectiveTimeoutMs,
@@ -1254,7 +1149,7 @@ function buildAsyncSingleRunnerPlan(
 export function executeAsyncSingle<T extends AsyncSingleParams>(
   id: string,
   params: T,
-): AsyncExecutionResult {
+): AsyncExecutionResult | Promise<AwaitedRunResult> {
   const {
     agent,
     agentConfig,
@@ -1270,9 +1165,6 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
   if (retiredNestedError) return formatAsyncStartError("single", retiredNestedError);
   const runStartedAt = Date.now();
   const task = params.task ?? "";
-  const acceptanceErrors = validateAsyncExecutionAcceptance({ acceptance: params.acceptance });
-  if (acceptanceErrors.length > 0)
-    return formatAsyncStartError("single", acceptanceErrors.join(" "));
   const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
   const childLocation = captureChildLocationSnapshot(ctx.cwd, runnerCwd);
   const skillNames = params.skills ?? agentConfig.skills ?? [];
@@ -1330,26 +1222,26 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     runnerCwd,
     systemPrompt,
     resolvedSkillNames: resolvedSkills.map((skill) => skill.name),
+    ...(missingSkills.length > 0
+      ? { skillsWarning: `Skills not found: ${missingSkills.join(", ")}` }
+      : {}),
     outputPath,
     outputMode,
     ...(childLocation ? { childLocation } : {}),
   });
-  if ("error" in launchPlan) return formatAsyncStartError("single", launchPlan.error);
-  const taskReference =
-    agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
-      ? inspectTkTicketReference(task)
-      : undefined;
-  const tkTicket = taskReference
-    ? taskReference.kind === "absent"
-      ? normalizeTkTicketMetadata(params.inheritedTkTicket)
-      : resolveTkTicketMetadata(task, { cwd: runnerCwd })
-    : detectTkTicketId(task)
-      ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
-      : normalizeTkTicketMetadata(params.inheritedTkTicket);
+  if ("error" in launchPlan) {
+    try {
+      fs.rmSync(asyncDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup for validation failures before the runner is spawned.
+    }
+    return formatAsyncStartError("single", launchPlan.error);
+  }
   const { buildPlan, effectiveTimeoutMs, effectiveDeadlineAt } = launchPlan;
   const plan = buildPlan();
   const telemetry = initialAsyncTelemetry({
     id,
+    execution: params.awaited ? "foreground" : "async",
     mode: "single",
     plan,
     provenance: params.telemetryProvenance,
@@ -1357,11 +1249,35 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     startedAt: runStartedAt,
     lineage: params.telemetryLineage,
   });
-  let spawnResult: { pid?: number; error?: string };
+  const resultPath = path.join(RESULTS_DIR, `${id}.json`);
+  const awaitedOwner =
+    params.awaited === true
+      ? createAwaitedRunOwner({
+          id,
+          asyncDir,
+          resultPath,
+          mode: "single",
+          plan,
+          events: ctx.pi.events,
+          sessionId: ctx.currentSessionId,
+          cwd: runnerCwd,
+          expectedGeneration: 0,
+          signal: params.signal,
+          onUpdate: params.onUpdate,
+        })
+      : undefined;
+
+  if (awaitedOwner && params.signal?.aborted) {
+    void awaitedOwner.cancel();
+    return awaitedOwner.promise;
+  }
+
+  let spawnResult: { pid?: number; error?: string; ownership?: OwnedProcessGroupOwner };
   try {
     spawnResult = spawnRunner(
       {
         id,
+        ...(params.awaited === true ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         plan,
         resultPath: path.join(RESULTS_DIR, `${id}.json`),
@@ -1378,8 +1294,6 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
         // Async singles retain a role-derived root deadline so the runner's
         // segment timer and the role step timeout describe the same budget.
         ...(effectiveDeadlineAt !== undefined ? { deadlineAt: effectiveDeadlineAt } : {}),
-        toolBudget: params.toolBudget,
-        tkTicket,
         ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
         ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
       },
@@ -1388,17 +1302,18 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
+    return awaitedOwner
+      ? awaitedOwner.fail(`Failed to start async run '${id}': ${message}`)
+      : formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
   }
 
   if (spawnResult.error) {
-    return formatAsyncStartError(
-      "single",
-      `Failed to start async run '${id}': ${spawnResult.error}`,
-    );
+    const message = `Failed to start async run '${id}': ${spawnResult.error}`;
+    return awaitedOwner ? awaitedOwner.fail(message) : formatAsyncStartError("single", message);
   }
 
   if (spawnResult.pid) {
+    awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
     ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id,
@@ -1410,13 +1325,14 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
       task: task?.slice(0, 50),
       cwd: runnerCwd,
       asyncDir,
-      ...(tkTicket ? { tkTicket } : {}),
       ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
       ...(effectiveTimeoutMs !== undefined
         ? { timeoutMs: effectiveTimeoutMs, deadlineAt: effectiveDeadlineAt }
         : {}),
     });
   }
+
+  if (awaitedOwner) return awaitedOwner.promise;
 
   return {
     content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
@@ -1430,7 +1346,6 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
       ...(effectiveTimeoutMs !== undefined
         ? { timeoutMs: effectiveTimeoutMs, deadlineAt: effectiveDeadlineAt }
         : {}),
-      ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
     },
   };
 }

@@ -138,7 +138,7 @@ describe("async per-step cwd from real producer chain (BUG-02)", () => {
       statusPayload.state = "complete";
       statusPayload.steps[0]!.status = "complete";
       statusPayload.steps[0]!.sessionFile = sessionFile;
-      delete (statusPayload as Record<string, unknown>).pid;
+      Reflect.deleteProperty(statusPayload, "pid");
       fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(statusPayload));
 
       const target = resolveAsyncResumeTarget(
@@ -216,7 +216,7 @@ describe("async per-step cwd from real producer chain (BUG-02)", () => {
       statusPayload.state = "complete";
       statusPayload.steps[0]!.status = "complete";
       statusPayload.steps[0]!.sessionFile = sessionFile;
-      delete (statusPayload as Record<string, unknown>).pid;
+      Reflect.deleteProperty(statusPayload, "pid");
       fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(statusPayload));
 
       const target = resolveAsyncResumeTarget(

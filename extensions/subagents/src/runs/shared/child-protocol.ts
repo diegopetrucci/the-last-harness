@@ -34,7 +34,7 @@ export const CHILD_PROTOCOL_HARD_KILL_GRACE_MS = 3000;
 export const MAX_CHILD_ERROR_BYTES = 8 * 1024;
 
 /** Maximum encoded bytes retained in the in-memory message history per child. */
-export const MAX_CHILD_RETAINED_MESSAGE_BYTES = 32 * 1024 * 1024;
+const MAX_CHILD_RETAINED_MESSAGE_BYTES = 32 * 1024 * 1024;
 
 const MAX_PROTOCOL_DIAGNOSTIC_BYTES = 4096;
 const CHILD_ERROR_TRUNCATION_MARKER = " … [child error truncated; full diagnostic is unavailable]";
@@ -46,7 +46,7 @@ const STDERR_TAIL_ERROR_TRUNCATION_MARKER =
 const RAW_STDOUT_TRUNCATION_MARKER =
   "[stdout truncated: showing the bounded prefix; later child output was dropped]";
 
-export type ChildTerminalReason = "output_limit" | "timed_out" | "interrupted" | "paused";
+type ChildTerminalReason = "output_limit" | "timed_out" | "interrupted" | "paused";
 
 export interface ChildTerminalReasonLatch {
   reason?: ChildTerminalReason;
@@ -67,7 +67,7 @@ export function claimChildTerminalReason(
  * fields remain on the object so raw durable artifacts stay useful, but the
  * fields used by orchestration are narrowed before a runner sees the event.
  */
-export type ChildProtocolMessage = Message & {
+type ChildProtocolMessage = Message & {
   provider?: string;
   model?: string;
   errorMessage?: string;
@@ -212,7 +212,7 @@ function isChildProtocolMessage(value: unknown): value is ChildProtocolMessage {
   return false;
 }
 
-export interface BoundedMessageLedger {
+interface BoundedMessageLedger {
   bytes: number;
   sizes: number[];
 }
@@ -252,7 +252,7 @@ export function childUsageNumber(value: unknown, ...keys: string[]): number {
   return 0;
 }
 
-/** Validate the exact event shapes consumed by foreground/background runners. */
+/** Validate the exact event shapes consumed by the subagent runner. */
 export function isChildProtocolEvent(value: unknown): value is ChildProtocolEvent {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   switch (value.type) {
@@ -282,7 +282,7 @@ export function isChildProtocolEvent(value: unknown): value is ChildProtocolEven
 }
 
 /** Classification of one line at the child stdout boundary. */
-export type ChildProtocolLine =
+type ChildProtocolLine =
   | { kind: "event"; event: ChildProtocolEvent }
   | { kind: "unknown"; value: Record<string, unknown> }
   | { kind: "raw" };
@@ -511,7 +511,7 @@ function trimToUtf8Boundary(buffer: Buffer, maxBytes: number): Buffer {
   return buffer.subarray(start);
 }
 
-export interface BoundedByteTail {
+interface BoundedByteTail {
   push(chunk: Buffer | string): void;
   text(): string;
   byteLength(): number;
@@ -549,7 +549,7 @@ export function createBoundedByteTail(maxBytes = MAX_CHILD_STDERR_BYTES): Bounde
   };
 }
 
-export interface BoundedBytePrefix {
+interface BoundedBytePrefix {
   push(chunk: Buffer | string): void;
   text(): string;
   byteLength(): number;

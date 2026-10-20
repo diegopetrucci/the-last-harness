@@ -3,7 +3,7 @@ import * as trackerModImport from "../../src/runs/background/async-job-tracker.t
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { scaleTestTimeout } from "./scale-timeout.ts";
-import type { AsyncStatusQuarantineOptions } from "../../src/runs/background/async-status-quarantine.ts";
+import type { AsyncStatusReadOptions } from "../../src/shared/utils.ts";
 
 export interface AsyncJobTrackerModule {
   createAsyncJobTracker(
@@ -16,9 +16,8 @@ export interface AsyncJobTrackerModule {
       resultsDir?: string;
       kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
       now?: () => number;
+      statusRead?: AsyncStatusReadOptions;
       fs?: Pick<typeof fs, "statSync" | "openSync" | "readSync" | "closeSync">;
-      /** Typed from production AsyncStatusQuarantineOptions. */
-      quarantine?: AsyncStatusQuarantineOptions;
     },
   ): {
     ensurePoller(): void;
@@ -39,7 +38,6 @@ export function createState() {
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {

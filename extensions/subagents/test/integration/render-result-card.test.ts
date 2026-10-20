@@ -56,109 +56,6 @@ function withTerminalRows<T>(rows: number, fn: () => T): T {
 }
 
 describe("renderSubagentResult", () => {
-  it("shows a resolved foreground tk ticket once while active in compact and expanded cards", () => {
-    const result = {
-      agent: "worker",
-      task: "Run `tk show psr-raw4` first.",
-      exitCode: 0,
-      usage: emptyUsage,
-      tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-      progress: {
-        index: 0,
-        agent: "worker",
-        status: "running" as const,
-        task: "Run `tk show psr-raw4` first.",
-        recentTools: [],
-        recentOutput: [],
-        toolCount: 1,
-        tokens: 0,
-        durationMs: 10,
-      },
-    };
-    for (const expanded of [false, true]) {
-      const text = renderSubagentResult!(
-        {
-          content: [{ type: "text", text: "running" }],
-          details: { mode: "single", results: [result] },
-        },
-        { expanded },
-        theme,
-      )
-        .render(120)
-        .join("\n");
-      assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
-    }
-
-    const completedText = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "done" }],
-        details: {
-          mode: "single",
-          results: [{ ...result, progress: { ...result.progress, status: "completed" } }],
-        },
-      },
-      { expanded: false },
-      theme,
-    )
-      .render(120)
-      .join("\n");
-    assert.doesNotMatch(completedText, /ticket: Show active tk title/);
-  });
-
-  it("shows one foreground tk ticket indicator for active parallel children", () => {
-    const text = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: {
-          mode: "parallel",
-          totalSteps: 2,
-          results: [
-            {
-              agent: "ticketed",
-              task: "Run `tk show psr-raw4` first.",
-              exitCode: 0,
-              usage: emptyUsage,
-              tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-              progress: {
-                index: 0,
-                agent: "ticketed",
-                status: "running",
-                task: "ticket",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-            {
-              agent: "plain",
-              task: "Review the result.",
-              exitCode: 0,
-              usage: emptyUsage,
-              progress: {
-                index: 1,
-                agent: "plain",
-                status: "running",
-                task: "plain",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-          ],
-        },
-      },
-      { expanded: false },
-      theme,
-    )
-      .render(140)
-      .join("\n");
-    assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
-  });
-
   it("ignores sparse historical result entries while preserving logical row indexes", () => {
     const validResult = {
       agent: "reviewer",
@@ -203,7 +100,7 @@ describe("renderSubagentResult", () => {
     assert.equal(sparseResults[1], validResult);
   });
 
-  it("renders one live-detail hint after all running foreground result rows", () => {
+  it("renders one live-detail hint after all running awaited result rows", () => {
     const text = withTerminalWidth(140, () =>
       renderSubagentResult!(
         {
@@ -217,7 +114,6 @@ describe("renderSubagentResult", () => {
                 task: "Review the change.",
                 exitCode: 0,
                 usage: emptyUsage,
-                tkTicket: { id: "tlhf-first", title: "First ticket" },
                 progress: {
                   index: 0,
                   agent: "reviewer",
@@ -252,7 +148,7 @@ describe("renderSubagentResult", () => {
                 },
               },
             ],
-            artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
+            artifacts: { dir: "/tmp/awaited-artifacts", files: [] },
           },
         },
         { expanded: false },
@@ -265,15 +161,14 @@ describe("renderSubagentResult", () => {
     const lines = text.split("\n");
     const hintLines = lines.filter((line) => line.includes(liveDetailHint));
     assert.equal(hintLines.length, 1, "concurrent running rows should share one live-detail hint");
-    assert.match(text, /artifacts: \/tmp\/foreground-artifacts/);
+    assert.match(text, /artifacts: \/tmp\/awaited-artifacts/);
 
     const reviewerRowIndex = lines.findIndex((line) => line.includes("reviewer"));
-    const reviewerTicketIndex = lines.findIndex((line) => line.includes("ticket: First ticket"));
     const reviewerActivityIndex = lines.findIndex((line) => line.includes("read: reviewer.ts"));
     const writerRowIndex = lines.findIndex((line) => line.includes("writer"));
     const writerActivityIndex = lines.findIndex((line) => line.includes("write: writer.ts"));
     const artifactsIndex = lines.findIndex((line) =>
-      line.includes("artifacts: /tmp/foreground-artifacts"),
+      line.includes("artifacts: /tmp/awaited-artifacts"),
     );
     const hintIndex = lines.findIndex((line) => line.includes(liveDetailHint));
 
@@ -281,18 +176,17 @@ describe("renderSubagentResult", () => {
     assert.match(
       lines[reviewerActivityIndex] ?? "",
       /^ {6}read: reviewer\.ts$/,
-      "foreground parallel activity must keep the exact 7-space column",
+      "awaited parallel activity must keep the exact 7-space column",
     );
     assert.match(
       lines[writerActivityIndex] ?? "",
       /^ {6}write: writer\.ts$/,
-      "second foreground parallel activity must keep the exact 7-space column",
+      "second awaited parallel activity must keep the exact 7-space column",
     );
-    assert.doesNotMatch(text, /⎿/, "foreground parallel rendering must not add the branch glyph");
-    assert.ok(reviewerTicketIndex > reviewerRowIndex, "ticket should remain under its agent row");
+    assert.doesNotMatch(text, /⎿/, "awaited parallel rendering must not add the branch glyph");
     assert.ok(
-      reviewerActivityIndex > reviewerTicketIndex,
-      "first agent activity should remain after its ticket",
+      reviewerActivityIndex > reviewerRowIndex,
+      "first agent activity should remain in its row",
     );
     assert.ok(writerRowIndex !== -1, "second agent row should be present");
     assert.ok(
@@ -357,7 +251,7 @@ describe("renderSubagentResult", () => {
                   },
                 },
               ],
-              artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
+              artifacts: { dir: "/tmp/awaited-artifacts", files: [] },
             },
           },
           { expanded: false },
@@ -428,7 +322,7 @@ describe("renderSubagentResult", () => {
                   },
                 },
               ],
-              artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
+              artifacts: { dir: "/tmp/awaited-artifacts", files: [] },
             },
           },
           { expanded: false },
@@ -492,144 +386,6 @@ describe("renderSubagentResult", () => {
     const lines = text.split("\n");
     assert.ok(lines.length <= 5, "tiny collapsed output should respect the line budget");
     assert.doesNotMatch(text, /Press|live detail|for live/);
-  });
-
-  it("indents the ticket line deeper than its agent row in multi-agent compact output", () => {
-    const text = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: {
-          mode: "parallel",
-          totalSteps: 2,
-          results: [
-            {
-              agent: "ticketed",
-              task: "Run `tk show psr-ndnt` first.",
-              exitCode: 0,
-              usage: emptyUsage,
-              tkTicket: { id: "psr-ndnt", title: "Indent ticket under agent" },
-              progress: {
-                index: 0,
-                agent: "ticketed",
-                status: "running",
-                task: "ticket",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-            {
-              agent: "plain",
-              task: "Review the result.",
-              exitCode: 0,
-              usage: emptyUsage,
-              progress: {
-                index: 1,
-                agent: "plain",
-                status: "running",
-                task: "plain",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-          ],
-        },
-      },
-      { expanded: false },
-      theme,
-    )
-      .render(140)
-      .join("\n");
-
-    const lines = text.split("\n");
-    const agentLineIndex = lines.findIndex((l) => l.includes("ticketed"));
-    const ticketLineIndex = lines.findIndex((l) => l.includes("ticket: Indent ticket under agent"));
-    assert.ok(agentLineIndex !== -1, "agent row should be present");
-    assert.ok(ticketLineIndex !== -1, "ticket line should be present");
-    assert.ok(ticketLineIndex > agentLineIndex, "ticket line should appear after agent row");
-
-    const agentLine = lines[agentLineIndex]!;
-    const ticketLine = lines[ticketLineIndex]!;
-    const agentIndent = agentLine.length - agentLine.trimStart().length;
-    const ticketIndent = ticketLine.length - ticketLine.trimStart().length;
-    assert.ok(
-      ticketIndent > agentIndent,
-      `ticket line indent (${ticketIndent}) should exceed agent row indent (${agentIndent})`,
-    );
-  });
-
-  it("indents the ticket line deeper than its agent row in multi-agent expanded output", () => {
-    const text = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: {
-          mode: "parallel",
-          totalSteps: 2,
-          results: [
-            {
-              agent: "ticketed",
-              task: "Run `tk show psr-xpnd` first.",
-              exitCode: 0,
-              usage: emptyUsage,
-              tkTicket: { id: "psr-xpnd", title: "Expanded indent ticket" },
-              progress: {
-                index: 0,
-                agent: "ticketed",
-                status: "running",
-                task: "ticket",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-            {
-              agent: "plain",
-              task: "Review the result.",
-              exitCode: 0,
-              usage: emptyUsage,
-              progress: {
-                index: 1,
-                agent: "plain",
-                status: "running",
-                task: "plain",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-          ],
-        },
-      },
-      { expanded: true },
-      theme,
-    )
-      .render(140)
-      .join("\n");
-
-    const lines = text.split("\n");
-    const agentLineIndex = lines.findIndex((l) => l.includes("ticketed"));
-    const ticketLineIndex = lines.findIndex((l) => l.includes("ticket: Expanded indent ticket"));
-    assert.ok(agentLineIndex !== -1, "agent row should be present");
-    assert.ok(ticketLineIndex !== -1, "ticket line should be present");
-    assert.ok(ticketLineIndex > agentLineIndex, "ticket line should appear after agent row");
-
-    const agentLine = lines[agentLineIndex]!;
-    const ticketLine = lines[ticketLineIndex]!;
-    const agentIndent = agentLine.length - agentLine.trimStart().length;
-    const ticketIndent = ticketLine.length - ticketLine.trimStart().length;
-    assert.ok(
-      ticketIndent > agentIndent,
-      `ticket line indent (${ticketIndent}) should exceed agent row indent (${agentIndent})`,
-    );
   });
 
   it("suppresses visible body lines for initial async-start placeholders", () => {

@@ -1,4 +1,4 @@
-import { normalizeActiveRuntimeMs } from "../runs/shared/lifecycle-state.ts";
+import { normalizeActiveRuntimeMs } from "../runs/shared/active-runtime.ts";
 
 export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = 14_400_000;
 

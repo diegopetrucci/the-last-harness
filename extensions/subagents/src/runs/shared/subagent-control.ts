@@ -8,15 +8,25 @@ import {
   type ControlNotificationChannel,
   type ResolvedControlConfig,
 } from "../../shared/types.ts";
-import { normalizeIdleEpisodeId } from "./health-transition.ts";
 
 const CONTROL_EVENT_TYPES: ControlEventType[] = ["needs_attention"];
+
+export function normalizeIdleEpisodeId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (
+    [...value].some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code < 0x20 || code > 0x7e;
+    })
+  )
+    return undefined;
+  const normalized = value.trim();
+  return normalized.length === 0 || normalized.length > 128 ? undefined : normalized;
+}
 const CONTROL_NOTIFICATION_CHANNELS: ControlNotificationChannel[] = ["event", "async"];
 type ControlEventReason = NonNullable<ControlEvent["reason"]>;
 const CONTROL_EVENT_REASONS: Record<ControlEventReason, true> = {
   idle: true,
-  completion_guard: true,
-  tool_failures: true,
   context_pressure: true,
 };
 
@@ -31,7 +41,6 @@ const RETIRED_CONTROL_EVENT_TYPES = ["active_long_running"] as const;
 export const DEFAULT_CONTROL_CONFIG: ResolvedControlConfig = {
   enabled: true,
   needsAttentionAfterMs: 180_000,
-  failedToolAttemptsBeforeAttention: 3,
   notifyOn: DEFAULT_NOTIFY_ON,
   notifyChannels: DEFAULT_NOTIFY_CHANNELS,
 };
@@ -72,10 +81,6 @@ export function resolveControlConfig(
     parsePositiveInt(override?.needsAttentionAfterMs) ??
     parsePositiveInt(globalConfig?.needsAttentionAfterMs) ??
     DEFAULT_CONTROL_CONFIG.needsAttentionAfterMs;
-  const failedToolAttemptsBeforeAttention =
-    parsePositiveInt(override?.failedToolAttemptsBeforeAttention) ??
-    parsePositiveInt(globalConfig?.failedToolAttemptsBeforeAttention) ??
-    DEFAULT_CONTROL_CONFIG.failedToolAttemptsBeforeAttention;
   const notifyOn =
     parseControlList(override?.notifyOn, CONTROL_EVENT_TYPES, RETIRED_CONTROL_EVENT_TYPES) ??
     parseControlList(globalConfig?.notifyOn, CONTROL_EVENT_TYPES, RETIRED_CONTROL_EVENT_TYPES) ??
@@ -87,7 +92,6 @@ export function resolveControlConfig(
   return {
     enabled,
     needsAttentionAfterMs,
-    failedToolAttemptsBeforeAttention,
     notifyOn: [...notifyOn],
     notifyChannels: [...notifyChannels],
   };
@@ -99,10 +103,11 @@ export function deriveActivityState(input: {
   lastActivityAt?: number;
   toolCallInFlight?: boolean;
   now?: number;
+  compactionInFlight?: boolean;
 }): ActivityState | undefined {
-  if (!input.config.enabled || input.toolCallInFlight) return undefined;
+  if (!input.config.enabled || input.toolCallInFlight || input.compactionInFlight) return undefined;
   const now = input.now ?? Date.now();
-  const lastActivity = input.lastActivityAt ?? input.startedAt;
+  const lastActivity = Math.max(input.startedAt, input.lastActivityAt ?? input.startedAt);
   const ageMs = Math.max(0, now - lastActivity);
   return ageMs > input.config.needsAttentionAfterMs ? "needs_attention" : undefined;
 }
@@ -127,7 +132,6 @@ export function buildControlEvent(input: {
   currentToolDurationMs?: number;
   currentPath?: string;
   elapsedMs?: number;
-  recentFailureSummary?: string;
   idleEpisodeId?: string;
 }): ControlEvent {
   const ts = input.ts ?? Date.now();
@@ -138,7 +142,8 @@ export function buildControlEvent(input: {
       ? normalizeIdleEpisodeId(input.idleEpisodeId)
       : undefined;
   const elapsedMs =
-    input.elapsedMs ?? (input.lastActivityAt ? Math.max(0, ts - input.lastActivityAt) : undefined);
+    input.elapsedMs ??
+    (input.lastActivityAt !== undefined ? Math.max(0, ts - input.lastActivityAt) : undefined);
   const elapsedSeconds = elapsedMs !== undefined ? Math.floor(elapsedMs / 1000) : undefined;
   const message =
     input.message ??
@@ -171,7 +176,6 @@ export function buildControlEvent(input: {
       : {}),
     ...(input.currentPath ? { currentPath: input.currentPath } : {}),
     ...(elapsedMs !== undefined ? { elapsedMs } : {}),
-    ...(input.recentFailureSummary ? { recentFailureSummary: input.recentFailureSummary } : {}),
   };
 }
 
@@ -179,7 +183,7 @@ export function shouldNotifyControlEvent(
   config: ResolvedControlConfig,
   event: ControlEvent,
 ): boolean {
-  return config.enabled && config.notifyOn.includes(event.type);
+  return config.enabled && config.notifyChannels.length > 0 && config.notifyOn.includes(event.type);
 }
 
 /** Parse the untrusted JSON event boundary while retaining pressure identity. */
@@ -220,7 +224,9 @@ export function parseControlEvent(value: unknown): ControlEvent | undefined {
     ts: raw.ts,
     runId: raw.runId,
     agent: raw.agent,
-    ...(typeof raw.index === "number" && Number.isInteger(raw.index) ? { index: raw.index } : {}),
+    ...(typeof raw.index === "number" && Number.isSafeInteger(raw.index) && raw.index >= 0
+      ? { index: raw.index }
+      : {}),
     message: raw.message,
     ...(severity ? { contextPressureSeverity: severity } : {}),
     ...(threshold ? { contextPressureThreshold: threshold } : {}),
@@ -233,9 +239,6 @@ export function parseControlEvent(value: unknown): ControlEvent | undefined {
     ...(currentToolDurationMs !== undefined ? { currentToolDurationMs } : {}),
     ...(typeof raw.currentPath === "string" ? { currentPath: raw.currentPath } : {}),
     ...(elapsedMs !== undefined ? { elapsedMs } : {}),
-    ...(typeof raw.recentFailureSummary === "string"
-      ? { recentFailureSummary: raw.recentFailureSummary }
-      : {}),
   };
 }
 
@@ -266,15 +269,6 @@ export function claimControlNotification(
 
 export function formatControlNoticeMessage(event: ControlEvent): string {
   const runTarget = event.runId;
-  if (event.reason === "completion_guard") {
-    return [
-      `Subagent failed: ${event.agent}`,
-      `Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
-      `Signal: ${event.message}`,
-      "Next: read the output artifact or session from the subagent result, then retry with a more explicit implementation prompt or handle the fix directly.",
-    ].join("\n");
-  }
-
   if (event.reason === "context_pressure") {
     return [
       `Subagent context pressure: ${event.agent}`,
@@ -292,7 +286,6 @@ export function formatControlNoticeMessage(event: ControlEvent): string {
     `Subagent needs attention: ${event.agent}`,
     `Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
     `Signal: ${event.message}`,
-    ...(event.recentFailureSummary ? [`Recent failures: ${event.recentFailureSummary}`] : []),
     "Hint: Inspect status first unless the run is clearly blocked. Live async nudges interrupt the child before sending the follow-up.",
     `Nudge: ${nudgeCommand}`,
     `Status: subagent({ action: "status", id: "${runTarget}" })`,

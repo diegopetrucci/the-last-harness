@@ -280,6 +280,18 @@ function backupPathFor(settingsPath) {
 function assertNotNormalPiSettings(settingsPath) {
     assertNotInNormalPiConfig(settingsPath, `Refusing to modify normal Pi config from The Last Harness defaults command: ${settingsPath}`);
 }
+function scrubRetiredTlhSettings(settings) {
+    let changed = false;
+    if (isPlainObject(settings.subagents) && isPlainObject(settings.subagents.agentOverrides)) {
+        for (const value of Object.values(settings.subagents.agentOverrides)) {
+            if (!isPlainObject(value) || !Object.hasOwn(value, "toolBudget"))
+                continue;
+            delete value.toolBudget;
+            changed = true;
+        }
+    }
+    return changed;
+}
 function writeSettings(settingsPath, value, previousRaw) {
     const formatted = `${JSON.stringify(value, null, 2)}\n`;
     if (formatted === previousRaw)
@@ -539,11 +551,13 @@ function main() {
         return;
     }
     ensureMutableSettings(settings);
+    const beforeScrub = JSON.stringify(settings);
+    scrubRetiredTlhSettings(settings);
     if (args.command === "disable") {
         const id = args.commandArgs[0];
         if (!id || args.commandArgs.length !== 1)
             throw new Error("Usage: tlh defaults disable <id>");
-        const before = JSON.stringify(settings);
+        const before = beforeScrub;
         const warningChanged = commandDisable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
         const changed = before !== JSON.stringify(settings);
@@ -561,7 +575,7 @@ function main() {
         const id = args.commandArgs[0];
         if (!id || args.commandArgs.length !== 1)
             throw new Error("Usage: tlh defaults enable <id>");
-        const before = JSON.stringify(settings);
+        const before = beforeScrub;
         const enabledExtension = findDefaultExtension(defaultExtensions, id);
         const mcpDecision = enabledExtension?.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID
             ? mcpCutoverDecision(settings, settingsPath, defaultExtensions, {

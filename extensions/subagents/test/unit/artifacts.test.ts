@@ -267,11 +267,11 @@ describe("writeArtifactWithFloor", () => {
     withTempDir((dir) => {
       const filePath = path.join(dir, "output.md");
       const computed =
-        "Implementation complete.\n\n---\nValidation evidence (from acceptance report):\n\n  [passed] npm test \u2014 passed\n---";
+        "Implementation complete.\n\n---\nValidation evidence:\n\n  [passed] npm test \u2014 passed\n---";
       writeArtifactWithFloor(
         filePath,
         computed,
-        "Implementation complete.\n\n```acceptance-report\n{...}\n```",
+        "Implementation complete.\n\n```child-output\n{...}\n```",
         false,
       );
       assert.equal(fs.readFileSync(filePath, "utf-8"), computed);

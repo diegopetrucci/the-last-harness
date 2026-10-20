@@ -8,6 +8,7 @@ import {
   type SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
 import {
+  buildPausedRunnerTelemetry,
   persistRunnerTerminalRun,
   type RunnerStepResult,
 } from "../../src/runs/background/terminal-persistence.ts";
@@ -17,16 +18,11 @@ import {
   type RunnerStatusPayload,
 } from "../../src/runs/background/run-status-owner.ts";
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
-import {
-  buildSkippedAcceptanceLedger,
-  resolveEffectiveAcceptance,
-} from "../../src/runs/shared/acceptance.ts";
 import type { ResolvedControlConfig, CostSummary, TokenUsage } from "../../src/shared/types.ts";
 
 const controls: ResolvedControlConfig = {
   enabled: true,
   needsAttentionAfterMs: 2_000,
-  failedToolAttemptsBeforeAttention: 3,
   notifyOn: ["needs_attention"],
   notifyChannels: ["event", "async"],
 };
@@ -272,17 +268,6 @@ describe("terminal persistence", () => {
     const resultPath = path.join(resultsDir, `${id}.json`);
     const sessionFile = path.join(root, "worker-session.jsonl");
     const oldPid = 4242;
-    const acceptance = buildSkippedAcceptanceLedger({
-      acceptance: resolveEffectiveAcceptance({
-        agentName: "worker",
-        task: "Resume the paused child.",
-        mode: "single",
-      }),
-      ledgerStatus: "skipped",
-      runtimeCheckStatus: "not-applicable",
-      id: "paused",
-      message: "Acceptance will run after resume.",
-    });
     const pause = {
       kind: "cohort_pause" as const,
       summary: "Paused after interrupt.",
@@ -310,11 +295,9 @@ describe("terminal persistence", () => {
       endedAt: 200,
       sessionFile,
       pause,
-      acceptance,
       processCleanup: { supported: true, attempted: true, terminated: true },
     }));
     owner.interrupted = true;
-    owner.pausedCheckpointCommitted = true;
     writeNormalizedLifecycleStatus(asyncDir, owner.statusPayload);
 
     const result: RunnerStepResult = {
@@ -325,7 +308,6 @@ describe("terminal persistence", () => {
       interrupted: true,
       sessionFile,
       pause,
-      acceptance,
     };
     persistRunnerTerminalRun({
       config: {
@@ -400,7 +382,6 @@ describe("terminal persistence", () => {
     );
     assert.equal(target.kind, "revive");
     assert.equal(target.sessionFile, sessionFile);
-    assert.equal(target.continuationAcceptance?.level, "checked");
     assert.equal(livenessProbes, 0);
   });
 
@@ -464,7 +445,10 @@ describe("terminal persistence", () => {
         state: string;
         lastUpdate?: number;
       };
-      assert.equal(persisted.state, adoptedState);
+      // The branch normalizes "continued" → "complete" on disk; "cancelled" is
+      // preserved as-is. Both cases must preserve the paused timestamp floor.
+      const expectedState = adoptedState === "continued" ? "complete" : adoptedState;
+      assert.equal(persisted.state, expectedState);
       assert.equal(persisted.lastUpdate, 120);
       assert.equal(owner.statusPayload.lastUpdate, 120);
     }
@@ -617,6 +601,115 @@ describe("terminal persistence", () => {
       terminationReason: "timed_out",
     });
   });
+
+  it("writes exitCode 1 and preserves cancel metadata for cancelled result artifacts", () => {
+    // Regression test: resultItems() was missing the step-level cancel field
+    // and the top-level exitCode was 0 instead of 1 for cancelled runs.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-terminal-persistence-cancel-"));
+    tempDirs.push(root);
+    const id = "terminal-cancel-exitcode";
+    const resultPath = path.join(root, "result.json");
+    const asyncDir = path.join(root, "async");
+    const cancel: import("../../src/shared/types.ts").AsyncCancellationMetadata = {
+      summary: "Cancelled by parent abort.",
+      cancelledAt: 150,
+    };
+    const statusPayload: RunnerStatusPayload = {
+      runId: id,
+      mode: "single",
+      state: "cancelled",
+      startedAt: 100,
+      endedAt: 150,
+      lastUpdate: 150,
+      cancel,
+      error: cancel.summary,
+      cwd: root,
+      currentStep: 0,
+      steps: [
+        {
+          agent: "worker",
+          status: "cancelled",
+          startedAt: 100,
+          endedAt: 150,
+          cancel,
+          terminationReason: "cancelled",
+          exitCode: 1,
+        },
+      ],
+    };
+    const statusOwner = Object.assign(
+      {} as Parameters<typeof persistRunnerTerminalRun>[0]["statusOwner"],
+      {
+        terminalReason: {},
+        interrupted: false,
+        timedOut: false,
+        supervisorPauseTransitionFailed: false,
+        concurrentTerminalStatusAdopted: false,
+        supervisorPauseRequest: undefined,
+        writeStatusPayload: () => {},
+      },
+    );
+    const result: RunnerStepResult = {
+      agent: "worker",
+      output: "cancelled output",
+      success: false,
+      exitCode: 1,
+      cancel,
+      terminationReason: "cancelled",
+    };
+    const events: Array<Record<string, unknown>> = [];
+    persistRunnerTerminalRun({
+      config: {
+        id,
+        plan: terminalPlan,
+        resultPath,
+        cwd: root,
+        artifactConfig: terminalArtifactConfig,
+        asyncDir,
+      },
+      plan: terminalPlan,
+      statusOwner,
+      statusPayload,
+      results: [result],
+      controlConfig: controls,
+      overallStartTime: 100,
+      runEndedAt: 150,
+      summary: "Cancelled by parent abort.",
+      truncated: false,
+      agentName: "worker",
+      resultPath,
+      cwd: root,
+      asyncDir,
+      skipFinalStatusWrite: true,
+      pausedOutputForIndex: () => "",
+      appendEvent: (line) => events.push(JSON.parse(line) as Record<string, unknown>),
+      writeRunLog: () => {},
+    });
+
+    assert.ok(fs.existsSync(resultPath), "result artifact must be written");
+    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf8")) as {
+      state: string;
+      exitCode: number;
+      results: Array<{
+        agent: string;
+        exitCode?: number;
+        cancel?: { summary: string; cancelledAt: number };
+      }>;
+    };
+    assert.equal(artifact.state, "cancelled");
+    assert.equal(artifact.exitCode, 1, "cancelled artifact top-level exitCode must be 1");
+    assert.equal(
+      artifact.results[0]?.cancel?.summary,
+      cancel.summary,
+      "step cancel.summary must be propagated into the result artifact",
+    );
+    assert.equal(
+      artifact.results[0]?.cancel?.cancelledAt,
+      cancel.cancelledAt,
+      "step cancel.cancelledAt must be propagated into the result artifact",
+    );
+    assert.equal(artifact.results[0]?.exitCode, 1, "step exitCode must be 1 for cancelled step");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -698,5 +791,92 @@ describe("runner result item carries per-child cwd (BUG-02)", () => {
       "result artifact step must carry the per-child cwd, not the run cwd",
     );
     assert.equal(artifact.cwd, runCwd, "result artifact top-level cwd must still be the run cwd");
+  });
+});
+
+describe("buildPausedRunnerTelemetry execution label", () => {
+  it("sets execution to 'foreground' for the first committed paused status of an awaited run", () => {
+    // Regression for P2: buildPausedRunnerTelemetry omitted the execution field, so
+    // awaited runs produced an atomic paused snapshot with execution='async'.
+    const config = {
+      id: "paused-awaited",
+      awaited: true,
+      plan: terminalPlan,
+      resultPath: "/tmp/paused-awaited.json",
+      cwd: "/tmp",
+      asyncDir: "/tmp",
+      artifactConfig: terminalArtifactConfig,
+      controlConfig: controls,
+      telemetry: {
+        schemaVersion: 1 as const,
+        run: { id: "paused-awaited", execution: "foreground" as const, mode: "single" as const },
+        steps: [],
+        provenance,
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention" as const],
+          notifyChannels: ["event" as const, "async" as const],
+        },
+      },
+    };
+    const result = buildPausedRunnerTelemetry({
+      config,
+      plan: terminalPlan,
+      results: [],
+      controlConfig: controls,
+      overallStartTime: 100,
+      endedAt: 200,
+      statusSteps: [],
+    });
+    assert.ok(result, "paused telemetry must be produced when provenance is present");
+    assert.equal(
+      result.run.execution,
+      "foreground",
+      "first committed paused status of an awaited run must carry execution='foreground'",
+    );
+    assert.equal(result.outcome?.state, "paused");
+  });
+
+  it("sets execution to 'async' for the first committed paused status of a non-awaited run", () => {
+    // Complement: a detached (non-awaited) run must still produce execution='async'.
+    const config = {
+      id: "paused-async",
+      awaited: false,
+      plan: terminalPlan,
+      resultPath: "/tmp/paused-async.json",
+      cwd: "/tmp",
+      asyncDir: "/tmp",
+      artifactConfig: terminalArtifactConfig,
+      controlConfig: controls,
+      telemetry: {
+        schemaVersion: 1 as const,
+        run: { id: "paused-async", execution: "async" as const, mode: "single" as const },
+        steps: [],
+        provenance,
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention" as const],
+          notifyChannels: ["event" as const, "async" as const],
+        },
+      },
+    };
+    const result = buildPausedRunnerTelemetry({
+      config,
+      plan: terminalPlan,
+      results: [],
+      controlConfig: controls,
+      overallStartTime: 100,
+      endedAt: 200,
+      statusSteps: [],
+    });
+    assert.ok(result, "paused telemetry must be produced when provenance is present");
+    assert.equal(
+      result.run.execution,
+      "async",
+      "first committed paused status of an async run must carry execution='async'",
+    );
+    assert.equal(result.outcome?.state, "paused");
   });
 });

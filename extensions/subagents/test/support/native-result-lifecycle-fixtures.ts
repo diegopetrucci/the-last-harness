@@ -5,15 +5,12 @@
  * fixtures. Each suite owns its mock process, temporary directory, and hooks.
  */
 
-import * as executorModImport from "../../src/runs/foreground/subagent-executor.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, type ArtifactPaths } from "../../src/shared/types.ts";
-import type { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
-import type { runSync } from "../../src/runs/foreground/execution.ts";
 import type { MockPi } from "./helpers.ts";
-import { makeAgent, makeMinimalCtx } from "./helpers.ts";
+import { makeAgent, makeMinimalCtx, tryImport } from "./helpers.ts";
 import { type ScaledMs, scaleTestTimeout } from "./scale-timeout.ts";
 import {
   startedMockPiPids,
@@ -38,7 +35,7 @@ export interface ExecutorResult {
       outputMode?: string;
       savedOutputPath?: string;
       outputSaveError?: string;
-      truncation?: { truncated?: boolean; text?: string };
+      truncation?: { truncated?: boolean };
       attemptedModels?: string[];
       modelFallbackNotice?: string;
       sessionFile?: string;
@@ -65,28 +62,23 @@ interface ExecutorModule {
 export interface NativeExecutorOptions {
   agents?: ReturnType<typeof makeAgent>[];
   config?: Record<string, unknown>;
+  /** Native-result suites exercise the awaited runner lifecycle. */
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-  runSync?: typeof runSync;
-  executeAsyncSingle?: typeof executeAsyncSingle;
 }
 
 export interface NativeExecutorState {
   baseCwd: string;
   currentSessionId: null;
   asyncJobs: Map<unknown, unknown>;
-  foregroundRuns: Map<string, unknown>;
-  foregroundControls: Map<string, unknown>;
-  lastForegroundControlId: string | null;
   cleanupTimers: Map<unknown, unknown>;
   lastUiContext: null;
   poller: null;
-  completionSeen: Map<unknown, unknown>;
   watcher: null;
   watcherRestartTimer: null;
   resultFileCoalescer: { schedule: () => boolean; clear: () => void };
 }
 
-const executorMod = executorModImport as ExecutorModule;
+const executorMod = await tryImport<ExecutorModule>("./src/extension/subagent-executor.ts");
 const createSubagentExecutor = executorMod.createSubagentExecutor;
 
 export function normalizePathForComparison(targetPath: string): string {
@@ -144,7 +136,7 @@ export interface AsyncStatusProbe {
   state?: string;
   currentStep?: number;
   sessionFile?: string;
-  steps?: Array<{ status?: string; sessionFile?: string; acceptance?: { status?: string } }>;
+  steps?: Array<{ status?: string; sessionFile?: string }>;
 }
 
 export async function waitForAsyncStatusPredicate(
@@ -211,13 +203,9 @@ export function makeNativeResultLifecycleExecutor(
     baseCwd: tempDir,
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null as string | null,
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {
@@ -236,10 +224,12 @@ export function makeNativeResultLifecycleExecutor(
     tempArtifactsDir: tempDir,
     getSubagentSessionRoot: () => tempDir,
     expandTilde: (value: string) => value,
-    discoverAgents: () => ({ agents: options.agents ?? [makeAgent("worker")] }),
+    discoverAgents: () => ({
+      agents: options.agents ?? [makeAgent("worker")],
+      // These suites assert the native envelope and lifecycle
+      // controls; opt into the documented bridge explicitly.
+    }),
     kill: options.kill,
-    runSync: options.runSync,
-    executeAsyncSingle: options.executeAsyncSingle,
   });
   return { executor, events, state };
 }
