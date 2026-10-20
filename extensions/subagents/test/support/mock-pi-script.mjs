@@ -562,6 +562,10 @@ async function main() {
   if (typeof response.delay === "number" && response.delay > 0) {
     await new Promise((resolve) => setTimeout(resolve, response.delay));
   }
+  if (typeof response.emitAtProcessUptimeMs === "number") {
+    const waitMs = response.emitAtProcessUptimeMs - process.uptime() * 1000;
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
 
   if (typeof response.rawStdout === "string") {
     await writeStdout(response.rawStdout);

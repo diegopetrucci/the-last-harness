@@ -12,7 +12,7 @@ import {
   removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { scaleTestTimeout, unscaledMs } from "../support/scale-timeout.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 import {
   ASYNC_DIR,
@@ -329,8 +329,16 @@ describe("async execution model restoration and fallback", () => {
           : undefined,
     },
     async () => {
+      // The deadline must fire after the child's context evidence is seen but
+      // inside the runner's fixed 1s final-stop grace (which would otherwise
+      // classify the run as context_exhausted). Scale the deadline for startup
+      // headroom and emit a fixed, unscaled gap before it, relative to child spawn. The gap must stay
+      // under the 1s grace; a wider gap tolerates a starved runner reading the line late.
+      const deadlineMs = scaleTestTimeout(1_500);
+      const deadlineGapMs = 800;
       mockPi.onCall({
         jsonl: highContextEmptyTerminalJsonl(),
+        emitAtProcessUptimeMs: deadlineMs - deadlineGapMs,
         keepAliveAfterFinalMessageMs: scaleTestTimeout(5_000),
       });
       const id = `async-context-timeout-boundary-${Date.now().toString(36)}`;
@@ -340,7 +348,7 @@ describe("async execution model restoration and fallback", () => {
         task: "Finish the edit before the deadline.",
         agentConfig: makeAgent("worker", {
           model: "mock/test-model",
-          maxExecutionTimeMs: unscaledMs(750),
+          maxExecutionTimeMs: deadlineMs,
         }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         availableModels: [
@@ -368,7 +376,11 @@ describe("async execution model restoration and fallback", () => {
       assert.equal(payload.state, "failed");
       assert.equal(child?.timedOut, true);
       assert.equal(child?.terminationReason, "timed_out");
-      assert.equal(child?.contextUsage?.contextPercent, 99);
+      assert.equal(
+        child?.contextUsage?.contextPercent,
+        99,
+        "context usage evidence must arrive before the deadline fires",
+      );
       assert.doesNotMatch(
         child?.error ?? "",
         /unfinished tool interaction under high context pressure/,

@@ -12,6 +12,12 @@ interface MockPiResponse {
   stderrByteChunks?: number[][];
   exitCode?: number;
   delay?: number;
+  /**
+   * Wait until the child process has been alive this long (`process.uptime()`,
+   * so loader startup counts) before emitting output. Makes emission land at a
+   * fixed offset from spawn regardless of startup cost.
+   */
+  emitAtProcessUptimeMs?: number;
   keepAliveAfterFinalMessageMs?: number;
   ignoreSigterm?: boolean;
   ignoreSigint?: boolean;
