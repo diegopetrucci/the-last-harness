@@ -493,6 +493,7 @@ describe("async execution lifecycle supervisor races", () => {
 
       let continuationRunId: string | undefined;
       let cleanupFailure: Error | undefined;
+      const watcherConsumedResultIds = new Set<string>();
       try {
         const sourceStart = executeAsyncSingle!(sourceRunId, {
           agent: "worker",
@@ -690,6 +691,13 @@ describe("async execution lifecycle supervisor races", () => {
           {},
         );
         try {
+          // The watcher unlinks result files it processes; record them so cleanup
+          // does not wait for files that no longer exist.
+          for (const id of [sourceRunId, continuationRunId]) {
+            if (id && fs.existsSync(path.join(RESULTS_DIR, `${id}.json`))) {
+              watcherConsumedResultIds.add(id);
+            }
+          }
           watcher.primeExistingResults();
           const deadline = Date.now() + scaleTestTimeout(10_000);
           while (
@@ -736,9 +744,9 @@ describe("async execution lifecycle supervisor races", () => {
         ];
         const cleanupTimeout = scaleTestTimeout(5_000);
         await Promise.all(
-          cleanupRunIds.map((id) =>
-            waitForAsyncResultFile(id, cleanupTimeout).catch(() => undefined),
-          ),
+          cleanupRunIds
+            .filter((id) => !watcherConsumedResultIds.has(id))
+            .map((id) => waitForAsyncResultFile(id, cleanupTimeout).catch(() => undefined)),
         );
 
         const collectOwnedPids = (): number[] => {
@@ -851,6 +859,7 @@ describe("async execution lifecycle supervisor races", () => {
       });
 
       let cleanupFailure: Error | undefined;
+      const watcherConsumedResultIds = new Set<string>();
       try {
         const started = executeAsyncSingle!(sourceRunId, {
           agent: "worker",
@@ -974,6 +983,13 @@ describe("async execution lifecycle supervisor races", () => {
           {},
         );
         try {
+          // The watcher unlinks result files it processes; record them so cleanup
+          // does not wait for files that no longer exist.
+          for (const id of [sourceRunId]) {
+            if (id && fs.existsSync(path.join(RESULTS_DIR, `${id}.json`))) {
+              watcherConsumedResultIds.add(id);
+            }
+          }
           watcher.primeExistingResults();
           const deadline = Date.now() + scaleTestTimeout(10_000);
           while (
@@ -1009,7 +1025,9 @@ describe("async execution lifecycle supervisor races", () => {
         // assertion fails. Never remove a live source lifecycle directory.
         fs.writeFileSync(releaseMarker, "", "utf-8");
         const cleanupTimeout = scaleTestTimeout(5_000);
-        await waitForAsyncResultFile(sourceRunId, cleanupTimeout).catch(() => undefined);
+        if (!watcherConsumedResultIds.has(sourceRunId)) {
+          await waitForAsyncResultFile(sourceRunId, cleanupTimeout).catch(() => undefined);
+        }
         const collectOwnedPids = (): number[] => {
           const pids = new Set<number>([...sourceRunnerPids, ...startedMockPiPids(mockPi)]);
           const persistedPid = readPersistedPid(sourceAsyncDir);
