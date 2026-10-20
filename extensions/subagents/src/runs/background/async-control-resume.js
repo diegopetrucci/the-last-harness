@@ -11,7 +11,7 @@ import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 import { resolveControlConfig } from "../shared/subagent-control.js";
 import { canonicalSubagentModelIdentity, modelReferenceFromIdentity, } from "../shared/model-fallback.js";
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.js";
-import { buildRevivedAsyncTask, continuationResumeBlock, resolveAsyncResumeTarget, } from "../background/async-resume.js";
+import { buildRevivedAsyncTask, continuationResumeBlock, readPersistedResultOwner, resolveAsyncResumeTarget, resolvePersistedOwner, } from "../background/async-resume.js";
 import { advanceLifecycleContinuation, checkPidLiveness, lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { childMessageAckPath, requestAsyncResume, waitForChildMessageAcceptance, } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
@@ -88,6 +88,23 @@ function resolveResumeTarget(params, _state, options = {}) {
         }),
     };
 }
+const OWNER_RECOVERY_GUIDANCE = "See docs/subagents.md#recovering-ownerless-or-foreign-runs for human-approved recovery.";
+function ownerRejectionMessage(runId) {
+    return `Async run '${runId}' is owned by another session and cannot be resumed from this session (a missing, malformed or conflicting persisted owner is also rejected). Reopen the original parent session. ${OWNER_RECOVERY_GUIDANCE}`;
+}
+function ownerRejectionResult(runId) {
+    return {
+        content: [{ type: "text", text: ownerRejectionMessage(runId) }],
+        isError: true,
+        details: { mode: "management", results: [] },
+    };
+}
+function isOwnedByCaller(owner, callerKey) {
+    return (typeof callerKey === "string" &&
+        callerKey.length > 0 &&
+        typeof owner === "string" &&
+        owner === callerKey);
+}
 function revivedPressureOptions(target, claimedPause) {
     return {
         ...(target.kind === "revive" && !claimedPause && "contextPressure" in target
@@ -98,21 +115,33 @@ function revivedPressureOptions(target, claimedPause) {
             : {}),
     };
 }
-function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiveContextWindow, options = {}) {
-    if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir)
+function revalidateOwnerEvidence(target, callerKey, statusOwner) {
+    const owner = resolvePersistedOwner(statusOwner, readPersistedResultOwner(RESULTS_DIR, target.runId));
+    if (owner === undefined || owner !== callerKey || owner !== target.ownerSessionId)
+        throw new Error(ownerRejectionMessage(target.runId));
+}
+function claimPausedAwaitingSupervisorTarget(target, continuationRunId, callerKey, effectiveContextWindow, options = {}) {
+    if (target.kind !== "revive")
         return undefined;
+    if (!("asyncDir" in target) || !target.asyncDir) {
+        revalidateOwnerEvidence(target, callerKey, undefined);
+        return undefined;
+    }
     const asyncDir = target.asyncDir;
     if (!fs.existsSync(asyncDir)) {
         if (target.state === "paused")
             throw new Error(`Paused run '${target.runId}' was not found.`);
+        revalidateOwnerEvidence(target, callerKey, undefined);
         return undefined;
     }
     const decision = withLifecycleStatusLock(asyncDir, (persisted) => {
         if (!persisted) {
             if (target.state === "paused")
                 throw new Error(`Paused run '${target.runId}' was not found.`);
+            revalidateOwnerEvidence(target, callerKey, undefined);
             return undefined;
         }
+        revalidateOwnerEvidence(target, callerKey, persisted.sessionId);
         let current = persisted;
         const recovered = recoverStaleLifecycleContinuationStatus(current, asyncDir, target.index);
         if (recovered.recovered)
@@ -175,6 +204,7 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiv
     if (!decision || "blockedMessage" in decision)
         return decision;
     return {
+        ownerSessionId: callerKey,
         asyncDir,
         claimToken: decision.claimToken,
         rollbackReserved: () => {
@@ -204,8 +234,8 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiv
 function asyncControlOwnedByCurrentSession(state, status) {
     return (typeof state.currentSessionId === "string" &&
         state.currentSessionId.length > 0 &&
-        typeof status.sessionId === "string" &&
-        status.sessionId === state.currentSessionId);
+        resolvePersistedOwner(status.sessionId, readPersistedResultOwner(RESULTS_DIR, status.runId)) ===
+            state.currentSessionId);
 }
 async function queueLiveAsyncResume(input) {
     if (!input.target.asyncDir) {
@@ -413,6 +443,9 @@ async function resolveResumeActionTarget(input) {
                     ? path.resolve(input.params.dir)
                     : null;
             const preResolutionStatus = preResolutionDir ? readStatus(preResolutionDir) : undefined;
+            if (preResolutionStatus?.state === "running" &&
+                !isOwnedByCaller(resolvePersistedOwner(preResolutionStatus.sessionId, readPersistedResultOwner(RESULTS_DIR, preResolutionStatus.runId)), input.callerKey))
+                return ownerRejectionResult(preResolutionStatus.runId);
             const hadLiveResumeIntent = Boolean(input.requestedFollowUp && preResolutionStatus?.state === "running");
             const asyncTarget = {
                 source: "async",
@@ -552,7 +585,8 @@ function preflightResumeContextPolicy(target, agentConfig, modelOverride, curren
 }
 export async function resumeAsyncRun(input) {
     const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
-    input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
+    const callerKey = resolveCurrentSessionId(input.ctx.sessionManager);
+    input.deps.state.currentSessionId = callerKey;
     const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
     let targetResolution;
     try {
@@ -564,6 +598,7 @@ export async function resumeAsyncRun(input) {
             deps: input.deps,
             requestCwd: input.requestCwd,
             parentSessionFile,
+            callerKey,
         });
     }
     catch (error) {
@@ -584,6 +619,8 @@ export async function resumeAsyncRun(input) {
     if ("content" in targetResolution)
         return targetResolution;
     const target = targetResolution;
+    if (target.kind === "revive" && !isOwnedByCaller(target.ownerSessionId, callerKey))
+        return ownerRejectionResult(target.runId);
     const resumeRestriction = await embeddedControlRestrictionError({
         action: "resume",
         targets: [resumeControlTarget(target)],
@@ -613,20 +650,6 @@ export async function resumeAsyncRun(input) {
     let persistedProjectAuthorization;
     const targetProjectIdentity = "projectAgent" in target ? target.projectAgent : undefined;
     if (targetProjectIdentity !== undefined) {
-        if (typeof input.deps.state.currentSessionId !== "string" ||
-            input.deps.state.currentSessionId.length === 0 ||
-            target.ownerSessionId !== input.deps.state.currentSessionId) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Async run '${target.runId}' is owned by another session and cannot be resumed from this session.`,
-                    },
-                ],
-                isError: true,
-                details: { mode: "management", results: [] },
-            };
-        }
         try {
             persistedProjectAuthorization = await authorizePersistedProjectAgentRun({
                 target,
@@ -667,7 +690,6 @@ export async function resumeAsyncRun(input) {
             details: { mode: "management", results: [] },
         };
     }
-    input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
     const effectiveCwd = persistedProjectAuthorization?.canonicalCwd ?? target.cwd ?? input.requestCwd;
     const scope = resolveExecutionAgentScope(input.params.agentScope);
     const discovered = persistedProjectAuthorization
@@ -716,7 +738,7 @@ export async function resumeAsyncRun(input) {
     const continuationRunId = randomUUID().slice(0, 8);
     let claimedPause;
     try {
-        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, modelContextWindow, { kill: input.deps.kill });
+        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, callerKey, modelContextWindow, { kill: input.deps.kill });
         if (claimDecision && "blockedMessage" in claimDecision) {
             return {
                 content: [{ type: "text", text: claimDecision.blockedMessage }],
@@ -778,7 +800,7 @@ export async function resumeAsyncRun(input) {
             ctx: {
                 pi: input.deps.pi,
                 cwd: persistedProjectAuthorization?.canonicalCwd ?? input.requestCwd,
-                currentSessionId: input.deps.state.currentSessionId,
+                currentSessionId: claimedPause?.ownerSessionId ?? callerKey,
                 parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
                 currentModel: input.ctx.model,
                 modelScope,

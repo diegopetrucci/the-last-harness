@@ -114,7 +114,7 @@ describe("async execution supervisor", () => {
       task: "capture this run",
       agentConfig: projectAgent,
       projectAgent: identity,
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
       artifactConfig: {
         enabled: false,
         includeInput: false,
@@ -197,7 +197,7 @@ describe("async execution supervisor", () => {
               },
             },
             cwd: tempDir,
-            currentSessionId: "session-1",
+            currentSessionId: "session-123",
           },
           artifactConfig: {
             enabled: false,
@@ -342,7 +342,7 @@ describe("async execution supervisor", () => {
           agent: "worker",
           task: "Ask for a supervisor decision and wait.",
           agentConfig: makeAgent("worker"),
-          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
           artifactConfig: {
             enabled: false,
             includeInput: false,
@@ -441,7 +441,7 @@ describe("async execution supervisor", () => {
           ctx: {
             pi: { events: { emit() {} } },
             cwd: tempDir,
-            currentSessionId: "session-1",
+            currentSessionId: "session-123",
             currentModel: { provider: "anthropic", id: "claude-sonnet-4" },
           },
           availableModels,
@@ -545,7 +545,7 @@ describe("async execution supervisor", () => {
           agent: "worker",
           task: "Ask for a supervisor decision and stop there.",
           agentConfig: makeAgent("worker"),
-          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
           artifactConfig: {
             enabled: false,
             includeInput: false,
@@ -618,7 +618,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Ask for a supervisor decision and wait.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -691,7 +691,7 @@ describe("async execution supervisor", () => {
           agent: "worker",
           task: "Ask for a supervisor decision and wait.",
           agentConfig: makeAgent("worker"),
-          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
           artifactConfig: {
             enabled: false,
             includeInput: false,
@@ -778,7 +778,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Ask for a supervisor decision and wait.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -848,7 +848,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Ask for a supervisor decision and stop there.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -955,7 +955,7 @@ describe("async execution supervisor", () => {
             },
           },
           cwd: tempDir,
-          currentSessionId: "session-1",
+          currentSessionId: "session-123",
         },
         artifactConfig: {
           enabled: false,
@@ -1038,7 +1038,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Ask for a supervisor decision and stop there.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1116,7 +1116,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Ask for a supervisor decision and stop there.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1205,7 +1205,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Ask for a supervisor decision and stop there.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1253,7 +1253,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Ask for a supervisor decision and stop there.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1314,7 +1314,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Provide a short non-blocking status update only. Do not edit files.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1347,7 +1347,7 @@ describe("async execution supervisor", () => {
         agent: "worker",
         task: "Provide a short non-blocking status update only. Do not edit files.",
         agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1421,7 +1421,7 @@ describe("async execution supervisor", () => {
             },
           },
           cwd: tempDir,
-          currentSessionId: "session-1",
+          currentSessionId: "session-123",
         },
         artifactConfig: {
           enabled: false,
