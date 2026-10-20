@@ -183,8 +183,12 @@ describe(
         });
 
         it("interrupt then resume preserves consumed runtime and skips the paused gap", async () => {
-          mockPi.onCall({ delay: 30_000, output: "never finishes" });
+          const readyMarker = path.join(tempDir, `child-ready-${awaited ? "a" : "d"}.marker`);
+          mockPi.onCall({ delay: 30_000, output: "never finishes", writeMarker: readyMarker });
           const { runId } = await launch(awaited);
+          // The mock child writes the marker only once it is actually running;
+          // run state and runner PID alone can precede child start on slow CI.
+          await waitForFile(readyMarker, scaleTestTimeout(20_000));
           const running = await waitForAsyncStatusPredicate(
             runId,
             (status) =>

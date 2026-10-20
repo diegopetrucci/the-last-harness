@@ -173,3 +173,36 @@ export function malformedActiveRuntimeAccountingField(
   if (owner !== undefined && owner !== "role" && owner !== "run") return "timeoutOwner";
   return undefined;
 }
+
+const ACCOUNTING_FIELDS = ["activeRuntimeMs", "activeRuntimeCheckpointAt", "timeoutOwner"] as const;
+
+/**
+ * Re-attach present-but-malformed accounting fields from the raw persisted
+ * status (root and per-step by index) onto a normalized status, verbatim.
+ * Only for persistence paths that must not erase fail-closed evidence.
+ */
+export function carryMalformedAccounting<T extends object>(normalized: T, raw: unknown): T {
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  if (!isObject(raw)) return normalized;
+  const carry = (target: Record<string, unknown>, source: unknown): Record<string, unknown> => {
+    if (!isObject(source)) return target;
+    const next = { ...target };
+    for (const field of ACCOUNTING_FIELDS) {
+      if (
+        source[field] !== undefined &&
+        malformedActiveRuntimeAccountingField({ [field]: source[field] })
+      )
+        next[field] = source[field];
+    }
+    return next;
+  };
+  const result = carry(normalized as Record<string, unknown>, raw);
+  const steps = result.steps;
+  const rawSteps = raw.steps;
+  if (Array.isArray(steps) && Array.isArray(rawSteps))
+    result.steps = steps.map((step, index) =>
+      carry(step as Record<string, unknown>, rawSteps[index]),
+    );
+  return result as T;
+}

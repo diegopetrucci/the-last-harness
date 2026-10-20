@@ -91,3 +91,26 @@ export function malformedActiveRuntimeAccountingField(value) {
         return "timeoutOwner";
     return undefined;
 }
+const ACCOUNTING_FIELDS = ["activeRuntimeMs", "activeRuntimeCheckpointAt", "timeoutOwner"];
+export function carryMalformedAccounting(normalized, raw) {
+    const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+    if (!isObject(raw))
+        return normalized;
+    const carry = (target, source) => {
+        if (!isObject(source))
+            return target;
+        const next = { ...target };
+        for (const field of ACCOUNTING_FIELDS) {
+            if (source[field] !== undefined &&
+                malformedActiveRuntimeAccountingField({ [field]: source[field] }))
+                next[field] = source[field];
+        }
+        return next;
+    };
+    const result = carry(normalized, raw);
+    const steps = result.steps;
+    const rawSteps = raw.steps;
+    if (Array.isArray(steps) && Array.isArray(rawSteps))
+        result.steps = steps.map((step, index) => carry(step, rawSteps[index]));
+    return result;
+}

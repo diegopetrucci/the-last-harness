@@ -118,6 +118,7 @@ function commitStaleFailure(asyncDir, observed, resultPath, now, message, guard)
         committed = transitionLifecycleStatus({
             asyncDir,
             expectedGeneration: lifecycleGeneration(observed),
+            carryMalformedAccounting: true,
             mutate: (current) => {
                 if (guard && !guard(current))
                     throw STALE_REPAIR_GUARD_FAILED;
@@ -257,6 +258,7 @@ function repairStatusFromResult(asyncDir, observed, resultPath, now) {
         committed = transitionLifecycleStatus({
             asyncDir,
             expectedGeneration: observedGeneration,
+            carryMalformedAccounting: true,
             mutate: (current) => {
                 if (isTerminalLifecycleState(current.state))
                     throw STALE_REPAIR_GUARD_FAILED;

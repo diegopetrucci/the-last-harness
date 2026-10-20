@@ -203,6 +203,7 @@ function commitStaleFailure(
     committed = transitionLifecycleStatus({
       asyncDir,
       expectedGeneration: lifecycleGeneration(observed),
+      carryMalformedAccounting: true,
       mutate: (current) => {
         if (guard && !guard(current)) throw STALE_REPAIR_GUARD_FAILED;
         return failedStatus(current, now, message);
@@ -392,6 +393,7 @@ function repairStatusFromResult(
     committed = transitionLifecycleStatus({
       asyncDir,
       expectedGeneration: observedGeneration,
+      carryMalformedAccounting: true,
       mutate: (current) => {
         // Abort if a concurrent writer already moved to a terminal state.
         if (isTerminalLifecycleState(current.state)) throw STALE_REPAIR_GUARD_FAILED;

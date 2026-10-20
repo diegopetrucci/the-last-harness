@@ -1014,30 +1014,15 @@ function buildTerminalAsyncResumeTarget(
     statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
       ? ("role" as const)
       : (statusTimeoutOwner ?? resultTimeoutOwner);
-  // Absent legacy accounting is accepted, but present-and-malformed accounting
-  // is untrustworthy: continuing would silently widen the role budget. Role
-  // evidence from either source already poisons the instance (reported by the
-  // caller), so only reject here when no valid role evidence exists.
-  if (timeoutOwner !== "role") {
-    const rawSteps = context.rawStatus?.steps;
-    const rawStep: unknown = Array.isArray(rawSteps) ? rawSteps[index] : undefined;
-    for (const [source, evidence] of [
-      ["status", context.rawStatus],
-      ["status", rawStep],
-      ["result", context.resultSteps[index]],
-    ] as const) {
-      const field =
-        typeof evidence === "object" &&
-        evidence !== null &&
-        malformedActiveRuntimeAccountingField(evidence as Record<string, unknown>);
-      if (field)
-        throw new Error(
-          `Async run '${context.runId}' cannot be resumed: persisted ${source} ${field} for child ${index} is malformed (${
-            field === "timeoutOwner" ? 'expected "role" or "run"' : "expected a non-negative number"
-          }). Repair or remove it to continue; no artifacts were changed.`,
-        );
-    }
-  }
+  const rawSteps = context.rawStatus?.steps;
+  assertAccountingTrustworthy({
+    runId: context.runId,
+    index,
+    rawStatus: context.rawStatus,
+    rawStep: Array.isArray(rawSteps) ? rawSteps[index] : undefined,
+    statusStep: selectedStatusStep,
+    resultStep: context.resultSteps[index],
+  });
   // Similarly normalize timedOut from each source so a truthy non-boolean in
   // the status cannot suppress a legitimate true in the result.
   const timedOut =
@@ -1177,6 +1162,45 @@ function resolveTerminalAsyncResumeTarget(
   );
 }
 
+/**
+ * Absent legacy accounting is accepted, but present-and-malformed accounting is
+ * untrustworthy: continuing would silently widen the role budget. The only
+ * exemption is real poison evidence (role ownership AND a timeout), which the
+ * caller reports as an exhausted instance; role ownership alone proves nothing.
+ */
+function assertAccountingTrustworthy(input: {
+  runId: string;
+  index: number;
+  rawStatus: unknown;
+  rawStep: unknown;
+  statusStep: unknown;
+  resultStep: unknown;
+}): void {
+  const records = [input.rawStep, input.statusStep, input.resultStep].filter(
+    (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
+  );
+  const poisoned =
+    records.some((record) => normalizeExecutionTimeoutOwner(record.timeoutOwner) === "role") &&
+    records.some((record) => record.timedOut === true || record.terminationReason === "timed_out");
+  if (poisoned) return;
+  for (const [source, evidence] of [
+    ["status", input.rawStatus],
+    ["status", input.rawStep],
+    ["result", input.resultStep],
+  ] as const) {
+    const field =
+      typeof evidence === "object" &&
+      evidence !== null &&
+      malformedActiveRuntimeAccountingField(evidence as Record<string, unknown>);
+    if (field)
+      throw new Error(
+        `Async run '${input.runId}' cannot be resumed: persisted ${source} ${field} for child ${input.index} is malformed (${
+          field === "timeoutOwner" ? 'expected "role" or "run"' : "expected a non-negative number"
+        }). Repair or remove it to continue; no artifacts were changed.`,
+      );
+  }
+}
+
 function readRawStatusRecord(
   asyncDir: string | null | undefined,
 ): Record<string, unknown> | undefined {
@@ -1207,6 +1231,23 @@ export function resolveAsyncResumeTarget(
     throw new Error("Async run not found. Provide id or dir.");
   }
 
+  // Validate the original raw accounting before stale repair can rewrite it.
+  const rawStatus = readRawStatusRecord(location.asyncDir);
+  const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
+  const preIndex = params.index ?? 0;
+  if (Number.isInteger(preIndex)) {
+    const preRawSteps = rawStatus?.steps;
+    assertAccountingTrustworthy({
+      runId:
+        location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown"),
+      index: preIndex,
+      rawStatus,
+      rawStep: Array.isArray(preRawSteps) ? preRawSteps[preIndex] : undefined,
+      statusStep: undefined,
+      resultStep: result?.results?.[preIndex],
+    });
+  }
+
   const reconciliation =
     location.asyncDir && !options.readOnly
       ? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })
@@ -1218,7 +1259,6 @@ export function resolveAsyncResumeTarget(
     status,
     location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json",
   );
-  const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
   const runId =
     status?.runId ??
     result?.runId ??
@@ -1247,7 +1287,7 @@ export function resolveAsyncResumeTarget(
     requireSessionFile,
     location,
     status,
-    rawStatus: readRawStatusRecord(location.asyncDir),
+    rawStatus,
     result,
     runId,
     state,

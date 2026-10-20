@@ -19,7 +19,11 @@ import {
   canonicalLifecycleState,
   canonicalLifecycleStepState,
 } from "../background/async-status-boundary.ts";
-import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./active-runtime.ts";
+import {
+  carryMalformedAccounting,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
+} from "./active-runtime.ts";
 import { normalizeIdleEpisodeId } from "./subagent-control.ts";
 import {
   appendSubagentTelemetryContinuation,
@@ -93,6 +97,12 @@ type LifecycleTransitionOptions = {
   expectedGeneration: number;
   mutate: (status: AsyncStatus) => AsyncStatus;
   lockOptions?: LifecycleLockOptions;
+  /**
+   * Keep present-but-malformed raw accounting fields verbatim when persisting.
+   * Normalization drops them, which would erase the evidence that makes a later
+   * resume fail closed.
+   */
+  carryMalformedAccounting?: boolean;
 };
 
 type LifecycleTransitionResult = {
@@ -332,10 +342,28 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
   return result as AsyncStatus & AnyRecord;
 }
 
-export function writeNormalizedLifecycleStatus(asyncDir: string, status: AsyncStatus): AsyncStatus {
+function readRawStatusJson(asyncDir: string): AnyRecord | undefined {
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    );
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeNormalizedLifecycleStatus(
+  asyncDir: string,
+  status: AsyncStatus,
+  rawEvidence?: AnyRecord,
+): AsyncStatus {
   const normalized = normalizeAsyncLifecycleStatus(status);
   const statusFile = path.join(asyncDir, "status.json");
-  writeAtomicJson(statusFile, normalized);
+  writeAtomicJson(
+    statusFile,
+    rawEvidence === undefined ? normalized : carryMalformedAccounting(normalized, rawEvidence),
+  );
   invalidateStatusCache(statusFile);
   return normalized;
 }
@@ -510,6 +538,9 @@ export function transitionLifecycleStatus(
   return withLifecycleStatusLock(
     options.asyncDir,
     (current) => {
+      const rawEvidence = options.carryMalformedAccounting
+        ? readRawStatusJson(options.asyncDir)
+        : undefined;
       if (!current)
         throw new Error(
           `Cannot transition lifecycle state for run '${runLabel(options.asyncDir)}': persisted status was not found.`,
@@ -531,10 +562,14 @@ export function transitionLifecycleStatus(
             }
           : mutated;
 
-      const status = writeNormalizedLifecycleStatus(options.asyncDir, {
-        ...next,
-        lifecycle: { ...next.lifecycle, generation: generation + 1 },
-      });
+      const status = writeNormalizedLifecycleStatus(
+        options.asyncDir,
+        {
+          ...next,
+          lifecycle: { ...next.lifecycle, generation: generation + 1 },
+        },
+        rawEvidence,
+      );
       return { previousGeneration: generation, nextGeneration: generation + 1, status };
     },
     options.lockOptions,

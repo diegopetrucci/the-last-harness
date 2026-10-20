@@ -596,21 +596,15 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
     const timeoutOwner = statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
         ? "role"
         : (statusTimeoutOwner ?? resultTimeoutOwner);
-    if (timeoutOwner !== "role") {
-        const rawSteps = context.rawStatus?.steps;
-        const rawStep = Array.isArray(rawSteps) ? rawSteps[index] : undefined;
-        for (const [source, evidence] of [
-            ["status", context.rawStatus],
-            ["status", rawStep],
-            ["result", context.resultSteps[index]],
-        ]) {
-            const field = typeof evidence === "object" &&
-                evidence !== null &&
-                malformedActiveRuntimeAccountingField(evidence);
-            if (field)
-                throw new Error(`Async run '${context.runId}' cannot be resumed: persisted ${source} ${field} for child ${index} is malformed (${field === "timeoutOwner" ? 'expected "role" or "run"' : "expected a non-negative number"}). Repair or remove it to continue; no artifacts were changed.`);
-        }
-    }
+    const rawSteps = context.rawStatus?.steps;
+    assertAccountingTrustworthy({
+        runId: context.runId,
+        index,
+        rawStatus: context.rawStatus,
+        rawStep: Array.isArray(rawSteps) ? rawSteps[index] : undefined,
+        statusStep: selectedStatusStep,
+        resultStep: context.resultSteps[index],
+    });
     const timedOut = selectedStatusStep?.timedOut === true || context.resultSteps[index]?.timedOut === true;
     return {
         ...targetWithModelMetadata,
@@ -705,6 +699,24 @@ function resolveTerminalAsyncResumeTarget(context) {
         : undefined;
     return buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, selectedContinuation, agent, resolvedSessionFile);
 }
+function assertAccountingTrustworthy(input) {
+    const records = [input.rawStep, input.statusStep, input.resultStep].filter((value) => typeof value === "object" && value !== null);
+    const poisoned = records.some((record) => normalizeExecutionTimeoutOwner(record.timeoutOwner) === "role") &&
+        records.some((record) => record.timedOut === true || record.terminationReason === "timed_out");
+    if (poisoned)
+        return;
+    for (const [source, evidence] of [
+        ["status", input.rawStatus],
+        ["status", input.rawStep],
+        ["result", input.resultStep],
+    ]) {
+        const field = typeof evidence === "object" &&
+            evidence !== null &&
+            malformedActiveRuntimeAccountingField(evidence);
+        if (field)
+            throw new Error(`Async run '${input.runId}' cannot be resumed: persisted ${source} ${field} for child ${input.index} is malformed (${field === "timeoutOwner" ? 'expected "role" or "run"' : "expected a non-negative number"}). Repair or remove it to continue; no artifacts were changed.`);
+    }
+}
 function readRawStatusRecord(asyncDir) {
     if (!asyncDir)
         return undefined;
@@ -726,13 +738,26 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     if (!location.asyncDir && !location.resultPath) {
         throw new Error("Async run not found. Provide id or dir.");
     }
+    const rawStatus = readRawStatusRecord(location.asyncDir);
+    const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
+    const preIndex = params.index ?? 0;
+    if (Number.isInteger(preIndex)) {
+        const preRawSteps = rawStatus?.steps;
+        assertAccountingTrustworthy({
+            runId: location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown"),
+            index: preIndex,
+            rawStatus,
+            rawStep: Array.isArray(preRawSteps) ? preRawSteps[preIndex] : undefined,
+            statusStep: undefined,
+            resultStep: result?.results?.[preIndex],
+        });
+    }
     const reconciliation = location.asyncDir && !options.readOnly
         ? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })
         : undefined;
     let status = reconciliation?.status ??
         (options.readOnly && location.asyncDir ? readStatus(location.asyncDir) : null);
     validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
-    const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
     const runId = status?.runId ??
         result?.runId ??
         result?.id ??
@@ -759,7 +784,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         requireSessionFile,
         location,
         status,
-        rawStatus: readRawStatusRecord(location.asyncDir),
+        rawStatus,
         result,
         runId,
         state,

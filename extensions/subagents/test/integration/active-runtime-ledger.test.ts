@@ -4,6 +4,7 @@
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
@@ -311,6 +312,97 @@ describe(
           assert.deepEqual(fs.readFileSync(statusPath), before);
         });
       }
+
+      async function resumeRejected(runId: string, match: RegExp): Promise<void> {
+        const { executor } = makeExecutor(scaleTestTimeout(60_000));
+        const result = await executor.execute(
+          "ledger-malformed",
+          { action: "resume", id: runId, message: "go" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(result.isError, true);
+        assert.match(result.content[0]?.text ?? "", match);
+        assert.equal(mockPi.callCount(), 0, "malformed accounting must not spawn");
+      }
+
+      function writeCorruptRun(
+        runId: string,
+        state: string,
+        step: Record<string, unknown>,
+        pid?: number,
+      ): { asyncDir: string; statusPath: string } {
+        const asyncDir = path.join(ASYNC_DIR, runId);
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        cleanup.push(asyncDir);
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, "", "utf-8");
+        const statusPath = path.join(asyncDir, "status.json");
+        fs.writeFileSync(
+          statusPath,
+          JSON.stringify({
+            runId,
+            mode: "single",
+            state,
+            startedAt: 100,
+            lastUpdate: 200,
+            cwd: tempDir,
+            ...(pid ? { pid } : {}),
+            steps: [{ agent: "worker", status: state, sessionFile, ...step }],
+          }),
+          "utf-8",
+        );
+        return { asyncDir, statusPath };
+      }
+
+      for (const step of [
+        { activeRuntimeMs: -5 },
+        { activeRuntimeMs: "100" },
+        { activeRuntimeMs: 100, activeRuntimeCheckpointAt: "yesterday" },
+      ]) {
+        it(`rejects corruption under normal role ownership: ${JSON.stringify(step)}`, async () => {
+          const runId = `ledger-role-owned-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const { statusPath } = writeCorruptRun(runId, "failed", {
+            timeoutOwner: "role",
+            ...step,
+          });
+          const before = fs.readFileSync(statusPath);
+          await resumeRejected(runId, /status activeRuntime\w+ for child 0 is malformed/);
+          assert.deepEqual(fs.readFileSync(statusPath), before);
+        });
+      }
+
+      it("rejects dead-PID corruption before stale repair with byte-identical artifacts", async () => {
+        const deadPid = spawnSync(process.execPath, ["-e", ""]).pid!;
+        const runId = `ledger-dead-pid-${Date.now()}`;
+        const { statusPath } = writeCorruptRun(runId, "running", { activeRuntimeMs: -5 }, deadPid);
+        const before = fs.readFileSync(statusPath);
+        await resumeRejected(runId, /status activeRuntimeMs for child 0 is malformed/);
+        assert.deepEqual(fs.readFileSync(statusPath), before);
+      });
+
+      it("keeps malformed evidence through stale repair so a later resume fails closed", async () => {
+        const runId = `ledger-stale-then-resume-${Date.now()}`;
+        const { asyncDir, statusPath } = writeCorruptRun(
+          runId,
+          "running",
+          { activeRuntimeMs: -5, timeoutOwner: "ROLE" },
+          999_994,
+        );
+        const repaired = reconcileAsyncRun(asyncDir, { kill: DEAD_PID_KILL });
+        assert.equal(repaired.repaired, true);
+        const persisted = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+        assert.equal(persisted.state, "failed");
+        assert.equal(persisted.steps[0].activeRuntimeMs, -5);
+        assert.equal(persisted.steps[0].timeoutOwner, "ROLE");
+        const before = fs.readFileSync(statusPath);
+        await resumeRejected(
+          runId,
+          /status (activeRuntimeMs|timeoutOwner) for child 0 is malformed/,
+        );
+        assert.deepEqual(fs.readFileSync(statusPath), before);
+      });
 
       it("rejects malformed result-side accounting", async () => {
         const runId = `ledger-malformed-result-${Date.now()}`;
