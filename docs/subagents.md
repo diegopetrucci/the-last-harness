@@ -303,6 +303,51 @@ For a result without child rows but with a top-level session, the final pointer 
 
 **Completion ownership and wake ordering.** `result-watcher.ts` is the sole owner of detached completion delivery. It claims each result artifact through one exclusive persisted `<artifact>.claim` sidecar before normalizing and emitting `subagent:async-complete`; `notify.ts` only projects that event and does not dedupe it. The claim is created with mode `0600` and its parent result directory remains inside the isolated profile. The awaited owner claims its private artifact through the same arbitration path, and awaited artifacts never fall through to the public async-complete notification while a live owner for the matching lifecycle generation exists. The watcher publishes the completion message before `sendUserMessage` sends the idle follow-up nudge, so the wake turn can see the notification. After delivery, the result artifact and claim are removed together. If delivery succeeded but cleanup failed, the claim is retained through a bounded immediate-plus-backoff retry sequence (100/250/500/1000/2000 ms); after the finite attempts a single diagnostic is logged and the claim remains as a manual-recovery marker. A process crash or unknown delivery outcome therefore suppresses replay while the result artifact remains available for manual inspection. Startup and periodic scans remove `.json.claim` markers only when their corresponding artifact is absent. To recover deliberately, inspect the artifact first; remove `<artifact>.claim` only when replay is intended, then rescan/restart the watcher. Removing the sidecar without that intent can duplicate a notification.
 
+### Recovering ownerless or foreign runs
+
+Durable revival (`resume`, including guided resume and paused continuations) requires the caller to be the run's owning parent session. The owner key is the parent session **file path**, or the session id when the session has no file. Reopening the original parent session file keeps ownership; a fork, a moved or copied file, and a new session have a different key and do not inherit it. If a different session needs the run's work, start a new run instead.
+
+The rejection message links here and names the run id. It appears when the caller's key differs from the persisted owner, or when the persisted owner is unusable. The owner evidence is the top-level `sessionId` in the run's `status.json` and in its result record (`<runId>.json`). Missing or `null` fields count as absent. At least one non-empty string must be present, all supplied strings must match, and any other supplied value (empty, non-string, or a different string) invalidates ownership, as does an unreadable, invalid-JSON, or non-object result record. Neither record overrides the other.
+
+This is human-approved recovery, not a technically enforced boundary: a same-user agent can edit these files, so an agent must not do so on its own initiative. TLH has no automatic migration, grace period, or model-facing override.
+
+**Locating the records.** Ordinary status output shows `Dir:` when permitted, and structured detached-start details carry `asyncDir`. Protected paused status may omit paths, and a result-only run may have no run directory left. Otherwise find the exact run id under the async and result roots defined in [`shared/types.ts`](../extensions/subagents/src/shared/types.ts). Set `RUN` to the run directory and `RESULT` to the result record; leave either unset if it does not exist.
+
+**Procedure.** A human does the following:
+
+1. **Verify provenance.** Establish which parent session created the run (its session file, or id if it had none), for example from that session's transcript. Do not infer it from the current session. Decide the exact owner key to write.
+2. **Quiesce.** Let active runs finish, or cancel them normally. Then stop every TLH/Pi session (a human cannot take the lifecycle lock, so nothing else may be writing).
+3. **Check for survivors.** These commands are investigative aids; a clean result alone is not proof. Pi renames its process to `pi` (`pi-rpc` for the RPC entry), so launch arguments are not visible in process listings. With every TLH/Pi session stopped, no Pi process should remain, and any match (a child, or an unrelated Pi you started) must be accounted for. If any command below prints `STOP` or errors, do not continue:
+
+   ```sh
+   pgrep -lf '^pi(-rpc)?( |$)'   # expect no output with every TLH/Pi session stopped; account for any match
+   if [ -n "$RUN" ]; then
+     PID=$(node -p 'const s=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); s.pid ?? ""' "$RUN/status.json") || echo "STOP: cannot read status.json; do not continue" >&2
+     [ -z "$PID" ] || ps -o pid,pgid,stat,command -p "$PID"   # runner: expect no row
+     node -p 'const s=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); [s.processCleanup,...(Array.isArray(s.steps)?s.steps:[]).map(x=>x?.processCleanup)].map(c=>c?.processGroupId).filter(Number.isInteger).join("\n")' "$RUN/status.json" |
+       while IFS= read -r g; do [ -n "$g" ] || continue; pgrep -g "$g"; done   # expect no output
+   fi
+   ```
+
+   Children run in their own detached process groups, which a dead runner does not clean up. The persisted `processCleanup.processGroupId` values exist only after a cleanup attempt, and a child's session file may be discovered after launch, so the absence of a match does not account for every group. A listed process is not necessarily this run's (for example an unrelated Pi session); reconcile each one. **If any child process group cannot be accounted for, or anything remains, stop and investigate. Do not edit ownership.**
+4. **Back up every record that exists**, outside the result directory (the result watcher scans it). Note which records are absent. If any command prints `STOP` or errors, do not continue:
+
+   ```sh
+   if BACKUP=$(mktemp -d); then
+     echo "Backups in: $BACKUP   (keep this path for Undo)"
+     [ -z "$RUN" ] || cp -p "$RUN/status.json" "$BACKUP/status.json" || echo "STOP: status.json backup failed; do not continue" >&2
+     [ -z "$RESULT" ] || cp -p "$RESULT" "$BACKUP/result.json" || echo "STOP: result backup failed; do not continue" >&2
+   else
+     echo "STOP: no backup directory; do not continue" >&2
+   fi
+   ```
+5. **Edit.** In each existing record, change only the top-level `sessionId` to the same key from step 1. Never create a missing record, and change nothing else.
+6. **Verify and reopen.** Re-read the edited records, then reopen the session whose exact key you wrote and retry the resume.
+
+**Undo.** Re-establish quiescence (steps 2–3), then copy `<backup>/status.json` back to `$RUN/status.json` and `<backup>/result.json` back to `$RESULT` (only for the records you backed up), using the backup path printed in step 4.
+
+Interrupt, cancel, and status-by-id are not session-scoped yet ([#826](https://github.com/diegopetrucci/the-last-harness/issues/826)).
+
 ### Terminal result and post-run facts
 
 Each child may carry a `terminalResult` in its persisted status step and result-artifact item (and in the corresponding in-memory `SingleResult`). It is an evidence record, not a task-completion verdict. The terminal result uses `completed | failed | cancelled | paused`; `paused` means a durable `contact_supervisor` pause and its waiter is settled. Lifecycle readers accept `completed`, historical `complete`, and detached historical `continued` spellings. New awaited continuation owners settle their source lifecycle as `complete`; detached historical runs retain `continued` for compatibility.
