@@ -76,7 +76,10 @@ import {
   normalizeActiveRuntimeMs,
 } from "../shared/active-runtime.ts";
 import type { AuthorizedProjectAgentRun } from "../shared/project-agent-control.ts";
-import { authorizePersistedProjectAgentRun } from "../shared/project-agent-control.ts";
+import {
+  authorizePersistedProjectAgentRun,
+  embeddedControlRestrictionError,
+} from "../shared/project-agent-control.ts";
 import type { ExecutorDeps, SubagentParamsLike } from "../shared/executor-types.ts";
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
 type ResumeSourceTarget = AsyncResumeSourceTarget;
@@ -559,6 +562,28 @@ export function buildResumeModelResolution(
         reason: [persisted?.reason, restoration].filter(Boolean).join(" "),
       };
 }
+function resumeControlTarget(target: {
+  runId: string;
+  agent: string;
+  cwd?: string;
+  childProjectAgent?: unknown;
+  childIdentityConflict?: boolean;
+}): {
+  runId: string;
+  agent: string;
+  cwd?: string;
+  projectAgent?: unknown;
+  conflict?: boolean;
+} {
+  return {
+    runId: target.runId,
+    agent: target.agent,
+    cwd: target.cwd,
+    projectAgent: target.childProjectAgent,
+    conflict: target.childIdentityConflict === true,
+  };
+}
+
 async function resolveResumeActionTarget(input: {
   params: SubagentParamsLike;
   requestedId: string | undefined;
@@ -615,6 +640,19 @@ async function resolveResumeActionTarget(input: {
             isError: true,
             details: { mode: "management", results: [] },
           };
+        const restriction = await embeddedControlRestrictionError({
+          action: "resume",
+          targets: [resumeControlTarget(asyncTarget)],
+          ctx: input.ctx,
+          deps: input.deps,
+        });
+        if (restriction) {
+          return {
+            content: [{ type: "text", text: restriction }],
+            isError: true,
+            details: { mode: "management", results: [] },
+          };
+        }
         if (asyncTarget.projectAgent !== undefined) {
           try {
             await authorizePersistedProjectAgentRun({
@@ -786,6 +824,19 @@ export async function resumeAsyncRun(input: {
   }
   if ("content" in targetResolution) return targetResolution;
   const target = targetResolution;
+  const resumeRestriction = await embeddedControlRestrictionError({
+    action: "resume",
+    targets: [resumeControlTarget(target)],
+    ctx: input.ctx,
+    deps: input.deps,
+  });
+  if (resumeRestriction) {
+    return {
+      content: [{ type: "text", text: resumeRestriction }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
 
   const followUp =
     requestedFollowUp ||
@@ -805,6 +856,22 @@ export async function resumeAsyncRun(input: {
   let persistedProjectAuthorization: AuthorizedProjectAgentRun | undefined;
   const targetProjectIdentity = "projectAgent" in target ? target.projectAgent : undefined;
   if (targetProjectIdentity !== undefined) {
+    if (
+      typeof input.deps.state.currentSessionId !== "string" ||
+      input.deps.state.currentSessionId.length === 0 ||
+      target.ownerSessionId !== input.deps.state.currentSessionId
+    ) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Async run '${target.runId}' is owned by another session and cannot be resumed from this session.`,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
     try {
       persistedProjectAuthorization = await authorizePersistedProjectAgentRun({
         target,

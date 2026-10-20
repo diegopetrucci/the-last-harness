@@ -80,6 +80,8 @@ type AsyncResumeTarget = {
   index: number;
   cwd?: string;
   sessionFile?: string;
+  /** Session key that owned the persisted run (status first, then result artifact). */
+  ownerSessionId?: string;
   /** Persisted per-child ticket assignment, when applicable. */
   ticketId?: string;
   modelIdentity?: SubagentModelIdentity;
@@ -94,6 +96,10 @@ type AsyncResumeTarget = {
   terminalResult?: SubagentTerminalResult;
   projectAgent?: ProjectAgentIdentity /** Present only when the persisted run carried a run-level project inventory. */;
   projectAgents?: ProjectAgentIdentity[];
+  /** The selected child's own persisted identity (no run-level fallback). */
+  childProjectAgent?: ProjectAgentIdentity;
+  /** Status/result records disagree about the selected child's agent or identity. */
+  childIdentityConflict?: boolean;
   /** Cumulative active runtime of the selected child's lineage. */
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
@@ -806,7 +812,10 @@ function resolveResumeDiagnosticMetadata(
   };
 }
 
-type AsyncResumeProjectAgentMetadata = Pick<AsyncResumeTarget, "projectAgent" | "projectAgents">;
+type AsyncResumeProjectAgentMetadata = Pick<
+  AsyncResumeTarget,
+  "projectAgent" | "projectAgents" | "childProjectAgent" | "childIdentityConflict"
+>;
 
 function resolvePersistedTicketId(
   context: AsyncResumeResolutionContext,
@@ -830,6 +839,21 @@ function resolveProjectAgentMetadata(
       throw new Error(`Invalid persisted project-agent capture for async run child ${index}.`);
     }
   }
+  const resultChild = context.resultSteps[index];
+  const statusIdentity = normalizeProjectAgentIdentity(statusStep?.projectAgent);
+  const resultIdentity = normalizeProjectAgentIdentity(resultChild?.projectAgent);
+  const childIdentityConflict =
+    (statusStep?.projectAgent !== undefined && !statusIdentity) ||
+    (resultChild?.projectAgent !== undefined && !resultIdentity) ||
+    (statusStep !== undefined &&
+      resultChild !== undefined &&
+      statusStep.agent !== resultChild.agent) ||
+    (statusIdentity !== undefined &&
+      resultIdentity !== undefined &&
+      JSON.stringify(statusIdentity) !== JSON.stringify(resultIdentity)) ||
+    (statusStep !== undefined &&
+      resultChild !== undefined &&
+      (statusIdentity === undefined) !== (resultIdentity === undefined));
   const topLevelProjectAgent =
     normalizeProjectAgentIdentity(ownObjectProperty(context.status, "projectAgent").value) ??
     context.result?.projectAgent;
@@ -846,6 +870,8 @@ function resolveProjectAgentMetadata(
     ...(topLevelProjectAgent ? { projectAgent: topLevelProjectAgent } : {}),
     ...(projectAgents !== undefined ? { projectAgents } : {}),
     ...(projectAgent ? { projectAgent } : {}),
+    ...(projectAgent ? { childProjectAgent: projectAgent } : {}),
+    ...(childIdentityConflict ? { childIdentityConflict: true } : {}),
   };
 }
 
@@ -878,6 +904,10 @@ function buildLiveAsyncResumeTarget(
     ...(ticketId ? { ticketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+    ...(projectMetadata.childProjectAgent
+      ? { childProjectAgent: projectMetadata.childProjectAgent }
+      : {}),
+    ...(projectMetadata.childIdentityConflict ? { childIdentityConflict: true } : {}),
     ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
     ...(metadata.modelResolution ? { modelResolution: metadata.modelResolution } : {}),
     ...(resolveResumeTerminalResult(index, statusStep, context.resultSteps)
@@ -960,6 +990,10 @@ function buildTerminalAsyncResumeTarget(
       context.status?.cwd ??
       context.result?.cwd,
     ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+    ...(() => {
+      const owner = context.status?.sessionId ?? context.result?.sessionId;
+      return typeof owner === "string" && owner.length > 0 ? { ownerSessionId: owner } : {};
+    })(),
   };
   const modelMetadata = resolveResumeModelMetadata(
     index,
@@ -974,6 +1008,10 @@ function buildTerminalAsyncResumeTarget(
     ...(ticketId ? { ticketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+    ...(projectMetadata.childProjectAgent
+      ? { childProjectAgent: projectMetadata.childProjectAgent }
+      : {}),
+    ...(projectMetadata.childIdentityConflict ? { childIdentityConflict: true } : {}),
     ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
     ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
     ...(resolveResumeTerminalResult(index, selectedStatusStep, context.resultSteps)

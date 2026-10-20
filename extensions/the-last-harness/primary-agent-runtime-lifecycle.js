@@ -1,6 +1,7 @@
 // Generated from extensions/the-last-harness/primary-agent-runtime-lifecycle.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { DISABLED_PRIMARY_AGENT, isEnabledPrimaryAgentSelection, } from "../the-last-harness-primary-agent.mjs";
+import { rushResumeDelegationReason, rushSteerDelegationReason, } from "./primary-agent-runtime-delegation.js";
 import { setTlhProjectAgentAccessProvider } from "./project-agent-access.mjs";
 import { inventoryProjectAgentGuidance, } from "../shared/project-agent-guidance.js";
 let runtimeEpoch = 0;
@@ -24,6 +25,9 @@ export function createTlhPrimaryAgentResourceLifecycle(options) {
             architect: selection === "architect" && canManage,
             canManage,
             canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
+            controlRestrictedToEmbedded: selection === "rush",
+            resumeRestrictionReason: rushResumeDelegationReason(),
+            steerRestrictionReason: rushSteerDelegationReason(),
             agentDir: getAgentDir(),
             createProjectTrustStore: createTrustStore,
         };

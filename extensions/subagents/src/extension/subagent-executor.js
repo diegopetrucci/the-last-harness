@@ -20,6 +20,7 @@ import { readStatus, resolveChildCwd } from "../shared/utils.js";
 import { normalizeTicketId, readTicketBody, ticketLookupKey, } from "../runs/shared/ticket-context.js";
 import { resolveSubagentRunId, } from "../runs/background/run-id-resolver.js";
 import { inspectSubagentStatus } from "../runs/background/run-status.js";
+import { runBoundToToolCall } from "../../../the-last-harness/project-agent-access.mjs";
 import { isAsyncStatusReadError } from "../runs/background/async-status-boundary.js";
 import { SUBAGENT_ACTIONS, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, } from "../shared/types.js";
 function toExecutionErrorResult(params, error) {
@@ -740,7 +741,8 @@ export function createSubagentExecutor(deps) {
             return toExecutionErrorResult(effectiveParams, error);
         }
     };
-    const executeWithSingleDispatchGuard = async (id, params, signal, onUpdate, ctx) => {
+    const executeWithSingleDispatchGuard = (id, params, signal, onUpdate, ctx) => runBoundToToolCall(id, () => executeGuarded(id, params, signal, onUpdate, ctx));
+    const executeGuarded = async (id, params, signal, onUpdate, ctx) => {
         const requestParams = params;
         if (requestParams.action)
             return execute(id, requestParams, signal, onUpdate, ctx);

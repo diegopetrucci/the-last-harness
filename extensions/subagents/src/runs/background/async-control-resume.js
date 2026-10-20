@@ -23,7 +23,7 @@ import { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSing
 import { RESULTS_DIR, } from "../../shared/types.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
-import { authorizePersistedProjectAgentRun } from "../shared/project-agent-control.js";
+import { authorizePersistedProjectAgentRun, embeddedControlRestrictionError, } from "../shared/project-agent-control.js";
 export function persistContinuationTelemetry(target, continuationRunId) {
     try {
         const sourceTelemetry = target.source === "async" && "telemetry" in target ? target.telemetry : undefined;
@@ -391,6 +391,15 @@ export function buildResumeModelResolution(target, requestedModel) {
             reason: [persisted?.reason, restoration].filter(Boolean).join(" "),
         };
 }
+function resumeControlTarget(target) {
+    return {
+        runId: target.runId,
+        agent: target.agent,
+        cwd: target.cwd,
+        projectAgent: target.childProjectAgent,
+        conflict: target.childIdentityConflict === true,
+    };
+}
 async function resolveResumeActionTarget(input) {
     let target;
     try {
@@ -432,6 +441,19 @@ async function resolveResumeActionTarget(input) {
                         isError: true,
                         details: { mode: "management", results: [] },
                     };
+                const restriction = await embeddedControlRestrictionError({
+                    action: "resume",
+                    targets: [resumeControlTarget(asyncTarget)],
+                    ctx: input.ctx,
+                    deps: input.deps,
+                });
+                if (restriction) {
+                    return {
+                        content: [{ type: "text", text: restriction }],
+                        isError: true,
+                        details: { mode: "management", results: [] },
+                    };
+                }
                 if (asyncTarget.projectAgent !== undefined) {
                     try {
                         await authorizePersistedProjectAgentRun({
@@ -562,6 +584,19 @@ export async function resumeAsyncRun(input) {
     if ("content" in targetResolution)
         return targetResolution;
     const target = targetResolution;
+    const resumeRestriction = await embeddedControlRestrictionError({
+        action: "resume",
+        targets: [resumeControlTarget(target)],
+        ctx: input.ctx,
+        deps: input.deps,
+    });
+    if (resumeRestriction) {
+        return {
+            content: [{ type: "text", text: resumeRestriction }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    }
     const followUp = requestedFollowUp ||
         (target.kind === "revive" &&
             target.state === "paused" &&
@@ -578,6 +613,20 @@ export async function resumeAsyncRun(input) {
     let persistedProjectAuthorization;
     const targetProjectIdentity = "projectAgent" in target ? target.projectAgent : undefined;
     if (targetProjectIdentity !== undefined) {
+        if (typeof input.deps.state.currentSessionId !== "string" ||
+            input.deps.state.currentSessionId.length === 0 ||
+            target.ownerSessionId !== input.deps.state.currentSessionId) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Async run '${target.runId}' is owned by another session and cannot be resumed from this session.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
+        }
         try {
             persistedProjectAuthorization = await authorizePersistedProjectAgentRun({
                 target,

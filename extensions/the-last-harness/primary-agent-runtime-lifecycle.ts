@@ -4,6 +4,10 @@ import {
   DISABLED_PRIMARY_AGENT,
   isEnabledPrimaryAgentSelection,
 } from "../the-last-harness-primary-agent.mjs";
+import {
+  rushResumeDelegationReason,
+  rushSteerDelegationReason,
+} from "./primary-agent-runtime-delegation.js";
 import { setTlhProjectAgentAccessProvider } from "./project-agent-access.mjs";
 import {
   inventoryProjectAgentGuidance,
@@ -60,12 +64,18 @@ export function createTlhPrimaryAgentResourceLifecycle(options: {
       architect: selection === "architect" && canManage,
       canManage,
       canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
+      controlRestrictedToEmbedded: selection === "rush",
+      resumeRestrictionReason: rushResumeDelegationReason(),
+      steerRestrictionReason: rushSteerDelegationReason(),
       agentDir: getAgentDir(),
       createProjectTrustStore: createTrustStore,
     } as {
       architect: boolean;
       canManage: boolean;
       canInitiate: boolean;
+      controlRestrictedToEmbedded: boolean;
+      resumeRestrictionReason: string;
+      steerRestrictionReason: string;
       agentDir: string;
       createProjectTrustStore: (agentDir: string) => ProjectTrustStore;
     };

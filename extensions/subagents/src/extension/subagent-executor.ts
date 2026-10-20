@@ -69,6 +69,7 @@ import {
 } from "../runs/background/run-id-resolver.ts";
 
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
+import { runBoundToToolCall } from "../../../the-last-harness/project-agent-access.mjs";
 import { isAsyncStatusReadError } from "../runs/background/async-status-boundary.ts";
 import {
   type AsyncStatus,
@@ -984,7 +985,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     }
   };
 
-  const executeWithSingleDispatchGuard = async (
+  const executeWithSingleDispatchGuard = (
+    id: string,
+    params: SubagentParamsLike,
+    signal: AbortSignal,
+    onUpdate: ((r: SubagentToolResult<Details>) => void) | undefined,
+    ctx: ExtensionContext,
+  ): Promise<SubagentToolResult<Details>> =>
+    // Bind the hook's embedded-only mark to this invocation; cleared on settle.
+    runBoundToToolCall(id, () => executeGuarded(id, params, signal, onUpdate, ctx));
+
+  const executeGuarded = async (
     id: string,
     params: SubagentParamsLike,
     signal: AbortSignal,

@@ -7,7 +7,8 @@ import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, regist
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { clearPrimaryAgentModelOverrideByName, isTlhPrimaryAgentSelection, getTlhDurableThinkingLevel, getTlhGlobalSettings, getTlhPrimaryAgentConfig, getTlhSubagentOverrides, resolvePrimaryAutoApplySetting, writeTlhPrimaryAgentDefault, writeTlhPrimaryAgentModelOverride, } from "./primary-agent-runtime-settings.js";
-import { applyOpenRouterModelToProjectTargets, applyProviderAwareModelsToNonProjectTargets, collectSubagentCallTargetsMatching, isSubagentResumeAction, isSubagentSteerAction, primaryToolAllowlist, rushDeveloperDelegationReason, rushResumeDelegationReason, rushSteerDelegationReason, subagentCallTargetsAgent, } from "./primary-agent-runtime-delegation.js";
+import { applyOpenRouterModelToProjectTargets, applyProviderAwareModelsToNonProjectTargets, collectSubagentCallTargetsMatching, primaryToolAllowlist, rushDeveloperDelegationReason, rushResumeDelegationReason, rushSteerDelegationReason, subagentCallTargetsAgent, } from "./primary-agent-runtime-delegation.js";
+import { noteSubagentToolExecutionEnd, noteSubagentToolExecutionStart, getTlhProjectAgentAccess, markEmbeddedOnlyToolCall, } from "./project-agent-access.mjs";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, dispatchPreflightBackoffMs, extractDispatchProviders, isHighConfidenceAuthSignatureInAttemptError, processSubagentRunDetails, } from "./primary-agent-runtime-auth.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
@@ -834,13 +835,22 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             const selection = currentPrimaryAgentSelection();
             const allowedSubagents = allowedSubagentsForExperimentalConfig();
             const projectTargets = collectSubagentCallTargetsMatching(event.input, (target) => isEmbeddedSubagentTarget(target));
-            if (!isEnabledPrimaryAgentSelection(selection)) {
-            }
-            if (selection === "rush" && isSubagentResumeAction(event.input)) {
-                return { block: true, reason: rushResumeDelegationReason() };
-            }
-            if (selection === "rush" && isSubagentSteerAction(event.input)) {
-                return { block: true, reason: rushSteerDelegationReason() };
+            if (selection === "rush" &&
+                isRecord(event.input) &&
+                (event.input.action === "resume" || event.input.action === "steer")) {
+                const access = getTlhProjectAgentAccess({
+                    cwd: ctx.cwd,
+                    sessionId: null,
+                    targetNames: [],
+                });
+                if (!isRecord(access) || access.controlRestrictedToEmbedded !== true) {
+                    return {
+                        block: true,
+                        reason: event.input.action === "resume"
+                            ? rushResumeDelegationReason()
+                            : rushSteerDelegationReason(),
+                    };
+                }
             }
             if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
                 return { block: true, reason: rushDeveloperDelegationReason() };
@@ -864,7 +874,28 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                     }
                 }
             }
+            if (selection === "rush" &&
+                isRecord(event.input) &&
+                (event.input.action === "resume" || event.input.action === "steer") &&
+                !markEmbeddedOnlyToolCall(event.toolCallId)) {
+                return {
+                    block: true,
+                    reason: event.input.action === "resume"
+                        ? rushResumeDelegationReason()
+                        : rushSteerDelegationReason(),
+                };
+            }
             return undefined;
+        });
+        pi.on("tool_execution_start", (_event) => {
+            const event = _event;
+            if (event.toolName === "subagent")
+                noteSubagentToolExecutionStart(event.toolCallId);
+        });
+        pi.on("tool_execution_end", (_event) => {
+            const event = _event;
+            if (event.toolName === "subagent")
+                noteSubagentToolExecutionEnd(event.toolCallId);
         });
         pi.on("tool_result", (_event, _ctx) => {
             const event = _event;

@@ -7,11 +7,13 @@ import {
   resolveCanonicalGitWorktreeRoot,
   validateProjectAgentCwdContainment,
   type ProjectAgentIdentity,
+  type ProjectAgentTrustDependencies,
   type ProjectAgentTrustStore,
 } from "../../agents/project-agent-loader.ts";
 import type { AgentConfig, AgentDiscoveryDiagnostic, AgentScope } from "../../agents/agents.ts";
 import type { ModelScopeConfig } from "./model-scope.ts";
 import type { ExecutorDeps, ProjectAgentAccess, SubagentParamsLike } from "./executor-types.ts";
+import { isCurrentInvocationEmbeddedOnly } from "../../../../the-last-harness/project-agent-access.mjs";
 import { resolveProjectAgentSessionId } from "../../shared/session-identity.ts";
 
 const EMBEDDED_TARGET_PATTERN = /^embedded\.([a-z0-9][a-z0-9-]*)$/;
@@ -31,11 +33,38 @@ export function isRecordValue(value: unknown): value is Record<string, unknown> 
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * A restricted-control (Rush) bridge must never normalize to "no access info":
+ * that would read as unrestricted. Malformed restricted values become a deny.
+ */
+function restrictedDenyAccess(value: Record<string, unknown>): ProjectAgentAccess {
+  return {
+    architect: false,
+    canManage: false,
+    canInitiate: false,
+    controlRestrictedToEmbedded: true,
+    ...(typeof value.resumeRestrictionReason === "string"
+      ? { resumeRestrictionReason: value.resumeRestrictionReason }
+      : {}),
+    ...(typeof value.steerRestrictionReason === "string"
+      ? { steerRestrictionReason: value.steerRestrictionReason }
+      : {}),
+  };
+}
+
 export function normalizeProjectAgentAccess(value: unknown): ProjectAgentAccess | undefined {
   if (!isRecordValue(value)) return undefined;
+  const normalized = normalizeWellFormedAccess(value);
+  if (normalized) return normalized;
+  return value.controlRestrictedToEmbedded === true ? restrictedDenyAccess(value) : undefined;
+}
+
+function normalizeWellFormedAccess(value: Record<string, unknown>): ProjectAgentAccess | undefined {
   const architect = typeof value.architect === "boolean" ? value.architect : undefined;
   const canManage = typeof value.canManage === "boolean" ? value.canManage : architect;
   if (canManage === undefined) return undefined;
+  if (value.canInitiate !== undefined && typeof value.canInitiate !== "boolean") return undefined;
+  if (value.canManage !== undefined && typeof value.canManage !== "boolean") return undefined;
   const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : canManage;
   const agentDir = typeof value.agentDir === "string" ? value.agentDir : undefined;
   const trustStore = value.trustStore as ProjectAgentTrustStore | undefined;
@@ -48,6 +77,13 @@ export function normalizeProjectAgentAccess(value: unknown): ProjectAgentAccess 
     architect: architect ?? false,
     canManage,
     canInitiate,
+    ...(value.controlRestrictedToEmbedded === true ? { controlRestrictedToEmbedded: true } : {}),
+    ...(typeof value.resumeRestrictionReason === "string"
+      ? { resumeRestrictionReason: value.resumeRestrictionReason }
+      : {}),
+    ...(typeof value.steerRestrictionReason === "string"
+      ? { steerRestrictionReason: value.steerRestrictionReason }
+      : {}),
     ...(agentDir ? { agentDir } : {}),
     ...(trustStore ? { trustStore } : {}),
     ...(createProjectTrustStore ? { createProjectTrustStore } : {}),
@@ -75,13 +111,13 @@ function projectAgentDefinitionKey(value: Awaited<ReturnType<typeof loadProjectA
 function projectAgentTrustOptions(access: ProjectAgentAccess): {
   agentDir?: string;
   trustStore?: ProjectAgentTrustStore;
-  createProjectTrustStore?: (agentDir: string) => ProjectAgentTrustStore;
+  trustDependencies?: ProjectAgentTrustDependencies;
 } {
   return {
     ...(access.agentDir ? { agentDir: access.agentDir } : {}),
     ...(access.trustStore ? { trustStore: access.trustStore } : {}),
     ...(access.createProjectTrustStore
-      ? { createProjectTrustStore: access.createProjectTrustStore }
+      ? { trustDependencies: { createProjectTrustStore: access.createProjectTrustStore } }
       : {}),
   };
 }
@@ -315,4 +351,65 @@ export async function authorizePersistedProjectAgentRun(input: {
     canonicalCwd: loaded.identity.cwd,
     modelScope: discovered.modelScope,
   };
+}
+
+export interface EmbeddedControlTarget {
+  runId: string;
+  agent: string;
+  cwd?: string;
+  /** The selected child's own persisted identity (never a run-level fallback). */
+  projectAgent?: unknown;
+  /** True when persisted records for this child disagree about its identity. */
+  conflict?: boolean;
+}
+
+/**
+ * Executor-side enforcement of the restricted-control rule (Rush): every exact
+ * target child must be an authorized embedded project agent. Returns a rejection
+ * message, or undefined when unrestricted or all targets pass. Fails closed on
+ * missing, malformed or conflicting identity.
+ */
+export async function embeddedControlRestrictionError(input: {
+  action: "resume" | "steer";
+  targets: readonly EmbeddedControlTarget[];
+  ctx: ExtensionContext;
+  deps: ExecutorDeps;
+}): Promise<string | undefined> {
+  // The hook's per-invocation mark is authoritative: no provider read lifts it.
+  const invocationRestricted = isCurrentInvocationEmbeddedOnly();
+  let access: ProjectAgentAccess | undefined;
+  try {
+    access = normalizeProjectAgentAccess(
+      input.deps.getProjectAgentAccess?.({
+        cwd: input.ctx.cwd,
+        sessionId: resolveProjectAgentSessionId(input.ctx.sessionManager),
+        targetNames: input.targets.map((target) => target.agent),
+      }),
+    );
+  } catch {
+    // A throwing bridge is broken, not absent: fail closed.
+    return `Primary agent may only ${input.action} embedded project-agent runs.`;
+  }
+  if (!invocationRestricted && !access?.controlRestrictedToEmbedded) return undefined;
+  const reason =
+    (input.action === "resume"
+      ? access?.resumeRestrictionReason
+      : access?.steerRestrictionReason) ??
+    `Primary agent may only ${input.action} embedded project-agent runs.`;
+  if (input.targets.length === 0) return reason;
+  for (const target of input.targets) {
+    if (
+      target.conflict === true ||
+      !EMBEDDED_TARGET_PATTERN.test(target.agent) ||
+      normalizeProjectAgentIdentity(target.projectAgent) === undefined
+    ) {
+      return reason;
+    }
+    try {
+      await authorizePersistedProjectAgentRun({ target, ctx: input.ctx, deps: input.deps });
+    } catch {
+      return reason;
+    }
+  }
+  return undefined;
 }

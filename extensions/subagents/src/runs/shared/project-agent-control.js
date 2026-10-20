@@ -1,17 +1,42 @@
 // Generated from extensions/subagents/src/runs/shared/project-agent-control.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { embeddedSlugFromName, loadProjectAgent, normalizeProjectAgentIdentity, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";
+import { isCurrentInvocationEmbeddedOnly } from "../../../../the-last-harness/project-agent-access.mjs";
 import { resolveProjectAgentSessionId } from "../../shared/session-identity.js";
 const EMBEDDED_TARGET_PATTERN = /^embedded\.([a-z0-9][a-z0-9-]*)$/;
 export function isRecordValue(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+function restrictedDenyAccess(value) {
+    return {
+        architect: false,
+        canManage: false,
+        canInitiate: false,
+        controlRestrictedToEmbedded: true,
+        ...(typeof value.resumeRestrictionReason === "string"
+            ? { resumeRestrictionReason: value.resumeRestrictionReason }
+            : {}),
+        ...(typeof value.steerRestrictionReason === "string"
+            ? { steerRestrictionReason: value.steerRestrictionReason }
+            : {}),
+    };
+}
 export function normalizeProjectAgentAccess(value) {
     if (!isRecordValue(value))
         return undefined;
+    const normalized = normalizeWellFormedAccess(value);
+    if (normalized)
+        return normalized;
+    return value.controlRestrictedToEmbedded === true ? restrictedDenyAccess(value) : undefined;
+}
+function normalizeWellFormedAccess(value) {
     const architect = typeof value.architect === "boolean" ? value.architect : undefined;
     const canManage = typeof value.canManage === "boolean" ? value.canManage : architect;
     if (canManage === undefined)
+        return undefined;
+    if (value.canInitiate !== undefined && typeof value.canInitiate !== "boolean")
+        return undefined;
+    if (value.canManage !== undefined && typeof value.canManage !== "boolean")
         return undefined;
     const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : canManage;
     const agentDir = typeof value.agentDir === "string" ? value.agentDir : undefined;
@@ -25,6 +50,13 @@ export function normalizeProjectAgentAccess(value) {
         architect: architect ?? false,
         canManage,
         canInitiate,
+        ...(value.controlRestrictedToEmbedded === true ? { controlRestrictedToEmbedded: true } : {}),
+        ...(typeof value.resumeRestrictionReason === "string"
+            ? { resumeRestrictionReason: value.resumeRestrictionReason }
+            : {}),
+        ...(typeof value.steerRestrictionReason === "string"
+            ? { steerRestrictionReason: value.steerRestrictionReason }
+            : {}),
         ...(agentDir ? { agentDir } : {}),
         ...(trustStore ? { trustStore } : {}),
         ...(createProjectTrustStore ? { createProjectTrustStore } : {}),
@@ -48,7 +80,7 @@ function projectAgentTrustOptions(access) {
         ...(access.agentDir ? { agentDir: access.agentDir } : {}),
         ...(access.trustStore ? { trustStore: access.trustStore } : {}),
         ...(access.createProjectTrustStore
-            ? { createProjectTrustStore: access.createProjectTrustStore }
+            ? { trustDependencies: { createProjectTrustStore: access.createProjectTrustStore } }
             : {}),
     };
 }
@@ -208,4 +240,40 @@ export async function authorizePersistedProjectAgentRun(input) {
         canonicalCwd: loaded.identity.cwd,
         modelScope: discovered.modelScope,
     };
+}
+export async function embeddedControlRestrictionError(input) {
+    const invocationRestricted = isCurrentInvocationEmbeddedOnly();
+    let access;
+    try {
+        access = normalizeProjectAgentAccess(input.deps.getProjectAgentAccess?.({
+            cwd: input.ctx.cwd,
+            sessionId: resolveProjectAgentSessionId(input.ctx.sessionManager),
+            targetNames: input.targets.map((target) => target.agent),
+        }));
+    }
+    catch {
+        return `Primary agent may only ${input.action} embedded project-agent runs.`;
+    }
+    if (!invocationRestricted && !access?.controlRestrictedToEmbedded)
+        return undefined;
+    const reason = (input.action === "resume"
+        ? access?.resumeRestrictionReason
+        : access?.steerRestrictionReason) ??
+        `Primary agent may only ${input.action} embedded project-agent runs.`;
+    if (input.targets.length === 0)
+        return reason;
+    for (const target of input.targets) {
+        if (target.conflict === true ||
+            !EMBEDDED_TARGET_PATTERN.test(target.agent) ||
+            normalizeProjectAgentIdentity(target.projectAgent) === undefined) {
+            return reason;
+        }
+        try {
+            await authorizePersistedProjectAgentRun({ target, ctx: input.ctx, deps: input.deps });
+        }
+        catch {
+            return reason;
+        }
+    }
+    return undefined;
 }

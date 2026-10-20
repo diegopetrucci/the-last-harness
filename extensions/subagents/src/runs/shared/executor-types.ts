@@ -65,6 +65,14 @@ export interface ProjectAgentAccess {
   architect: boolean;
   /** Enabled primaries and disabled mode may initiate a new project-agent execution. */
   canInitiate?: boolean;
+  /**
+   * Resume/steer may only target authorized embedded project agents (Rush).
+   * Enforced by the executor against the exact persisted child records it acts on.
+   */
+  controlRestrictedToEmbedded?: boolean;
+  /** Host-supplied rejection texts for restricted resume/steer. */
+  resumeRestrictionReason?: string;
+  steerRestrictionReason?: string;
   /** Host-owned persisted trust dependencies; never model-facing. */
   agentDir?: string;
   trustStore?: ProjectAgentTrustStore;

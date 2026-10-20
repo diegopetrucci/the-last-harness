@@ -230,7 +230,7 @@ The active TLH primary agent normally handles these tools for you. See [subagent
 
 ## Project custom subagents
 
-Custom subagents are not a slash command. Project-owned agents use the exact direct Git-root path `.tlh/agents/custom/<UPPERCASE-SLUG>.md`; persist trust for the validated Git root, then explicitly request one naturally by slug from an enabled primary agent or disabled mode. Generic profile, package, project `.pi/.agents`, configured-directory, and settings-based custom sources do not authorize targets. See [custom-subagents.md](custom-subagents.md) for strict frontmatter, trust boundaries, snapshot behavior, resume limits, troubleshooting, and removal.
+Custom subagents are not a slash command. Project-owned agents use the exact direct Git-root path `.tlh/agents/custom/<UPPERCASE-SLUG>.md`; persist trust for the validated Git root, then explicitly request one naturally by slug from an enabled primary agent or disabled mode. Generic profile, package, project `.pi/.agents`, configured-directory, and settings-based custom sources do not authorize targets. See [custom-subagents.md](custom-subagents.md) for strict frontmatter, trust boundaries, persisted-identity reauthorization, resume limits, troubleshooting, and removal.
 
 ---
 

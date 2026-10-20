@@ -476,6 +476,20 @@ function resolveProjectAgentMetadata(context, index, statusStep) {
             throw new Error(`Invalid persisted project-agent capture for async run child ${index}.`);
         }
     }
+    const resultChild = context.resultSteps[index];
+    const statusIdentity = normalizeProjectAgentIdentity(statusStep?.projectAgent);
+    const resultIdentity = normalizeProjectAgentIdentity(resultChild?.projectAgent);
+    const childIdentityConflict = (statusStep?.projectAgent !== undefined && !statusIdentity) ||
+        (resultChild?.projectAgent !== undefined && !resultIdentity) ||
+        (statusStep !== undefined &&
+            resultChild !== undefined &&
+            statusStep.agent !== resultChild.agent) ||
+        (statusIdentity !== undefined &&
+            resultIdentity !== undefined &&
+            JSON.stringify(statusIdentity) !== JSON.stringify(resultIdentity)) ||
+        (statusStep !== undefined &&
+            resultChild !== undefined &&
+            (statusIdentity === undefined) !== (resultIdentity === undefined));
     const topLevelProjectAgent = normalizeProjectAgentIdentity(ownObjectProperty(context.status, "projectAgent").value) ??
         context.result?.projectAgent;
     const explicitProjectAgents = context.status?.projectAgents ?? context.result?.projectAgents;
@@ -491,6 +505,8 @@ function resolveProjectAgentMetadata(context, index, statusStep) {
         ...(topLevelProjectAgent ? { projectAgent: topLevelProjectAgent } : {}),
         ...(projectAgents !== undefined ? { projectAgents } : {}),
         ...(projectAgent ? { projectAgent } : {}),
+        ...(projectAgent ? { childProjectAgent: projectAgent } : {}),
+        ...(childIdentityConflict ? { childIdentityConflict: true } : {}),
     };
 }
 function buildLiveAsyncResumeTarget(context, index, statusStep) {
@@ -512,6 +528,10 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
         ...(ticketId ? { ticketId } : {}),
         ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+        ...(projectMetadata.childProjectAgent
+            ? { childProjectAgent: projectMetadata.childProjectAgent }
+            : {}),
+        ...(projectMetadata.childIdentityConflict ? { childIdentityConflict: true } : {}),
         ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
         ...(metadata.modelResolution ? { modelResolution: metadata.modelResolution } : {}),
         ...(resolveResumeTerminalResult(index, statusStep, context.resultSteps)
@@ -563,6 +583,10 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
             context.status?.cwd ??
             context.result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+        ...(() => {
+            const owner = context.status?.sessionId ?? context.result?.sessionId;
+            return typeof owner === "string" && owner.length > 0 ? { ownerSessionId: owner } : {};
+        })(),
     };
     const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
@@ -572,6 +596,10 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         ...(ticketId ? { ticketId } : {}),
         ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+        ...(projectMetadata.childProjectAgent
+            ? { childProjectAgent: projectMetadata.childProjectAgent }
+            : {}),
+        ...(projectMetadata.childIdentityConflict ? { childIdentityConflict: true } : {}),
         ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
         ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
         ...(resolveResumeTerminalResult(index, selectedStatusStep, context.resultSteps)

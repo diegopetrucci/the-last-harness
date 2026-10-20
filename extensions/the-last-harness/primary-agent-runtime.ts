@@ -48,14 +48,18 @@ import {
   applyOpenRouterModelToProjectTargets,
   applyProviderAwareModelsToNonProjectTargets,
   collectSubagentCallTargetsMatching,
-  isSubagentResumeAction,
-  isSubagentSteerAction,
   primaryToolAllowlist,
   rushDeveloperDelegationReason,
   rushResumeDelegationReason,
   rushSteerDelegationReason,
   subagentCallTargetsAgent,
 } from "./primary-agent-runtime-delegation.js";
+import {
+  noteSubagentToolExecutionEnd,
+  noteSubagentToolExecutionStart,
+  getTlhProjectAgentAccess,
+  markEmbeddedOnlyToolCall,
+} from "./project-agent-access.mjs";
 import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   dispatchPreflightBackoffMs,
@@ -1450,16 +1454,29 @@ function createTlhPrimaryAgentRuntime(
       const projectTargets = collectSubagentCallTargetsMatching(event.input, (target) =>
         isEmbeddedSubagentTarget(target),
       );
-      if (!isEnabledPrimaryAgentSelection(selection)) {
-        // Disabled mode retains the TLH safety plane and may initiate an
-        // explicitly requested project-agent execution. Retained project
-        // controls remain reserved for enabled primary agents.
-      }
-      if (selection === "rush" && isSubagentResumeAction(event.input)) {
-        return { block: true, reason: rushResumeDelegationReason() };
-      }
-      if (selection === "rush" && isSubagentSteerAction(event.input)) {
-        return { block: true, reason: rushSteerDelegationReason() };
+      // Rush's resume/steer restriction (embedded targets only) is enforced by
+      // the subagent executor against the exact persisted child records. Delegate
+      // only when the in-process bridge guarantees the executor sees that
+      // restriction; otherwise fail closed here (no file reads).
+      if (
+        selection === "rush" &&
+        isRecord(event.input) &&
+        (event.input.action === "resume" || event.input.action === "steer")
+      ) {
+        const access = getTlhProjectAgentAccess({
+          cwd: ctx.cwd,
+          sessionId: null,
+          targetNames: [],
+        });
+        if (!isRecord(access) || access.controlRestrictedToEmbedded !== true) {
+          return {
+            block: true,
+            reason:
+              event.input.action === "resume"
+                ? rushResumeDelegationReason()
+                : rushSteerDelegationReason(),
+          };
+        }
       }
       if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
         return { block: true, reason: rushDeveloperDelegationReason() };
@@ -1500,7 +1517,40 @@ function createTlhPrimaryAgentRuntime(
         }
       }
 
+      // LAST step before allowing: bind the Rush embedded-only restriction to
+      // this invocation so the executor enforces it regardless of later
+      // provider reads. Marking last keeps blocked calls from holding marks;
+      // a later hook/extension block is cleared by start/end accounting
+      // (pi-agent-core fires one start and one end per call).
+      // Registry full or no usable id: fail closed.
+      if (
+        selection === "rush" &&
+        isRecord(event.input) &&
+        (event.input.action === "resume" || event.input.action === "steer") &&
+        !markEmbeddedOnlyToolCall(event.toolCallId)
+      ) {
+        return {
+          block: true,
+          reason:
+            event.input.action === "resume"
+              ? rushResumeDelegationReason()
+              : rushSteerDelegationReason(),
+        };
+      }
+
       return undefined;
+    });
+
+    // Start/end accounting for EVERY subagent call (see project-agent-access.mjs):
+    // pi emits one start before validation/hooks and one end per call; an id's
+    // Rush mark is cleared only when all same-id executions have ended.
+    pi.on("tool_execution_start", (_event) => {
+      const event = _event as { toolName?: string; toolCallId?: string };
+      if (event.toolName === "subagent") noteSubagentToolExecutionStart(event.toolCallId);
+    });
+    pi.on("tool_execution_end", (_event) => {
+      const event = _event as { toolName?: string; toolCallId?: string };
+      if (event.toolName === "subagent") noteSubagentToolExecutionEnd(event.toolCallId);
     });
 
     // Result-time auth-health observation — foreground path.
@@ -1510,7 +1560,7 @@ function createTlhPrimaryAgentRuntime(
     // the failing attempt's error lives in details.results[*].modelAttempts[*].error.
     // Parsing is from unknown per the TypeScript boundaries skill.
     pi.on("tool_result", (_event, _ctx) => {
-      const event = _event as { toolName?: string; details?: unknown };
+      const event = _event as { toolName?: string; toolCallId?: string; details?: unknown };
       if (event.toolName !== "subagent") return;
       const authStore = getProviderAuthHealthStore?.();
       if (!authStore) return;

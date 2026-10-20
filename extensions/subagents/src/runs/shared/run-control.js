@@ -7,7 +7,7 @@ import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { readStatus } from "../../shared/utils.js";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
-import { projectRunAuthorizationError, authorizePersistedProjectAgentRun, } from "./project-agent-control.js";
+import { projectRunAuthorizationError, authorizePersistedProjectAgentRun, embeddedControlRestrictionError, } from "./project-agent-control.js";
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.js";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.js";
@@ -406,17 +406,29 @@ export async function authorizeProjectSteerTarget(input) {
     catch (error) {
         throw projectRunAuthorizationError(error instanceof Error ? error.message : "the persisted control target is invalid.");
     }
-    if (!location.asyncDir)
-        return;
-    const status = readStatus(location.asyncDir);
-    if (!status || status.runId !== location.resolvedId)
-        return;
-    const steps = status.steps ?? [];
+    const status = location.asyncDir ? readStatus(location.asyncDir) : null;
+    const known = Boolean(location.asyncDir && status && status.runId === location.resolvedId);
+    const steps = known ? (status?.steps ?? []) : [];
     const selected = input.params.index !== undefined
         ? steps.slice(input.params.index, input.params.index + 1)
         : steps.length === 1
             ? steps
             : steps.filter((step) => step.status === "running" || step.status === "pending");
+    const restriction = await embeddedControlRestrictionError({
+        action: "steer",
+        targets: selected.map((step) => ({
+            runId: status?.runId ?? "",
+            agent: step.agent,
+            cwd: step.cwd ?? status?.cwd,
+            projectAgent: step.projectAgent,
+        })),
+        ctx: input.ctx,
+        deps: input.deps,
+    });
+    if (restriction)
+        throw new Error(restriction);
+    if (!known || !status)
+        return;
     for (const step of selected) {
         if (!step.agent.startsWith("embedded."))
             continue;

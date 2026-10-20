@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import {
   buildChildEnv,
@@ -182,18 +183,30 @@ test("subagents runner rejects unsupported filtering at the CLI", () => {
   assert.match(result.stderr, /does not support --test-skip-pattern/);
 });
 
-test("subagents runner accepts a selected test across real multi-file diagnostics", () => {
-  const files = discoverSuiteFiles("integration");
-  assert.ok(files.length > 1, "the regression requires a multi-file suite");
-  const result = spawnSync(
-    process.execPath,
-    [
-      runnerPath,
-      "integration",
-      "--test-name-pattern=removes completed jobs after retention and requests a rerender",
-    ],
-    { cwd: repoRoot, env: scrubRunnerEnv(), encoding: "utf8", timeout: 120_000 },
-  );
+test("subagents runner accepts a selected test across multi-file diagnostics", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-subagents-runner-fixture-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixtureSource = (name) =>
+    `import assert from "node:assert/strict";\nimport test from "node:test";\n` +
+    `test("${name}", () => assert.ok(true));\n`;
+  writeFileSync(join(root, "a-selected.test.ts"), fixtureSource("processes all items"));
+  writeFileSync(join(root, "b-excluded.test.ts"), fixtureSource("unrelated behavior"));
+  writeFileSync(join(root, "c-excluded.test.ts"), fixtureSource("another unrelated behavior"));
+  const files = discoverSuiteFiles("integration", { directory: root });
+  assert.equal(files.length, 3, "the regression requires a multi-file suite");
+
+  // Exercise the real runner and TS loader path against the fixture directory
+  // through the optional runSuite config seam, in a scrubbed child process.
+  const script =
+    `import { runSuite } from ${JSON.stringify(pathToFileURL(runnerPath).href)};\n` +
+    `process.exitCode = runSuite("integration", ["--test-name-pattern=processes all items"], ` +
+    `{ config: { directory: ${JSON.stringify(root)}, minimumTests: 1 } });\n`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: repoRoot,
+    env: scrubRunnerEnv(),
+    encoding: "utf8",
+    timeout: 60_000,
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(
     result.stdout,
