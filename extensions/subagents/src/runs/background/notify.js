@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
 import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
-import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.js";
 import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.js";
@@ -362,18 +361,15 @@ function serializableDetails(details) {
             : {}),
     };
 }
-const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
 function sendCompletion(pi, details, options = { triggerTurn: true }) {
     const serializable = serializableDetails(details);
+    const wake = options.triggerTurn && (options.isIdle?.() ?? true);
     pi.sendMessage({
         customType: "subagent-notify",
         content: formatSingleCompletion(details),
         display: true,
-        details: serializable,
-    });
-    if (options.triggerTurn && (options.isIdle?.() ?? true)) {
-        pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
-    }
+        details: { ...serializable, triggersTurn: wake },
+    }, wake ? { triggerTurn: true } : undefined);
 }
 export function buildCompletionDetails(result) {
     const children = Array.isArray(result.results) ? result.results : [];

@@ -13,7 +13,7 @@ import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   type SubagentTerminalResult,
 } from "../../src/shared/types.ts";
-import { createPi, NUDGE_TEXT } from "../support/notify-fixtures.ts";
+import { createPi } from "../support/notify-fixtures.ts";
 
 function terminalResult(): SubagentTerminalResult {
   return {
@@ -39,7 +39,7 @@ function terminalResult(): SubagentTerminalResult {
 
 describe("single completion notifications", () => {
   it("delivers two siblings finishing close together as two immediate notifications", () => {
-    const { events, sentMessages, sentUserMessages } = createPi();
+    const { events, sentMessages, wakes } = createPi();
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
       id: "sibling-a",
@@ -69,11 +69,8 @@ describe("single completion notifications", () => {
       (sentMessages[1]!.message as { content: string }).content,
       /^Background task completed: \*\*beta\*\*/,
     );
-    assert.equal(sentUserMessages.length, 2);
-    assert.deepEqual(sentUserMessages[0], {
-      content: NUDGE_TEXT,
-      options: { deliverAs: "followUp" },
-    });
+    assert.equal(wakes.length, 2);
+    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
   });
 
   it("uses the fixed artifact-summary-facts order and bounds child-derived fields", () => {

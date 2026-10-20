@@ -12,6 +12,7 @@ import {
 import type { AgentConfig, AgentDiscoveryDiagnostic, AgentScope } from "../../agents/agents.ts";
 import type { ModelScopeConfig } from "./model-scope.ts";
 import type { ExecutorDeps, ProjectAgentAccess, SubagentParamsLike } from "./executor-types.ts";
+import { resolveProjectAgentSessionId } from "../../shared/session-identity.ts";
 
 const EMBEDDED_TARGET_PATTERN = /^embedded\.([a-z0-9][a-z0-9-]*)$/;
 
@@ -94,7 +95,7 @@ export async function resolveProjectAgentExecution(
   params: SubagentParamsLike,
   effectiveCwd: string,
   scope: AgentScope,
-  _sessionId: string | null,
+  sessionId: string | null,
   deps: ExecutorDeps,
 ): Promise<ProjectAgentExecutionResolution | { error: string }> {
   const names = [
@@ -122,7 +123,7 @@ export async function resolveProjectAgentExecution(
     access = normalizeProjectAgentAccess(
       deps.getProjectAgentAccess?.({
         cwd: effectiveCwd,
-        sessionId: _sessionId,
+        sessionId,
         targetNames: embeddedTargets,
       }),
     );
@@ -269,7 +270,7 @@ export async function authorizePersistedProjectAgentRun(input: {
   const access = normalizeProjectAgentAccess(
     input.deps.getProjectAgentAccess?.({
       cwd: input.ctx.cwd,
-      sessionId: resolveSessionId(input.ctx),
+      sessionId: resolveProjectAgentSessionId(input.ctx.sessionManager),
       targetNames: [input.target.agent],
     }),
   );
@@ -308,13 +309,4 @@ export async function authorizePersistedProjectAgentRun(input: {
     canonicalCwd: loaded.identity.cwd,
     modelScope: discovered.modelScope,
   };
-}
-
-function resolveSessionId(ctx: ExtensionContext): string | null {
-  try {
-    const value = ctx.sessionManager.getSessionId();
-    return typeof value === "string" && value.length > 0 ? value : null;
-  } catch {
-    return null;
-  }
 }

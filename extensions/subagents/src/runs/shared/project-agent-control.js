@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { embeddedSlugFromName, loadProjectAgent, normalizeProjectAgentIdentity, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";
+import { resolveProjectAgentSessionId } from "../../shared/session-identity.js";
 const EMBEDDED_TARGET_PATTERN = /^embedded\.([a-z0-9][a-z0-9-]*)$/;
 export function isRecordValue(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -51,7 +52,7 @@ function addProjectAgents(discovered, loaded) {
         byName.set(entry.agent.name, entry.agent);
     return { ...discovered, agents: [...byName.values()] };
 }
-export async function resolveProjectAgentExecution(params, effectiveCwd, scope, _sessionId, deps) {
+export async function resolveProjectAgentExecution(params, effectiveCwd, scope, sessionId, deps) {
     const names = [
         ...(typeof params.agent === "string" ? [params.agent] : []),
         ...(params.tasks ?? []).map((task) => task.agent),
@@ -69,7 +70,7 @@ export async function resolveProjectAgentExecution(params, effectiveCwd, scope, 
     try {
         access = normalizeProjectAgentAccess(deps.getProjectAgentAccess?.({
             cwd: effectiveCwd,
-            sessionId: _sessionId,
+            sessionId,
             targetNames: embeddedTargets,
         }));
     }
@@ -169,7 +170,7 @@ export async function authorizePersistedProjectAgentRun(input) {
     }
     const access = normalizeProjectAgentAccess(input.deps.getProjectAgentAccess?.({
         cwd: input.ctx.cwd,
-        sessionId: resolveSessionId(input.ctx),
+        sessionId: resolveProjectAgentSessionId(input.ctx.sessionManager),
         targetNames: [input.target.agent],
     }));
     if (input.requireArchitect !== false && !access?.architect) {
@@ -201,13 +202,4 @@ export async function authorizePersistedProjectAgentRun(input) {
         canonicalCwd: loaded.identity.cwd,
         modelScope: discovered.modelScope,
     };
-}
-function resolveSessionId(ctx) {
-    try {
-        const value = ctx.sessionManager.getSessionId();
-        return typeof value === "string" && value.length > 0 ? value : null;
-    }
-    catch {
-        return null;
-    }
 }

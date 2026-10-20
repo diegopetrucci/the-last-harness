@@ -17,7 +17,7 @@ import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   type SubagentTerminalResult,
 } from "../../src/shared/types.ts";
-import { NUDGE_TEXT, createPi } from "../support/notify-fixtures.ts";
+import { createPi } from "../support/notify-fixtures.ts";
 
 function terminalResult(): SubagentTerminalResult {
   return {
@@ -43,7 +43,7 @@ function terminalResult(): SubagentTerminalResult {
 
 describe("registerSubagentNotify", () => {
   it("recovers an awaited marker when no live owner remains", () => {
-    const { events, sentMessages, sentUserMessages } = createPi();
+    const { events, sentMessages, wakes } = createPi();
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
       id: "awaited-completion",
@@ -61,11 +61,11 @@ describe("registerSubagentNotify", () => {
       (sentMessages[0]!.message as { content: string }).content,
       /Summary:\n  recoverable awaited result/,
     );
-    assert.equal(sentUserMessages.length, 1);
+    assert.equal(wakes.length, 1);
   });
 
   it("suppresses a completion generation owned by a live awaited run", () => {
-    const { events, sentMessages, sentUserMessages } = createPi();
+    const { events, sentMessages, wakes } = createPi();
     const id = `notify-generation-${Date.now().toString(36)}`;
     registerAwaitedRun(
       id,
@@ -94,14 +94,14 @@ describe("registerSubagentNotify", () => {
         sessionId: "session-1",
       });
       assert.deepEqual(sentMessages, []);
-      assert.deepEqual(sentUserMessages, []);
+      assert.deepEqual(wakes, []);
     } finally {
       unregisterAwaitedRun(id, 2);
     }
   });
 
   it("uses a fixed shape and fallback summary for an empty completion", () => {
-    const { events, sentMessages, sentUserMessages } = createPi();
+    const { events, sentMessages, wakes } = createPi();
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
       id: "notify-empty-1",
@@ -123,15 +123,12 @@ describe("registerSubagentNotify", () => {
       "Background task completed: **worker**\n\nSummary:\n  (no output)\n\nAsync id: notify-empty-1",
     );
     assert.equal(message.details.resultPreview, "(no output)");
-    assert.equal(sentUserMessages.length, 1);
-    assert.deepEqual(sentUserMessages[0], {
-      content: NUDGE_TEXT,
-      options: { deliverAs: "followUp" },
-    });
+    assert.equal(wakes.length, 1);
+    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
   });
 
   it("preserves a multiline summary and task position without exposing raw event fields", () => {
-    const { events, sentMessages, sentUserMessages } = createPi();
+    const { events, sentMessages, wakes } = createPi();
     const summary = "Done streaming\nAll clear";
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -158,8 +155,9 @@ describe("registerSubagentNotify", () => {
       taskInfo: " (2/3)",
       resultPreview: summary,
       asyncId: "notify-summary-1",
+      triggersTurn: true,
     });
-    assert.equal(sentUserMessages.length, 1);
+    assert.equal(wakes.length, 1);
   });
 
   it("shows resume guidance only when the session file exists", () => {
@@ -330,7 +328,7 @@ describe("registerSubagentNotify", () => {
   });
 
   it("ignores completions for another or missing session", () => {
-    const { events, sentMessages, sentUserMessages } = createPi("session-owner");
+    const { events, sentMessages, wakes } = createPi("session-owner");
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
       id: "notify-other-session",
@@ -350,11 +348,11 @@ describe("registerSubagentNotify", () => {
     });
 
     assert.deepEqual(sentMessages, []);
-    assert.deepEqual(sentUserMessages, []);
+    assert.deepEqual(wakes, []);
   });
 
-  it("reads idleness live and sends no nudge while streaming", () => {
-    const { events, sentMessages, sentUserMessages, lifecycleHandlers } = createPi("session-1");
+  it("reads idleness live and sends no wake while streaming", () => {
+    const { events, sentMessages, wakes, lifecycleHandlers } = createPi("session-1");
     let idle = false;
     lifecycleHandlers.get("session_start")?.({}, { isIdle: () => idle });
 
@@ -367,7 +365,7 @@ describe("registerSubagentNotify", () => {
       sessionId: "session-1",
     });
     assert.equal(sentMessages.length, 1);
-    assert.equal(sentUserMessages.length, 0);
+    assert.equal(wakes.length, 0);
 
     idle = true;
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -379,11 +377,11 @@ describe("registerSubagentNotify", () => {
       sessionId: "session-1",
     });
     assert.equal(sentMessages.length, 2);
-    assert.equal(sentUserMessages.length, 1);
+    assert.equal(wakes.length, 1);
   });
 
   it("delivers failures immediately with the same single shape", () => {
-    const { events, sentMessages, sentUserMessages } = createPi();
+    const { events, sentMessages, wakes } = createPi();
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
       id: "notify-failed-1",
       agent: "worker",
@@ -400,6 +398,6 @@ describe("registerSubagentNotify", () => {
       (sentMessages[0]!.message as { content: string }).content,
       /^Background task failed: \*\*worker\*\*\n\nSummary:\n  child failed/,
     );
-    assert.equal(sentUserMessages.length, 1);
+    assert.equal(wakes.length, 1);
   });
 });

@@ -32,7 +32,6 @@ import {
   normalizeSubagentRunTelemetry,
   type SubagentRunTelemetry,
 } from "../../shared/telemetry.ts";
-import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.ts";
 import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
@@ -81,6 +80,8 @@ export interface SubagentNotifyDetails {
   taskInfo?: string;
   /** Bounded child-derived summary text. */
   resultPreview: string;
+  /** Set at send time on the persisted completion message. */
+  triggersTurn?: boolean;
   /** Bounded child-derived A1c facts body (without the Facts: label). */
   factsPreview?: string;
   /** Bounded output artifact paths, in display order. */
@@ -535,26 +536,28 @@ function serializableDetails(details: SubagentNotifyDetails): Record<string, unk
   };
 }
 
-const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
-
 function sendCompletion(
-  pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,
+  pi: Pick<ExtensionAPI, "sendMessage">,
   details: SubagentNotifyDetails,
   options: { triggerTurn: boolean; isIdle?: () => boolean } = { triggerTurn: true },
 ): void {
   const serializable = serializableDetails(details);
-  pi.sendMessage({
-    customType: "subagent-notify",
-    content: formatSingleCompletion(details),
-    display: true,
-    details: serializable,
-  });
-  // Keep completion projection before the wake nudge. When idle, the follow-up
-  // turn sees the notification in the transcript; while streaming, the custom
-  // message is enough and a second turn would race the active response.
-  if (options.triggerTurn && (options.isIdle?.() ?? true)) {
-    pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
-  }
+  // Idleness is read live at send time; when no session context has been captured yet,
+  // assume idle. { triggerTurn: true } is safe either way: Pi starts a run from the custom
+  // message when idle (before_agent_start fires, so the TLH system prompt applies) and
+  // steers the active turn when streaming. Never pass triggerTurn:false: while streaming it
+  // defers delivery instead of steering.
+  const wake = options.triggerTurn && (options.isIdle?.() ?? true);
+  pi.sendMessage(
+    {
+      customType: "subagent-notify",
+      content: formatSingleCompletion(details),
+      display: true,
+      // Persisted so session analysis can tell a wake from a steer.
+      details: { ...serializable, triggersTurn: wake },
+    },
+    wake ? { triggerTurn: true } : undefined,
+  );
 }
 
 export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDetails {
@@ -632,7 +635,7 @@ export default function registerSubagentNotify(
   }
 
   // Capture a session context so idleness is read at delivery time rather than
-  // at registration time. This preserves completion-before-nudge ordering even
+  // at registration time. This preserves completion-before-wake ordering even
   // when a session changes while a child is finishing.
   let sessionContext: Pick<ExtensionContext, "isIdle"> | null = null;
   const isIdle = () => sessionContext?.isIdle() ?? true;

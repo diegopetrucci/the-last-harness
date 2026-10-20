@@ -377,9 +377,9 @@ describe("renderSubagentResult", () => {
         })),
       },
     };
-    const text = withTerminalWidth(8, () =>
+    const text = withTerminalWidth(4, () =>
       withTerminalRows(10, () =>
-        renderSubagentResult!(tinyResult, { expanded: false }, theme).render(8).join("\n"),
+        renderSubagentResult!(tinyResult, { expanded: false }, theme).render(4).join("\n"),
       ),
     );
 

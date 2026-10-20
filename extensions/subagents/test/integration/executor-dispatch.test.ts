@@ -624,6 +624,38 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     }
   });
 
+  it("authorizes project agents with the session UUID, not the session file path", async () => {
+    const requests: Array<{ sessionId: string | null }> = [];
+    const executor = createSubagentExecutor({
+      pi: makeExtensionAPI({ events: createEventBus() }),
+      state: makeSubagentState({ baseCwd: tempDir }),
+      config: {},
+      tempArtifactsDir: tempDir,
+      getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
+      expandTilde: (value: string) => value,
+      discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+      getProjectAgentAccess: (request: { sessionId: string | null }) => {
+        requests.push({ sessionId: request.sessionId });
+        return { architect: true, canInitiate: false };
+      },
+    });
+    const ctx = makeMinimalCtx(tempDir);
+    ctx.sessionManager.getSessionId = () => "session-uuid-1";
+    ctx.sessionManager.getSessionFile = () => path.join(tempDir, "parent-session.jsonl");
+
+    const result = await executor.execute(
+      "project-agent-session-identity",
+      { agent: "embedded.reader", task: "must not launch" },
+      new AbortController().signal,
+      undefined,
+      ctx,
+    );
+
+    assert.equal(result.isError, true);
+    assert.deepEqual(requests, [{ sessionId: "session-uuid-1" }]);
+    assert.equal(mockPi.callCount(), 0);
+  });
+
   it("uses tasks instead of the top-level agent for parallel mode", async () => {
     const result = await makeExecutor().execute(
       "id",

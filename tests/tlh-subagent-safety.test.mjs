@@ -74,7 +74,7 @@ async function emitChainedBeforeAgentStart(options, registrars) {
     SessionManager.inMemory(cwd),
     /** @type {any} */ ({}),
   );
-  return runner.emitBeforeAgentStart("child task", undefined, options);
+  return runner.emitBeforeAgentStart({ messageType: "user", prompt: "child task" }, options);
 }
 
 function createPiHarness() {

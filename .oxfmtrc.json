@@ -47,6 +47,7 @@
     "scripts/tlh-sessions.mjs",
     "scripts/tlh-tickets.mjs",
     "scripts/tlh-update.mjs",
+    "scripts/tlh-version.mjs",
     "scripts/tlh-wrapper.mjs",
     "extensions/annotate-git-diff/web/index.html",
     "extensions/the-last-harness/annotate-last-message/web/index.html"

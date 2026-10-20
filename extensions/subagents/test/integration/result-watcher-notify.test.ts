@@ -44,7 +44,8 @@ function createHarness(sessionId = "session-owner") {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const emitted: Array<{ event: string; data: unknown }> = [];
   const sent: Array<{ content: string; details?: unknown }> = [];
-  const nudges: string[] = [];
+  // Messages sent with { triggerTurn: true } — the native wake of an idle parent.
+  const wakes: Array<{ options?: { triggerTurn?: boolean } }> = [];
   const pi = {
     events: {
       on(event: string, handler: (payload: unknown) => void) {
@@ -59,16 +60,20 @@ function createHarness(sessionId = "session-owner") {
       },
     },
     on(_event: string, _handler: (...args: unknown[]) => void) {},
-    sendMessage(message: { content?: string; details?: unknown }) {
+    sendMessage(
+      message: { content?: string; details?: unknown },
+      options?: { triggerTurn?: boolean },
+    ) {
       sent.push({ content: message.content ?? "", details: message.details });
+      if (options?.triggerTurn) wakes.push({ options });
     },
-    sendUserMessage(content: string) {
-      nudges.push(content);
+    sendUserMessage() {
+      throw new Error("notify must not send a synthetic user message (#470)");
     },
   };
   const state = createState(sessionId);
   registerSubagentNotify(pi as never, state);
-  return { pi, state, sent, nudges, emitted };
+  return { pi, state, sent, wakes, emitted };
 }
 
 function writeResult(resultsDir: string, file: string, data: Record<string, unknown>): string {
@@ -186,7 +191,7 @@ function writePausedLifecycle(
 describe("result watcher to native notify", () => {
   it("delivers two siblings finishing ten milliseconds apart as two notifications", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-two-siblings-"));
-    const { pi, state, sent, nudges, emitted } = createHarness();
+    const { pi, state, sent, wakes, emitted } = createHarness();
     const watcher = createResultWatcher(pi, state, resultsDir);
     try {
       writeResult(resultsDir, "01-alpha.json", {
@@ -217,7 +222,7 @@ describe("result watcher to native notify", () => {
       assert.match(sent[0]!.content, /^Background task completed: \*\*alpha\*\*/);
       assert.match(sent[1]!.content, /^Background task completed: \*\*beta\*\*/);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 2);
-      assert.equal(nudges.length, 2);
+      assert.equal(wakes.length, 2);
     } finally {
       watcher.stopResultWatcher();
       fs.rmSync(resultsDir, { recursive: true, force: true });
@@ -322,7 +327,7 @@ describe("result watcher to native notify", () => {
 
   it("consumes awaited results privately without emitting detached completion notifications", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-"));
-    const { pi, state, sent, nudges, emitted } = createHarness();
+    const { pi, state, sent, wakes, emitted } = createHarness();
     const runId = "awaited-run";
     registerAwaitedRun(runId, () => true, 1);
     const watcher = createResultWatcher(pi, state, resultsDir);
@@ -341,7 +346,7 @@ describe("result watcher to native notify", () => {
       watcher.primeExistingResults();
       await waitUntil(() => !fs.existsSync(resultPath));
       assert.deepEqual(sent, []);
-      assert.deepEqual(nudges, []);
+      assert.deepEqual(wakes, []);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
     } finally {
       watcher.stopResultWatcher();
@@ -355,7 +360,7 @@ describe("result watcher to native notify", () => {
     const runId = "awaited-recovery";
     registerAwaitedRun(runId, () => true, 4);
     unregisterAwaitedRun(runId, 4);
-    const { pi, state, sent, nudges, emitted } = createHarness();
+    const { pi, state, sent, wakes, emitted } = createHarness();
     const watcher = createResultWatcher(pi, state, resultsDir);
     try {
       const resultPath = writeResult(resultsDir, "awaited-recovery.json", {
@@ -372,7 +377,7 @@ describe("result watcher to native notify", () => {
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
       assert.match(sent[0]!.content, /recovered awaited result/);
-      assert.equal(nudges.length, 1);
+      assert.equal(wakes.length, 1);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
       assert.equal(fs.existsSync(resultPath), false);
       watcher.primeExistingResults();
@@ -407,7 +412,7 @@ describe("result watcher to native notify", () => {
       },
     ] as const;
     const deliveries: unknown[] = [];
-    const { pi, state, sent, nudges, emitted } = createHarness();
+    const { pi, state, sent, wakes, emitted } = createHarness();
     for (const testCase of cases) {
       registerAwaitedRun(
         testCase.id,
@@ -488,7 +493,7 @@ describe("result watcher to native notify", () => {
         cases.map((testCase) => ({ state: testCase.state, generation: 1 })),
       );
       assert.deepEqual(sent, []);
-      assert.deepEqual(nudges, []);
+      assert.deepEqual(wakes, []);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
       for (const testCase of cases)
         assert.equal(fs.existsSync(path.join(resultsDir, `${testCase.id}.json`)), false);
@@ -503,7 +508,7 @@ describe("result watcher to native notify", () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-generationless-"));
     const runId = "awaited-generationless-artifact";
     const deliveries: unknown[] = [];
-    const { pi, state, sent, nudges, emitted } = createHarness();
+    const { pi, state, sent, wakes, emitted } = createHarness();
     registerAwaitedRun(
       runId,
       (data) => {
@@ -529,7 +534,7 @@ describe("result watcher to native notify", () => {
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
       assert.deepEqual(deliveries, []);
-      assert.equal(nudges.length, 1);
+      assert.equal(wakes.length, 1);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
       assert.equal(fs.existsSync(resultPath), false);
     } finally {
@@ -543,7 +548,7 @@ describe("result watcher to native notify", () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-malformed-children-"));
     const runId = "awaited-malformed-child-array";
     const deliveries: unknown[] = [];
-    const { pi, state, sent, nudges, emitted } = createHarness();
+    const { pi, state, sent, wakes, emitted } = createHarness();
     registerAwaitedRun(
       runId,
       (data) => {
@@ -569,7 +574,7 @@ describe("result watcher to native notify", () => {
       watcher.primeExistingResults();
       await waitUntil(() => deliveries.length === 1);
       assert.equal(sent.length, 0);
-      assert.equal(nudges.length, 0);
+      assert.equal(wakes.length, 0);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
       assert.equal(fs.existsSync(resultPath), false);
       const child = (deliveries[0] as { results?: Array<Record<string, unknown>> }).results?.[0];
@@ -588,7 +593,7 @@ describe("result watcher to native notify", () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-replacement-"));
     const runId = "awaited-replacement-generation";
     const delivered: number[] = [];
-    const { pi, state, sent, nudges, emitted } = createHarness();
+    const { pi, state, sent, wakes, emitted } = createHarness();
     registerAwaitedRun(
       runId,
       (data) => {
@@ -654,7 +659,7 @@ describe("result watcher to native notify", () => {
 
       assert.deepEqual(delivered, [3]);
       assert.equal(sent.length, 2);
-      assert.equal(nudges.length, 2);
+      assert.equal(wakes.length, 2);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 2);
     } finally {
       watcher.stopResultWatcher();
@@ -716,7 +721,7 @@ describe("result watcher to native notify", () => {
         },
       },
     ] as const;
-    const { pi, state, sent, nudges, emitted } = createHarness(sessionId);
+    const { pi, state, sent, wakes, emitted } = createHarness(sessionId);
     const ownerDeliveries: unknown[] = [];
     for (const testCase of cases)
       registerAwaitedRun(
@@ -735,7 +740,7 @@ describe("result watcher to native notify", () => {
       }
       await waitUntil(() => ownerDeliveries.length === cases.length);
       assert.equal(sent.length, 0);
-      assert.equal(nudges.length, 0);
+      assert.equal(wakes.length, 0);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
 
       for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
@@ -748,7 +753,7 @@ describe("result watcher to native notify", () => {
         emitted.filter((entry) => entry.event === "subagent:async-complete").length,
         cases.length,
       );
-      assert.equal(nudges.length, cases.length);
+      assert.equal(wakes.length, cases.length);
       assert.match(sent[0]!.content, /stale runner repaired/);
       assert.match(sent[1]!.content, /Async runner plan was missing/);
     } finally {
@@ -759,7 +764,7 @@ describe("result watcher to native notify", () => {
   });
 
   it("delivers failure and attention-worthy status without a completion delay", () => {
-    const { pi, state, sent, nudges } = createHarness();
+    const { pi, state, sent, wakes } = createHarness();
     pi.events.emit("subagent:async-complete", {
       id: "failed-immediate",
       agent: "worker",
@@ -771,7 +776,7 @@ describe("result watcher to native notify", () => {
     });
     assert.equal(sent.length, 1);
     assert.match(sent[0]!.content, /^Background task failed:/);
-    assert.equal(nudges.length, 1);
+    assert.equal(wakes.length, 1);
   });
 
   it("notifies an awaiting_supervisor paused result exactly once across repeated scans", async () => {

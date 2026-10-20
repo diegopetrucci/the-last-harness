@@ -49,7 +49,10 @@ import {
   executeAsyncSingle,
   isAsyncAvailable,
 } from "../runs/background/async-execution.ts";
-import { resolveCurrentSessionId } from "../shared/session-identity.ts";
+import {
+  resolveCurrentSessionId,
+  resolveProjectAgentSessionId,
+} from "../shared/session-identity.ts";
 import { resolveControlConfig } from "../runs/shared/subagent-control.ts";
 
 import { normalizeSingleOutputOverride } from "../runs/shared/single-output.ts";
@@ -882,7 +885,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       effectiveParams,
       requestedExecutionCwd,
       scope,
-      deps.state.currentSessionId,
+      resolveProjectAgentSessionId(ctx.sessionManager),
       deps,
     );
     if ("error" in projectResolution) {

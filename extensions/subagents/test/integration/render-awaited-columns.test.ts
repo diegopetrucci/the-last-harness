@@ -49,20 +49,28 @@ const indentOf = (line: string) => line.length - line.trimStart().length;
 const find = (lines: string[], needle: string) => lines.filter((l) => l.includes(needle));
 
 describe("awaited detail column", () => {
-  it("collapsed single aligns location, activity and hint at column 4", () => {
+  it("collapsed single aligns details at column 4 and the hint at column 2", () => {
     const lines = render("single", [running(0, "worker")], false);
-    const detail = lines.slice(1).filter((l) => l.trim());
-    assert.ok(detail.length >= 3);
+    const hints = find(lines, hint);
+    assert.equal(hints.length, 1);
+    const detail = lines.slice(1).filter((l) => l.trim() && l !== hints[0]);
+    assert.ok(detail.length >= 2);
     for (const line of detail) assert.equal(indentOf(line), 4, line);
-    assert.equal(find(lines, hint).length, 1);
+    assert.equal(indentOf(hints[0]!), 2);
+    const nonEmpty = lines.filter((l) => l.trim() !== "");
+    assert.equal(nonEmpty[nonEmpty.length - 1], hints[0]);
   });
 
-  it("collapsed multi aligns details at column 6 with a single hint", () => {
+  it("collapsed multi aligns details at column 6 and the hint at column 2", () => {
     const lines = render("parallel", [running(0, "a"), running(1, "b")], false);
-    const detail = lines.filter((l) => /loc-|Press /.test(l));
-    assert.equal(find(lines, hint).length, 1);
-    assert.ok(detail.length >= 3);
+    const detail = lines.filter((l) => /loc-/.test(l));
+    const hints = find(lines, hint);
+    assert.equal(hints.length, 1);
+    assert.ok(detail.length >= 2);
     for (const line of detail) assert.equal(indentOf(line), 6, line);
+    assert.equal(indentOf(hints[0]!), 2);
+    const nonEmpty = lines.filter((l) => l.trim() !== "");
+    assert.equal(nonEmpty[nonEmpty.length - 1], hints[0]);
   });
 
   it("collapsed finished single status line shares the detail column", () => {

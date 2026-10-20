@@ -174,6 +174,8 @@ const PACKAGED_SCRIPT_FILES = [
   "scripts/tlh-tickets.mts",
   "scripts/tlh-update.mjs",
   "scripts/tlh-update.mts",
+  "scripts/tlh-version.mjs",
+  "scripts/tlh-version.mts",
   "scripts/tlh-wrapper.mjs",
   "scripts/tlh-wrapper.mts",
 ];

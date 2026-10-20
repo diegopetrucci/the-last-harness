@@ -1,12 +1,11 @@
 import { EventEmitter } from "node:events";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 
-export const NUDGE_TEXT = "[tlh] Background subagent completed — see notification above.";
-
 export function createPi(currentSessionId = "session-1") {
   const events = new EventEmitter();
   const sentMessages: Array<{ message: unknown; options: unknown }> = [];
-  const sentUserMessages: Array<{ content: unknown; options: unknown }> = [];
+  // Messages sent with { triggerTurn: true } — the native wake of an idle parent.
+  const wakes: Array<{ message: unknown; options: unknown }> = [];
   const lifecycleHandlers = new Map<string, (...args: unknown[]) => void>();
   const pi = {
     events,
@@ -15,14 +14,17 @@ export function createPi(currentSessionId = "session-1") {
     },
     sendMessage(message: unknown, options?: unknown) {
       sentMessages.push({ message, options });
+      if ((options as { triggerTurn?: boolean } | undefined)?.triggerTurn) {
+        wakes.push({ message, options });
+      }
     },
-    sendUserMessage(content: unknown, options?: unknown) {
-      sentUserMessages.push({ content, options });
+    sendUserMessage() {
+      throw new Error("notify must not send a synthetic user message (#470)");
     },
   };
 
   registerSubagentNotify(pi as never, { currentSessionId });
-  return { events, sentMessages, sentUserMessages, lifecycleHandlers };
+  return { events, sentMessages, wakes, lifecycleHandlers };
 }
 
 export function completionResult(overrides: Record<string, unknown> = {}) {

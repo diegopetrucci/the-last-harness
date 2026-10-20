@@ -29,7 +29,7 @@ command -v tlh
 type -a tlh pi
 ```
 
-For ordinary interactive TLH launches, current managed wrappers export `PI_CODING_AGENT_DIR` for the isolated TLH profile, validate the private runtime, and then exec the pinned absolute runtime path. A `pi` earlier on `PATH` cannot shadow that ordinary managed launch. Installer-owned helper subcommands such as `tlh update`, `tlh defaults`, `tlh tickets`, and `tlh doctor` dispatch through their helper scripts first, so their pre-runtime behavior is different. A direct `pi` launch still does not use the managed TLH wrapper path automatically.
+For ordinary interactive TLH launches, current managed wrappers export `PI_CODING_AGENT_DIR` for the isolated TLH profile, validate the private runtime, and then exec the pinned absolute runtime path. A `pi` earlier on `PATH` cannot shadow that ordinary managed launch. Installer-owned helper subcommands such as `tlh update`, `tlh defaults`, `tlh tickets`, `tlh doctor`, and `tlh version` dispatch through their helper scripts first, so their pre-runtime behavior is different. A direct `pi` launch still does not use the managed TLH wrapper path automatically.
 
 Common causes:
 

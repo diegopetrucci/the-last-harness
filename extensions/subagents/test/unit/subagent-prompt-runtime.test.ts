@@ -179,7 +179,7 @@ async function emitChainedBeforeAgentStart(
     SessionManager.inMemory(cwd),
     {} as ConstructorParameters<typeof ExtensionRunner>[4],
   );
-  return runner.emitBeforeAgentStart("child task", undefined, options);
+  return runner.emitBeforeAgentStart({ messageType: "user", prompt: "child task" }, options);
 }
 
 function countOccurrences(value: string, needle: string): number {

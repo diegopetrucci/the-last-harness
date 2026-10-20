@@ -279,7 +279,7 @@ function renderSingleCompact(d, r, theme, frame, now) {
             const prefix = activityIndex === 0 ? AWAITED_ACTIVITY_PREFIX : AWAITED_ACTIVITY_CONTINUATION_PREFIX;
             lines.push(theme.fg("dim", `${prefix}${activity}`));
         }
-        lines.push(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${liveDetailHintText()}`));
+        lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
         return collapsedAwaitedComponent(lines, theme);
     }
     const preview = compactOutputPreview(rawOutput);
@@ -370,7 +370,7 @@ function renderMultiCompact(d, entries, theme, frame, now) {
     if (d.artifacts)
         lines.push(theme.fg("dim", `  artifacts: ${safeTerminalText(shortenPath(d.artifacts.dir))}`));
     if (hasRunningResult)
-        lines.push(theme.fg("dim", `${MULTI_DETAIL_INDENT}${liveDetailHintText()}`));
+        lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
     return collapsedAwaitedComponent(lines, theme);
 }
 function renderZeroResult(result, d, options, theme) {

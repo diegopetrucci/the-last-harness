@@ -159,6 +159,9 @@ export interface SubagentCoverage extends ScanCoverage {
     missingRunId: number;
     missingNudge: number;
     unmatchedNudges: number;
+    legacyObserved: number;
+    nativeObserved: number;
+    supersededSources: number;
   };
   missingEvidence: {
     telemetryForRun: number;

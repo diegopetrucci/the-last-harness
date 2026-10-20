@@ -422,6 +422,9 @@ function renderWrapper(args: WrapperRenderArgs): string {
     "tlh_package_sessions_script_is_usable() {",
     '  tlh_package_script_is_usable "${default_tlh_package_root}/scripts/tlh-sessions.mjs"',
     "}",
+    "tlh_package_version_script_is_usable() {",
+    '  tlh_package_script_is_usable "${default_tlh_package_root}/scripts/tlh-version.mjs"',
+    "}",
     "tlh_package_mcp_adapter_guard_is_usable() {",
     '  local tlh_guard_script="${default_tlh_package_root}/scripts/lib/mcp-adapter-cutover.mjs"',
     '  local tlh_default_extensions="${default_tlh_package_root}/config/default-extensions.json"',
@@ -431,7 +434,7 @@ function renderWrapper(args: WrapperRenderArgs): string {
 
     'export PI_CODING_AGENT_DIR="${default_agent_dir}"',
     // Pre-disable upstream Pi's native OSC 7501 emitter (see GitHub issue #748;
-    // available in pinned Pi 1.1.0) so it cannot fight TLH's root-record reporter.
+    // available since Pi 1.1.0) so it cannot fight TLH's root-record reporter.
     'export PI_PROGRAM_STATUS="${PI_PROGRAM_STATUS:-0}"',
     "",
     'if [[ "${1:-}" == "update" ]]; then',
@@ -502,6 +505,16 @@ function renderWrapper(args: WrapperRenderArgs): string {
     "  fi",
     "  tlh_resolve_node",
     '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-sessions.mjs" --agent-dir "${default_agent_dir}" "$@"',
+    "fi",
+    "",
+    'if [[ "${1:-}" == "version" ]]; then',
+    "  shift",
+    "  if ! tlh_package_version_script_is_usable; then",
+    "    printf 'error: tlh version package support files are missing or corrupt; run `tlh update` to recover.\\n' >&2",
+    "    exit 1",
+    "  fi",
+    "  tlh_resolve_node",
+    '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-version.mjs" --agent-dir "${default_agent_dir}" --package-root "${default_tlh_package_root}" --pi-cmd "${default_pi_cmd}" "$@"',
     "fi",
     "",
     "tlh_mcp_adapter_guard_required=1",

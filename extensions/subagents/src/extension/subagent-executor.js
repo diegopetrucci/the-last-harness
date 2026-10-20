@@ -12,7 +12,7 @@ import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.js";
 import { retiredNestedLaunchError } from "../runs/shared/pi-args.js";
 import { normalizeSkillInput } from "../agents/skills.js";
 import { executeAsyncParallel, executeAsyncSingle, isAsyncAvailable, } from "../runs/background/async-execution.js";
-import { resolveCurrentSessionId } from "../shared/session-identity.js";
+import { resolveCurrentSessionId, resolveProjectAgentSessionId, } from "../shared/session-identity.js";
 import { resolveControlConfig } from "../runs/shared/subagent-control.js";
 import { normalizeSingleOutputOverride } from "../runs/shared/single-output.js";
 import { readStatus, resolveChildCwd } from "../shared/utils.js";
@@ -663,7 +663,7 @@ export function createSubagentExecutor(deps) {
         const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
         const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
         deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        const projectResolution = await resolveProjectAgentExecution(effectiveParams, requestedExecutionCwd, scope, deps.state.currentSessionId, deps);
+        const projectResolution = await resolveProjectAgentExecution(effectiveParams, requestedExecutionCwd, scope, resolveProjectAgentSessionId(ctx.sessionManager), deps);
         if ("error" in projectResolution) {
             return toExecutionErrorResult(effectiveParams, new Error(projectResolution.error));
         }

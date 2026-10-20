@@ -338,14 +338,14 @@ describe("no-pi-intercom regression guard", () => {
     it("delivers notices via pi.sendMessage", () => {
       const sent: Array<{ message: unknown; options: unknown }> = [];
 
-      const nudges: Array<{ text: string; options: unknown }> = [];
+      const syntheticUserMessages: string[] = [];
       const mockPi = {
         sendMessage(message: unknown, options?: unknown) {
           // Delivery goes here — not to the event bus
           sent.push({ message, options });
         },
-        sendUserMessage(text: string, options?: unknown) {
-          nudges.push({ text, options });
+        sendUserMessage(text: string) {
+          syntheticUserMessages.push(text);
         },
       };
 
@@ -360,6 +360,13 @@ describe("no-pi-intercom regression guard", () => {
         1,
         `Expected exactly one delivered control notice; got ${sent.length}`,
       );
+      assert.deepEqual(sent[0]?.options, { triggerTurn: true });
+      assert.equal(
+        (sent[0]?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details
+          ?.triggersTurn,
+        true,
+      );
+      assert.deepEqual(syntheticUserMessages, []);
     });
   });
 });

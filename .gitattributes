@@ -39,6 +39,7 @@ scripts/tlh-recover-update.mjs linguist-generated=true
 scripts/tlh-sessions.mjs linguist-generated=true
 scripts/tlh-tickets.mjs linguist-generated=true
 scripts/tlh-update.mjs linguist-generated=true
+scripts/tlh-version.mjs linguist-generated=true
 scripts/tlh-wrapper.mjs linguist-generated=true
 extensions/notify/index.js linguist-generated=true
 extensions/annotate-git-diff/clipboard.js linguist-generated=true

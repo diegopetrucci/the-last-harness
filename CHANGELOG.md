@@ -69,10 +69,23 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
 - Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
 
+## [0.45.0] - 2026-10-14
+
+### Fixed
+
+- Project-agent (`embedded.<slug>`) dispatch, resume, and steer now check the session UUID that TLH stamps on project-agent snapshots instead of the session file path, so they are no longer always rejected in persisted sessions. [#782](https://github.com/diegopetrucci/the-last-harness/issues/782)
+- The collapsed foreground subagent card now aligns the live-detail hint with the mode or agent name instead of the detail column, keeping it as the last line for both single and parallel/chain runs.
+- Background subagent completions and async control notices no longer add a synthetic `[tlh] …` user message. They now wake an idle session natively with Pi 1.2.0's `triggerTurn`, so the wake turn keeps TLH's system prompt and the transcript no longer shows an extra user turn. [#470](https://github.com/diegopetrucci/the-last-harness/issues/470), [#468](https://github.com/diegopetrucci/the-last-harness/issues/468)
+
+### Changed
+
+- Bumped the bundled Pi runtime from `1.1.0` to `1.2.0`. Pi's `before_agent_start` now also runs for extension-triggered turns, so MCP adapter auth/UI turns keep TLH's system prompt; Pi now validates keybinding values at startup and applies theme validation earlier in startup (TLH's packaged theme passes and its `$schema` URL is updated); and the `@earendil-works/chord` dependency is dropped from the private runtime. TLH's child policy, generic MCP gateway, and terminal activity contracts are unchanged.
+
 ## [0.44.0] - 2026-10-12
 
 ### Added
 
+- `tlh version [--json]` reports read-only, machine-readable install information (`schemaVersion` 1: TLH and Pi runtime versions, update track, ref, repo, and profile directory) for external tools such as tlh-gui. See [`docs/commands.md`](docs/commands.md#tlh-version) and [#746](https://github.com/diegopetrucci/the-last-harness/issues/746).
 - TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`. `done` is reported when a run settles normally; `idle` is reported before any run settles in the session, or when a run is cancelled, including cancellation during an automatic retry delay when Pi's native `agent_settled.aborted` metadata overrides the failed attempt [#748](https://github.com/diegopetrucci/the-last-harness/issues/748); `error` is reported when a run settles after failing without a retry; `blocked` is reported while a blocking UI prompt is open and takes precedence over `working` (`blocked` carries `kind=permission` for confirmation prompts or `kind=question` for other prompts). The sequence is only sent to an interactive TTY; unsupported terminals ignore it. Opt out with `TLH_PROGRAM_STATUS=0`. The Herdr and cmux bridges remain active until those integrations consume OSC 7501 directly (see [#747](https://github.com/diegopetrucci/the-last-harness/issues/747)).
 - The `tlh` wrapper defaults `PI_PROGRAM_STATUS=0` to keep Pi 1.1.0's native OSC 7501 emitter off while TLH's effective-activity reporter remains the root owner. Set `PI_PROGRAM_STATUS=1` to re-enable Pi's emitter; deliberately pair it with `TLH_PROGRAM_STATUS=0` when transferring root ownership to Pi. See [#748](https://github.com/diegopetrucci/the-last-harness/issues/748).
 
