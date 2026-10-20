@@ -79,7 +79,7 @@ function getGlobalContextWindowPolicy(model) {
             : nativeContextWindow,
     };
 }
-export function getModelContextWindowPolicy(model) {
+function getModelContextWindowPolicy(model) {
     if (!isModelContextWindowOwner(model))
         return undefined;
     const descriptor = Object.getOwnPropertyDescriptor(model, MODEL_CONTEXT_WINDOW_POLICY_KEY);

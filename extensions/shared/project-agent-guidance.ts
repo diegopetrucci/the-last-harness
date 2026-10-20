@@ -8,11 +8,9 @@ import { ProjectTrustStore, type ProjectTrustDecision } from "@earendil-works/pi
 
 export { isCanonicalPackagedMinorAgent } from "./project-agent-provenance.js";
 
-export { resolveValidatedGitWorktreeRoot } from "./project-agent-worktree.js";
-
 /** Maximum UTF-8 bytes accepted from one project-agent guidance file. */
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
-export const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
+const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
 const PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY = "agents";
 const PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY = "builtin";
 
@@ -111,8 +109,8 @@ export interface ProjectAgentGuidanceResult {
   inventory: ProjectAgentGuidanceInventory;
 }
 
-export const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
-export const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
+const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
+const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
 
 function errorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) return undefined;

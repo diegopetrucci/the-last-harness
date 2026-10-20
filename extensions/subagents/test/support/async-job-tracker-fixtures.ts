@@ -1,13 +1,14 @@
+import type { SubagentState } from "../../src/shared/types.ts";
+import * as trackerModImport from "../../src/runs/background/async-job-tracker.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { scaleTestTimeout } from "./scale-timeout.ts";
-import { tryImport } from "./helpers.ts";
 import type { AsyncStatusReadOptions } from "../../src/shared/utils.ts";
 
 export interface AsyncJobTrackerModule {
   createAsyncJobTracker(
     pi: { events: { emit(channel: string, data: unknown): void } },
-    state: Record<string, unknown>,
+    state: SubagentState | Record<string, unknown>,
     asyncDirRoot: string,
     options?: {
       completionRetentionMs?: number;
@@ -27,10 +28,7 @@ export interface AsyncJobTrackerModule {
   };
 }
 
-export const trackerMod = await tryImport<AsyncJobTrackerModule>(
-  "./src/runs/background/async-job-tracker.ts",
-);
-export const available = !!trackerMod;
+export const trackerMod = trackerModImport as AsyncJobTrackerModule;
 
 export function createState() {
   return {

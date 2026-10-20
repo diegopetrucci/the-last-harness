@@ -14,7 +14,7 @@ import {
  * @property {(() => void)=} registerParent
  */
 
-export const ALLOWED_SUBAGENTS = Object.freeze([
+const ALLOWED_SUBAGENTS = Object.freeze([
   "developer",
   "test-runner",
   "code-reviewer",

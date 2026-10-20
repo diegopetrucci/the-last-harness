@@ -1,9 +1,9 @@
 // Generated from scripts/lib/tlh-startup-readiness.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
-const HEADER_TEXT_MARKERS = ["Context:", "run /context"];
+// Markers must be TLH-rendered content: Pi's own first frame (editor border,
+// default cwd footer) paints before TLH's header and footer do.
 const HEADER_LOGO_PATTERN = /(^|\n)\s*tlh(?:\s+v\d[^\n]*)?\s*(?=\n|$)/u;
-const HEADER_RULE_PATTERN = /(^|\n)[^\n]*─(?:[^\n]*─){19,}[^\n]*(?=\n|$)/u;
-const FOOTER_MARKER = "agent: ";
-const FOOTER_CWD_PATTERN = /(^|\n)(?:~|\/)[^\n]* \([^\n()]+\)(?=\n|$)/u;
+const FOOTER_PATTERN = /(^|\n)\s*agent: \S/u;
+const CURSOR_POSITION_PATTERN = new RegExp(`${String.raw `\u001B`}\\[[0-9;]*[Hf]`, "gu");
 const ANSI_PATTERN = new RegExp(`${String.raw `\u001B`}(?:\\][^${String.raw `\u0007\u001B`}]*(?:${String.raw `\u0007`}|${String.raw `\u001B\\`})|\\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])`, "gu");
 export function stripTerminalNoise(text) {
     let result = "";
@@ -17,23 +17,38 @@ export function stripTerminalNoise(text) {
     }
     return result.replace(/\r/g, "\n");
 }
+/**
+ * Like stripTerminalNoise, but treats CSI cursor-position sequences as line
+ * breaks so TUI frames painted by absolute positioning keep their line
+ * structure for marker detection.
+ */
+export function stripTerminalNoiseForReadiness(text) {
+    return stripTerminalNoise(text.replace(CURSOR_POSITION_PATTERN, "\n"));
+}
 export function hasHeaderMarker(text) {
-    return (HEADER_TEXT_MARKERS.some((marker) => text.includes(marker)) ||
-        HEADER_LOGO_PATTERN.test(text) ||
-        HEADER_RULE_PATTERN.test(text));
+    return HEADER_LOGO_PATTERN.test(text);
 }
 export function hasFooterMarker(text) {
-    return text.includes(FOOTER_MARKER) || FOOTER_CWD_PATTERN.test(text);
+    return FOOTER_PATTERN.test(text);
 }
 export function createReadinessObserver() {
-    return { normalizedOutput: "" };
+    return { rawOutput: "", normalizedOutput: "" };
+}
+/**
+ * Appends a chunk and re-derives normalized text from the whole raw buffer, so
+ * escape sequences split across reads cannot leave fragments that defeat the
+ * line-anchored markers. Startup output is small, so this stays cheap.
+ */
+export function appendReadinessOutput(state, chunk) {
+    state.rawOutput += chunk;
+    state.normalizedOutput = stripTerminalNoiseForReadiness(state.rawOutput);
 }
 export function observeReadinessChunk(state, chunk, elapsedMs) {
     if (chunk.length === 0)
         return state.readyMs !== undefined;
     if (state.firstOutputMs === undefined)
         state.firstOutputMs = elapsedMs;
-    state.normalizedOutput += stripTerminalNoise(chunk);
+    appendReadinessOutput(state, chunk);
     if (state.headerMs === undefined && hasHeaderMarker(state.normalizedOutput)) {
         state.headerMs = elapsedMs;
     }

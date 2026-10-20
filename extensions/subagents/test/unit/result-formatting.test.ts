@@ -242,24 +242,7 @@ describe("formatAwaitedNativeSubagentText ceiling-contract sweep", () => {
     assert.ok(text.isWellFormed());
   });
 
-  // -------------------------------------------------------------------------
-  // Premature-drop guard: no child is dropped while its bare
-  // scaffolding would fit.
-  //
-  // Before the fix the per-child fit decision included a 1-char summary-line
-  // placeholder in fixedCost, making the loop think each child cost 1 char more
-  // than its bare scaffolding actually does. With 8 children the overcount was
-  // 8 chars, causing a premature drop whenever the true scaffold total was in
-  // [7993, 8000] — a range the loop saw as [8001, 8008].
-  //
-  // Boundary measured with: runId="" (outerCost=85), artifactPath=425 chars,
-  // sessionPath=500 chars. Per-child fixedCost (new, 8-child sum): 7909.
-  // Scaffold_new = 85 + 7909 = 7994 ≤ 8000 → all 8 fit.
-  // Scaffold_old = 7994 + 8 = 8002 > 8000 → premature drop to 7.
-  //
-  // At artifactPath=426 the new scaffold is 8002 > 8000, so the drop to 7 is
-  // legitimate and expected in both old and new code.
-  // -------------------------------------------------------------------------
+  // No child is dropped while its bare scaffolding fits.
   it("no child dropped while bare scaffolding fits", () => {
     const artPath = "a".repeat(425); // 425 chars — scaffold_new = 7994 ≤ 8000
     const sessPath = "b".repeat(500); // 500 chars (at the reference cap)
@@ -384,17 +367,7 @@ describe("formatAwaitedNativeSubagentText ceiling-contract sweep", () => {
     assert.ok(text.isWellFormed());
   });
 
-  // -------------------------------------------------------------------------
-  // Omission-marker guard: marker must not direct reader to paths of retained children.
-  //
-  // When some (not all) children are dropped for size, the omitted children's
-  // paths are never emitted. The marker must not imply those results are
-  // reachable through paths that belong to retained children.
-  //
-  // Measured shape: 8 children at 499-char paths; 7 display, 1 is dropped.
-  // Before the fix: marker said "see listed paths above" (misdirected).
-  // After the fix: marker states output is not reachable from this envelope.
-  // -------------------------------------------------------------------------
+  // Omission markers must not direct readers to retained children's paths.
   it("partial-drop omission marker does not point at retained children's paths", () => {
     // 499-char paths push the fixed cost just over the ceiling at 8 children,
     // causing exactly 1 child to be dropped.

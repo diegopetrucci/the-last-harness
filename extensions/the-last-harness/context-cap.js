@@ -129,7 +129,6 @@ function setModelContextWindowPolicy(model, policy, policyState) {
         modelRef,
     };
     ownedModelPolicies.set(model, ownership);
-    pruneOwnedModelReferences(policyState);
     policyState.ownedModels.add(modelRef);
 }
 function modelHasOwnedContextWindowMetadata(model, ownership, ownerToken) {
@@ -276,6 +275,7 @@ function applyContextWindowPolicy(model, policyState, policy, authoritativeGener
 }
 function applyContextWindowPolicyToModels(models, policyState, policy, authoritativeGeneration) {
     let changed = 0;
+    pruneOwnedModelReferences(policyState);
     for (const model of models ?? []) {
         if (applyContextWindowPolicy(model, policyState, policy, authoritativeGeneration))
             changed++;

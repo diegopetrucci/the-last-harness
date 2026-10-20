@@ -19,12 +19,11 @@ export function createTlhPrimaryAgentResourceLifecycle(options) {
     let sessionProjectAgentGuidanceSnapshot;
     setTlhProjectAgentAccessProvider(() => {
         const selection = options.getPrimaryAgentSelection();
-        const architect = selection === "architect" &&
-            isEnabledPrimaryAgentSelection(selection) &&
-            options.hasActivePrimaryAgent();
+        const canManage = isEnabledPrimaryAgentSelection(selection) && options.hasActivePrimaryAgent();
         return {
-            architect,
-            canInitiate: architect || selection === DISABLED_PRIMARY_AGENT,
+            architect: selection === "architect" && canManage,
+            canManage,
+            canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
             agentDir: getAgentDir(),
             createProjectTrustStore: createTrustStore,
         };

@@ -25,7 +25,7 @@ function readTlhThinkingDefault() {
         return undefined;
     }
 }
-export function persistTlhThinkingDefault(cwd, level) {
+function persistTlhThinkingDefault(cwd, level) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write thinking defaults outside the isolated TLH profile.", (current) => {
         const settings = current && current.trim() ? parseSettingsObject(current) : {};
         if (settings.defaultThinkingLevel === level) {

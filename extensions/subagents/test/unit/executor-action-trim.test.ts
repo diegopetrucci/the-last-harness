@@ -1,10 +1,9 @@
 /**
- * Focused tests for ps-519q: fail-close executor to 8 actions.
+ * Focused tests for ps-519q: fail-close executor to 7 actions.
  *
  * Verifies:
  *   (a) Removed actions (append-step, schedule, create) return Unknown-action error.
- *   (b) action='steer' async path is covered here and in async-interrupt-action.test.ts;
- *       nested steer routing is covered in nested-control.test.ts.
+ *   (b) action='steer' async path is covered here and in async-interrupt-action.test.ts.
  *   (c) Removed schedule action fails closed through the full extension stack.
  */
 import assert from "node:assert/strict";

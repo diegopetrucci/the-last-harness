@@ -56,7 +56,7 @@ export interface NativeExecutor {
 }
 
 interface ExecutorModule {
-  createSubagentExecutor?: (...args: unknown[]) => NativeExecutor;
+  createSubagentExecutor: (...args: unknown[]) => NativeExecutor;
 }
 
 export interface NativeExecutorOptions {
@@ -79,8 +79,7 @@ export interface NativeExecutorState {
 }
 
 const executorMod = await tryImport<ExecutorModule>("./src/extension/subagent-executor.ts");
-export const available = !!executorMod?.createSubagentExecutor;
-const createSubagentExecutor = executorMod?.createSubagentExecutor;
+const createSubagentExecutor = executorMod.createSubagentExecutor;
 
 export function normalizePathForComparison(targetPath: string): string {
   try {
@@ -214,7 +213,7 @@ export function makeNativeResultLifecycleExecutor(
       clear: () => {},
     },
   };
-  const executor = createSubagentExecutor!({
+  const executor = createSubagentExecutor({
     pi: {
       events,
       getSessionName: () => "orchestrator",

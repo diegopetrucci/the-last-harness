@@ -32,8 +32,11 @@ export function isRecordValue(value: unknown): value is Record<string, unknown> 
 }
 
 export function normalizeProjectAgentAccess(value: unknown): ProjectAgentAccess | undefined {
-  if (!isRecordValue(value) || typeof value.architect !== "boolean") return undefined;
-  const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : value.architect;
+  if (!isRecordValue(value)) return undefined;
+  const architect = typeof value.architect === "boolean" ? value.architect : undefined;
+  const canManage = typeof value.canManage === "boolean" ? value.canManage : architect;
+  if (canManage === undefined) return undefined;
+  const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : canManage;
   const agentDir = typeof value.agentDir === "string" ? value.agentDir : undefined;
   const trustStore = value.trustStore as ProjectAgentTrustStore | undefined;
   const createProjectTrustStore =
@@ -42,7 +45,8 @@ export function normalizeProjectAgentAccess(value: unknown): ProjectAgentAccess 
       : undefined;
   if (trustStore !== undefined && typeof trustStore.getEntry !== "function") return undefined;
   return {
-    architect: value.architect,
+    architect: architect ?? false,
+    canManage,
     canInitiate,
     ...(agentDir ? { agentDir } : {}),
     ...(trustStore ? { trustStore } : {}),
@@ -138,7 +142,7 @@ export async function resolveProjectAgentExecution(
   }
   if (access.canInitiate !== true) {
     return projectExecutionError(
-      `TLH project-agent execution requires the architect or disabled primary mode. Target(s): ${embeddedTargets.join(", ")}.`,
+      `TLH project-agent execution is not authorized for the current primary-agent mode. Target(s): ${embeddedTargets.join(", ")}.`,
     );
   }
 
@@ -274,8 +278,10 @@ export async function authorizePersistedProjectAgentRun(input: {
       targetNames: [input.target.agent],
     }),
   );
-  if (input.requireArchitect !== false && !access?.architect) {
-    throw projectRunAuthorizationError("the current primary agent is not the architect.");
+  if (input.requireArchitect !== false && access?.canManage !== true) {
+    throw projectRunAuthorizationError(
+      "the current primary agent cannot manage project-agent runs.",
+    );
   }
   if (!access) {
     throw projectRunAuthorizationError("project-agent authorization is unavailable.");

@@ -29,21 +29,7 @@ export interface AsyncExecutionResult {
   details: { asyncId?: string; timeoutMs?: number; deadlineAt?: number };
 }
 
-/**
- * WRITER contract: a transparent alias for AsyncResultArtifact used when tests
- * read artifacts that the production writers produced earlier in the same test
- * run — including via the readAsyncPayload() helper below. Because every field
- * reflects live writer output, the full required-field contract applies.
- *
- * This is an alias — not a re-declaration — so field names and types stay in
- * sync with AsyncResultArtifact automatically. Before PR #515 this was a
- * hand-maintained restatement that silently drifted twice and needed manual
- * patches; the alias makes that class of drift impossible.
- *
- * Tests that exercise legacy, synthetic, or malformed artifacts must use the
- * Partial-based fixtures in test/support/async-artifact-fixtures.ts instead of
- * casting to this type.
- */
+/** Alias for live writer output; fields stay in sync with AsyncResultArtifact. */
 export type AsyncResultPayload = AsyncResultArtifact;
 
 /**

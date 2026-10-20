@@ -26,6 +26,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Launch and model-list lookups are faster: context-cap policy no longer rescans its tracked models once per model.
+- Fresh installs again batch-install pinned npm default extensions before the critical quiet-tools install, so they no longer install one-by-one on first launch.
 - A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped; a project-scoped agent list includes load warnings for canonical packaged roles.
 - `/toggle-context-cap` now refuses to write when `settings.json`, `tlh`, or `tlh.contextCap` is not a JSON object, instead of throwing or saving a corrupted settings file.
 - Explicit `--model` and `--thinking` launch flags now win over persisted primary-agent overrides and packaged defaults for the launch session. Previously, `applySessionStart` would replace the CLI-resolved model and thinking level with the active primary's stored or bundled defaults, causing RPC hosts (such as tlh-gui) that spawn `tlh --model M --thinking T` and verify the active model to fail.
@@ -66,6 +68,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Hid more superseded Anthropic (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-4-8`, `claude-opus-5`) and OpenAI Codex (`gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-6-luna`, `gpt-6-sol`) models from the model picker by default.
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
 - Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
@@ -90,6 +93,7 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH now ships `compaction.reserveTokens: 49152` as a packaged default (inserted only when absent, recorded with a `tlh.compactionReserveTokensManaged` marker) to mitigate compaction summaries hitting the token cap on reasoning models. Auto-compaction triggers about 32,768 tokens earlier; see [`docs/install.md`](docs/install.md#compaction-reserve-default). [#785](https://github.com/diegopetrucci/the-last-harness/issues/785)
 - The architect no longer creates a branch before launching a worker when working in a fresh worktree, including one on `main`/`master`.
 - Removed the unused `tasks[].count` parameter from the subagent tool; passing it is now rejected with an error. List each parallel task explicitly.
+- All enabled primary agents (Architect, Rush, Product, Bug-Hunter) can now start and manage explicitly requested trusted `embedded.<slug>` project agents; disabled mode can start them but not resume or steer them. [#330](https://github.com/diegopetrucci/the-last-harness/issues/330)
 
 ### Removed
 
@@ -107,6 +111,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- `check:startup-performance` now times TLH's own header/footer frame (not Pi's first frame) and its PTY bridge sets a window size and answers terminal startup queries.
 - Corrected current context-cap guidance to the implemented 350k primary cap and role-specific child windows.
 - Fixed a flaky `tlh doctor ignores RTK executables on PATH` test that matched random temp-path suffixes.
 - Generated `.js` twins now carry a generated-file header pointing at their TypeScript source.
@@ -117,6 +122,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Changelog policy: every PR gets an entry, with contributor-only changes under `### Internal`.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - `check-package-versions` now fails on `package.json`-vs-lockfile pin drift, and CI `node_modules` cache keys include `package.json`.
+- Removed test-only script exports (`extractSubagentCorrelations`, `isRepositoryRelativeTimingFile`, `hasTlhHeader`/`hasTlhFooter`) and unused or module-internal extension/test-helper exports; tests now use the live APIs.
 - Docs now state each fact once in an owning doc (ownership table in CONTRIBUTING.md), drop version numbers from prose, and `npm run validate` checks internal Markdown links and anchors.
 
 ## [0.45.0] - 2026-10-14

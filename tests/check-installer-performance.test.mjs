@@ -26,8 +26,6 @@ import {
   createReadinessObserver,
   diagnoseReadinessFailure,
   finishPhaseObserver,
-  hasTlhFooter,
-  hasTlhHeader,
   installedRevisionMismatchDiagnostic,
   npmVersion,
   observeInstallerChunk,
@@ -49,6 +47,7 @@ import {
   summarizeSamples,
   writeCredentialFreeTrustMetadata,
 } from "../scripts/check-installer-performance.mjs";
+import { hasFooterMarker, hasHeaderMarker } from "../scripts/lib/tlh-startup-readiness.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const benchmarkScript = join(repoRoot, "scripts", "check-installer-performance.mjs");
@@ -537,14 +536,14 @@ test("checkout all is rejected and pin manifests use only remote ref sources", a
 test("readiness requires actual header and footer markers, not first output", () => {
   const readiness = createReadinessObserver();
   assert.equal(observeReadinessChunk(readiness, "loading package\n", 1), false);
-  assert.equal(observeReadinessChunk(readiness, "Con", 5), false);
-  assert.equal(observeReadinessChunk(readiness, "text: tlh\n", 8), false);
+  assert.equal(observeReadinessChunk(readiness, "t", 5), false);
+  assert.equal(observeReadinessChunk(readiness, "lh\n", 8), false);
   assert.equal(observeReadinessChunk(readiness, "agent: ready\n", 12), true);
   assert.equal(readiness.firstOutputMs, 1);
   assert.equal(readiness.headerMs, 8);
   assert.equal(readiness.footerMs, 12);
-  assert.equal(hasTlhHeader(readiness.normalizedOutput), true);
-  assert.equal(hasTlhFooter(readiness.normalizedOutput), true);
+  assert.equal(hasHeaderMarker(readiness.normalizedOutput), true);
+  assert.equal(hasFooterMarker(readiness.normalizedOutput), true);
 
   const missing = createReadinessObserver();
   observeReadinessChunk(missing, "first output only\n", 3);

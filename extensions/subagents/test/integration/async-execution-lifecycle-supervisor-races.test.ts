@@ -2,7 +2,7 @@
  * Integration tests for async execution – supervisor pause and concurrent
  * terminal-state races.
  *
- * Requires pi packages to be importable. Skips gracefully if unavailable.
+ * Requires pi packages to be importable.
  */
 
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";

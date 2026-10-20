@@ -7,9 +7,13 @@ export function isRecordValue(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 export function normalizeProjectAgentAccess(value) {
-    if (!isRecordValue(value) || typeof value.architect !== "boolean")
+    if (!isRecordValue(value))
         return undefined;
-    const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : value.architect;
+    const architect = typeof value.architect === "boolean" ? value.architect : undefined;
+    const canManage = typeof value.canManage === "boolean" ? value.canManage : architect;
+    if (canManage === undefined)
+        return undefined;
+    const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : canManage;
     const agentDir = typeof value.agentDir === "string" ? value.agentDir : undefined;
     const trustStore = value.trustStore;
     const createProjectTrustStore = typeof value.createProjectTrustStore === "function"
@@ -18,7 +22,8 @@ export function normalizeProjectAgentAccess(value) {
     if (trustStore !== undefined && typeof trustStore.getEntry !== "function")
         return undefined;
     return {
-        architect: value.architect,
+        architect: architect ?? false,
+        canManage,
         canInitiate,
         ...(agentDir ? { agentDir } : {}),
         ...(trustStore ? { trustStore } : {}),
@@ -82,7 +87,7 @@ export async function resolveProjectAgentExecution(params, effectiveCwd, scope, 
         return projectExecutionError("TLH project-agent execution was rejected: project-agent authorization is unavailable.");
     }
     if (access.canInitiate !== true) {
-        return projectExecutionError(`TLH project-agent execution requires the architect or disabled primary mode. Target(s): ${embeddedTargets.join(", ")}.`);
+        return projectExecutionError(`TLH project-agent execution is not authorized for the current primary-agent mode. Target(s): ${embeddedTargets.join(", ")}.`);
     }
     const requestedTargets = [
         ...(typeof params.agent === "string" && embeddedTargets.includes(params.agent)
@@ -174,8 +179,8 @@ export async function authorizePersistedProjectAgentRun(input) {
         sessionId: resolveProjectAgentSessionId(input.ctx.sessionManager),
         targetNames: [input.target.agent],
     }));
-    if (input.requireArchitect !== false && !access?.architect) {
-        throw projectRunAuthorizationError("the current primary agent is not the architect.");
+    if (input.requireArchitect !== false && access?.canManage !== true) {
+        throw projectRunAuthorizationError("the current primary agent cannot manage project-agent runs.");
     }
     if (!access) {
         throw projectRunAuthorizationError("project-agent authorization is unavailable.");

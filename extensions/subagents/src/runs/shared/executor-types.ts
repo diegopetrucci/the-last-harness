@@ -59,9 +59,11 @@ export interface SubagentParamsLike {
 }
 
 export interface ProjectAgentAccess {
-  /** True only while the architect is active; retained controls require this. */
+  /** Retained project-agent controls require an enabled primary agent. */
+  canManage?: boolean;
+  /** True only while the architect is active; retained for compatibility diagnostics. */
   architect: boolean;
-  /** Architect and disabled mode may initiate a new project-agent execution. */
+  /** Enabled primaries and disabled mode may initiate a new project-agent execution. */
   canInitiate?: boolean;
   /** Host-owned persisted trust dependencies; never model-facing. */
   agentDir?: string;

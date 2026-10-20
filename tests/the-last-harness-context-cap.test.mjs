@@ -1881,3 +1881,42 @@ test("/toggle-context-cap preserves malformed JSON and reports the guarded write
     },
   );
 });
+
+test("applying policy to a large registry prunes owned refs linearly", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-cap-linear-prune-test-", { test: t });
+  writeFileSync(join(fixture.agent, "settings.json"), "{}\n");
+
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+    async () => {
+      const count = 400;
+      const models = Array.from({ length: count }, (_, i) =>
+        createModel(1_000_000, "bulk-provider", `bulk-${i}`),
+      );
+      const ctx = createCtx({
+        model: createModel(128_000),
+        cwd: fixture.dir,
+        modelRegistry: { getAll: () => models, getAvailable: () => models },
+      });
+      const pi = createPiHarness();
+      registerContextCap(pi);
+
+      const originalDeref = WeakRef.prototype.deref;
+      let derefCalls = 0;
+      WeakRef.prototype.deref = function countingDeref() {
+        derefCalls++;
+        return originalDeref.call(this);
+      };
+      try {
+        await pi.handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx);
+      } finally {
+        WeakRef.prototype.deref = originalDeref;
+      }
+
+      assert.equal(models[0].contextWindow, CAP);
+      assert.equal(models[count - 1].contextWindow, CAP);
+      // Per-model pruning would need ~count^2/2 (80k) derefs; batch pruning is O(count).
+      assert.ok(derefCalls < count * 10, `expected linear deref work, saw ${derefCalls}`);
+    },
+  );
+});

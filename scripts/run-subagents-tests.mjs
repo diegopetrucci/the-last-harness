@@ -17,7 +17,7 @@ export const repoRoot = resolve(dirname(scriptPath), "..");
 export const suiteConfigs = {
   unit: {
     directory: join(repoRoot, "extensions/subagents/test/unit"),
-    minimumTests: 1193,
+    minimumTests: 1196,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
@@ -354,8 +354,7 @@ export function buildChildEnv(parentEnv, agentDir) {
   return env;
 }
 
-export function runSuite(suite, options = []) {
-  const config = suiteConfigs[suite];
+export function runSuite(suite, options = [], { config = suiteConfigs[suite] } = {}) {
   if (!config) {
     console.error(
       "Usage: node scripts/run-subagents-tests.mjs <unit|integration|e2e> [node test options]",

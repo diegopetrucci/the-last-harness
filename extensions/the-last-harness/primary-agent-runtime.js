@@ -7,7 +7,7 @@ import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, regist
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { clearPrimaryAgentModelOverrideByName, isTlhPrimaryAgentSelection, getTlhDurableThinkingLevel, getTlhGlobalSettings, getTlhPrimaryAgentConfig, getTlhSubagentOverrides, resolvePrimaryAutoApplySetting, writeTlhPrimaryAgentDefault, writeTlhPrimaryAgentModelOverride, } from "./primary-agent-runtime-settings.js";
-import { applyOpenRouterModelToProjectTargets, applyProviderAwareModelsToNonProjectTargets, collectSubagentCallTargetsMatching, embeddedDelegationBlockedReason, isSubagentResumeAction, isSubagentSteerAction, primaryToolAllowlist, rushDeveloperDelegationReason, rushResumeDelegationReason, rushSteerDelegationReason, subagentCallTargetsAgent, } from "./primary-agent-runtime-delegation.js";
+import { applyOpenRouterModelToProjectTargets, applyProviderAwareModelsToNonProjectTargets, collectSubagentCallTargetsMatching, isSubagentResumeAction, isSubagentSteerAction, primaryToolAllowlist, rushDeveloperDelegationReason, rushResumeDelegationReason, rushSteerDelegationReason, subagentCallTargetsAgent, } from "./primary-agent-runtime-delegation.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, dispatchPreflightBackoffMs, extractDispatchProviders, isHighConfidenceAuthSignatureInAttemptError, processSubagentRunDetails, } from "./primary-agent-runtime-auth.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
@@ -845,11 +845,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
                 return { block: true, reason: rushDeveloperDelegationReason() };
             }
-            const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
-            if (embeddedBlockReason) {
-                return { block: true, reason: embeddedBlockReason };
-            }
-            const allowEmbeddedTargets = selection === "architect" || selection === DISABLED_PRIMARY_AGENT;
+            const allowEmbeddedTargets = isEnabledPrimaryAgentSelection(selection) || selection === DISABLED_PRIMARY_AGENT;
             const reason = validateSubagentToolInput(event.input, {
                 allowedSubagents,
                 allowEmbeddedTargets,

@@ -48,7 +48,6 @@ import {
   applyOpenRouterModelToProjectTargets,
   applyProviderAwareModelsToNonProjectTargets,
   collectSubagentCallTargetsMatching,
-  embeddedDelegationBlockedReason,
   isSubagentResumeAction,
   isSubagentSteerAction,
   primaryToolAllowlist,
@@ -1454,7 +1453,7 @@ function createTlhPrimaryAgentRuntime(
       if (!isEnabledPrimaryAgentSelection(selection)) {
         // Disabled mode retains the TLH safety plane and may initiate an
         // explicitly requested project-agent execution. Retained project
-        // controls remain architect-only and are handled above.
+        // controls remain reserved for enabled primary agents.
       }
       if (selection === "rush" && isSubagentResumeAction(event.input)) {
         return { block: true, reason: rushResumeDelegationReason() };
@@ -1465,12 +1464,8 @@ function createTlhPrimaryAgentRuntime(
       if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
         return { block: true, reason: rushDeveloperDelegationReason() };
       }
-      const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
-      if (embeddedBlockReason) {
-        return { block: true, reason: embeddedBlockReason };
-      }
       const allowEmbeddedTargets =
-        selection === "architect" || selection === DISABLED_PRIMARY_AGENT;
+        isEnabledPrimaryAgentSelection(selection) || selection === DISABLED_PRIMARY_AGENT;
       const reason = validateSubagentToolInput(event.input, {
         allowedSubagents,
         allowEmbeddedTargets,

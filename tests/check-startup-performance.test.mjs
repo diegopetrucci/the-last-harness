@@ -22,6 +22,13 @@ import {
   createWorkspace,
   PYTHON_PTY_BRIDGE_FOR_TESTS,
 } from "../scripts/check-startup-performance.mjs";
+import {
+  hasFooterMarker,
+  hasHeaderMarker,
+  observeReadinessChunk,
+  createReadinessObserver,
+  stripTerminalNoiseForReadiness,
+} from "../scripts/lib/tlh-startup-readiness.mjs";
 import { renderWrapper } from "../scripts/tlh-wrapper.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -432,7 +439,7 @@ if [[ "\${PI_CODING_AGENT_DIR:-}" == "\${source_agent_dir}" ]]; then
   printf 'used original profile: %s\n' "\${PI_CODING_AGENT_DIR}" >&2
   exit 9
 fi
-printf 'Context: startup check\n'
+printf 'tlh\n'
 printf 'agent: ready\n'
 trap 'exit 0' INT TERM
 fixture_deadline=$((SECONDS + ${SYNTHETIC_FIXTURE_LIFETIME_SECONDS}))
@@ -450,7 +457,7 @@ if [[ -z "\${PI_CODING_AGENT_DIR:-}" ]]; then
   printf 'missing PI_CODING_AGENT_DIR\n' >&2
   exit 9
 fi
-printf 'Context: custom command\n'
+printf 'tlh\n'
 printf 'agent: ready\n'
 trap 'exit 0' INT TERM
 fixture_deadline=$((SECONDS + ${SYNTHETIC_FIXTURE_LIFETIME_SECONDS}))
@@ -851,9 +858,9 @@ test("check-startup-performance recognizes genuine header output after delayed P
     fixture.customCommandPath,
     `#!/usr/bin/env bash
 set -euo pipefail
-printf '~/Developer/the-last-harness-minotaur (main)\n'
+printf 'agent: ready\n'
 sleep 0.15
-printf '────────────────────────────────────────────────────────────────────────────────\n'
+printf '\\033[2;1H\\033[2K\\033[1mtlh\\033[0m'
 trap 'exit 0' INT TERM
 fixture_deadline=$((SECONDS + ${SYNTHETIC_FIXTURE_LIFETIME_SECONDS}))
 while (( SECONDS < fixture_deadline )); do
@@ -890,13 +897,14 @@ done
   assert.equal(result.stderr, "");
 });
 
-test("check-startup-performance does not treat rendered footer cwd output as a header", (t) => {
+test("check-startup-performance does not treat Pi's border and default footer as TLH readiness", (t) => {
   const fixture = createManagedWrapperFixture();
   t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
   writeExecutable(
     fixture.customCommandPath,
     `#!/usr/bin/env bash
 set -euo pipefail
+printf '────────────────────────────────────────────────────────────────────────────────\n'
 printf '~/Developer/the-last-harness-minotaur (main)\n'
 trap 'exit 0' INT TERM
 fixture_deadline=$((SECONDS + ${SYNTHETIC_FIXTURE_LIFETIME_SECONDS}))
@@ -972,7 +980,7 @@ printf '%s\n' "$PPID" >"${bridgePidFile}"
 trap '' INT
 trap 'printf "signal=%s\\n" "TERM" >"${childSignalFile}"; wait "$helper_pid"; exit 0' TERM
 printf 'ready\n' >"${childReadyFile}"
-printf 'Context: interrupt cleanup\\n'
+printf 'tlh\\n'
 while (( SECONDS < fixture_deadline )); do
   sleep 1
 done
@@ -1117,4 +1125,127 @@ done
   assert.match(readFileSync(childSignalFile, "utf8"), /signal=TERM/);
   assert.match(readFileSync(helperSignalFile, "utf8"), /signal=TERM/);
   assert.equal(stderr, "");
+});
+
+const PI_FIRST_FRAME =
+  "\x1b[?2026h\x1b_Ga=d,d=A,q=2\x1b\\\x1b[2J\x1b[1;1H\x1b[2K\x1b[0m\x1b]8;;\x07\x1b[2;1H\x1b[2K" +
+  "─".repeat(80) +
+  "\x1b[3;1H\x1b[2K/private/var/tmp/work (main)\x1b[4;1H\x1b[2K0.0%/0 (auto)\x1b[?2026l";
+const TLH_FRAME =
+  "\x1b[?2026h\x1b[1;1H\x1b[2K\x1b[1m\x1b[38;5;75mtlh\x1b[0m\x1b[2;1H\x1b[2KTip: be kind" +
+  "\x1b[9;1H\x1b[2Kagent: architect \u2022 unknown \u2022 0.0%/0\x1b[?2026l";
+
+test("readiness ignores Pi's first frame and accepts a cursor-positioned TLH frame", () => {
+  const piOnly = createReadinessObserver();
+  assert.equal(observeReadinessChunk(piOnly, PI_FIRST_FRAME, 480), false);
+  assert.equal(hasHeaderMarker(piOnly.normalizedOutput), false);
+  assert.equal(hasFooterMarker(piOnly.normalizedOutput), false);
+
+  const readiness = createReadinessObserver();
+  assert.equal(observeReadinessChunk(readiness, PI_FIRST_FRAME, 480), false);
+  assert.equal(observeReadinessChunk(readiness, TLH_FRAME, 700), true);
+  assert.equal(readiness.headerMs, 700);
+  assert.equal(readiness.footerMs, 700);
+
+  const updateNotice = stripTerminalNoiseForReadiness(
+    "\x1b[1;1H\x1b[1mtlh\x1b[0m\x1b[2m v1.2.3\x1b[0m https://example.test/releases\x1b[2;1H",
+  );
+  assert.equal(hasHeaderMarker(updateNotice), true);
+});
+
+test("readiness detection is independent of chunk boundaries", () => {
+  const styledPiFrame =
+    "\x1b[1;1H\x1b[2K\x1b]8;;https://example.test\x07Pi frame\x1b]8;;\x07\x1b[2;1H\x1b[2K\x1b[2m" +
+    "─".repeat(80) +
+    "\x1b[0m\x1b[3;1H\x1b[2K/private/var/tmp/work (main)";
+  const stream = `${styledPiFrame}${TLH_FRAME}`;
+  const piLength = styledPiFrame.length;
+  const readyAt = stream.indexOf("agent: a") + "agent: a".length;
+  assert.ok(readyAt > piLength);
+
+  for (let split = 1; split < stream.length; split += 1) {
+    const state = createReadinessObserver();
+    const first = observeReadinessChunk(state, stream.slice(0, split), 10);
+    assert.equal(first, split >= readyAt, `first chunk split at ${split}`);
+    assert.equal(observeReadinessChunk(state, stream.slice(split), 20), true, `split ${split}`);
+    assert.equal(hasHeaderMarker(state.normalizedOutput), true, `header split ${split}`);
+    assert.equal(hasFooterMarker(state.normalizedOutput), true, `footer split ${split}`);
+  }
+
+  const piOnly = createReadinessObserver();
+  for (const character of styledPiFrame) observeReadinessChunk(piOnly, character, 5);
+  assert.equal(piOnly.readyMs, undefined);
+
+  const bytewise = createReadinessObserver();
+  let readyPrefix;
+  [...stream].reduce((offset, character) => {
+    const next = offset + character.length;
+    if (observeReadinessChunk(bytewise, character, next) && readyPrefix === undefined) {
+      readyPrefix = next;
+    }
+    return next;
+  }, 0);
+  assert.equal(readyPrefix, readyAt);
+});
+
+test("python PTY bridge sets a window size and answers startup terminal queries once", async (t) => {
+  if (!hasPython3PtyBridge()) {
+    t.skip("python3 is required for the PTY bridge");
+    return;
+  }
+  const root = mkdtempSync(join(tmpdir(), "tlh-python-pty-bridge-query-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const commandPath = join(root, "queries.py");
+  writeExecutable(
+    commandPath,
+    String.raw`#!/usr/bin/env python3
+import fcntl, os, select, struct, sys, termios, time, tty
+tty.setraw(0)
+rows, cols = struct.unpack("HHHH", fcntl.ioctl(0, termios.TIOCGWINSZ, b"\0" * 8))[:2]
+os.write(1, b"\x1b[?u\x1b[c\x1b[16t\x1b]10;?\x07\x1b]11;?\x1b\\\x1b]4;3;?\x07\x1b]4;1")
+time.sleep(0.2)
+os.write(1, b"5;?\x07")
+data = b""
+deadline = time.time() + 3
+while time.time() < deadline and data.count(b"rgb:8080") < 2:
+    if select.select([0], [], [], 0.1)[0]:
+        data += os.read(0, 4096)
+time.sleep(0.3)
+while select.select([0], [], [], 0.1)[0]:
+    data += os.read(0, 4096)
+sys.stdout.write("SIZE %d %d\r\n" % (rows, cols))
+sys.stdout.write("REPLY " + data.decode("latin1").replace("\x1b", "<E>").replace("\x07", "<B>") + "\r\n")
+sys.stdout.flush()
+`,
+  );
+  const bridge = spawn("python3", ["-c", PYTHON_PTY_BRIDGE_FOR_TESTS, commandPath], {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: true,
+  });
+  let stdout = "";
+  bridge.stdout.setEncoding("utf8");
+  bridge.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  bridge.stderr.resume();
+  t.after(() => {
+    try {
+      process.kill(-bridge.pid, "SIGKILL");
+    } catch {
+      // Already exited.
+    }
+  });
+  await waitForProcessExit(bridge, 10000, "query bridge exit");
+
+  assert.match(stdout, /SIZE 50 160/u);
+  const reply = stdout.match(/REPLY (.*)/u)?.[1] ?? "";
+  const colour = (n) => `<E>]4;${n};rgb:8080/8080/8080<E>\\`;
+  assert.equal(
+    reply.trim(),
+    "<E>[?0u<E>[?62;22c<E>[6;20;10t" +
+      "<E>]10;rgb:dddd/dddd/dddd<E>\\<E>]11;rgb:1111/1111/1111<E>\\" +
+      colour(3) +
+      colour(15),
+  );
 });
