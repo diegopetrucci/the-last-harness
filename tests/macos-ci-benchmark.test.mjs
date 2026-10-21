@@ -34,7 +34,7 @@ test("macOS benchmark workflow is manual-only and preserves the default CI workf
   assert.match(workflow, /concurrency:\n  group: macos-ci-benchmark\n  cancel-in-progress: false/u);
   assert.match(workflow, /runs-on: macos-latest/u);
   assert.match(workflow, /timeout-minutes: 30/u);
-  assert.match(workflow, /node-version: '22\.19\.0'/u);
+  assert.match(workflow, /node-version: '22\.23\.4'/u);
   assert.match(workflow, /cache: 'npm'/u);
   assert.match(workflow, /uses: actions\/cache@v6/u);
   assert.match(workflow, /path: node_modules/u);

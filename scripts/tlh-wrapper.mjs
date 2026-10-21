@@ -4,7 +4,7 @@ import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertNotInNormalPiConfig, assignOptionValue, renderShellWords, shellQuote, } from "./lib/tlh-install-utils.mjs";
+import { NODE_RUNTIME_RANGE, NODE_RUNTIME_SHELL_CHECK, assertNotInNormalPiConfig, assignOptionValue, renderShellWords, shellQuote, } from "./lib/tlh-install-utils.mjs";
 const DEFAULT_MARKER = "Managed by The Last Harness installer";
 function usage() {
     return `Usage: tlh-wrapper.mjs [options]
@@ -259,6 +259,7 @@ function renderWrapper(args) {
         "done",
         'tlh_managed_helper_path="${tlh_managed_bin}${tlh_sanitized_path:+:${tlh_sanitized_path}}"',
         'tlh_node_cmd=""',
+        ...NODE_RUNTIME_SHELL_CHECK.split("\n"),
         "tlh_resolve_node() {",
         '  if [[ -n "${tlh_node_cmd}" ]]; then',
         "    return",
@@ -279,6 +280,12 @@ function renderWrapper(args) {
         "      exit 1",
         "    fi",
         '    tlh_node_cmd="${tlh_node_dir}/${tlh_node_base}"',
+        "  fi",
+        "  local tlh_node_version",
+        '  tlh_node_version="$("${tlh_node_cmd}" --version)"',
+        '  if ! tlh_node_version_supported "${tlh_node_version}"; then',
+        `    printf '%s\\n' 'error: Node.js ${NODE_RUNTIME_RANGE} is required. Upgrade Node.js on PATH before running tlh.' >&2`,
+        "    exit 1",
         "  fi",
         "}",
         "tlh_js_import_target_path() {",
@@ -480,6 +487,7 @@ function renderWrapper(args) {
         '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-version.mjs" --agent-dir "${default_agent_dir}" --package-root "${default_tlh_package_root}" --pi-cmd "${default_pi_cmd}" "$@"',
         "fi",
         "",
+        "tlh_resolve_node",
         "tlh_mcp_adapter_guard_required=1",
         'case "${1:-}" in',
         "  --version|-v|install|remove|uninstall|list|mcp) tlh_mcp_adapter_guard_required=0 ;;",

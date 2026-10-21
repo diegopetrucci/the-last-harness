@@ -53,7 +53,12 @@ function main() {
     // Write (or overwrite) the minimal manifest with overrides to constrain
     // all @earendil-works/* siblings to the same pinned version so they cannot
     // drift to a newer patch release while pi-coding-agent stays at the pin.
-    const overrides = Object.fromEntries(PI_SIBLING_PACKAGES.map((pkg) => [pkg, pinnedPiVersion]));
+    // Pin npm Undici independently of Node's bundled copy: October 2026 DoS,
+    // integrity, and redirect/cache fixes also apply to Pi's explicit dependency.
+    const overrides = {
+        ...Object.fromEntries(PI_SIBLING_PACKAGES.map((pkg) => [pkg, pinnedPiVersion])),
+        undici: "8.12.2",
+    };
     const manifest = {
         name: "tlh-pi-runtime",
         version: pinnedPiVersion,

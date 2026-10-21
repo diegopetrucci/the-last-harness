@@ -40,18 +40,15 @@ import {
   RUNTIME_STAGING_DIR_PREFIX,
 } from "../scripts/lib/tlh-install-runtime.mjs";
 
-test("stage-1 enforces the TLH Node runtime minimum", () => {
-  assert.equal(nodeVersionMeetsMinimum("22.18.9"), false);
-  assert.equal(nodeVersionMeetsMinimum("22.19.0"), true);
-  assert.equal(nodeVersionMeetsMinimum("23.0.0"), true);
-  assert.doesNotThrow(() => assertSupportedNodeRuntime("v22.19.0"));
-  assert.throws(
-    () => assertSupportedNodeRuntime("22.18.9"),
-    /Node\.js >= 22\.19\.0 is required \(found v22\.18\.9\)\. Install or upgrade Node\.js, then rerun the installer\./,
-  );
+test("stage-1 enforces the TLH Node security policy", () => {
+  assert.equal(nodeVersionMeetsMinimum("22.23.3"), false);
+  assert.equal(nodeVersionMeetsMinimum("22.23.4"), true);
+  assert.equal(nodeVersionMeetsMinimum("26.12.0"), false);
+  assert.doesNotThrow(() => assertSupportedNodeRuntime("v24.22.1"));
+  assert.throws(() => assertSupportedNodeRuntime("26.12.0"), /Node\.js .* is required/);
   assert.throws(
     () => assertSupportedNodeRuntime("not-a-version"),
-    /unable to determine Node\.js version; The Last Harness requires Node\.js >= 22\.19\.0\./,
+    /unable to determine Node\.js version/,
   );
 });
 

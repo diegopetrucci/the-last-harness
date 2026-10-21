@@ -24,6 +24,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Durable subagent revival now requires the owning parent session; ownerless, foreign or conflicting-owner runs are rejected before any side effect (#822).
+- Installers and generated wrappers now reject Node releases below the branch-specific October 2026 security floors; CI and release jobs use patched Node and the private Pi runtime pins patched npm Undici, covering the native Brotli decoder and eMudhra trust-store fixes.
 - A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped; a project-scoped agent list includes load warnings for canonical packaged roles.
 - `/toggle-context-cap` now refuses to write when `settings.json`, `tlh`, or `tlh.contextCap` is not a JSON object, instead of throwing or saving a corrupted settings file.
 - Explicit `--model` and `--thinking` launch flags now win over persisted primary-agent overrides and packaged defaults for the launch session. Previously, `applySessionStart` would replace the CLI-resolved model and thinking level with the active primary's stored or bundled defaults, causing RPC hosts (such as tlh-gui) that spawn `tlh --model M --thinking T` and verify the active model to fail.

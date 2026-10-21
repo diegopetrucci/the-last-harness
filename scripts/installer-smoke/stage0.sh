@@ -28,7 +28,7 @@ run_stage0_node_preflight_smoke() {
     fail "stage-0 old Node remote preflight unexpectedly succeeded"
   fi
   assert_contains "${combined_file}" "Refreshing installer..."
-  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "Node.js ^22.23.4 || ^24.22.1 || ^26.12.1 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -50,7 +50,7 @@ run_stage0_node_preflight_smoke() {
     cat "${combined_file}" >&2
     fail "stage-0 old Node local preflight unexpectedly succeeded"
   fi
-  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "Node.js ^22.23.4 || ^24.22.1 || ^26.12.1 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"

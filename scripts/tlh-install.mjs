@@ -13,7 +13,7 @@ import { mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "
 import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
 import { LEGACY_MANAGED_PROFILE_ARTIFACTS, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
 import { mcpAdapterCutoverHeldForInstall, pinnedNpmInstallPresent, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
-import { assignRequiredEqualsValue, outputLines, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
+import { MIN_NODE_VERSION, NODE_RUNTIME_RANGE, nodeRuntimeSupported, assignRequiredEqualsValue, outputLines, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
@@ -23,8 +23,7 @@ const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const PINNED_PI_VERSION = "1.3.0";
-// Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
-const MIN_NODE_VERSION = "22.19.0";
+// Keep PINNED_PI_VERSION in sync with TLH_PINNED_PI_VERSION in install.sh.
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.4";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -78,22 +77,8 @@ function parseNodeVersion(version) {
         return null;
     return match.slice(1).map((part) => Number.parseInt(part, 10));
 }
-function compareVersionTriplets(currentVersion, expectedVersion) {
-    const current = parseNodeVersion(currentVersion);
-    const expected = parseNodeVersion(expectedVersion);
-    if (!current || !expected)
-        return null;
-    for (let index = 0; index < expected.length; index += 1) {
-        if (current[index] > expected[index])
-            return 1;
-        if (current[index] < expected[index])
-            return -1;
-    }
-    return 0;
-}
-function nodeVersionMeetsMinimum(currentVersion, minimumVersion = MIN_NODE_VERSION) {
-    const comparison = compareVersionTriplets(currentVersion, minimumVersion);
-    return comparison !== null && comparison >= 0;
+function nodeVersionMeetsMinimum(currentVersion) {
+    return nodeRuntimeSupported(currentVersion);
 }
 function formatNodeVersion(version) {
     const text = String(version || "").trim();
@@ -103,10 +88,10 @@ function formatNodeVersion(version) {
 }
 function assertSupportedNodeRuntime(currentVersion = process.versions.node) {
     if (!parseNodeVersion(currentVersion)) {
-        throw new Error(`unable to determine Node.js version; The Last Harness requires Node.js >= ${MIN_NODE_VERSION}.`);
+        throw new Error(`unable to determine Node.js version; The Last Harness requires Node.js ${NODE_RUNTIME_RANGE}.`);
     }
     if (!nodeVersionMeetsMinimum(currentVersion)) {
-        throw new Error(`Node.js >= ${MIN_NODE_VERSION} is required (found ${formatNodeVersion(currentVersion)}). Install or upgrade Node.js, then rerun the installer.`);
+        throw new Error(`Node.js ${NODE_RUNTIME_RANGE} is required (found ${formatNodeVersion(currentVersion)}). Install or upgrade Node.js, then rerun the installer.`);
     }
 }
 function usage() {
@@ -116,7 +101,7 @@ Stage-1 The Last Harness installer helper. It runs the normal install flow using
 an isolated Pi profile and installer-owned helper commands.
 
 Requirements:
-  Node.js >= ${MIN_NODE_VERSION} on PATH
+  Node.js ${NODE_RUNTIME_RANGE} on PATH
   Upstream Pi ${PINNED_PI_VERSION} (installed per-user into a private TLH runtime prefix,
   default: ~/.the-last-harness/runtime (release) or ~/.the-last-harness-main/runtime (main);
   install or repair failures stop with an actionable error)

@@ -329,3 +329,35 @@ export function outputLines(output) {
         .map((line) => line.trim())
         .filter(Boolean);
 }
+// October 2026 Node security release: branch-specific floors exclude vulnerable
+// newer majors too. Keep the stage-0 shell policy aligned (tested for parity).
+export const NODE_RUNTIME_RANGE = "^22.23.4 || ^24.22.1 || ^26.12.1";
+export const MIN_NODE_VERSION = "22.23.4";
+export function nodeRuntimeSupported(version) {
+    const match = String(version)
+        .trim()
+        .match(/^v?(\d+)\.(\d+)\.(\d+)$/);
+    if (!match)
+        return false;
+    const [, major, minor, patch] = match.map(Number);
+    const floors = {
+        22: [23, 4],
+        24: [22, 1],
+        26: [12, 1],
+    };
+    const floor = floors[major];
+    return !!floor && (minor > floor[0] || (minor === floor[0] && patch >= floor[1]));
+}
+export const NODE_RUNTIME_SHELL_CHECK = [
+    "tlh_node_version_supported() {",
+    '  local version="$1"',
+    '  [[ "${version}" =~ ^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)$ ]] || return 1',
+    '  local major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"',
+    '  case "${major}" in',
+    "    22) (( 10#${minor} > 23 || (10#${minor} == 23 && 10#${patch} >= 4) )) ;;",
+    "    24) (( 10#${minor} > 22 || (10#${minor} == 22 && 10#${patch} >= 1) )) ;;",
+    "    26) (( 10#${minor} > 12 || (10#${minor} == 12 && 10#${patch} >= 1) )) ;;",
+    "    *) return 1 ;;",
+    "  esac",
+    "}",
+].join("\n");

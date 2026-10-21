@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js on `PATH` (the minimum is `engines.node` in `package.json`). TLH always installs its own pinned Pi (version in `config/pi-runtime/package.json`) into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified, so you can keep both. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
+Requires Node.js on `PATH` (supported release lines and security floors are defined by `engines.node` in `package.json`). TLH always installs its own pinned Pi (version in `config/pi-runtime/package.json`) into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified, so you can keep both. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
 
 Run the one-liner:
 
@@ -21,6 +21,16 @@ The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a sta
 The official generated GitHub Release `install.sh` asset embeds its release tag and a SHA-256 checksum for every support file it can fetch, including the conditional settings/keybinding files and bundled subagent prompts. For a matching release ref and the default official repository/base URL, stage 0 verifies every successfully fetched file in one pass before it executes stage 1. An explicit `--ref` or `TLH_REF` that repeats the asset's baked tag remains eligible for verification; a different ref or custom raw base is not. A required mismatch aborts and cleans up the temporary download root; an optional mismatch is removed and treated as unavailable, so tampered support bytes are never handed to stage 1. `--no-settings` still skips the conditional files and prompts as before. This authenticates fetched support bytes against the asset's embedded inventory; obtain the stage-0 asset itself from the official HTTPS GitHub Release or another trusted channel.
 
 This guarantee does not apply to raw source installers, mutable or custom refs, forks, custom raw bases, or local checkout files. Those paths retain the existing canonicalization/local behavior and print an explicit integrity-not-enforced notice when they need remote support files; they must not be treated as release-verified. For recovery after a failed or suspect fetch, inspect the reported ref/source and rerun the official latest-release command above, or select a known-good pinned release tag. To roll back an installed profile, use its isolated settings backup or rerun the desired pinned release installer; normal `~/.pi/agent` configuration is never changed.
+
+### Node security updates
+
+Installers and newly generated wrappers enforce the supported Node release lines in `package.json`. Odd-numbered, end-of-life, prerelease, and unknown future release lines are rejected until reviewed. TLH installs a private **Pi package**, but uses the host **Node executable** on `PATH`.
+
+The [October 2026 Node security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases) fixes the native Brotli decoder (CVE-2026-111497), TLS validation, and the [eMudhra CA compromise](https://emudhra.we-have-a-problem.com/). Bundled `pi-web-access` URL-fetch tools process remote content; updating Pi, Undici, an extension, or CA certificates alone does not repair Node's native decoder.
+
+TLH also overrides the private Pi runtime’s npm Undici to a patched version for its separate October advisories. Rerunning the installer detects the changed runtime lockfile and rebuilds that private runtime. The default web-access package has a compatible Undici range, but existing extension installations can retain older resolutions; update or reinstall those extensions under patched Node and verify their resolved dependencies.
+
+For existing installations, upgrade the Node executable used to launch TLH to a supported patched release, then rerun the updated installer to regenerate the wrapper. Close and relaunch existing TLH sessions and child agents under that executable; a repository update does not replace a running runtime. Review custom system/extra CA stores and other clients separately; upgrading Node does not update those stores or clients. Do not disable TLS verification as a workaround.
 
 ## Installer compatibility boundary
 
