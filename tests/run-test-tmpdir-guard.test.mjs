@@ -300,6 +300,35 @@ test("runWithTmpdirGuard sets TMPDIR/TMP/TEMP in child env", async () => {
   }
 });
 
+test("runWithTmpdirGuard scrubs PI_SUBAGENT_* env but preserves other keys", async () => {
+  const envs = [];
+  function spawn(_cmd, _args, opts) {
+    envs.push(opts?.env);
+    return fakeChild(0);
+  }
+  await runWithTmpdirGuard({
+    spawn,
+    env: {
+      PI_SUBAGENT_CHILD: "1",
+      PI_SUBAGENTS_FOO: "x",
+      PI_SUBAGENTX: "keep",
+      TLH_KEEP: "yes",
+      TMPDIR: "/ambient",
+    },
+  });
+  assert.equal(envs.length, 4);
+  for (const env of envs) {
+    assert.deepEqual(
+      Object.keys(env).filter((k) => /^PI_SUBAGENTS?_/u.test(k)),
+      [],
+    );
+    assert.equal(env.PI_SUBAGENTX, "keep");
+    assert.equal(env.TLH_KEEP, "yes");
+    assert.notEqual(env.TMPDIR, "/ambient");
+    assert.equal(env.TMPDIR, env.TMP);
+  }
+});
+
 test("runWithTmpdirGuard removes the per-run root even when tests fail", async () => {
   let capturedRoot;
   function spawn(_cmd, _args, opts) {

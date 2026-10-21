@@ -253,6 +253,11 @@ export async function runWithTmpdirGuard({
 
   const root = mkdtempSync(join(tmpdir(), "tlh-test-run-"));
   const guardEnv = { ...env, TMPDIR: root, TMP: root, TEMP: root };
+  // Ambient subagent-child markers (e.g. PI_SUBAGENT_CHILD) must not leak into
+  // tests; tests that need child mode set these explicitly.
+  for (const key of Object.keys(guardEnv)) {
+    if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete guardEnv[key];
+  }
 
   let pendingSignal = /** @type {string | null} */ (null);
   /** @type {OwnedChild | null} */
