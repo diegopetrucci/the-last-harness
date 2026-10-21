@@ -12,7 +12,7 @@ import {
   removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { scaleTestTimeout, unscaledMs } from "../support/scale-timeout.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 import {
   ASYNC_DIR,
@@ -329,8 +329,20 @@ describe("async execution model restoration and fallback", () => {
           : undefined,
     },
     async () => {
+      // The deadline must fire after the child's context evidence is seen but
+      // inside the runner's fixed 1s final-stop grace (which would otherwise
+      // classify the run as context_exhausted). executeAsyncSingle computes the
+      // root deadline in this process (Date.now() + maxExecutionTimeMs) before
+      // spawning the runner, so it includes runner and child startup. Anchor the
+      // child's emission to the same wall clock: emit deadlineGapMs before the
+      // deadline. Startup must fit in deadlineMs - deadlineGapMs; the gap must
+      // stay well under the 1s grace.
+      const deadlineMs = scaleTestTimeout(2_000);
+      const deadlineGapMs = 600;
+      const dispatchAt = Date.now();
       mockPi.onCall({
         jsonl: highContextEmptyTerminalJsonl(),
+        emitAtEpochMs: dispatchAt + deadlineMs - deadlineGapMs,
         keepAliveAfterFinalMessageMs: scaleTestTimeout(5_000),
       });
       const id = `async-context-timeout-boundary-${Date.now().toString(36)}`;
@@ -340,7 +352,7 @@ describe("async execution model restoration and fallback", () => {
         task: "Finish the edit before the deadline.",
         agentConfig: makeAgent("worker", {
           model: "mock/test-model",
-          maxExecutionTimeMs: unscaledMs(750),
+          maxExecutionTimeMs: deadlineMs,
         }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         availableModels: [
@@ -368,7 +380,11 @@ describe("async execution model restoration and fallback", () => {
       assert.equal(payload.state, "failed");
       assert.equal(child?.timedOut, true);
       assert.equal(child?.terminationReason, "timed_out");
-      assert.equal(child?.contextUsage?.contextPercent, 99);
+      assert.equal(
+        child?.contextUsage?.contextPercent,
+        99,
+        "context usage evidence must arrive before the deadline fires",
+      );
       assert.doesNotMatch(
         child?.error ?? "",
         /unfinished tool interaction under high context pressure/,

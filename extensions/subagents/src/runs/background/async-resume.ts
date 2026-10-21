@@ -440,6 +440,8 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
     state: validateOptionalString(data, "state", resultPath),
     cwd: validateOptionalString(data, "cwd", resultPath),
     sessionFile: validateOptionalString(data, "sessionFile", resultPath),
+    // Kept raw so a malformed owner fails closed instead of reading as absent.
+    ...(data.sessionId !== undefined ? { sessionId: data.sessionId as string } : {}),
     model: validateOptionalString(data, "model", resultPath),
     thinking: parseThinkingLevel(data.thinking),
     modelIdentity: parseResultModelIdentity(data.modelIdentity, resultPath, "modelIdentity"),
@@ -504,10 +506,19 @@ function readResultFile(resultPath: string): AsyncResultFile {
   }
 }
 
+function isPathFreeRunId(value: string): boolean {
+  return !path.isAbsolute(value) && !/[\\/]/.test(value) && !value.includes("..");
+}
+
+function isInsideRoot(root: string, target: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(target));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function assertRunId(value: string | undefined, field: "id"): string | undefined {
   if (value === undefined) return undefined;
   if (value.trim() === "") throw new Error(`${field} must not be empty.`);
-  if (path.isAbsolute(value) || /[\\/]/.test(value) || value.includes("..")) {
+  if (!isPathFreeRunId(value)) {
     throw new Error(`${field} must be an async run id or prefix, not a path.`);
   }
   return value;
@@ -516,8 +527,7 @@ function assertRunId(value: string | undefined, field: "id"): string | undefined
 function assertInsideRoot(root: string, target: string, label: string): void {
   const rootPath = path.resolve(root);
   const targetPath = path.resolve(target);
-  const relative = path.relative(rootPath, targetPath);
-  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) return;
+  if (isInsideRoot(rootPath, targetPath)) return;
   throw new Error(`${label} must be inside ${rootPath}.`);
 }
 
@@ -953,6 +963,63 @@ function resolveLiveAsyncResumeTarget(
   return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
 }
 
+/**
+ * The single owner-evidence rule for durable revival. Missing, empty,
+ * malformed or conflicting status/result owners yield no owner (fail closed);
+ * one record never overrides the other. `null` counts as absent.
+ */
+export function resolvePersistedOwner(
+  statusOwner: unknown,
+  resultOwner: unknown,
+): string | undefined {
+  const owners = new Set<string>();
+  for (const candidate of [statusOwner, resultOwner]) {
+    if (candidate === undefined || candidate === null) continue;
+    if (typeof candidate !== "string" || candidate.length === 0) return undefined;
+    owners.add(candidate);
+  }
+  return owners.size === 1 ? [...owners][0] : undefined;
+}
+
+/** Raw owner field: absent (undefined/null), a string, or a malformed marker. */
+export type PersistedOwnerField = string | null | undefined | { malformed: true };
+
+const UNREADABLE_OWNER_EVIDENCE: PersistedOwnerField = Object.freeze({ malformed: true as const });
+
+/**
+ * Read the result record's raw owner field without validating or mutating.
+ * Absent file -> undefined; unreadable or non-object content -> a non-string
+ * sentinel so the owner rule fails closed.
+ */
+export function readPersistedResultOwner(resultsDir: string, runId: string): PersistedOwnerField {
+  if (runId.trim() === "" || !isPathFreeRunId(runId)) return UNREADABLE_OWNER_EVIDENCE;
+  const resultPath = path.join(resultsDir, `${runId}.json`);
+  if (!isInsideRoot(resultsDir, resultPath)) return UNREADABLE_OWNER_EVIDENCE;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(resultPath, "utf-8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "ENOENT"
+      ? undefined
+      : UNREADABLE_OWNER_EVIDENCE;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as { sessionId?: PersistedOwnerField }).sessionId
+      : UNREADABLE_OWNER_EVIDENCE;
+  } catch {
+    return UNREADABLE_OWNER_EVIDENCE;
+  }
+}
+
+function persistedOwnerEvidence(context: AsyncResumeResolutionContext): {
+  ownerSessionId?: string;
+} {
+  const owner = resolvePersistedOwner(context.status?.sessionId, context.result?.sessionId);
+  return owner === undefined ? {} : { ownerSessionId: owner };
+}
+
 function buildTerminalAsyncResumeTarget(
   context: AsyncResumeResolutionContext,
   index: number,
@@ -990,10 +1057,7 @@ function buildTerminalAsyncResumeTarget(
       context.status?.cwd ??
       context.result?.cwd,
     ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-    ...(() => {
-      const owner = context.status?.sessionId ?? context.result?.sessionId;
-      return typeof owner === "string" && owner.length > 0 ? { ownerSessionId: owner } : {};
-    })(),
+    ...persistedOwnerEvidence(context),
   };
   const modelMetadata = resolveResumeModelMetadata(
     index,

@@ -12,6 +12,13 @@ interface MockPiResponse {
   stderrByteChunks?: number[][];
   exitCode?: number;
   delay?: number;
+  /**
+   * Wait until this wall-clock time (`Date.now()` epoch ms) before emitting
+   * output, or emit immediately if it has already passed. Lets a test anchor
+   * emission to the same clock origin as a parent-computed deadline, whatever
+   * the process startup cost.
+   */
+  emitAtEpochMs?: number;
   keepAliveAfterFinalMessageMs?: number;
   ignoreSigterm?: boolean;
   ignoreSigint?: boolean;

@@ -181,6 +181,7 @@ function validateResultFile(value, resultPath) {
         state: validateOptionalString(data, "state", resultPath),
         cwd: validateOptionalString(data, "cwd", resultPath),
         sessionFile: validateOptionalString(data, "sessionFile", resultPath),
+        ...(data.sessionId !== undefined ? { sessionId: data.sessionId } : {}),
         model: validateOptionalString(data, "model", resultPath),
         thinking: parseThinkingLevel(data.thinking),
         modelIdentity: parseResultModelIdentity(data.modelIdentity, resultPath, "modelIdentity"),
@@ -233,12 +234,19 @@ function readResultFile(resultPath) {
         throw error;
     }
 }
+function isPathFreeRunId(value) {
+    return !path.isAbsolute(value) && !/[\\/]/.test(value) && !value.includes("..");
+}
+function isInsideRoot(root, target) {
+    const relative = path.relative(path.resolve(root), path.resolve(target));
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
 function assertRunId(value, field) {
     if (value === undefined)
         return undefined;
     if (value.trim() === "")
         throw new Error(`${field} must not be empty.`);
-    if (path.isAbsolute(value) || /[\\/]/.test(value) || value.includes("..")) {
+    if (!isPathFreeRunId(value)) {
         throw new Error(`${field} must be an async run id or prefix, not a path.`);
     }
     return value;
@@ -246,8 +254,7 @@ function assertRunId(value, field) {
 function assertInsideRoot(root, target, label) {
     const rootPath = path.resolve(root);
     const targetPath = path.resolve(target);
-    const relative = path.relative(rootPath, targetPath);
-    if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)))
+    if (isInsideRoot(rootPath, targetPath))
         return;
     throw new Error(`${label} must be inside ${rootPath}.`);
 }
@@ -564,6 +571,47 @@ function resolveLiveAsyncResumeTarget(context) {
         throw new Error(`Async run '${context.runId}' has ${running.length} running children. Provide index to choose one.`);
     return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
 }
+export function resolvePersistedOwner(statusOwner, resultOwner) {
+    const owners = new Set();
+    for (const candidate of [statusOwner, resultOwner]) {
+        if (candidate === undefined || candidate === null)
+            continue;
+        if (typeof candidate !== "string" || candidate.length === 0)
+            return undefined;
+        owners.add(candidate);
+    }
+    return owners.size === 1 ? [...owners][0] : undefined;
+}
+const UNREADABLE_OWNER_EVIDENCE = Object.freeze({ malformed: true });
+export function readPersistedResultOwner(resultsDir, runId) {
+    if (runId.trim() === "" || !isPathFreeRunId(runId))
+        return UNREADABLE_OWNER_EVIDENCE;
+    const resultPath = path.join(resultsDir, `${runId}.json`);
+    if (!isInsideRoot(resultsDir, resultPath))
+        return UNREADABLE_OWNER_EVIDENCE;
+    let raw;
+    try {
+        raw = fs.readFileSync(resultPath, "utf-8");
+    }
+    catch (error) {
+        return error?.code === "ENOENT"
+            ? undefined
+            : UNREADABLE_OWNER_EVIDENCE;
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+            ? parsed.sessionId
+            : UNREADABLE_OWNER_EVIDENCE;
+    }
+    catch {
+        return UNREADABLE_OWNER_EVIDENCE;
+    }
+}
+function persistedOwnerEvidence(context) {
+    const owner = resolvePersistedOwner(context.status?.sessionId, context.result?.sessionId);
+    return owner === undefined ? {} : { ownerSessionId: owner };
+}
 function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, selectedContinuation, agent, resolvedSessionFile) {
     const target = {
         kind: "revive",
@@ -583,10 +631,7 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
             context.status?.cwd ??
             context.result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-        ...(() => {
-            const owner = context.status?.sessionId ?? context.result?.sessionId;
-            return typeof owner === "string" && owner.length > 0 ? { ownerSessionId: owner } : {};
-        })(),
+        ...persistedOwnerEvidence(context),
     };
     const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);

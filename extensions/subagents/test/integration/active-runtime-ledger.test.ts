@@ -123,6 +123,7 @@ describe("durable active-runtime ledger", () => {
         createActiveRuntimeTracker({ priorActiveRuntimeMs: 0, segmentStartedAt: startedAt }),
       );
     });
+    owner.statusPayload.sessionId = "session-123";
     owner.writeStatusPayload();
     // One periodic tick one interval in; everything after it is lost when the
     // runner dies, so at most one interval can go uncharged.
@@ -284,6 +285,7 @@ describe("durable active-runtime ledger", () => {
             runId,
             mode: "single",
             state: "failed",
+            sessionId: "session-123",
             startedAt: 100,
             endedAt: 200,
             lastUpdate: 200,
@@ -341,6 +343,7 @@ describe("durable active-runtime ledger", () => {
           runId,
           mode: "single",
           state,
+          sessionId: "session-123",
           startedAt: 100,
           lastUpdate: 200,
           cwd: tempDir,
@@ -413,6 +416,7 @@ describe("durable active-runtime ledger", () => {
           agent: "worker",
           success: false,
           state: "failed",
+          sessionId: "session-123",
           cwd: tempDir,
           results: [{ agent: "worker", success: false, sessionFile, timeoutOwner: "everyone" }],
         }),
@@ -450,6 +454,7 @@ describe("durable active-runtime ledger", () => {
           runId,
           mode: "single",
           state: "failed",
+          sessionId: "session-123",
           startedAt: 100,
           endedAt: 200,
           lastUpdate: 200,
@@ -474,6 +479,7 @@ describe("durable active-runtime ledger", () => {
           agent: "worker",
           success: false,
           state: "failed",
+          sessionId: "session-123",
           cwd: tempDir,
           results: [
             {
@@ -514,6 +520,7 @@ describe("durable active-runtime ledger", () => {
           runId,
           mode: "single",
           state: "complete",
+          sessionId: "session-123",
           startedAt: 100,
           endedAt: 200,
           lastUpdate: 200,
