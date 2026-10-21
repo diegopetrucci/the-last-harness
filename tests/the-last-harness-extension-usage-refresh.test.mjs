@@ -28,7 +28,10 @@ function createPi() {
     on(event, handler) {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
     },
-    registerCommand() {},
+    commands: new Map(),
+    registerCommand(name, command) {
+      this.commands.set(name, command);
+    },
     registerShortcut() {},
     appendEntry() {},
     getAllTools: () => activeTools.map((name) => ({ name })),
@@ -68,6 +71,7 @@ function createCtx(options) {
   };
   const ctx = {
     hasUI: true,
+    ...(options.mode ? { mode: options.mode } : {}),
     cwd: options.cwd,
     model: {
       provider,
@@ -97,6 +101,9 @@ function createCtx(options) {
       },
       setHeader() {},
       notify() {},
+      setStatus(key, text) {
+        options.statusCalls?.push([key, text]);
+      },
       getEditorText: () => "",
     },
     isIdle: () => true,
@@ -1032,4 +1039,204 @@ test("rapid turn_end burst collapses to a single fetch and no extra renders when
       rmSync(tempDir, { recursive: true, force: true });
     }
   }
+});
+
+async function withUsageEnv(run) {
+  const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-status-"));
+  const agentDir = join(tempDir, "agent");
+  const cwd = join(tempDir, "workspace");
+  const previousEnv = {
+    PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+  };
+  const previousFetch = globalThis.fetch;
+  const session = createTestSession();
+  try {
+    delete process.env.PI_SUBAGENT_CHILD;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    mkdirSync(join(agentDir, "tlh"), { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(agentDir, "tlh", "install-state.json"),
+      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
+    );
+    const authStorage = {
+      runtimeOverrides: new Map(),
+      get: (provider) =>
+        provider === "anthropic" ? { type: "oauth", access: "oauth-access-token" } : undefined,
+    };
+    await run({ session, cwd, authStorage, agentDir });
+  } finally {
+    try {
+      await session.dispose();
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreEnv(previousEnv);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+}
+
+test("rpc mode publishes the usage segment as tlh-usage status, deduped, and republishes after /usage weekly", async () => {
+  await withUsageEnv(async ({ session, cwd, authStorage }) => {
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return {
+        ok: true,
+        json: async () => ({
+          five_hour: { used: 4, limit: 10 },
+          seven_day: { used: 1, limit: 10 },
+        }),
+      };
+    };
+    const { pi } = session;
+    theLastHarness(pi);
+    const statusCalls = [];
+    const ctx = session.createCtx({
+      cwd,
+      authStorage,
+      mode: "rpc",
+      statusCalls,
+      currentAccessToken: () => "oauth-access-token",
+      requestRender: () => {},
+    });
+
+    await fireAll(pi, "session_start", { reason: "startup" }, ctx);
+    assert.deepEqual(statusCalls[0], ["tlh-usage", undefined], "first publish is unconditional");
+    await eventually(() => statusCalls.length === 2, "usage refresh should publish a status");
+    const [key, text] = statusCalls[1];
+    assert.equal(key, "tlh-usage");
+    assert.equal(typeof text, "string");
+    assert.ok(text.length > 0);
+    assert.ok(!text.includes("\n"));
+
+    await fireAll(pi, "model_select", {}, ctx);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(statusCalls.length, 2, "unchanged text must not republish");
+
+    await pi.commands.get("usage").handler("weekly on", ctx);
+    assert.equal(statusCalls.length, 3, "weekly preference change republishes");
+    assert.notEqual(statusCalls[2][1], text);
+    await pi.commands.get("usage").handler("weekly on", ctx);
+    assert.equal(statusCalls.length, 3, "no-op weekly change does not republish");
+
+    authStorage.runtimeOverrides.set("anthropic", "runtime-api-key");
+    ctx.modelRegistry.isUsingOAuth = () => false;
+    ctx.model = { ...ctx.model, provider: "other" };
+    await fireAll(pi, "model_select", {}, ctx);
+    assert.deepEqual(statusCalls.at(-1), ["tlh-usage", undefined]);
+
+    const before = statusCalls.length;
+    await fireAll(pi, "session_shutdown", {}, ctx);
+    await pi.commands.get("usage").handler("weekly off", ctx);
+    assert.equal(statusCalls.length, before, "no publish after shutdown");
+  });
+});
+
+test("non-rpc modes never publish tlh-usage status", async () => {
+  await withUsageEnv(async ({ session, cwd, authStorage }) => {
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return { ok: true, json: async () => ({ five_hour: { used: 4, limit: 10 } }) };
+    };
+    const { pi } = session;
+    theLastHarness(pi);
+    const statusCalls = [];
+    let renderRequests = 0;
+    const ctx = session.createCtx({
+      cwd,
+      authStorage,
+      mode: "interactive",
+      statusCalls,
+      currentAccessToken: () => "oauth-access-token",
+      requestRender: () => {
+        renderRequests += 1;
+      },
+    });
+    await fireAll(pi, "session_start", { reason: "startup" }, ctx);
+    await eventually(
+      () => fetchCalls === 1 && renderRequests === 1,
+      "TUI footer render still requested",
+    );
+    await fireAll(pi, "model_select", {}, ctx);
+    await pi.commands.get("usage").handler("weekly on", ctx);
+    assert.deepEqual(statusCalls, []);
+  });
+});
+
+test("rpc mode without ctx.ui.setStatus does not throw", async () => {
+  await withUsageEnv(async ({ session, cwd, authStorage }) => {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ five_hour: { used: 4, limit: 10 } }),
+    });
+    const { pi } = session;
+    theLastHarness(pi);
+    const ctx = session.createCtx({
+      cwd,
+      authStorage,
+      mode: "rpc",
+      currentAccessToken: () => "oauth-access-token",
+      requestRender: () => {},
+    });
+    delete ctx.ui.setStatus;
+    await fireAll(pi, "session_start", { reason: "startup" }, ctx);
+    await fireAll(pi, "model_select", {}, ctx);
+    await pi.commands.get("usage").handler("weekly on", ctx);
+    await fireAll(pi, "session_shutdown", {}, ctx);
+  });
+});
+
+test("a new extension instance clears a previous session's retained tlh-usage status", async () => {
+  await withUsageEnv(async ({ session, cwd, authStorage }) => {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ five_hour: { used: 4, limit: 10 } }),
+    });
+    const hostStatusCalls = [];
+    theLastHarness(session.pi);
+    const ctx1 = session.createCtx({
+      cwd,
+      authStorage,
+      mode: "rpc",
+      statusCalls: hostStatusCalls,
+      currentAccessToken: () => "oauth-access-token",
+      requestRender: () => {},
+    });
+    await fireAll(session.pi, "session_start", { reason: "startup" }, ctx1);
+    await eventually(
+      () => typeof hostStatusCalls.at(-1)?.[1] === "string",
+      "session 1 should publish usage",
+    );
+    const session1Count = hostStatusCalls.length;
+    await fireAll(session.pi, "session_shutdown", {}, ctx1);
+
+    const session2 = createTestSession();
+    try {
+      theLastHarness(session2.pi);
+      const ctx2 = session2.createCtx({
+        cwd,
+        authStorage,
+        mode: "rpc",
+        statusCalls: hostStatusCalls,
+        currentAccessToken: () => "oauth-access-token",
+        requestRender: () => {},
+      });
+      ctx2.modelRegistry.isUsingOAuth = () => false;
+      ctx2.model = { ...ctx2.model, provider: "other" };
+      await fireAll(session2.pi, "session_start", { reason: "new" }, ctx2);
+      assert.deepEqual(hostStatusCalls.at(-1), ["tlh-usage", undefined]);
+      assert.equal(hostStatusCalls.length, session1Count + 1);
+    } finally {
+      await session2.dispose();
+    }
+  });
 });
