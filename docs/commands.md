@@ -214,6 +214,14 @@ Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-stat
 
 The report is built from sanitized session analysis only. It omits raw transcript text, raw tool arguments, and raw tool-result payloads, and TLH tells you where the private local report directory lives so you can delete it when you no longer need the report.
 
+### `/usage` and RPC status for hosts
+
+`/usage` shows or changes the subscription usage-limit footer preferences, including `/usage weekly`.
+
+When TLH runs in RPC mode, it publishes the same usage segment as the TUI footer (for example `5h session 12% used, resets in 2h3m · weekly 40% used, resets in 3d 2h`) through the extension UI status key `tlh-usage`, as `ctx.ui.setStatus("tlh-usage", <text>)`. Hosts such as tlh-gui can render it as-is. The status is published at session start, after a usage refresh that changes it, on model selection, and after `/usage weekly` changes; `undefined` clears it. It applies only to Anthropic and OpenAI Codex OAuth subscription models. The reset countdown is not republished on a timer, so it can be stale while the session is idle.
+
+The bundled pi-fast extension already publishes status key `fast` with `"fast"` while fast mode is on and `undefined` otherwise.
+
 ### `/what-consumed-my-session-limit-and-tokens`
 
 `/what-consumed-my-session-limit-and-tokens` takes no flags or subcommands. Run it to generate a local HTML report covering TLH sessions within the current provider session-limit window across all projects under the same session root.

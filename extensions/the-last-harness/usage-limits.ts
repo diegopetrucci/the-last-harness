@@ -58,10 +58,13 @@ function usageCommandCompletions(prefix: string) {
   return completions.length > 0 ? completions : null;
 }
 
-export function registerUsageCommand(pi: ExtensionAPI): void {
+export function registerUsageCommand(
+  pi: ExtensionAPI,
+  onWeeklyPreferenceChanged?: () => void,
+): void {
   pi.registerCommand("usage", {
     description: "Show or change TLH usage-limit footer preferences",
     getArgumentCompletions: usageCommandCompletions,
-    handler: (args, ctx) => handleUsageCommand(args, ctx),
+    handler: (args, ctx) => handleUsageCommand(args, ctx, onWeeklyPreferenceChanged),
   });
 }

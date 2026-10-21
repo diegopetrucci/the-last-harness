@@ -111,6 +111,7 @@ function formatUsageWeeklyStatus(showWeekly: boolean | undefined): string {
 export async function handleUsageCommand(
   args: string,
   ctx: ExtensionCommandContext,
+  onWeeklyPreferenceChanged?: () => void,
 ): Promise<void> {
   const command = parseUsageSlashAction(args);
   if (!command) {
@@ -132,6 +133,7 @@ export async function handleUsageCommand(
   try {
     const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
     setCachedTlhUsageWeeklyVisibility(nextShowWeekly);
+    onWeeklyPreferenceChanged?.();
     const changedLabel = result.changed ? "Updated" : "No change to";
     const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
     ctx.ui.notify(

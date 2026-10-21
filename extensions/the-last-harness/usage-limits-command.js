@@ -74,7 +74,7 @@ function formatUsageWeeklyStatus(showWeekly) {
     }
     return "TLH usage weekly window follows the default auto mode: it shows only when weekly remaining capacity is below 25%. Use /usage weekly on to always show it, /usage weekly off to always hide it, or /usage weekly toggle.";
 }
-export async function handleUsageCommand(args, ctx) {
+export async function handleUsageCommand(args, ctx, onWeeklyPreferenceChanged) {
     const command = parseUsageSlashAction(args);
     if (!command) {
         ctx.ui.notify(USAGE_COMMAND_HELP, "error");
@@ -92,6 +92,7 @@ export async function handleUsageCommand(args, ctx) {
     try {
         const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
         setCachedTlhUsageWeeklyVisibility(nextShowWeekly);
+        onWeeklyPreferenceChanged?.();
         const changedLabel = result.changed ? "Updated" : "No change to";
         const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
         ctx.ui.notify(`${changedLabel} TLH usage weekly-window preference at ${formatHomePath(result.settingsPath)}. ${formatUsageWeeklyStatus(nextShowWeekly)}${backupLabel}`, "info");

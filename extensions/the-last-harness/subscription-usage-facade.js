@@ -5,11 +5,15 @@ class LazyTlhSubscriptionUsageService {
     service;
     servicePromise;
     currentFooterRender;
+    usageChangeListener;
     registerFooterRenderRequest(requestRender) {
         this.currentFooterRender = requestRender;
     }
     clearFooterRenderRequest() {
         this.currentFooterRender = undefined;
+    }
+    setUsageChangeListener(listener) {
+        this.usageChangeListener = listener;
     }
     getSnapshot(provider) {
         return this.service?.getSnapshot(provider);
@@ -38,6 +42,7 @@ class LazyTlhSubscriptionUsageService {
                 nextProviderSnapshot !== previousProviderSnapshot ||
                 nextProviderEligible !== previousProviderEligible) {
                 this.currentFooterRender?.();
+                this.usageChangeListener?.();
             }
         })
             .catch(() => undefined);

@@ -19,6 +19,7 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
   private service: TlhSubscriptionUsageServiceLike | undefined;
   private servicePromise: Promise<TlhSubscriptionUsageServiceLike> | undefined;
   private currentFooterRender: (() => void) | undefined;
+  private usageChangeListener: (() => void) | undefined;
 
   registerFooterRenderRequest(requestRender: () => void): void {
     this.currentFooterRender = requestRender;
@@ -26,6 +27,12 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
 
   clearFooterRenderRequest(): void {
     this.currentFooterRender = undefined;
+  }
+
+  // Separate from the footer render callback so non-TUI hosts (RPC) can observe
+  // usage changes without a footer component.
+  setUsageChangeListener(listener: (() => void) | undefined): void {
+    this.usageChangeListener = listener;
   }
 
   getSnapshot(provider?: string): TlhSubscriptionUsageSnapshot | undefined {
@@ -62,6 +69,7 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
           nextProviderEligible !== previousProviderEligible
         ) {
           this.currentFooterRender?.();
+          this.usageChangeListener?.();
         }
       })
       .catch(() => undefined);
