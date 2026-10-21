@@ -78,6 +78,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Internal
 
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
+- The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 
 ## [0.46.0] - 2026-10-20
 
