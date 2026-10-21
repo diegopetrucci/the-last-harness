@@ -26,7 +26,7 @@
     "url": "https://github.com/diegopetrucci/the-last-harness/issues"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": "^24.22.1 || >=26.12.1"
   },
   "scripts": {
     "build": "npm run build:runtime",
