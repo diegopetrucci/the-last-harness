@@ -2,15 +2,7 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree, Scope, Variable } from "@oxlint/plugins";
 
-function referencedAliasName(type: ESTree.TSType): string | null {
-  if (type.type === "TSParenthesizedType") return referencedAliasName(type.typeAnnotation);
-  if (type.type !== "TSTypeReference" || type.typeName.type !== "Identifier") return null;
-  return type.typeArguments === null ||
-    type.typeArguments === undefined ||
-    type.typeArguments.params.length === 0
-    ? type.typeName.name
-    : null;
-}
+import { referencedAliasName } from "../shared/referenced-alias-name.ts";
 
 type ScopeKey = Scope | NamespaceScopeKey;
 type NamespaceScopeKey = {

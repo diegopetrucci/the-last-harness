@@ -104,7 +104,5 @@ export function writeSystemClipboard(text, options = {}) {
     runFirstAvailable(platform, clipboardWriteCommands(platform), runner, text);
 }
 export const __testing = {
-    clipboardReadCommands,
-    clipboardWriteCommands,
     MAX_CLIPBOARD_BYTES,
 };

@@ -223,7 +223,3 @@ export function resolveValidatedGitWorktreeRoot(cwdInput, options = {}) {
         return undefined;
     return strictCanonicalPath(search.root, fileSystem);
 }
-export const __testing = {
-    findValidatedGitWorktreeRootAt,
-    inspectGitWorktreeMarker,
-};

@@ -148,7 +148,5 @@ export function writeSystemClipboard(text: string, options: ClipboardOptions = {
 }
 
 export const __testing = {
-  clipboardReadCommands,
-  clipboardWriteCommands,
   MAX_CLIPBOARD_BYTES,
 };
