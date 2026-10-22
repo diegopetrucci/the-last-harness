@@ -528,7 +528,7 @@ test("usage footer stays within narrow terminal widths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: no-provider warning tests
+// no-provider warning tests
 // ---------------------------------------------------------------------------
 
 test("footer warns when the upstream provider count is zero", () => {
@@ -602,7 +602,7 @@ test("no-provider warning respects narrow footer widths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: focused line-2 composition tests
+// focused line-2 composition tests
 // ---------------------------------------------------------------------------
 
 test("line 2 shows model without provider prefix when single provider", () => {
@@ -674,7 +674,7 @@ test("line 2 omits the removed DUMB ZONE warning at high context usage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: focused line-3 rendered omission and presence tests
+// focused line-3 rendered omission and presence tests
 // ---------------------------------------------------------------------------
 
 test("line 3 is omitted when cost is zero and there is no subscription segment", () => {
@@ -708,7 +708,7 @@ test("line 3 renders subscription only when cost is suppressed and segment is pr
 });
 
 // ---------------------------------------------------------------------------
-// NEW: reset countdown in subscription usage footer segment
+// reset countdown in subscription usage footer segment
 // ---------------------------------------------------------------------------
 
 // Helper: build a minimal Anthropic snapshot with explicit window fields.
@@ -854,7 +854,7 @@ test("reset countdown: session+weekly segment joiner is intact when both have co
 });
 
 // ---------------------------------------------------------------------------
-// NEW: per-segment color tests for line 2 (color-aware theme stub)
+// per-segment color tests for line 2 (color-aware theme stub)
 // ---------------------------------------------------------------------------
 
 // Color-aware theme: wraps each segment in XML-style tags so assertions can
@@ -946,7 +946,7 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 });
 
 // ---------------------------------------------------------------------------
-// NEW: extension status line rendering
+// extension status line rendering
 // ---------------------------------------------------------------------------
 
 test("fast extension status renders as a dim line-2 segment without generic duplication", () => {
@@ -1019,7 +1019,7 @@ test("non-context-cap extension statuses are still rendered in the footer", () =
 });
 
 // ---------------------------------------------------------------------------
-// NEW: install notice warning line (last line of footer)
+// install notice warning line (last line of footer)
 // ---------------------------------------------------------------------------
 
 function makeInstallNotice(kind, detail, commitSubject) {
@@ -1673,7 +1673,7 @@ test("footer keeps the MCP status estimate within narrow widths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: provider auth-health reauth warning line
+// provider auth-health reauth warning line
 // ---------------------------------------------------------------------------
 
 // Helper: record a status directly into a fresh store by exploiting clearProvider
@@ -1917,11 +1917,7 @@ test('formatReauthWarningLine: "×2" count variant tells user both providers nee
 });
 
 test("formatReauthWarningLine: count-only variant never exceeds requested width — width contract at extreme narrowness", () => {
-  // The count-only variant (e.g. '⚠ reauth ×2') is itself ~11-12 columns wide.
-  // At a width below that, the prior code returned it unconditionally and violated
-  // the invariant that every footer line fits within `width`. This test asserts
-  // visibleWidth(result) <= width at a width of 5 — well below the count text.
-  // It must FAIL against the un-patched code and PASS after the truncateToWidth fix.
+  // Even the count-only variant must fit within the requested width.
   const narrowWidth = 5;
   const result = formatReauthWarningLine(["anthropic", "openai-codex"], narrowWidth, theme);
   assert.ok(
