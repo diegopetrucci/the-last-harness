@@ -742,24 +742,20 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
   elif [[ ! -f "${_runtime_marker_file}" ]]; then
     _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but has no valid TLH runtime ownership marker at ${_runtime_marker_file}. Not removing to protect co-located files"
   else
-    # Parse marker JSON (fail-closed; no jq, no node — uninstaller is self-contained).
-    # JSON.stringify() produces compact single-line output; each field is extracted by
-    # a BRE sed pattern. An empty result for any field means absent/malformed → SKIP.
-    _marker_raw="$(cat "${_runtime_marker_file}" 2>/dev/null || true)"
-    _mver="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"schemaVersion"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
-    _mpkg="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"packageName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-    _mpath="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"runtimeAbsPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-    _morigin="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"origin"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    # Trust only the installer's exact JSON.stringify marker shape (one trailing LF allowed).
+    _marker_pattern='^\{"schemaVersion":1,"packageName":"([^"\\[:cntrl:]]*)","runtimeAbsPath":"([^"\\[:cntrl:]]+)","origin":"(created|migrated)"\}$'
+    _marker_raw=""
+    if IFS= read -r -d '' _marker_raw < "${_runtime_marker_file}"; then
+      _marker_raw=""
+    fi
 
-    if [[ "${_mver}" != "1" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected schemaVersion 1, got '${_mver}')"
-    elif [[ "${_mpkg}" != "${PI_PACKAGE_NAME}" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected packageName '${PI_PACKAGE_NAME}', got '${_mpkg}')"
-    elif [[ "${_morigin}" != "created" && "${_morigin}" != "migrated" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (unrecognised origin '${_morigin}')"
-    elif [[ -z "${_mpath}" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (empty runtimeAbsPath)"
+    if [[ ! "${_marker_raw%$'\n'}" =~ ${_marker_pattern} ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is not valid TLH marker JSON: ${_runtime_marker_file}"
+    elif [[ "${BASH_REMATCH[1]}" != "${PI_PACKAGE_NAME}" ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected packageName '${PI_PACKAGE_NAME}', got '${BASH_REMATCH[1]}')"
     else
+      _mpath="${BASH_REMATCH[2]}"
+      _morigin="${BASH_REMATCH[3]}"
       _runtime_real="$(realpath_for_compare "${RUNTIME_DIR}")"
       if [[ "${_mpath}" != "${_runtime_real}" ]]; then
         _runtime_gate_skip_reason="ownership marker runtimeAbsPath '${_mpath}' does not match realpath '${_runtime_real}' of ${RUNTIME_DIR}"
