@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMockPi as _createMockPi } from "./mock-pi.ts";
 import type { MockPi } from "./mock-pi.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
-import type { AgentProgress, SubagentState } from "../../src/shared/types.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import type { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
 import {
@@ -172,19 +172,6 @@ const defaultExtensionAPI = {
 // real shape; exporting it lets test files import the type from this helper.
 export type { AgentConfig };
 
-export function makeAgentConfigs(names: string[]): AgentConfig[] {
-  return names.map((name) => ({
-    name,
-    description: `Test agent: ${name}`,
-    systemPrompt: "",
-    systemPromptMode: "replace" as const,
-    inheritProjectContext: false,
-    inheritSkills: false,
-    source: "user" as const,
-    filePath: "",
-  }));
-}
-
 /**
  * Creates a minimal AgentConfig for test fixtures.
  */
@@ -217,25 +204,6 @@ export function makeRunnerStep(
     task,
     inheritProjectContext: false,
     inheritSkills: false,
-    ...overrides,
-  };
-}
-
-/**
- * Creates a complete AgentProgress fixture typed from the production interface.
- * `agent`, `status`, and `task` are required parameters; all other required
- * fields default to inert/zero values so call sites express only what they test.
- */
-export function makeAgentProgress(
-  overrides: Pick<AgentProgress, "agent" | "status" | "task"> & Partial<AgentProgress>,
-): AgentProgress {
-  return {
-    index: 0,
-    recentTools: [],
-    recentOutput: [],
-    toolCount: 0,
-    tokens: 0,
-    durationMs: 0,
     ...overrides,
   };
 }

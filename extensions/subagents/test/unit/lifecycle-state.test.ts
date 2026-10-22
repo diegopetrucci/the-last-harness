@@ -1348,9 +1348,6 @@ describe("lifecycle state helpers", () => {
   });
 
   it("concurrent-writer regression: locked telemetry-continuation write does not overwrite a terminal status", () => {
-    // Regression test for P1-a: persistContinuationTelemetry previously did an unlocked
-    // read + writeNormalizedLifecycleStatus that could overwrite a concurrent settle.
-    // After the fix, the operation holds withLifecycleStatusLock and skips terminal states.
     const root = tempRoot("pi-lifecycle-concurrent-writer-");
     try {
       const asyncDir = path.join(root, "run-concurrent-writer");

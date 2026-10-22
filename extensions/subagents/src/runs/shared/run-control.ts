@@ -4,14 +4,13 @@ import { resolveAsyncRunLocation, type AsyncRunLocation } from "../background/as
 import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveSubagentRunId } from "../background/run-id-resolver.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { normalizeComparableCwd, readStatus } from "../../shared/utils.ts";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.ts";
 import {
   projectRunAuthorizationError,
   authorizePersistedProjectAgentRun,
   embeddedControlRestrictionError,
 } from "./project-agent-control.ts";
-import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentParamsLike, ExecutorDeps } from "./executor-types.ts";
 import type {
@@ -30,23 +29,6 @@ type AsyncInterruptResult =
   | { ok: false; kind: "error"; error: string };
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.ts";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.ts";
-export {
-  registerForegroundMessageInbox,
-  clearForegroundMessageInbox,
-} from "./foreground-message-inbox.ts";
-export function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
-  let currentSessionId;
-  let parentSessionFile;
-  try {
-    currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-    parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-  } catch {
-    return [];
-  }
-  if (!parentSessionFile) return [];
-  if (deps.state?.currentSessionId !== currentSessionId) return [];
-  return [deps.getSubagentSessionRoot(parentSessionFile)];
-}
 export {
   readModelRegistrySnapshot,
   providerFallbackModelsForTarget,
@@ -214,10 +196,6 @@ function requestAsyncInterruptForTarget(
 }
 function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
-function normalizeComparableCwd(cwd: string): string {
-  const resolved = path.resolve(cwd);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 function diskOnlyAsyncStatusBelongsElsewhere(state: SubagentState, status: AsyncStatus): boolean {
   if (state.currentSessionId && status.sessionId)

@@ -382,7 +382,7 @@ test("tlh doctor returns success for a healthy isolated profile", (t) => {
   assert.match(output, /OK\s+managed tk validation:/);
   assert.match(output, /OK\s+gh availability\/auth:/);
   assert.match(output, /OK\s+MCP\/web-search prerequisites:/);
-  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.0; target=5\.0\.0/);
+  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.1; target=5\.0\.1/);
   assert.match(output, /Summary: .*0 FAIL/);
 });
 
@@ -410,7 +410,7 @@ test("tlh doctor recognizes global and selected project adapter configs without 
 
   assert.equal(result.status, 0, output);
   assert.match(output, /MCP config present \(3; 2 adapter-owned\)/);
-  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.0; target=5\.0\.0/);
+  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.1; target=5\.0\.1/);
   assert.doesNotMatch(output, /secret-value|shared\.json/);
 });
 
@@ -445,7 +445,7 @@ test("tlh doctor reports a held pre-v5 adapter with sanitized versions and no wr
   assert.equal(result.status, 0, output);
   assert.match(
     output,
-    /WARN\s+MCP adapter cutover: state=hold; reason=selected-pre-v5; selected=2\.36\.0; target=5\.0\.0; held/,
+    /WARN\s+MCP adapter cutover: state=hold; reason=selected-pre-v5; selected=2\.36\.0; target=5\.0\.1; held/,
   );
   assert.doesNotMatch(output, /secret-value|@diegopetrucci|https?:\/\//i);
   assert.equal(readFileSync(settingsPath, "utf8"), settingsBeforeDoctor);
@@ -479,7 +479,7 @@ test("tlh doctor does not label a newer native adapter as held", (t) => {
   assert.equal(result.status, 0, output);
   assert.match(
     output,
-    /^OK[ \t]+MCP adapter cutover: state=native; selected=5\.1\.0; target=5\.0\.0$/m,
+    /^OK[ \t]+MCP adapter cutover: state=native; selected=5\.1\.0; target=5\.0\.1$/m,
   );
   assert.doesNotMatch(output, /^.*MCP adapter cutover:.*held.*$/m);
 });
@@ -507,7 +507,7 @@ test("tlh doctor holds an unresolved adapter selector without exposing its sourc
   assert.equal(result.status, 0, output);
   assert.match(
     output,
-    /WARN\s+MCP adapter cutover: state=hold; reason=selected-version-unresolved; selected=unresolved; target=5\.0\.0; held/,
+    /WARN\s+MCP adapter cutover: state=hold; reason=selected-version-unresolved; selected=unresolved; target=5\.0\.1; held/,
   );
   assert.doesNotMatch(output, /@diegopetrucci|\^5/);
 });

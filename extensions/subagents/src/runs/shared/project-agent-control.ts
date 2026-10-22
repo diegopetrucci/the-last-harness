@@ -248,11 +248,6 @@ export function projectRunAuthorizationError(message: string): Error {
   return new Error(`TLH project-agent control rejected: ${message}`);
 }
 
-export function hasMalformedProjectAgentControlMarker(value: unknown): boolean {
-  if (!isRecordValue(value) || !Object.hasOwn(value, "projectAgent")) return false;
-  return normalizeProjectAgentIdentity(value.projectAgent) === undefined;
-}
-
 export interface AuthorizedProjectAgentRun {
   identity: ProjectAgentIdentity;
   agentConfig: AgentConfig;

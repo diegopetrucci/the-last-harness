@@ -274,7 +274,7 @@ export function modelThinkingBadge(theme: Theme, model?: string, thinking?: stri
  * Returns undefined when the snapshot is absent (same-cwd run, the common case).
  */
 function childLocationText(loc: ChildLocationSnapshot | undefined): string | undefined {
-  if (!loc) return undefined;
+  if (!loc || typeof loc.displayPath !== "string") return undefined;
   // Keep newline-bearing path components visible without allowing them to
   // become physical rows. Escape before the single-line display boundary so
   // safeTerminalText does not replace them with spaces first.
