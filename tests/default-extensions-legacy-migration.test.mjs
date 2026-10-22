@@ -801,7 +801,7 @@ test("mcporter migration holds prior TLH-managed and manual installs until v5 is
 test("mcporter migration holds the managed 2.36.0 pin idempotently", () => {
   const mcporter = bundledExtension("mcporter");
   assert.ok(mcporter, "bundled mcporter default should exist");
-  assert.equal(mcporter.source, "npm:@diegopetrucci/pi-mcp-adapter@5.0.0");
+  assert.equal(mcporter.source, "npm:@diegopetrucci/pi-mcp-adapter@5.0.1");
   assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
   assert.deepEqual(mcporter.replaces, [
     "npm:pi-mcp-adapter",

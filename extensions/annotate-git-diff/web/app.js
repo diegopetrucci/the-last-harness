@@ -1697,18 +1697,14 @@ function setupMonaco() {
       });
       monacoApi.editor.setTheme("review-dark");
 
-      // SECURITY NOTE (DOMPurify advisory — risk-accepted 2026):
+      // SECURITY NOTE (plain-text/read-only boundary):
       // Both editors below are read-only plain-text diff views (readOnly: true,
       // originalEditable: false). No MarkdownString, renderMarkdown, hover
       // providers, completion providers, setModelMarkers, or trusted-HTML paths
-      // are used anywhere in this extension. Monaco's bundled DOMPurify is only
-      // exercised through those paths (hover-tooltip HTML, completion docs,
-      // trusted-type widgets). Because none of them are active here, the
-      // advisories GHSA-vxr8-fq34-vvx9, GHSA-cmwh-pvxp-8882, and
-      // GHSA-c2j3-45gr-mqc4 (dompurify <=3.4.11 via monaco-editor@0.56.0) are
-      // not reachable in this usage. Do NOT add MarkdownString, hover/completion
-      // rendering, or trusted-HTML support without first re-evaluating the
-      // DOMPurify advisory and updating this co-located security note.
+      // are used anywhere in this extension. Keep those rendering paths disabled.
+      // Do NOT add MarkdownString, renderMarkdown, hover/completion rendering,
+      // or trusted-HTML support without a fresh security review of the resulting
+      // behavior and dependencies, and update this co-located security note.
       diffEditor = monacoApi.editor.createDiffEditor(diffEditorHostEl, {
         automaticLayout: true,
         renderSideBySide: activeFileShowsDiff(),
