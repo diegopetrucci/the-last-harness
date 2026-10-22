@@ -106,7 +106,7 @@ type AppendDiagnosticJsonl = (filePath: string, line: string, droppedEventType?:
  */
 const activeTempDirs = new Set<string>();
 let killCleanupInstalled = false;
-function ensureKillCleanup(): void {
+export function ensureKillCleanup(): void {
   if (killCleanupInstalled) return;
   killCleanupInstalled = true;
   let terminating = false;
