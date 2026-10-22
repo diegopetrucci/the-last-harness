@@ -4,17 +4,6 @@ import { isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE } from "../the-last-harness-primary-agent.mjs";
 import { isThinkingLevel } from "./thinking.js";
-export function defaultProjectTrustForCwd(cwd) {
-    try {
-        const value = SettingsManager.create(cwd, getAgentDir(), {
-            projectTrusted: false,
-        }).getDefaultProjectTrust();
-        return value === "always" || value === "never" ? value : "ask";
-    }
-    catch {
-        return "ask";
-    }
-}
 export function getTlhGlobalSettings(cwd) {
     try {
         const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
