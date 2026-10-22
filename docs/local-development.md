@@ -33,6 +33,10 @@ TLH is a packaged profile for the upstream Pi runtime, not a programmatic librar
 
 Files may be shipped so runtime discovery or installer workflows can find them; that fact does not stabilize every exported symbol or deep-import path. Contributors may change or remove undocumented exports and internal paths without treating that as a compatibility break. This policy does not narrow any separately documented `tlh` CLI, configuration, runtime entrypoint, or durable artifact contract.
 
+## Contributor Node with mise
+
+The repo-root `mise.toml` pins Node.js for contributors who use [mise](https://mise.jdx.dev/), only inside this project (no global default). It is contributor-only and excluded from the npm package. Activate mise in your shell, or run commands through `mise x -- <cmd>`. New checkouts and worktrees need `mise trust` (or a matching `trusted_config_paths` entry). CI also tests the minimum supported Node.js release; supported ranges live in the `engines` field of [package.json](../package.json).
+
 ## Run validation
 
 Run the aggregate validation script. What it covers, the Oxlint configuration, the test reporters, and the full-validation rules are in [VALIDATING.md](../VALIDATING.md#standard-full-validation):

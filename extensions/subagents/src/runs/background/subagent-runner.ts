@@ -52,7 +52,11 @@ import {
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
 } from "../shared/active-runtime.ts";
-import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution.ts";
+import {
+  ensureKillCleanup,
+  runSingleStep,
+  saturatingStepDeadlineAt,
+} from "./single-step-execution.ts";
 import {
   appendUnexpectedLifecycleTransitionDiagnostic,
   createBackgroundRunStatusOwner,
@@ -477,6 +481,13 @@ async function runSubagentWithInput(
     interruptRunner?.();
   };
   process.on(ASYNC_INTERRUPT_SIGNAL, interruptSignalTrampoline);
+  // Install the SIGINT/SIGTERM cleanup handler before the first status write.
+  // Lifecycle status writes take a lock dir whose owner.json is published a
+  // moment after mkdir; a signal with no listener kills the runner inside that
+  // window and leaves an ownerless (fail-closed, unrecoverable) lock, so an
+  // awaited-owner abort could never persist 'cancelled'. A listener defers the
+  // signal to the event loop, between synchronous writes. Idempotent.
+  ensureKillCleanup();
   const eventsPath = path.join(asyncDir, "events.jsonl");
   const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
   const controlConfig = config.controlConfig ?? DEFAULT_CONTROL_CONFIG;
