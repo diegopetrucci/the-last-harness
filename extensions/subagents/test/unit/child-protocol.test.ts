@@ -66,7 +66,7 @@ describe("child protocol validation", () => {
     );
   });
 
-  it("keeps Pi 0.87.1 system-role message_end envelopes diagnostic and unknown", () => {
+  it("keeps system-role message_end envelopes diagnostic and unknown", () => {
     const systemMessageEnd = {
       type: "message_end",
       message: {

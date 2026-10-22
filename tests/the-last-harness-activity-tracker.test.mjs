@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
+import { createFakeTimers } from "./support/fake-timers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { createTlhEffectiveActivityTracker, registerTlhEffectiveActivityTracker } =
@@ -41,39 +42,6 @@ function createEventPiHarness() {
     pi,
     fire(event, payload = {}, ctx) {
       for (const handler of eventHandlers.get(event) ?? []) handler(payload, ctx);
-    },
-  };
-}
-
-function createFakeTimers() {
-  let now = 0;
-  let nextId = 1;
-  const timers = new Map();
-  return {
-    now: () => now,
-    setTimeout(fn, delay = 0) {
-      const id = nextId++;
-      timers.set(id, { fn, at: now + delay });
-      return id;
-    },
-    clearTimeout(id) {
-      timers.delete(id);
-    },
-    advance(ms) {
-      now += ms;
-      let ran = true;
-      while (ran) {
-        ran = false;
-        for (const [id, timer] of [...timers.entries()].sort((a, b) => a[1].at - b[1].at)) {
-          if (timer.at > now) continue;
-          timers.delete(id);
-          timer.fn();
-          ran = true;
-        }
-      }
-    },
-    pendingCount() {
-      return timers.size;
     },
   };
 }

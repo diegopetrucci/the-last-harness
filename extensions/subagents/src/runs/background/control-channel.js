@@ -4,7 +4,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { POLL_INTERVAL_MS } from "../../shared/types.js";
-export const INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 const STEER_REQUESTS_DIR = "steer-requests";
 const STEER_TARGETS_DIR = "steer-targets";
 const CHILD_MESSAGE_ACKS_DIR = "message-acks";

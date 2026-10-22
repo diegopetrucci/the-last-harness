@@ -9,33 +9,8 @@ import {
   buildCompletionDetails,
   formatSingleCompletion,
 } from "../../src/runs/background/notify.ts";
-import {
-  SUBAGENT_ASYNC_COMPLETE_EVENT,
-  type SubagentTerminalResult,
-} from "../../src/shared/types.ts";
-import { createPi } from "../support/notify-fixtures.ts";
-
-function terminalResult(): SubagentTerminalResult {
-  return {
-    state: "completed",
-    facts: {
-      attempts: [
-        {
-          attempt: 1,
-          exit: { code: 0, signal: null },
-          durationMs: 12,
-          providerTokens: { status: "unavailable" },
-          requestedToolCalls: { edit: 1, write: 0, bash: 2 },
-          workspace: {
-            baseline: { status: "unavailable", reason: "not_git_repository" },
-            post: { status: "unavailable", reason: "not_git_repository" },
-            attribution: "unknown",
-          },
-        },
-      ],
-    },
-  };
-}
+import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { createPi, terminalResult } from "../support/notify-fixtures.ts";
 
 describe("single completion notifications", () => {
   it("delivers two siblings finishing close together as two immediate notifications", () => {
