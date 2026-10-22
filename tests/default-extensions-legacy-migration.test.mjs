@@ -1,5 +1,3 @@
-/* eslint-disable max-lines -- migration coverage intentionally spans legacy and Pi Voice cases. */
-
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";

@@ -999,19 +999,15 @@ describe("childLocationLine — newline in displayPath", () => {
 // ---------------------------------------------------------------------------
 
 describe("childLocation boundary validation — render safety", () => {
-  it("passing a non-string displayPath directly to the renderer throws (demonstrating the threat)", () => {
-    // This confirms the vulnerability: if a malformed object bypasses the
-    // boundary validator and reaches the renderer, safeTerminalText will call
-    // string methods on a non-string and throw.
-    // Use JSON.parse for a single any-typed assertion, avoiding a chained
-    // `as unknown as T` which the linter rejects.
+  it("omits location text when displayPath is not a string", () => {
     const malformedLoc = JSON.parse(
       JSON.stringify({ childCwd: "/repo", displayPath: {} }),
     ) as ChildLocationSnapshot;
-    assert.throws(
-      () => buildWidgetLines([makeJob(malformedLoc)], theme as any, 120, false),
-      "renderer must throw when displayPath is not a string",
-    );
+    let lines: string[] = [];
+    assert.doesNotThrow(() => {
+      lines = buildWidgetLines([makeJob(malformedLoc)], theme as any, 120, false);
+    });
+    assert.ok(lines.every((line) => !line.includes("cwd:")));
   });
 
   it("boundary validator rejects malformed displayPath and renderer receives undefined", () => {

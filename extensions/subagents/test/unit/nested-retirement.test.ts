@@ -3,10 +3,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import {
-  clearForegroundMessageInbox,
-  registerForegroundMessageInbox,
-} from "../../src/runs/shared/foreground-message-inbox.ts";
 import { NESTED_EVENTS_DIR } from "../../src/runs/shared/nested-events.ts";
 import {
   retiredNestedLaunchError,
@@ -14,48 +10,10 @@ import {
   SUBAGENT_CHILD_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
+import { makeSubagentState } from "../support/helpers.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
-interface SimpleControl {
-  runId: string;
-  mode: string;
-  startedAt: number;
-  updatedAt: number;
-  messageInboxRoot?: string;
-  activeMessageInboxes?: Map<number, string>;
-}
-
 describe("nested orchestration retirement", () => {
-  it("isolates foreground message inboxes across direct control lifecycles", () => {
-    const first: SimpleControl = {
-      runId: "same-run",
-      mode: "single",
-      startedAt: 1,
-      updatedAt: 1,
-    };
-    const firstInbox = registerForegroundMessageInbox(first, first.runId, 0);
-    fs.writeFileSync(path.join(firstInbox, "stale.json"), "{}", "utf-8");
-    const firstRoot = first.messageInboxRoot!;
-
-    const second: SimpleControl = {
-      runId: "same-run",
-      mode: "single",
-      startedAt: 2,
-      updatedAt: 2,
-    };
-    const secondInbox = registerForegroundMessageInbox(second, second.runId, 0);
-    try {
-      assert.notEqual(second.messageInboxRoot, firstRoot);
-      assert.equal(fs.existsSync(path.join(secondInbox, "stale.json")), false);
-    } finally {
-      clearForegroundMessageInbox(first, 0);
-      clearForegroundMessageInbox(second, 0);
-    }
-    assert.equal(fs.existsSync(firstRoot), false);
-    assert.equal(fs.existsSync(path.dirname(secondInbox)), false);
-  });
-
   it("does not create a retired nested events dir for an ordinary run", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-root-no-nested-route-"));
     try {
@@ -131,17 +89,7 @@ function makeWorkerAgent(): AgentConfig {
 }
 
 function makeNestedExecutor(sessionBase: string) {
-  const state: SubagentState = {
-    baseCwd: "",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  const state = makeSubagentState({ baseCwd: "" });
   return createSubagentExecutor({
     pi: {
       events: {

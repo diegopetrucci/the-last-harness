@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { SubagentTerminalResult } from "../../src/shared/types.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 
 export function createPi(currentSessionId = "session-1") {
@@ -27,15 +28,24 @@ export function createPi(currentSessionId = "session-1") {
   return { events, sentMessages, wakes, lifecycleHandlers };
 }
 
-export function completionResult(overrides: Record<string, unknown> = {}) {
+export function terminalResult(): SubagentTerminalResult {
   return {
-    id: `notify-${Math.random().toString(36).slice(2)}`,
-    agent: "worker",
-    success: true,
-    summary: "Done",
-    exitCode: 0,
-    timestamp: 123,
-    sessionId: "session-a",
-    ...overrides,
+    state: "completed",
+    facts: {
+      attempts: [
+        {
+          attempt: 1,
+          exit: { code: 0, signal: null },
+          durationMs: 12,
+          providerTokens: { status: "unavailable" },
+          requestedToolCalls: { edit: 1, write: 0, bash: 2 },
+          workspace: {
+            baseline: { status: "unavailable", reason: "not_git_repository" },
+            post: { status: "unavailable", reason: "not_git_repository" },
+            attribution: "unknown",
+          },
+        },
+      ],
+    },
   };
 }

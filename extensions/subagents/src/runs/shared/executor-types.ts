@@ -1,9 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentDiscoveryDiagnostic, AgentScope } from "../../agents/agents.ts";
-import type {
-  ProjectAgentIdentity,
-  ProjectAgentTrustStore,
-} from "../../agents/project-agent-loader.ts";
+import type { ProjectAgentTrustStore } from "../../agents/project-agent-loader.ts";
 import type {
   ControlConfig,
   ExtensionConfig,
@@ -78,8 +75,6 @@ export interface ProjectAgentAccess {
   trustStore?: ProjectAgentTrustStore;
   createProjectTrustStore?: (agentDir: string) => ProjectAgentTrustStore;
 }
-
-export type ProjectAgentRunIdentity = ProjectAgentIdentity;
 
 interface ProjectAgentAccessRequest {
   cwd: string;

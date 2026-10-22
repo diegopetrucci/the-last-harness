@@ -95,7 +95,7 @@ import { provisionPiRuntime } from "./lib/tlh-install-runtime.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "1.3.0";
+const PINNED_PI_VERSION = "1.4.0";
 // Keep in sync with TLH_PINNED_PI_VERSION in install.sh.
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.4";

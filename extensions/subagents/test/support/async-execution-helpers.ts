@@ -121,18 +121,6 @@ export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export async function waitForTestCondition(
-  condition: () => boolean,
-  description: string,
-  timeoutMs: ScaledMs = scaleTestTimeout(10_000),
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!condition()) {
-    if (Date.now() > deadline) assert.fail(`Timed out waiting for ${description}`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Wait / polling helpers
 // ---------------------------------------------------------------------------

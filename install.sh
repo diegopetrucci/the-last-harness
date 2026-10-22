@@ -9,7 +9,7 @@ REF="${TLH_REF:-main}"
 # major; the last is an open floor.
 TLH_MIN_NODE_VERSIONS=("24.22.1" "26.12.1")
 TLH_NODE_REQUIREMENT_TEXT="Node.js >=24.22.1 <25 or >=26.12.1"
-TLH_PINNED_PI_VERSION="1.3.0"
+TLH_PINNED_PI_VERSION="1.4.0"
 
 # Keep stage-0 remote support downloads bounded so an unavailable raw-file
 # request cannot hold up the installer indefinitely, especially in parallel.
