@@ -446,12 +446,6 @@ describe("subagent async widget rendering", () => {
   });
 
   it("job-row phrase stays stable when running step changes in a chain/parallel job", () => {
-    // Regression for the pre-fix behaviour where job-level rows anchored the
-    // phrase on runningStep?.startedAt (or activityStep?.startedAt), causing a
-    // reset when the chain advanced or a parallel slot changed.
-    //
-    // After the fix, job-level rows anchor on job.startedAt first; the step
-    // startedAt is only a fallback when job.startedAt is undefined.
     const now = Date.now();
     // job.startedAt is 4 000 ms ago → slot 0 within the 8 s window.
     const jobStartedAt = now - 4_000;
@@ -461,7 +455,7 @@ describe("subagent async widget rendering", () => {
 
     // Single-mode job: step 0 (the only step) currently running.
     // step.startedAt = now − 9 000 ms → would be slot 1 if used as the phrase
-    // anchor; job.startedAt = now − 4 000 ms → slot 0 (correct after fix).
+    // anchor; job.startedAt = now − 4 000 ms → slot 0.
     // mode: "single" means widgetParallelAgentDetails returns [] so no per-step
     // phrase rows appear in the multi-job widget — this lets the test assert the
     // exact job-row phrase without interference from step-level anchoring (which

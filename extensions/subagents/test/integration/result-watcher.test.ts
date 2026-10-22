@@ -3,25 +3,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS } from "../../src/runs/background/result-artifact-consumer.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function createState(): SubagentState {
-  return {
+  return makeSubagentState({
     baseCwd: "/repo",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: {
-      schedule: () => false,
-      clear: () => {},
-    },
-  };
+  });
 }
 
 describe("result watcher", () => {
