@@ -27,6 +27,8 @@ import { createJiti } from "jiti";
 
 import { withEnv } from "./test-fixture-helpers.mjs";
 
+import { createInMemoryCredentialStore } from "./support/in-memory-credential-store.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
 
@@ -547,41 +549,6 @@ function createLoggingExtension(logs, prompts, role) {
 
 function sortedToolNames(toolInfos) {
   return toolInfos.map((tool) => tool.name).sort((left, right) => left.localeCompare(right));
-}
-
-// AuthStorage.inMemory() is not publicly exported from @earendil-works/pi-coding-agent.
-function createInMemoryCredentialStore() {
-  const store = new Map();
-  const tails = new Map();
-  const noop = () => {};
-  function enqueue(providerId, fn) {
-    const tail = tails.get(providerId) ?? Promise.resolve();
-    const result = tail.then(() => fn());
-    tails.set(providerId, result.then(noop, noop));
-    return result;
-  }
-  return {
-    async read(providerId) {
-      return store.get(providerId);
-    },
-    async list() {
-      return [...store.entries()].map(([id, cred]) => ({ providerId: id, type: cred.type }));
-    },
-    modify(providerId, fn) {
-      return enqueue(providerId, async () => {
-        const current = store.get(providerId);
-        const next = await fn(current);
-        if (next === undefined) return current;
-        store.set(providerId, next);
-        return next;
-      });
-    },
-    delete(providerId) {
-      return enqueue(providerId, async () => {
-        store.delete(providerId);
-      });
-    },
-  };
 }
 
 const EXPECTED_ACTIVE_TOOLS = {

@@ -1407,11 +1407,7 @@ run_uninstall_malformed_marker_json_smoke() {
 
   # Each sub-case seeds a valid agent-dir (install-state piInstalledByTlh=true) and a
   # TLH pi runtime layout, then writes an adversarial or symlinked marker file.
-  # The invariant is: unextractable OR field-VALUE invalid/mismatched marker → SKIP
-  # (Cases 1-9 below).  Grammar-only defects that leave all ownership field VALUES
-  # intact are a separate class: the sed-based parser extracts values leniently and
-  # PLANS REMOVAL when all fields are valid and the path+pi-layout checks pass
-  # (Case 10 below).  Do NOT read this function as "all malformed markers → skip".
+  # Invariant: any marker that is not the installer's exact JSON shape → SKIP.
 
   # ── Case 1: truncated JSON (packageName and other fields absent) ─────────────
   local truncated_agent="${case_dir}/truncated/agent"
@@ -1575,15 +1571,7 @@ EOF_ESCQUOTE
   assert_contains "${combined_file}" "ownership marker ${symlinkm_marker} is a symlink; cannot verify TLH ownership"
   assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${symlinkm_runtime}"
 
-  # ── Case 10: grammar-only-malformed marker (trailing comma after last field) → PLANS REMOVAL ──
-  # The marker JSON is syntactically invalid (a trailing comma after the closing
-  # "origin":"created" makes it unparseable by JSON.parse).  However, all ownership
-  # field VALUES are valid and extractable by the bash sed-based parser: schemaVersion=1,
-  # packageName=@earendil-works/pi-coding-agent, runtimeAbsPath matches, origin=created.
-  # The pi layout is present and the runtime dir is real (not a symlink).
-  # Per the intentional lenient value-extraction design (Option A), uninstall.sh PLANS
-  # rm -rf removal: a grammar defect that does not corrupt any ownership field value does
-  # not block removal when the runtime is provably TLH-owned.  This is correct behavior.
+  # ── Case 10: grammar-only-malformed marker (trailing comma after last field) → SKIP ──
   local grammaronly_agent="${case_dir}/grammar-only/agent"
   local grammaronly_runtime="${case_dir}/grammar-only/runtime"
   local grammaronly_bin="${case_dir}/bin-grammar-only"
@@ -1591,15 +1579,15 @@ EOF_ESCQUOTE
   write_tlh_install_state "${grammaronly_agent}" true
   write_tlh_pi_runtime "${grammaronly_runtime}"
   grammaronly_real="$(cd "${grammaronly_runtime}" >/dev/null 2>&1 && pwd -P)"
-  # Trailing comma after "origin":"created" — invalid JSON grammar, valid extracted values.
   printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created",}' \
     "${grammaronly_real}" >"${grammaronly_runtime}/.tlh-runtime-owned"
 
   : >"${stdout_file}"; : >"${stderr_file}"
   bash uninstall.sh --dry-run --agent-dir "${grammaronly_agent}" --bin-dir "${grammaronly_bin}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${grammaronly_runtime}"
-  assert_not_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "ownership marker is not valid TLH marker JSON"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${grammaronly_runtime}"
 }
 
 run_uninstall_install_state_parser_smoke() {

@@ -1,74 +1,23 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { after, test } from "node:test";
+import { test } from "node:test";
+
+import {
+  tempFixture as createMergeFixture,
+  runMerge,
+  readJson,
+} from "./support/merge-settings-fixtures.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
-const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const settingsDefaultsPath = join(repoRoot, "config", "settings.defaults.json");
 const bundledExtensionsPath = join(repoRoot, "config", "default-extensions.json");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const changelogSentinel = "9999.0.0";
 const builtinMcpExclusion = "-builtin:mcp";
-const _tmpDirs = [];
 
-after(() => {
-  for (const dir of _tmpDirs) rmSync(dir, { recursive: true, force: true });
-});
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
-}
-
-/**
- * Create a temp fixture with an empty default-extensions list (enough for most
- * -builtin:mcp tests that rely on tlh.disabledDefaultExtensions).
- */
-function tempFixture(settingsValue) {
-  const dir = mkdtempSync(join(tmpdir(), "tlh-merge-mcp-test-"));
-  _tmpDirs.push(dir);
-  const defaults = join(dir, "settings.defaults.json");
-  const extensions = join(dir, "default-extensions.json");
-  const settings = join(dir, "settings.json");
-  writeFileSync(defaults, readFileSync(settingsDefaultsPath));
-  writeFileSync(extensions, "[]\n");
-  writeFileSync(settings, `${JSON.stringify(settingsValue, null, 2)}\n`);
-  return { defaults, extensions, settings };
-}
-
-/**
- * Create a temp fixture backed by the bundled default-extensions.json so that
- * package-filter opt-out logic can find the mcporter extension entry.
- */
-function tempFixtureWithBundledExtensions(settingsValue) {
-  const dir = mkdtempSync(join(tmpdir(), "tlh-merge-mcp-test-"));
-  _tmpDirs.push(dir);
-  const defaults = join(dir, "settings.defaults.json");
-  const extensions = join(dir, "default-extensions.json");
-  const settings = join(dir, "settings.json");
-  writeFileSync(defaults, readFileSync(settingsDefaultsPath));
-  writeFileSync(extensions, readFileSync(bundledExtensionsPath));
-  writeFileSync(settings, `${JSON.stringify(settingsValue, null, 2)}\n`);
-  return { defaults, extensions, settings };
-}
-
-function runMerge(fixture, { quiet = true } = {}) {
-  const args = [
-    mergeScript,
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    fixture.extensions,
-  ];
-  if (quiet) args.push("--quiet");
-  return execFileSync(process.execPath, args, {
-    cwd: repoRoot,
-    env: process.env,
-    encoding: "utf8",
-  });
+function tempFixture(settingsValue, extensionsValue = []) {
+  return createMergeFixture(readJson(settingsDefaultsPath), settingsValue, extensionsValue);
 }
 
 test("packaged settings defaults disable builtin:mcp", () => {
@@ -84,10 +33,13 @@ test("packaged settings defaults disable builtin:mcp", () => {
 });
 
 test("fresh merge appends the builtin:mcp exclusion and records ownership", () => {
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -98,11 +50,14 @@ test("fresh merge appends the builtin:mcp exclusion and records ownership", () =
 
 test("update preserves unrelated extension entries and does not claim a preexisting exclusion", () => {
   const extensions = ["./user-extension.js", builtinMcpExclusion, "./another-extension.js"];
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    extensions,
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      extensions,
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -120,11 +75,14 @@ test("update preserves unrelated extension entries and does not claim a preexist
 });
 
 test("opted-out merge (disabledDefaultExtensions) does not add the builtin:mcp exclusion", () => {
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    tlh: { disabledDefaultExtensions: ["mcporter"] },
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      tlh: { disabledDefaultExtensions: ["mcporter"] },
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -136,12 +94,15 @@ test("opted-out merge (disabledDefaultExtensions) does not add the builtin:mcp e
 });
 
 test("opted-out merge preserves an unmarked user exclusion", () => {
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    extensions: [builtinMcpExclusion],
-    tlh: { disabledDefaultExtensions: ["mcporter"] },
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      extensions: [builtinMcpExclusion],
+      tlh: { disabledDefaultExtensions: ["mcporter"] },
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -151,15 +112,18 @@ test("opted-out merge preserves an unmarked user exclusion", () => {
 });
 
 test("opted-out merge removes a TLH-owned exclusion and clears ownership", () => {
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    extensions: [builtinMcpExclusion],
-    tlh: {
-      disabledDefaultExtensions: ["mcporter"],
-      builtinMcpExclusionManaged: true,
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      extensions: [builtinMcpExclusion],
+      tlh: {
+        disabledDefaultExtensions: ["mcporter"],
+        builtinMcpExclusionManaged: true,
+      },
+      lastChangelogVersion: changelogSentinel,
     },
-    lastChangelogVersion: changelogSentinel,
-  });
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -169,15 +133,18 @@ test("opted-out merge removes a TLH-owned exclusion and clears ownership", () =>
 });
 
 test("false exclusion ownership does not authorize removal", () => {
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    extensions: [builtinMcpExclusion],
-    tlh: {
-      disabledDefaultExtensions: ["mcporter"],
-      builtinMcpExclusionManaged: false,
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      extensions: [builtinMcpExclusion],
+      tlh: {
+        disabledDefaultExtensions: ["mcporter"],
+        builtinMcpExclusionManaged: false,
+      },
+      lastChangelogVersion: changelogSentinel,
     },
-    lastChangelogVersion: changelogSentinel,
-  });
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -187,12 +154,15 @@ test("false exclusion ownership does not authorize removal", () => {
 });
 
 test("opted-out merge preserves unrelated extension entries and unmarked exclusions", () => {
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    extensions: ["./user-ext.js", builtinMcpExclusion, "./other-ext.js"],
-    tlh: { disabledDefaultExtensions: ["mcporter"] },
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      extensions: ["./user-ext.js", builtinMcpExclusion, "./other-ext.js"],
+      tlh: { disabledDefaultExtensions: ["mcporter"] },
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -206,10 +176,13 @@ test("package-filter opt-out does not add the builtin:mcp exclusion", () => {
   const mcporterSource = readJson(bundledExtensionsPath).find((e) => e.id === "mcporter")?.source;
   assert.ok(mcporterSource, "mcporter must have a bundled source");
 
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -225,12 +198,15 @@ test("package-filter opt-out removes a TLH-owned exclusion and clears ownership"
   const mcporterSource = readJson(bundledExtensionsPath).find((e) => e.id === "mcporter")?.source;
   assert.ok(mcporterSource, "mcporter must have a bundled source");
 
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
-    extensions: [builtinMcpExclusion],
-    tlh: { builtinMcpExclusionManaged: true },
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
+      extensions: [builtinMcpExclusion],
+      tlh: { builtinMcpExclusionManaged: true },
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -243,11 +219,14 @@ test("package-filter opt-out preserves an unmarked user exclusion", () => {
   const mcporterSource = readJson(bundledExtensionsPath).find((e) => e.id === "mcporter")?.source;
   assert.ok(mcporterSource, "mcporter must have a bundled source");
 
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
-    extensions: [builtinMcpExclusion],
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
+      extensions: [builtinMcpExclusion],
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
@@ -301,11 +280,14 @@ test("missing default-extension manifest preserves an unmarked user exclusion", 
 });
 
 test("enabled merge adds exactly one exclusion while preserving an existing extensions array", () => {
-  const fixture = tempFixtureWithBundledExtensions({
-    packages: [harnessPackage],
-    extensions: ["./user-ext.js"],
-    lastChangelogVersion: changelogSentinel,
-  });
+  const fixture = tempFixture(
+    {
+      packages: [harnessPackage],
+      extensions: ["./user-ext.js"],
+      lastChangelogVersion: changelogSentinel,
+    },
+    readJson(bundledExtensionsPath),
+  );
 
   runMerge(fixture);
 
