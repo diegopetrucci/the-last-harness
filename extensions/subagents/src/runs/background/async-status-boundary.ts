@@ -1,12 +1,4 @@
-import type {
-  ActivityState,
-  AsyncStatus,
-  CompactionReason,
-  ContextPressureProjection,
-  ContextPressureThreshold,
-  ContextUsageDiagnostics,
-  SubagentTerminationReason,
-} from "../../shared/types.ts";
+import type { ActivityState, AsyncStatus, CompactionReason } from "../../shared/types.ts";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.ts";
 import {
   parseContextPressureCrossedThresholds,
@@ -404,8 +396,3 @@ export function parsePersistedAsyncStatus(
   }
   return status;
 }
-
-export type PersistedContextUsage = ContextUsageDiagnostics;
-export type PersistedContextPressure = ContextPressureProjection;
-export type PersistedContextThreshold = ContextPressureThreshold;
-export type PersistedTerminationReason = SubagentTerminationReason;
