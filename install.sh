@@ -3,8 +3,12 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
-# Keep in sync with MIN_NODE_VERSION and PINNED_PI_VERSION in scripts/tlh-install.mjs.
-TLH_MIN_NODE_VERSION="22.19.0"
+# Keep in sync with MIN_NODE_VERSIONS in scripts/lib/tlh-install-utils.mjs and
+# PINNED_PI_VERSION in scripts/tlh-install.mjs.
+# Ordered per-line minimums: every entry except the last is bounded to its own
+# major; the last is an open floor.
+TLH_MIN_NODE_VERSIONS=("24.22.1" "26.12.1")
+TLH_NODE_REQUIREMENT_TEXT="Node.js >=24.22.1 <25 or >=26.12.1"
 TLH_PINNED_PI_VERSION="1.4.0"
 
 # Keep stage-0 remote support downloads bounded so an unavailable raw-file
@@ -62,7 +66,7 @@ Install upstream Pi and The Last Harness as a separate tlh command. Normal Pi
 config under ~/.pi/agent is not modified.
 
 Requirements:
-  Node.js >= ${TLH_MIN_NODE_VERSION} on PATH
+  ${TLH_NODE_REQUIREMENT_TEXT} on PATH
   Upstream Pi ${TLH_PINNED_PI_VERSION} (installed into a private TLH runtime at ~/.the-last-harness/runtime;
   a global pi is never used or modified; install or repair failures stop with an actionable error)
 USAGE
@@ -714,27 +718,25 @@ require_command() {
   fi
 }
 
+# Keep node version semantics in sync with normalize/parse helpers in
+# scripts/lib/tlh-install-utils.mts: trim whitespace, strip one leading "v";
+# exact MAJOR.MINOR.PATCH is a release, MAJOR.MINOR.PATCH-<prerelease> is always
+# unsupported, anything else is unparsable.
+normalize_node_version_stage0() {
+  local version="$1"
+  version="${version#"${version%%[![:space:]]*}"}"
+  version="${version%"${version##*[![:space:]]}"}"
+  printf '%s' "${version#v}"
+}
+
 version_at_least_stage0() {
   local current="$1"
   local minimum="$2"
-  local current_major current_minor current_patch current_extra
-  local minimum_major minimum_minor minimum_patch minimum_extra
+  local current_major current_minor current_patch
+  local minimum_major minimum_minor minimum_patch
 
-  current="${current#v}"
-  minimum="${minimum#v}"
-  IFS='.' read -r current_major current_minor current_patch current_extra <<< "${current}"
-  IFS='.' read -r minimum_major minimum_minor minimum_patch minimum_extra <<< "${minimum}"
-  current_patch="${current_patch%%[^0-9]*}"
-  minimum_patch="${minimum_patch%%[^0-9]*}"
-  : "${current_extra:=}"
-  : "${minimum_extra:=}"
-
-  if [[ ! "${current_major}" =~ ^[0-9]+$ || ! "${current_minor}" =~ ^[0-9]+$ || ! "${current_patch}" =~ ^[0-9]+$ ]]; then
-    return 1
-  fi
-  if [[ ! "${minimum_major}" =~ ^[0-9]+$ || ! "${minimum_minor}" =~ ^[0-9]+$ || ! "${minimum_patch}" =~ ^[0-9]+$ ]]; then
-    return 1
-  fi
+  IFS='.' read -r current_major current_minor current_patch <<< "${current}"
+  IFS='.' read -r minimum_major minimum_minor minimum_patch <<< "${minimum}"
 
   if (( 10#${current_major} > 10#${minimum_major} )); then return 0; fi
   if (( 10#${current_major} < 10#${minimum_major} )); then return 1; fi
@@ -743,18 +745,41 @@ version_at_least_stage0() {
   (( 10#${current_patch} >= 10#${minimum_patch} ))
 }
 
+# Expects a normalized exact MAJOR.MINOR.PATCH release version.
+node_version_supported_stage0() {
+  local current="$1"
+  local current_major="${current%%.*}"
+  local last_index=$(( ${#TLH_MIN_NODE_VERSIONS[@]} - 1 ))
+  local index minimum minimum_major
+
+  for index in "${!TLH_MIN_NODE_VERSIONS[@]}"; do
+    minimum="${TLH_MIN_NODE_VERSIONS[index]}"
+    minimum_major="${minimum%%.*}"
+    if (( index != last_index )) && (( 10#${current_major} != 10#${minimum_major} )); then
+      continue
+    fi
+    if version_at_least_stage0 "${current}" "${minimum}"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 require_supported_node_stage0() {
   require_command node
 
+  local raw_version=""
   local current_version=""
-  current_version="$(node --version 2>/dev/null || true)"
-  current_version="${current_version//$'\r'/}"
-  current_version="${current_version//$'\n'/}"
-  if [[ -z "${current_version}" ]]; then
-    die "unable to determine Node.js version; The Last Harness requires Node.js >= ${TLH_MIN_NODE_VERSION}."
-  fi
-  if ! version_at_least_stage0 "${current_version}" "${TLH_MIN_NODE_VERSION}"; then
-    die "Node.js >= ${TLH_MIN_NODE_VERSION} is required (found ${current_version}). Install or upgrade Node.js, then rerun the installer."
+  raw_version="$(node --version 2>/dev/null || true)"
+  current_version="$(normalize_node_version_stage0 "${raw_version}")"
+  if [[ "${current_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if ! node_version_supported_stage0 "${current_version}"; then
+      die "${TLH_NODE_REQUIREMENT_TEXT} is required (found v${current_version}). Install or upgrade Node.js, then rerun the installer."
+    fi
+  elif [[ "${current_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]]; then
+    die "${TLH_NODE_REQUIREMENT_TEXT} is required (found v${current_version}). Install or upgrade Node.js, then rerun the installer."
+  else
+    die "unable to determine Node.js version; The Last Harness requires ${TLH_NODE_REQUIREMENT_TEXT}."
   fi
 }
 

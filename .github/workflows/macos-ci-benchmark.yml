@@ -44,7 +44,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '22.19.0'
+          node-version: '24.22.1'
           cache: 'npm'
 
       - name: Restore node_modules cache
@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: node-modules-${{ runner.os }}-${{ runner.arch }}-22.19.0-${{ hashFiles('package-lock.json', 'package.json') }}
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-24.22.1-${{ hashFiles('package-lock.json', 'package.json') }}
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'

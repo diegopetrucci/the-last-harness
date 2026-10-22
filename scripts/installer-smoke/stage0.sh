@@ -15,7 +15,7 @@ run_stage0_node_preflight_smoke() {
   mkdir -p "${case_dir}" "${home_dir}"
   make_support_copy_curl "${fakebin}"
   make_fake_stage1_support_root "${case_dir}/support-root"
-  make_fake_node_version "${fakebin}" "v22.18.9"
+  make_fake_node_version "${fakebin}" "v24.22.0"
 
   set +e
   (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${case_dir}/support-root" FAKE_RAW_BASE="${raw_base}" TLH_RAW_BASE="${raw_base}" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
@@ -28,7 +28,7 @@ run_stage0_node_preflight_smoke() {
     fail "stage-0 old Node remote preflight unexpectedly succeeded"
   fi
   assert_contains "${combined_file}" "Refreshing installer..."
-  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "Node.js >=24.22.1 <25 or >=26.12.1 is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -50,7 +50,7 @@ run_stage0_node_preflight_smoke() {
     cat "${combined_file}" >&2
     fail "stage-0 old Node local preflight unexpectedly succeeded"
   fi
-  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "Node.js >=24.22.1 <25 or >=26.12.1 is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"

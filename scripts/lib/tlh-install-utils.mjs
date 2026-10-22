@@ -329,3 +329,66 @@ export function outputLines(output) {
         .map((line) => line.trim())
         .filter(Boolean);
 }
+// Keep in sync with TLH_MIN_NODE_VERSIONS in install.sh.
+// Ordered per-line minimums: every entry except the last is bounded to its own
+// major; the last is an open floor.
+export const MIN_NODE_VERSIONS = ["24.22.1", "26.12.1"];
+export const NODE_REQUIREMENT_TEXT = "Node.js >=24.22.1 <25 or >=26.12.1";
+// Trim surrounding whitespace and strip one leading "v". Keep in sync with
+// normalize_node_version_stage0 in install.sh.
+export function normalizeNodeVersion(version) {
+    return String(version ?? "")
+        .trim()
+        .replace(/^v/, "");
+}
+// Only exact MAJOR.MINOR.PATCH release versions parse; prereleases and trailing
+// text return null.
+export function parseNodeVersion(version) {
+    const match = normalizeNodeVersion(version).match(/^(\d+)\.(\d+)\.(\d+)$/);
+    if (!match)
+        return null;
+    return match.slice(1).map((part) => Number.parseInt(part, 10));
+}
+export function isNodePrereleaseVersion(version) {
+    return /^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/.test(normalizeNodeVersion(version));
+}
+export function compareVersionTriplets(currentVersion, expectedVersion) {
+    const current = parseNodeVersion(currentVersion);
+    const expected = parseNodeVersion(expectedVersion);
+    if (!current || !expected)
+        return null;
+    for (let index = 0; index < expected.length; index += 1) {
+        if (current[index] > expected[index])
+            return 1;
+        if (current[index] < expected[index])
+            return -1;
+    }
+    return 0;
+}
+export function nodeVersionMeetsMinimum(currentVersion, minimumVersions = MIN_NODE_VERSIONS) {
+    const current = parseNodeVersion(currentVersion);
+    if (!current)
+        return false;
+    return minimumVersions.some((minimumVersion, index) => {
+        const minimum = parseNodeVersion(minimumVersion);
+        if (!minimum)
+            return false;
+        const isLast = index === minimumVersions.length - 1;
+        if (!isLast && current[0] !== minimum[0])
+            return false;
+        const comparison = compareVersionTriplets(currentVersion, minimumVersion);
+        return comparison !== null && comparison >= 0;
+    });
+}
+export function formatNodeVersion(version) {
+    const text = normalizeNodeVersion(version);
+    return text ? `v${text}` : "unknown";
+}
+export function assertSupportedNodeRuntime(currentVersion = process.versions.node) {
+    if (!parseNodeVersion(currentVersion) && !isNodePrereleaseVersion(currentVersion)) {
+        throw new Error(`unable to determine Node.js version; The Last Harness requires ${NODE_REQUIREMENT_TEXT}.`);
+    }
+    if (!nodeVersionMeetsMinimum(currentVersion)) {
+        throw new Error(`${NODE_REQUIREMENT_TEXT} is required (found ${formatNodeVersion(currentVersion)}). Install or upgrade Node.js, then rerun the installer.`);
+    }
+}
