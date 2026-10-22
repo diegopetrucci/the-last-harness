@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 
+import { tempFixture, runMerge, readJson } from "./support/merge-settings-fixtures.mjs";
+
 const _tmpDirs = [];
 after(() => {
   for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
@@ -36,45 +38,6 @@ const retiredUpstreamRtkPackage = "npm:pi-rtk";
 const retiredSherifNpmRtkPackage = "npm:@sherif-fanous/pi-rtk";
 const retiredSherifGitRtkPackage = "git:github.com/sherif-fanous/pi-rtk@v0.5.0";
 const changelogSentinel = "9999.0.0";
-
-function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
-  const dir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-test-"));
-  _tmpDirs.push(dir);
-  const defaults = join(dir, "settings.defaults.json");
-  const extensions = join(dir, "default-extensions.json");
-  const settings = join(dir, "settings.json");
-  writeFileSync(defaults, JSON.stringify(defaultsValue, null, 2));
-  writeFileSync(extensions, `${JSON.stringify(extensionsValue, null, 2)}\n`);
-  writeFileSync(settings, JSON.stringify(settingsValue, null, 2));
-  return { defaults, extensions, settings };
-}
-
-function runMerge(
-  fixture,
-  { dryRun = false, force = false, quiet = true, packageSource = "", env = process.env } = {},
-) {
-  const args = [
-    mergeScript,
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    fixture.extensions,
-  ];
-  if (packageSource) args.push("--package-source", packageSource);
-  if (dryRun) args.push("--dry-run");
-  if (force) args.push("--force");
-  if (quiet) args.push("--quiet");
-  return execFileSync(process.execPath, args, {
-    cwd: repoRoot,
-    env,
-    encoding: "utf8",
-  });
-}
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
-}
 
 function writePackageManifest(packageDir, value) {
   mkdirSync(packageDir, { recursive: true });

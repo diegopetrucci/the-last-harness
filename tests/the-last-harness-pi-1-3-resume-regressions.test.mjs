@@ -6,6 +6,8 @@ import test from "node:test";
 
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
+import { createInMemoryCredentialStore } from "./support/in-memory-credential-store.mjs";
+
 const repoRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 function isolatedEnv(fixture, overrides = {}) {
   const unset = {};
@@ -56,46 +58,6 @@ async function loadRuntimeModules() {
     piAi,
     theLastHarness: extension.default,
     loadPrimaryAgents: prompts.loadPrimaryAgents,
-  };
-}
-
-function createInMemoryCredentialStore() {
-  const store = new Map();
-  const tails = new Map();
-  const enqueue = (providerId, fn) => {
-    const tail = tails.get(providerId) ?? Promise.resolve();
-    const result = tail.then(fn);
-    tails.set(
-      providerId,
-      result.then(
-        () => undefined,
-        () => undefined,
-      ),
-    );
-    return result;
-  };
-  return {
-    async read(providerId) {
-      return store.get(providerId);
-    },
-    async list() {
-      return [...store.entries()].map(([providerId, credential]) => ({
-        providerId,
-        type: credential.type,
-      }));
-    },
-    modify(providerId, fn) {
-      return enqueue(providerId, async () => {
-        const next = await fn(store.get(providerId));
-        if (next !== undefined) store.set(providerId, next);
-        return next;
-      });
-    },
-    delete(providerId) {
-      return enqueue(providerId, async () => {
-        store.delete(providerId);
-      });
-    },
   };
 }
 
