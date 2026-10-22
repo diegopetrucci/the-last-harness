@@ -40,6 +40,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled Pi runtime from `1.3.0` to `1.4.0`. TLH behavior and defaults are unchanged; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence) and provider-backed checks remain pending.
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
 - Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
