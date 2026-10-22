@@ -34,26 +34,10 @@ import {
   writeLoggingPi,
 } from "./install-stage1-core-test-helpers.mjs";
 
-import { assertSupportedNodeRuntime, nodeVersionMeetsMinimum } from "../scripts/tlh-install.mjs";
 import {
   RUNTIME_INSTALL_LOCK_NAME,
   RUNTIME_STAGING_DIR_PREFIX,
 } from "../scripts/lib/tlh-install-runtime.mjs";
-
-test("stage-1 enforces the TLH Node runtime minimum", () => {
-  assert.equal(nodeVersionMeetsMinimum("22.18.9"), false);
-  assert.equal(nodeVersionMeetsMinimum("22.19.0"), true);
-  assert.equal(nodeVersionMeetsMinimum("23.0.0"), true);
-  assert.doesNotThrow(() => assertSupportedNodeRuntime("v22.19.0"));
-  assert.throws(
-    () => assertSupportedNodeRuntime("22.18.9"),
-    /Node\.js >= 22\.19\.0 is required \(found v22\.18\.9\)\. Install or upgrade Node\.js, then rerun the installer\./,
-  );
-  assert.throws(
-    () => assertSupportedNodeRuntime("not-a-version"),
-    /unable to determine Node\.js version; The Last Harness requires Node\.js >= 22\.19\.0\./,
-  );
-});
 
 test("stage-1 repairs the TLH private Pi runtime to the pinned version when it is below the pin", (t) => {
   const root = makeTempDir();

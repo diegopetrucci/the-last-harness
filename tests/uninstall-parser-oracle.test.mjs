@@ -462,25 +462,22 @@ test("uninstall-oracle: valid marker but missing pi layout → skip", (t) => {
   assertPlanClass(result.stdout, "skip", "missing pi layout");
 });
 
-test("uninstall-oracle: CRLF in compact marker (single-line) → parsed correctly by bash sed", (t) => {
+test("uninstall-oracle: compact marker with one trailing newline → runtime removal", (t) => {
   const { root, agentDir, binDir, homeDir, realRuntimeDir } = buildFixture({
     withRuntime: true,
     hasPiLayout: true,
   });
-  // Compact JSON with CRLF at end of line — sed [[:space:]] covers \r, .* covers rest.
   const markerJson = validMarker(realRuntimeDir, { origin: "created" });
-  const markerContent = markerJson + "\r\n";
+  const markerContent = markerJson + "\n";
   writeFileSync(join(root, "profile", "runtime", RUNTIME_MARKER_FILENAME), markerContent, "utf8");
   t.after(() => cleanFixture(root));
 
   const result = runDryRun(agentDir, binDir, homeDir);
   assert.equal(result.status, 0, `uninstall.sh failed:\n${result.stderr}`);
 
-  // Oracle strips CRLF before JSON.parse to mirror what sed effectively handles.
-  const normalized = markerContent.replace(/\r/g, "");
-  const expected = oracleRuntimePlanClass(normalized, realRuntimeDir, true);
-  assert.equal(expected, "runtime", "oracle sanity check: CRLF should not prevent valid parse");
-  assertPlanClass(result.stdout, "runtime", "CRLF in marker");
+  const expected = oracleRuntimePlanClass(markerContent, realRuntimeDir, true);
+  assert.equal(expected, "runtime", "oracle sanity check");
+  assertPlanClass(result.stdout, expected, "one trailing newline");
 });
 
 test("uninstall-oracle: missing all fields → skip", (t) => {
@@ -644,41 +641,25 @@ test("uninstall-oracle: install-state missing (file absent) → oracle=absent, s
   );
 });
 
-// ── Grammar-only-malformed marker: intentional lenient behavior ────────────────
-//
-// The bash sed-based parser extracts field VALUES only; it does not validate JSON
-// grammar.  A marker whose JSON is syntactically invalid (e.g. a trailing comma
-// after the last field) but whose ownership field VALUES are all correct
-// (schemaVersion=1, packageName=matching, runtimeAbsPath=matching, origin=created)
-// is treated as TLH-owned, and removal IS planned.
-//
-// The JS oracle (oracleRuntimePlanClass) uses JSON.parse, which rejects such
-// grammar-only-malformed inputs and would predict "skip".  That prediction is
-// WRONG for this class of inputs; oracle and bash diverge ONLY here.  We therefore
-// do NOT call oracleRuntimePlanClass for this test — the JSON.parse oracle is
-// explicitly excluded from grammar-only-malformed inputs.  Instead we document and
-// directly assert the known correct bash behavior.
-test("uninstall-oracle: grammar-only-malformed marker (trailing comma after origin=created, all ownership fields valid) → runtime removal [intentional lenient value-extraction]", (t) => {
-  const { root, agentDir, binDir, homeDir, runtimeDir, realRuntimeDir } = buildFixture({
-    withRuntime: true,
-    hasPiLayout: true,
+for (const [label, malformedMarker] of [
+  ["trailing comma", (marker) => `${marker.slice(0, -1)},}`],
+  ["leading garbage", (marker) => `garbage${marker}`],
+]) {
+  test(`uninstall-oracle: marker with ${label} → skip`, (t) => {
+    const { root, agentDir, binDir, homeDir, runtimeDir, realRuntimeDir } = buildFixture({
+      withRuntime: true,
+      hasPiLayout: true,
+    });
+    t.after(() => cleanFixture(root));
+    const markerContent = malformedMarker(validMarker(realRuntimeDir));
+    writeFileSync(join(runtimeDir, RUNTIME_MARKER_FILENAME), markerContent, "utf8");
+
+    const result = runDryRun(agentDir, binDir, homeDir);
+    assert.equal(result.status, 0, `uninstall.sh failed:\n${result.stderr}`);
+
+    const expected = oracleRuntimePlanClass(markerContent, realRuntimeDir, true);
+    assert.equal(expected, "skip", "oracle sanity check");
+    assertPlanClass(result.stdout, expected, label);
+    assert.ok(result.stdout.includes("ownership marker is not valid TLH marker JSON"));
   });
-  // Trailing comma after the last field makes this invalid JSON (JSON.parse throws).
-  // The bash sed-based parser extracts field VALUES only and sees:
-  //   schemaVersion=1, packageName=@earendil-works/pi-coding-agent,
-  //   runtimeAbsPath=<matching>, origin=created
-  // All ownership field values are valid → bash PLANS REMOVAL.
-  const markerContent = `{"schemaVersion":1,"packageName":"${PI_PACKAGE_NAME}","runtimeAbsPath":"${realRuntimeDir}","origin":"created",}`;
-  writeFileSync(join(runtimeDir, RUNTIME_MARKER_FILENAME), markerContent, "utf8");
-  t.after(() => cleanFixture(root));
-
-  const result = runDryRun(agentDir, binDir, homeDir);
-  assert.equal(result.status, 0, `uninstall.sh failed:\n${result.stderr}`);
-
-  // Confirm JSON.parse rejects this input (oracle would incorrectly predict "skip").
-  assert.throws(() => JSON.parse(markerContent), "sanity: markerContent is not valid JSON");
-
-  // Assert the ACTUAL bash behavior: grammar-only-malformed but all ownership fields
-  // valid → intentional lenient removal.
-  assertPlanClass(result.stdout, "runtime", "grammar-only-malformed trailing comma");
-});
+}

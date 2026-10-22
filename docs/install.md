@@ -197,9 +197,9 @@ Pi-native warming is separate from the retired TLH async-parent prompt-cache hea
 
 ## Compaction reserve default
 
-TLH ships `compaction.reserveTokens: 49152` as a packaged default, a mitigation for compaction summaries hitting the token cap on reasoning models ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785); upstream [earendil-works/pi#9075](https://github.com/earendil-works/pi/issues/9075), [#9512](https://github.com/earendil-works/pi/issues/9512)). Pi caps the compaction summary at 0.8 × `reserveTokens` and the split-turn prefix at 0.5 × `reserveTokens`; with Pi's default of 16,384 that is 13,107 tokens, and on adaptive-thinking models thinking shares that cap, so long high/xhigh/max sessions can fail every `/compact`. At 49,152 the limits are 39,321 (summary) and 24,576 (split-turn prefix).
+TLH ships `compaction.reserveTokens: 49152` as a packaged default, originally a mitigation for compaction summaries hitting a token cap on reasoning models ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785); upstream [earendil-works/pi#9075](https://github.com/earendil-works/pi/issues/9075), [#9512](https://github.com/earendil-works/pi/issues/9512)). Since Pi 1.4.0, summaries no longer have a fixed output cap derived from the reserve. `reserveTokens` now controls when auto-compaction starts (when the context window minus the reserve is reached) and, because Pi clamps summary output to the remaining context window, indirectly bounds the room for an auto-compaction summary. TLH intentionally keeps the packaged value pending live verification of long high/xhigh/max-effort sessions (tracked in #785).
 
-Trade-off: auto-compaction triggers about 32,768 tokens earlier than Pi's own default reserve, in both primary and child sessions (effective context caps are described in [subagents.md](subagents.md#child-context-window-policy)). The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
+Trade-off: auto-compaction triggers about 32,768 tokens earlier than Pi's own default reserve of 16,384, in both primary and child sessions (effective context caps are described in [subagents.md](subagents.md#child-context-window-policy)). The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
 
 Small-window caveat: Pi does not scale the reserve to the model's window, so models with windows of 64k or less need their own override. The example below uses `16384`, which restores Pi's own default for that model:
 
@@ -215,7 +215,7 @@ Small-window caveat: Pi does not scale the reserve to the model's window, so mod
 
 Install and update use the usual append-if-missing merge: the value is written only when absent and an existing user value is preserved. When TLH writes it, it records `tlh.compactionReserveTokensManaged: true` in `settings.json` as provenance. Deleting the key does not opt out, because `tlh update` re-adds missing keys; set an explicit value such as `16384` instead. `tlh update --force` overwrites the value like other packaged defaults.
 
-This is only a mitigation: summaries grow with the session, so very long sessions can still hit the cap. `/tree` branch summaries (upstream [#10908](https://github.com/earendil-works/pi/issues/10908)) are unaffected.
+Summaries still grow with the session, so very long sessions can leave little room for a summary, particularly in small windows.
 
 ## Doctor
 

@@ -4,12 +4,12 @@
     "aliases": ["openai-fast"],
     "replaces": ["npm:@diegopetrucci/pi-openai-fast"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-fast@0.1.6",
+    "source": "npm:@diegopetrucci/pi-fast@0.1.10",
     "description": "Enable optional Fast mode for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models."
   },
   {
     "id": "anthropic-auth",
-    "source": "npm:@gotgenes/pi-anthropic-auth@3.4.2",
+    "source": "npm:@gotgenes/pi-anthropic-auth@3.4.3",
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
@@ -17,24 +17,24 @@
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
     "replaces": ["npm:pi-mcp-adapter", "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-mcp-adapter@5.0.0",
+    "source": "npm:@diegopetrucci/pi-mcp-adapter@5.0.1",
     "description": "Connect tlh to MCP servers with the upstream adapter."
   },
   {
     "id": "pi-web-access",
     "replaces": ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-web-access@0.29.2",
+    "source": "npm:@diegopetrucci/pi-web-access@0.29.3",
     "description": "Exa-backed web search and URL fetch tools (web_search, fetch_content, get_search_content) used by the web-scout subagent."
   },
   {
     "id": "inline-bash",
-    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.11",
+    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.13",
     "description": "Expand inline bash commands in user prompts."
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.15",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.17",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
@@ -48,7 +48,7 @@
   },
   {
     "id": "dirty-repo-guard",
-    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.11",
+    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.12",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   }
 ]

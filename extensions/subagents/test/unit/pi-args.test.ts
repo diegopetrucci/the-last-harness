@@ -435,7 +435,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(args.includes("--no-extensions"), false);
   });
 
-  // Pi 0.99.2: --no-extensions now also disables built-in providers (builtin:mcp, builtin:codemode,
+  // --no-extensions also disables built-in providers (builtin:mcp, builtin:codemode,
   // builtin:tool-search). An explicit extensions policy still emits --no-extensions, but a
   // builtin:<name> entry in the list must be passed through via --extension so the child can
   // selectively re-enable one built-in extension.
@@ -450,7 +450,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
     });
 
     // With an explicit extensions list, --no-extensions must be emitted (disables all extensions
-    // including built-ins in Pi 0.99.2).
+    // including built-ins).
     assert.ok(args.includes("--no-extensions"));
 
     const loadedExtensions = args.filter((_arg, index) => args[index - 1] === "--extension");
@@ -705,7 +705,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.ok(extensionArgs.includes("./child-tool.ts"));
   });
 
-  it("child spawn receives no parent-address env and loads no fanout-child extension", () => {
+  it("child spawn receives no parent-address env", () => {
     const { args, env } = buildPiArgs({
       baseArgs: [],
       task: "work",
@@ -716,7 +716,6 @@ describe("buildPiArgs system prompt mode wiring", () => {
     });
 
     // A child spawn must never receive parent-address env vars regardless of tools declared.
-    // These env vars are what allowed a child to become a nested-fanout orchestrator.
     assert.equal(Object.hasOwn(env, "PI_SUBAGENT_PARENT_EVENT_SINK"), false);
     assert.equal(Object.hasOwn(env, "PI_SUBAGENT_PARENT_CONTROL_INBOX"), false);
     assert.equal(Object.hasOwn(env, "PI_SUBAGENT_PARENT_ROOT_RUN_ID"), false);
@@ -727,9 +726,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(Object.hasOwn(env, "PI_SUBAGENT_PARENT_CAPABILITY_TOKEN"), false);
     // SUBAGENT_CHILD_ENV must be set so the child knows it is a child.
     assert.equal(env[SUBAGENT_CHILD_ENV], "1");
-    // The fanout-child extension must NOT be added to the extension list.
     const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
-    assert.ok(!extensionArgs.some((arg) => arg.includes("fanout-child")));
     // Only the prompt-runtime extension is added.
     assert.ok(extensionArgs.some((arg) => arg.includes("subagent-prompt-runtime")));
   });

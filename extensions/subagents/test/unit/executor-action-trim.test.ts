@@ -13,6 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import { consumeChildMessageRequests } from "../../src/runs/background/control-channel.ts";
 import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
@@ -23,17 +24,9 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const EXPECTED_VALID = "list, get, status, interrupt, resume, steer, doctor";
 
 function createState(): SubagentState {
-  return {
+  return makeSubagentState({
     baseCwd: "",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  });
 }
 
 function makeExecutor(state: SubagentState) {

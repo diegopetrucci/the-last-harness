@@ -19,13 +19,6 @@ import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { POLL_INTERVAL_MS } from "../../shared/types.ts";
 
-/**
- * @deprecated Persisted-PID interrupts now use the file inbox; retained for
- * compatibility with callers that still name the former signal.
- */
-export const INTERRUPT_SIGNAL: NodeJS.Signals =
-  process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
-
 export type ControlChannelFs = Pick<
   typeof fs,
   "mkdirSync" | "existsSync" | "rmSync" | "renameSync" | "watch" | "readdirSync" | "readFileSync"

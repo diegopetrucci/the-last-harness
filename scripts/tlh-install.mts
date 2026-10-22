@@ -52,7 +52,11 @@ import {
   type NpmPreinstallIo,
 } from "./lib/tlh-install-npm.mjs";
 import {
+  MIN_NODE_VERSIONS,
+  NODE_REQUIREMENT_TEXT,
+  assertSupportedNodeRuntime,
   assignRequiredEqualsValue,
+  nodeVersionMeetsMinimum,
   outputLines,
   readConfiguredNpmCommand,
   renderShellWords,
@@ -91,9 +95,8 @@ import { provisionPiRuntime } from "./lib/tlh-install-runtime.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "1.3.0";
-// Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
-const MIN_NODE_VERSION = "22.19.0";
+const PINNED_PI_VERSION = "1.4.0";
+// Keep in sync with TLH_PINNED_PI_VERSION in install.sh.
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.4";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -244,56 +247,6 @@ function spawnErrorCode(error: unknown): string | number | undefined {
   return (error as NodeJS.ErrnoException).code;
 }
 
-function parseNodeVersion(version: string | number | undefined): number[] | null {
-  const match = String(version)
-    .trim()
-    .replace(/^v/, "")
-    .match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return null;
-  return match.slice(1).map((part) => Number.parseInt(part, 10));
-}
-
-function compareVersionTriplets(
-  currentVersion: string | number | undefined,
-  expectedVersion: string | number | undefined,
-): number | null {
-  const current = parseNodeVersion(currentVersion);
-  const expected = parseNodeVersion(expectedVersion);
-  if (!current || !expected) return null;
-  for (let index = 0; index < expected.length; index += 1) {
-    if (current[index] > expected[index]) return 1;
-    if (current[index] < expected[index]) return -1;
-  }
-  return 0;
-}
-
-function nodeVersionMeetsMinimum(
-  currentVersion: string | number | undefined,
-  minimumVersion = MIN_NODE_VERSION,
-): boolean {
-  const comparison = compareVersionTriplets(currentVersion, minimumVersion);
-  return comparison !== null && comparison >= 0;
-}
-
-function formatNodeVersion(version: string | number | undefined): string {
-  const text = String(version || "").trim();
-  if (!text) return "unknown";
-  return text.startsWith("v") ? text : `v${text}`;
-}
-
-function assertSupportedNodeRuntime(currentVersion = process.versions.node): void {
-  if (!parseNodeVersion(currentVersion)) {
-    throw new Error(
-      `unable to determine Node.js version; The Last Harness requires Node.js >= ${MIN_NODE_VERSION}.`,
-    );
-  }
-  if (!nodeVersionMeetsMinimum(currentVersion)) {
-    throw new Error(
-      `Node.js >= ${MIN_NODE_VERSION} is required (found ${formatNodeVersion(currentVersion)}). Install or upgrade Node.js, then rerun the installer.`,
-    );
-  }
-}
-
 function usage(): string {
   return `Usage: tlh-install.mjs [options]
 
@@ -301,7 +254,7 @@ Stage-1 The Last Harness installer helper. It runs the normal install flow using
 an isolated Pi profile and installer-owned helper commands.
 
 Requirements:
-  Node.js >= ${MIN_NODE_VERSION} on PATH
+  ${NODE_REQUIREMENT_TEXT} on PATH
   Upstream Pi ${PINNED_PI_VERSION} (installed per-user into a private TLH runtime prefix,
   default: ~/.the-last-harness/runtime (release) or ~/.the-last-harness-main/runtime (main);
   install or repair failures stop with an actionable error)
@@ -1982,7 +1935,8 @@ if (isMainModule()) {
 
 export {
   LEGACY_MANAGED_PROFILE_ARTIFACTS,
-  MIN_NODE_VERSION,
+  MIN_NODE_VERSIONS,
+  NODE_REQUIREMENT_TEXT,
   RUNTIME_MARKER_FILENAME,
   RUNTIME_OWNED_TOPLEVEL,
   assertSupportedNodeRuntime,
