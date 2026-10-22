@@ -637,3 +637,186 @@ test("Pi 1.3 child resume honors explicit tools and restores omitted tools from 
     },
   );
 });
+
+for (const primaryEnabled of [false, true]) {
+  test(`Pi 1.4 resume activates newly installed default-active extension tools only without the TLH primary agent (${primaryEnabled ? "TLH primary enabled" : "control without TLH"})`, async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-pi-1-4-new-tool-resume-", {
+      cwd: true,
+      test: t,
+    });
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify(
+        {
+          tlh: {
+            primaryAgent: { enabled: true, selected: "architect" },
+            telemetry: { enabled: false },
+            updateCheck: { enabled: false },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    writeFileSync(join(fixture.cwd, "allowed-tool.txt"), "allowed-tool-ok\n", "utf8");
+
+    await withEnv(isolatedEnv(fixture), async () => {
+      const { codingAgent, piAi, theLastHarness, loadPrimaryAgents } = await loadRuntimeModules();
+      const { createAgentSession, DefaultResourceLoader, defineTool } = codingAgent;
+      const { ModelRuntime, SessionManager, SettingsManager } = codingAgent;
+      const { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } = piAi;
+      const { faux, modelRuntime, model } = await createFauxRuntime(
+        { ModelRuntime, fauxProvider },
+        "tlh-pi-1-4-new-tool-faux",
+        "new-tool",
+      );
+
+      let newToolExecutions = 0;
+      // Default activation: deliberately no `defaultActive: false`.
+      const newTool = defineTool({
+        name: "new_tool",
+        label: "new_tool",
+        description: "tool installed after the transcript loadout was recorded",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        async execute() {
+          newToolExecutions += 1;
+          return { content: [{ type: "text", text: "new-tool-executed" }] };
+        },
+      });
+
+      let session;
+      const snapshots = [];
+      const providerRequests = [];
+      const snapshot = () => ({
+        active: session.getActiveToolNames(),
+        callable: session.getCallableToolNames(),
+        all: sortedNames(session.getAllTools().map((tool) => tool.name)),
+      });
+      const probeExtension = (pi) => {
+        pi.registerTool(newTool);
+        pi.on("session_start", () => snapshots.push(snapshot()));
+      };
+      const recordProviderRequest = (context) => {
+        providerRequests.push(declaredToolNames(context.messages));
+      };
+
+      // The recorded loadout never mentions new_tool.
+      const manager = SessionManager.create(fixture.cwd, join(fixture.agent, "sessions"), {
+        id: "pi-1-4-new-tool-resume",
+      });
+      manager.appendMessage({
+        role: "system",
+        content: "",
+        toolsAdded: [toolDeclaration("read"), toolDeclaration("bash"), toolDeclaration("write")],
+      });
+      manager.appendModelChange(model.provider, model.id);
+      manager.appendThinkingLevelChange("low");
+
+      const settingsManager = SettingsManager.create(fixture.cwd, fixture.agent);
+      const resourceLoader = new DefaultResourceLoader({
+        cwd: fixture.cwd,
+        agentDir: fixture.agent,
+        settingsManager,
+        extensionFactories: primaryEnabled ? [theLastHarness, probeExtension] : [probeExtension],
+        noContextFiles: true,
+        noPromptTemplates: true,
+        noSkills: true,
+        noThemes: true,
+        systemPrompt: "Deterministic Pi 1.4 resume fixture.",
+        appendSystemPrompt: [],
+      });
+      await resourceLoader.reload();
+      assert.equal(resourceLoader.getExtensions().errors.length, 0);
+
+      faux.setResponses([
+        async (context) => {
+          recordProviderRequest(context);
+          return fauxAssistantMessage(fauxToolCall("new_tool", {}, { id: "attempt-new-tool" }), {
+            stopReason: "toolUse",
+          });
+        },
+        async (context) => {
+          recordProviderRequest(context);
+          return fauxAssistantMessage(fauxText("new-tool-attempt-done"), { stopReason: "stop" });
+        },
+        async (context) => {
+          recordProviderRequest(context);
+          return fauxAssistantMessage(
+            fauxToolCall("read", { path: "allowed-tool.txt" }, { id: "allowed-read" }),
+            { stopReason: "toolUse" },
+          );
+        },
+        async (context) => {
+          recordProviderRequest(context);
+          return fauxAssistantMessage(fauxText("allowed-read-complete"), { stopReason: "stop" });
+        },
+      ]);
+
+      try {
+        const created = await createAgentSession({
+          cwd: fixture.cwd,
+          agentDir: fixture.agent,
+          modelRuntime,
+          model,
+          resourceLoader,
+          settingsManager,
+          sessionManager: manager,
+          sessionStartEvent: {
+            type: "session_start",
+            reason: "resume",
+            previousSessionFile: "fixture-pi-1-4.jsonl",
+          },
+        });
+        session = created.session;
+        await session.bindExtensions({ mode: "print" });
+
+        const boundary = snapshots.at(-1);
+        assert.ok(boundary, "the probe must observe session_start");
+        assert.equal(boundary.all.includes("new_tool"), true);
+
+        if (!primaryEnabled) {
+          // Control: TLH is not loaded (its "disabled" primary mode still applies the
+          // architect tool surface), so this isolates Pi's own resume restore. Pi 1.4 activates extension tools the branch never mentioned.
+          // Pi 1.3 restored only the recorded `toolsAdded`, so this would fail there.
+          assert.equal(boundary.active.includes("new_tool"), true);
+          assert.equal(session.getActiveToolNames().includes("new_tool"), true);
+          return;
+        }
+
+        const architect = loadPrimaryAgents().get("architect");
+        assert.ok(architect, "the bundled architect definition must be available");
+        const primaryToolSet = sortedNames(
+          architect.tools.filter((name) => boundary.all.includes(name)),
+        );
+        assert.equal(boundary.active.includes("new_tool"), false);
+        assert.equal(boundary.callable.includes("new_tool"), false);
+        assert.deepEqual(sortedNames(boundary.active), primaryToolSet);
+
+        await session.prompt("Attempt the newly installed tool.");
+        await session.prompt("Use the allowed read tool.");
+        assert.equal(providerRequests.length, 4);
+        for (const declared of providerRequests) {
+          assert.equal(declared.includes("new_tool"), false);
+          assert.deepEqual(sortedNames(declared), primaryToolSet);
+        }
+        assert.equal(newToolExecutions, 0, "the newly installed tool must not execute");
+        const rejected = session.state.messages.find(
+          (message) => message.role === "toolResult" && message.toolName === "new_tool",
+        );
+        assert.ok(rejected, "the attempted call must produce a tool result");
+        assert.equal(rejected.isError, true);
+        assert.match(toolResultText(rejected), /not found/i);
+        const readResult = session.state.messages.find(
+          (message) => message.role === "toolResult" && message.toolName === "read",
+        );
+        assert.ok(readResult, "the allowed read call must produce a tool result");
+        assert.equal(readResult.isError, false);
+        assert.match(toolResultText(readResult), /allowed-tool-ok/);
+        assert.deepEqual(sortedNames(session.getActiveToolNames()), primaryToolSet);
+      } finally {
+        session?.dispose();
+      }
+    });
+  });
+}
