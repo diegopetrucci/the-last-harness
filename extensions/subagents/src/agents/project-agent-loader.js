@@ -433,6 +433,3 @@ export function embeddedSlugFromName(value) {
     const match = PROJECT_AGENT_NAME_PATTERN.exec(value);
     return match?.[1];
 }
-export function isEmbeddedProjectAgentName(value) {
-    return embeddedSlugFromName(value) !== undefined;
-}
