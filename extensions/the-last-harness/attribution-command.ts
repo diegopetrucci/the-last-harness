@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
 import { resolveTlhCommitAttribution } from "./attribution.js";
 import type {
   TlhAttributionConfig,
@@ -30,15 +31,6 @@ function validateTlhAttributionSettings(settings: unknown): asserts settings is 
   }
 }
 
-function parseTlhSettingsContent(content: string | undefined): TlhSettings {
-  if (!content) {
-    return {};
-  }
-  const parsed = JSON.parse(content) as unknown;
-  validateTlhAttributionSettings(parsed);
-  return parsed;
-}
-
 function ensureMutableAttributionSettings(
   settings: TlhSettings,
 ): asserts settings is TlhSettings & {
@@ -55,6 +47,7 @@ function toggleTlhCommitAttribution(cwd: string): TlhAttributionWriteResult {
     "Refusing to write attribution settings outside the isolated TLH profile.",
     (current) => {
       const settings = parseTlhSettingsContent(current);
+      validateTlhAttributionSettings(settings);
       const currentState = resolveTlhCommitAttribution(settings.tlh?.attribution);
       const nextEnabled = !currentState.enabled;
 

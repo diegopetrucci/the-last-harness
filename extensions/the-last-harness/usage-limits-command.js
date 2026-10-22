@@ -1,6 +1,7 @@
 // Generated from extensions/the-last-harness/usage-limits-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
 import { getCachedTlhUsageWeeklyVisibility, getPersistedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, setCachedTlhUsageWeeklyVisibility, USAGE_COMMAND_HELP, } from "./usage-limits.js";
 function validateTlhUsageLimitsSettings(settings) {
     if (!isRecord(settings)) {
@@ -19,14 +20,6 @@ function ensureMutableUsageLimitsSettings(settings) {
     validateTlhUsageLimitsSettings(settings);
     settings.tlh ??= {};
     settings.tlh.usageLimits ??= {};
-}
-function parseTlhSettingsContent(content) {
-    if (!content) {
-        return {};
-    }
-    const parsed = JSON.parse(content);
-    validateTlhUsageLimitsSettings(parsed);
-    return parsed;
 }
 function writeTlhUsageWeeklyPreference(cwd, showWeekly) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write usage-limit settings outside the isolated TLH profile.", (current) => {

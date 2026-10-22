@@ -62,7 +62,7 @@ export function readTlhStartupState() {
     }
     try {
         const parsed = JSON.parse(content);
-        return parsed && typeof parsed === "object" ? parsed : {};
+        return isRecord(parsed) ? parsed : {};
     }
     catch {
         return {};
@@ -79,7 +79,7 @@ export function readTlhInstallState() {
     }
     try {
         const parsed = JSON.parse(content);
-        return parsed && typeof parsed === "object" ? parsed : {};
+        return isRecord(parsed) ? parsed : {};
     }
     catch {
         return {};
