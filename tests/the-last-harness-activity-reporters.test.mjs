@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { createJiti } from "jiti";
+import { createFakeTimers } from "./support/fake-timers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const {
@@ -17,39 +18,6 @@ const _tmpDirs = [];
 after(() => {
   for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
 });
-
-function createFakeTimers() {
-  let now = 0;
-  let nextId = 1;
-  const timers = new Map();
-  return {
-    now: () => now,
-    setTimeout(fn, delay = 0) {
-      const id = nextId++;
-      timers.set(id, { fn, at: now + delay, delay });
-      return { id, unref() {} };
-    },
-    clearTimeout(handle) {
-      timers.delete(handle.id ?? handle);
-    },
-    advance(ms) {
-      now += ms;
-      let ran = true;
-      while (ran) {
-        ran = false;
-        for (const [id, timer] of [...timers.entries()].sort((a, b) => a[1].at - b[1].at)) {
-          if (timer.at > now) continue;
-          timers.delete(id);
-          timer.fn();
-          ran = true;
-        }
-      }
-    },
-    getPendingDelays() {
-      return [...timers.values()].map((timer) => timer.delay).sort((a, b) => a - b);
-    },
-  };
-}
 
 function createFakeSocket(path) {
   const socket = new EventEmitter();

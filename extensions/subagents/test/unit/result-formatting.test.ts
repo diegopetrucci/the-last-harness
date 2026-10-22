@@ -124,18 +124,6 @@ describe("result formatter", () => {
   });
 });
 
-// =========================================================================
-// formatAwaitedNativeSubagentText ceiling-contract sweep.
-//
-// Derived from measured behaviour on this file. Do NOT import notify.ts
-// fixtures — the caps, scaffolding, and structure differ.
-//
-// Five properties are checked per combination:
-//   1. Output never exceeds MAX_NATIVE_AWAITED_CHARS (8 000).
-//   2. Every displayed child retains BOTH recovery pointers (artifact + session).
-//   4. No mangled truncation-marker fragments (e.g. '… [su').
-//   5. Output is always well-formed UTF-16.
-// =========================================================================
 describe("formatAwaitedNativeSubagentText ceiling-contract sweep", () => {
   const ART_PATH =
     "/home/user/.the-last-harness/agent/runs/run-12345678-abcd-efgh-ijkl/artifacts/subagent-output.md";
@@ -294,24 +282,6 @@ describe("formatAwaitedNativeSubagentText ceiling-contract sweep", () => {
     assert.ok(textPlus.length <= MAX_CHARS, `length ${textPlus.length} exceeds ceiling`);
   });
 
-  // -------------------------------------------------------------------------
-  // Bare-heading guard: orphaned 'Summary:' heading when per-child summary budget is exhausted.
-  //
-  // When the per-child summary budget is smaller than any well-formed truncation
-  // marker, boundedNativeAwaitedSummary returns "", and the caller must NOT
-  // emit the 'Summary:' heading at all — an orphaned heading is worse than none.
-  //
-  // Measured shape: 8 children, 7 with 500-char artifact and session paths
-  // (budget too tight for any marker), 1 with no references (budget fits the
-  // shorter no-references marker). Before the fix: 7 bare 'Summary:' headings.
-  // After the fix: 0 bare 'Summary:' headings.
-  //
-  // Detector note: the previous search for this defect only treated a heading as
-  // bare when the next line was a child header or end of input, missing the case
-  // where scaffolding lines (e.g. 'Output artifact:') follow. The correct detector
-  // below treats a 'Summary:' heading as bare when its next non-blank line is
-  // scaffolding, an omission marker, or end of input.
-  // -------------------------------------------------------------------------
   it("no bare 'Summary:' heading emitted when per-child summary budget is exhausted", () => {
     // 7 children carry 500-char paths that push the per-child budget below any
     // well-formed marker length; 1 child has no references and receives the shorter
@@ -355,7 +325,6 @@ describe("formatAwaitedNativeSubagentText ceiling-contract sweep", () => {
       const isEndOfInput = j >= lines.length;
       if (isScaffolding || isOmissionMarker || isEndOfInput || isChildHeader) bareSummaryCount++;
     }
-    // Before the fix: 7 bare headings. After the fix: 0.
     assert.equal(
       bareSummaryCount,
       0,

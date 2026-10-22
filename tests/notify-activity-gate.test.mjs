@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { after } from "node:test";
 import test from "node:test";
 import { createJiti } from "jiti";
+import { createFakeTimers } from "./support/fake-timers.mjs";
 
 // ---------------------------------------------------------------------------
 // Hermetic agent-dir isolation
@@ -53,49 +54,6 @@ const { CONFIG_DIR_NAME } = await import("@earendil-works/pi-coding-agent");
 const { TLH_EFFECTIVE_ACTIVITY_EVENT } = await jiti.import(
   "../extensions/shared/tlh-effective-activity.ts",
 );
-
-// ---------------------------------------------------------------------------
-// Fake timer helpers (same pattern as activity-tracker tests)
-// ---------------------------------------------------------------------------
-
-function createFakeTimers() {
-  let now = 0;
-  let nextId = 1;
-  const timers = new Map();
-  return {
-    now: () => now,
-    setTimeout(fn, delay = 0) {
-      const id = nextId++;
-      timers.set(id, { fn, at: now + delay });
-      return id;
-    },
-    clearTimeout(id) {
-      timers.delete(id);
-    },
-    /**
-     * Advance fake clock by `ms` milliseconds.
-     * Fires all timers whose deadline is <= new `now`, in order.
-     * Returns a Promise so callers can await async timer callbacks.
-     */
-    async advance(ms) {
-      now += ms;
-      let ran = true;
-      while (ran) {
-        ran = false;
-        for (const [id, timer] of [...timers.entries()].sort((a, b) => a[1].at - b[1].at)) {
-          if (timer.at > now) continue;
-          timers.delete(id);
-          const result = timer.fn();
-          if (result && typeof result.then === "function") await result;
-          ran = true;
-        }
-      }
-    },
-    pendingCount() {
-      return timers.size;
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Pi harness factory
@@ -186,7 +144,7 @@ test("notify fires when no activity signal has been received (graceful degradati
   // No TLH_EFFECTIVE_ACTIVITY_EVENT ever emitted → latestInProgress stays undefined.
   // Undefined must NOT be treated as "in flight" (graceful degradation).
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   assert.equal(notifyCount, 1, "expected exactly one notification when no signal was received");
 });
@@ -210,7 +168,7 @@ test("notify is suppressed while background work is in flight", async () => {
   pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: true, activeAsyncJobIds: ["run-1"] });
 
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   assert.equal(notifyCount, 0, "expected no notification while work is in flight");
 });
@@ -240,12 +198,12 @@ test("no notify when child completion wakes parent and agent is no longer idle w
 
   // 100 ms later: child completes, tracker emits inProgress=false.
   // pi-subagents wakes the parent, starting a new agent turn.
-  await timers.advance(100);
+  await timers.advanceAsync(100);
   pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: false, activeAsyncJobIds: [] });
 
   // At 300 ms: timer fires. The agent is NOT idle (isIdle() returns false).
   // Must not notify — the new turn's own agent_settled is responsible.
-  await timers.advance(200); // total = 300 ms
+  await timers.advanceAsync(200); // total = 300 ms
 
   assert.equal(
     notifyCount,
@@ -277,12 +235,12 @@ test("notify fires when child completes without waking parent and agent stays id
 
   // 100 ms later: child completes, tracker emits inProgress=false.
   // The child result needed no further parent work, so the agent stays idle.
-  await timers.advance(100);
+  await timers.advanceAsync(100);
   pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: false, activeAsyncJobIds: [] });
 
   // At 300 ms: timer fires. Agent IS idle (isIdle() returns true) and
   // inProgress is false → should notify exactly once.
-  await timers.advance(200); // total = 300 ms
+  await timers.advanceAsync(200); // total = 300 ms
 
   assert.equal(
     notifyCount,
@@ -311,11 +269,11 @@ test("no duplicate ping when agent_settled fires twice in rapid succession", asy
 
   // Two rapid settles (simulating settle → child completes → new settle).
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(30); // First timer is pending but not yet fired.
+  await timers.advanceAsync(30); // First timer is pending but not yet fired.
   pi.fireEvent("agent_settled", {}, makeCtx()); // Cancels first timer, sets new one.
 
   // Advance past the second debounce.
-  await timers.advance(100);
+  await timers.advanceAsync(100);
 
   assert.equal(notifyCount, 1, "expected exactly one ping despite two rapid settles");
 });
@@ -339,9 +297,9 @@ test("notify remains suppressed when inProgress stays true through the debounce"
 
   // Multiple settles while still in-flight.
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   assert.equal(notifyCount, 0, "expected no notifications while work remains in flight");
 });
@@ -375,7 +333,7 @@ test("notify works normally when pi.events is absent (no event bus)", async () =
   for (const handler of eventHandlers.get("agent_settled") ?? []) {
     handler({}, makeCtx());
   }
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   assert.equal(notifyCount, 1, "expected notification even without an events bus");
 });
@@ -401,12 +359,12 @@ test("pending debounce timer is cancelled and replaced by a new settle", async (
   assert.equal(timers.pendingCount(), 1, "first debounce timer should be pending");
 
   // Second settle before first fires.
-  await timers.advance(50);
+  await timers.advanceAsync(50);
   pi.fireEvent("agent_settled", {}, makeCtx());
   assert.equal(timers.pendingCount(), 1, "only one debounce timer should be pending at a time");
 
   // First timer was cancelled; advance past second.
-  await timers.advance(100);
+  await timers.advanceAsync(100);
   assert.equal(notifyCount, 1, "only one notification for two settles");
   assert.equal(timers.pendingCount(), 0, "no timers remain after notification");
 });
@@ -435,7 +393,7 @@ test("session_shutdown clears pending debounce timer", async () => {
   assert.equal(timers.pendingCount(), 0, "timer should be cleared after session_shutdown");
 
   // Advancing past the original debounce window must produce no notification.
-  await timers.advance(200);
+  await timers.advanceAsync(200);
   assert.equal(notifyCount, 0, "no notification should fire after session_shutdown");
 });
 
@@ -511,7 +469,7 @@ test("[ts-hehb] final errored settle with retry grace active and no background j
   pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: true, activeAsyncJobIds: [] });
 
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   assert.equal(notifyCount, 1, "expected notification: retry grace alone must not suppress");
 });
@@ -539,7 +497,7 @@ test("UI-prompt waiting does not suppress notifications without background work"
     activeAsyncJobIds: [],
   });
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   assert.equal(notifyCount, 1, "waiting alone must not suppress a ready notification");
 });
@@ -569,7 +527,7 @@ test("[ts-hehb] primary-only activity never suppresses notifications", async () 
   }
 
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   assert.equal(notifyCount, 1, "expected notification: primary-only activity must never suppress");
 });
@@ -610,7 +568,7 @@ test("[ts-gfzs] falling edge then parent wake then new settle yields exactly one
   pi.fireEvent("agent_settled", {}, makeCtx()); // isIdle: () => true
 
   // Debounce fires — work still in flight → pendingSettle recorded.
-  await timers.advance(50);
+  await timers.advanceAsync(50);
   assert.equal(notifyCount, 0, "no notification yet — work in flight when debounce fired");
 
   // Falling edge arrives: tracker detected the dead child.
@@ -627,7 +585,7 @@ test("[ts-gfzs] falling edge then parent wake then new settle yields exactly one
 
   // New run's own settle fires and its debounce runs to completion.
   pi.fireEvent("agent_settled", {}, makeCtx());
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   // Exactly one notification — from the woken turn's own agent_settled.
   assert.equal(notifyCount, 1, "exactly one notification from the woken turn's own agent_settled");
@@ -658,7 +616,7 @@ test("notify fires once when pending settle emits after work clears while agent 
   pi.fireEvent("agent_settled", {}, makeCtx()); // isIdle: () => true
 
   // Debounce fires (50 ms) — work is still in flight → pendingSettle is recorded.
-  await timers.advance(50);
+  await timers.advanceAsync(50);
   assert.equal(notifyCount, 0, "no notification yet — work in flight when debounce fired");
 
   // Periodic liveness drain detects dead child and emits falling edge.
@@ -667,7 +625,7 @@ test("notify fires once when pending settle emits after work clears while agent 
   pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: false, activeAsyncJobIds: [] });
   assert.equal(notifyCount, 0, "not yet — debounce re-armed, must advance timer");
 
-  await timers.advance(50);
+  await timers.advanceAsync(50);
 
   // Must have notified exactly once from the pending-settle path.
   assert.equal(notifyCount, 1, "exactly one notification when work clears and agent stays idle");
@@ -699,7 +657,7 @@ test("notify stays silent when new agent run starts before pending settle fires"
   pi.fireEvent("agent_settled", {}, makeCtx()); // isIdle: () => true
 
   // Debounce fires — work still in flight → pendingSettle recorded.
-  await timers.advance(50);
+  await timers.advanceAsync(50);
   assert.equal(notifyCount, 0, "no notification yet — work in flight when debounce fired");
 
   // Child result wakes the parent: a new agent run starts, clearing the pending settle.
@@ -740,7 +698,7 @@ test("malformed notify.json is ignored and valid fields still apply", async () =
         ...ctxOverrides,
       }),
     );
-    await timers.advance(50);
+    await timers.advanceAsync(50);
     return notifyCount;
   }
 

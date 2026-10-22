@@ -31,7 +31,6 @@ const BOGUS_PI_PACKAGE_ROOT = path.join(
 );
 const ISOLATED_ENV_KEYS = [
   "PI_SUBAGENT_CHILD",
-  "PI_SUBAGENT_FANOUT_CHILD",
   "PI_SUBAGENT_DEPTH",
   "PI_SUBAGENT_MAX_DEPTH",
   "PI_SUBAGENT_EXTRA_AGENT_DIRS",
@@ -62,7 +61,6 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
 
     const previousEnv = new Map(ISOLATED_ENV_KEYS.map((key) => [key, process.env[key]]));
     process.env.PI_SUBAGENT_CHILD = "1";
-    process.env.PI_SUBAGENT_FANOUT_CHILD = "1";
     process.env.PI_SUBAGENT_DEPTH = "1";
     process.env.PI_SUBAGENT_MAX_DEPTH = "1";
     process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = BOGUS_EXTRA_DIRS;

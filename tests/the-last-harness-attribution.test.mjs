@@ -889,10 +889,10 @@ test("toggle attribution command refuses non-temporary profiles during Node test
   );
 });
 
-test("toggle attribution command re-enables by writing true and creating a backup", async (t) => {
+test("toggle attribution command re-enables from BOM settings and preserves a backup", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-attribution-test-", { test: t });
   const settingsPath = join(fixture.agent, "settings.json");
-  const initialSettings = `${JSON.stringify({ tlh: { attribution: { commit: false }, gnosis: { enabled: true } } }, null, 2)}\n`;
+  const initialSettings = `\uFEFF${JSON.stringify({ tlh: { attribution: { commit: false }, gnosis: { enabled: true } } }, null, 2)}\n`;
   writeFileSync(settingsPath, initialSettings);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
