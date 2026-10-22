@@ -26,8 +26,6 @@ import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 
 interface AsyncJobTrackerOptions {
   completionRetentionMs?: number;
-  /** Deprecated test compatibility; identities are no longer retained in memory. */
-  projectAgentTerminalRetentionMs?: number;
   pollIntervalMs?: number;
   resultsDir?: string;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;

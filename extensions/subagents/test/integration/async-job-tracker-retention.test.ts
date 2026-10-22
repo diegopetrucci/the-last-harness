@@ -1211,11 +1211,6 @@ describe("async job tracker", () => {
   });
 
   it("drops a malformed childLocation from polled status steps without throwing (poll-path boundary guard)", async () => {
-    // Regression for ts-y7q9 item 1: the poll loop spreads status.steps with
-    // { ...step, index } and then normalizes childLocation through
-    // parsePersistedChildLocationSnapshot.  Before the fix, a malformed value
-    // (e.g. childLocation: { childCwd: 42 }) was spread raw into
-    // renderer-facing job state, causing repeated throws on every poll tick.
     const asyncRoot = createTempDir("pi-async-tracker-child-loc-malformed-");
     let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
     try {

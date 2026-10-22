@@ -5,29 +5,11 @@ import { resolveAsyncRunLocation } from "../background/async-resume.js";
 import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
-import { readStatus } from "../../shared/utils.js";
+import { normalizeComparableCwd, readStatus } from "../../shared/utils.js";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
 import { projectRunAuthorizationError, authorizePersistedProjectAgentRun, embeddedControlRestrictionError, } from "./project-agent-control.js";
-import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.js";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.js";
-export { registerForegroundMessageInbox, clearForegroundMessageInbox, } from "./foreground-message-inbox.js";
-export function trustedSessionRootsForStatus(ctx, deps) {
-    let currentSessionId;
-    let parentSessionFile;
-    try {
-        currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-    }
-    catch {
-        return [];
-    }
-    if (!parentSessionFile)
-        return [];
-    if (deps.state?.currentSessionId !== currentSessionId)
-        return [];
-    return [deps.getSubagentSessionRoot(parentSessionFile)];
-}
 export { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "./run-support.js";
 function isAsyncInterruptFailure(result) {
     return !result.ok;
@@ -174,10 +156,6 @@ function requestAsyncInterruptForTarget(state, target, kill) {
 }
 function isNotFoundError(error) {
     return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
-function normalizeComparableCwd(cwd) {
-    const resolved = path.resolve(cwd);
-    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 function diskOnlyAsyncStatusBelongsElsewhere(state, status) {
     if (state.currentSessionId && status.sessionId)

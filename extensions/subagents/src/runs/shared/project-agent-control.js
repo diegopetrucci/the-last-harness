@@ -179,11 +179,6 @@ export async function resolveProjectAgentExecution(params, effectiveCwd, scope, 
 export function projectRunAuthorizationError(message) {
     return new Error(`TLH project-agent control rejected: ${message}`);
 }
-export function hasMalformedProjectAgentControlMarker(value) {
-    if (!isRecordValue(value) || !Object.hasOwn(value, "projectAgent"))
-        return false;
-    return normalizeProjectAgentIdentity(value.projectAgent) === undefined;
-}
 export async function authorizePersistedProjectAgentRun(input) {
     const identity = normalizeProjectAgentIdentity(input.target.projectAgent);
     if (!identity)

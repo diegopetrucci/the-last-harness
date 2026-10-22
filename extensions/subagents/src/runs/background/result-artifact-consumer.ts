@@ -192,11 +192,3 @@ export function claimResultArtifact(
     },
   };
 }
-
-export function isResultArtifactClaimError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "resultArtifactOperation" in error &&
-    typeof (error as Partial<ClaimOperationError>).resultArtifactOperation === "string"
-  );
-}

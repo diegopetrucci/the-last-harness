@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import {
@@ -13,20 +14,10 @@ import type { SubagentState } from "../../src/shared/types.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 function createState(sessionId: string): SubagentState {
-  return {
+  return makeSubagentState({
     baseCwd: "/repo",
     currentSessionId: sessionId,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: {
-      schedule: () => false,
-      clear: () => {},
-    },
-  };
+  });
 }
 
 async function waitUntil(

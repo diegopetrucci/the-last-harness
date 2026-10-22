@@ -10,10 +10,6 @@ const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(
   String.raw`${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`,
   "i",
 );
-export const SINGLE_OUTPUT_INSTRUCTION_LINE_PATTERN = new RegExp(
-  String.raw`^\s*${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}`,
-  "i",
-);
 
 export function extractSingleOutputInstructionTarget(text: string): string | undefined {
   const match = text.match(SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN);

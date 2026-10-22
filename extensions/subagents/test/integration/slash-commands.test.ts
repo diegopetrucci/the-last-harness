@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
 type RegisteredSlashCommand = {
@@ -71,20 +72,9 @@ function createEventBus(): EventBus {
 }
 
 function createState(cwd: string) {
-  return {
+  return makeSubagentState({
     baseCwd: cwd,
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: {
-      schedule: () => false,
-      clear: () => {},
-    },
-  };
+  });
 }
 
 function createCommandContext(
