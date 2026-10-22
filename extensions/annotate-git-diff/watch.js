@@ -83,6 +83,3 @@ export function createRepoChangeWatcher(repoRoot, onChange, options = {}) {
         },
     };
 }
-export const __testing = {
-    isIgnoredWatchPath,
-};
