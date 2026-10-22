@@ -18,7 +18,7 @@ import { advanceLifecycleContinuation, isCompletedLifecycleStepState, lifecycleG
 import { formatSupervisorPauseMessage } from "../../shared/pause-messages.js";
 import { retiredNestedLaunchError } from "../shared/pi-args.js";
 import { boundedActiveRuntimeMs, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
-import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution.js";
+import { ensureKillCleanup, runSingleStep, saturatingStepDeadlineAt, } from "./single-step-execution.js";
 import { appendUnexpectedLifecycleTransitionDiagnostic, createBackgroundRunStatusOwner, } from "./run-status-owner.js";
 import { finalizeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { createBackgroundRunControlOwner } from "./run-control-owner.js";
@@ -332,6 +332,7 @@ async function runSubagentWithInput(config, plan) {
         interruptRunner?.();
     };
     process.on(ASYNC_INTERRUPT_SIGNAL, interruptSignalTrampoline);
+    ensureKillCleanup();
     const eventsPath = path.join(asyncDir, "events.jsonl");
     const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
     const controlConfig = config.controlConfig ?? DEFAULT_CONTROL_CONFIG;

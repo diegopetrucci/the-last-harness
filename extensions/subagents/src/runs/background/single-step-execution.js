@@ -23,7 +23,7 @@ import { skipOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.js
 import { classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, mergeContextUsageDiagnostics, parseContextUsageDiagnostics, resolveSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 const activeTempDirs = new Set();
 let killCleanupInstalled = false;
-function ensureKillCleanup() {
+export function ensureKillCleanup() {
     if (killCleanupInstalled)
         return;
     killCleanupInstalled = true;
