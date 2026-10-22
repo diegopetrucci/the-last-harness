@@ -195,7 +195,6 @@ export function normalizeSubagentRunMode(value: unknown): SubagentRunMode {
   return value === "parallel" ? "parallel" : "single";
 }
 
-/** Stable machine-readable reason why a child execution segment terminated. */
 /** Acceptance ledger status values; used by telemetry for schema compatibility. */
 export type AcceptanceLedgerStatus =
   | "not-required"
@@ -208,6 +207,7 @@ export type AcceptanceLedgerStatus =
   | "rejected"
   | "skipped";
 
+/** Stable machine-readable reason why a child execution segment terminated. */
 export type SubagentTerminationReason =
   | "completed"
   | "output_limit"

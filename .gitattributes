@@ -192,7 +192,6 @@ extensions/subagents/src/runs/background/single-step-execution.js linguist-gener
 extensions/subagents/src/runs/background/stale-run-reconciler.js linguist-generated=true
 extensions/subagents/src/runs/background/subagent-runner.js linguist-generated=true
 extensions/subagents/src/runs/background/terminal-persistence.js linguist-generated=true
-extensions/subagents/src/runs/shared/foreground-message-inbox.js linguist-generated=true
 extensions/subagents/src/runs/shared/active-runtime.js linguist-generated=true
 extensions/subagents/src/runs/shared/child-protocol.js linguist-generated=true
 extensions/subagents/src/runs/shared/deadline-timer.js linguist-generated=true
