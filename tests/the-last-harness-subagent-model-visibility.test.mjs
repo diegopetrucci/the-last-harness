@@ -1,29 +1,6 @@
-/**
- * Regression suite: TLH hidden-model visibility for subagent dispatch.
- *
- * Verifies that the TLH hidden-model list (modelVisibility.hidden) only
- * suppresses models from the user-facing picker and does NOT prevent
- * subagents from resolving or receiving those models.
- *
- * Ported from main (06d8f4a8) to branch paths:
- *   - readModelRegistrySnapshot: runs/shared/run-support.ts (was: foreground-support.ts)
- *   - createSubagentExecutor: extension/subagent-executor.ts (was: foreground/subagent-executor.ts)
- *
- * Omitted assertions (each with reason):
- *   1. snapshot.evidence (allModels/error fields) — branch's readModelRegistrySnapshot returns
- *      { availableModels } only; the evidence field was part of the retired foreground-support module.
- *   2. buildModelCandidatePlan availability-based filtering — branch's function in
- *      runs/shared/model-fallback.ts takes (primaryModel, fallbackModels, options?) and does not
- *      accept an availableModels array or evidence object; no availability-based fallback filtering.
- *   3. "fallback planning filters unavailable credentials" test entirely — all assertions depended
- *      on evidence fields and the 5-arg buildModelCandidatePlan signature (both retired on branch).
- *   4. Parallel dispatch model-override assertions — executeAsyncParallel has no injectable mock
- *      seam on the branch (no deps.executeAsyncParallel override); coverage of snapshot pass-through
- *      is provided by the single and async dispatch paths.
- *   5. resumeAsyncRun from foreground-resume.ts — foreground resume is retired; branch's
- *      async-control-resume.ts resumeAsyncRun requires fully persisted async run state (async dir,
- *      result file, pause claims) that is too complex to fixture for this regression test.
- */
+// Hidden models remain available to subagent dispatch. Omitted assertions cover
+// snapshot.evidence, availability-based buildModelCandidatePlan filtering, injectable
+// parallel dispatch, and foreground resume signatures that are no longer supported.
 
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -34,6 +11,7 @@ import { after, test } from "node:test";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
+import { createInMemoryCredentialStore } from "./support/in-memory-credential-store.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const subagentsTempRoot = mkdtempSync(join(tmpdir(), "tlh-subagent-model-visibility-runtime-"));
@@ -49,11 +27,9 @@ const jiti = createJiti(import.meta.url);
 const { getUnfilteredAvailableModels, installTlhModelVisibilityFilter } = await jiti.import(
   "../extensions/the-last-harness/model-visibility.ts",
 );
-// Branch path: runs/shared/run-support.ts (not foreground-support.ts).
 const { readModelRegistrySnapshot } = await jiti.import(
   "../extensions/subagents/src/runs/shared/run-support.ts",
 );
-// Branch path: extension/subagent-executor.ts (not foreground/subagent-executor.ts).
 const { createSubagentExecutor } = await jiti.import(
   "../extensions/subagents/src/extension/subagent-executor.ts",
 );
@@ -97,44 +73,6 @@ function runtimeModel(id) {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
     maxTokens: 8_192,
-  };
-}
-
-// AuthStorage.inMemory() is not publicly exported from @earendil-works/pi-coding-agent.
-function createInMemoryCredentialStore() {
-  const store = new Map();
-  const tails = new Map();
-  const noop = () => {};
-  function enqueue(providerId, fn) {
-    const tail = tails.get(providerId) ?? Promise.resolve();
-    const result = tail.then(() => fn());
-    tails.set(providerId, result.then(noop, noop));
-    return result;
-  }
-  return {
-    async read(providerId) {
-      return store.get(providerId);
-    },
-    async list() {
-      return [...store.entries()].map(([id, credential]) => ({
-        providerId: id,
-        type: credential.type,
-      }));
-    },
-    modify(providerId, fn) {
-      return enqueue(providerId, async () => {
-        const current = store.get(providerId);
-        const next = await fn(current);
-        if (next === undefined) return current;
-        store.set(providerId, next);
-        return next;
-      });
-    },
-    delete(providerId) {
-      return enqueue(providerId, async () => {
-        store.delete(providerId);
-      });
-    },
   };
 }
 
