@@ -19,7 +19,7 @@ import { evaluateMcpAdapterCutover } from "../scripts/lib/mcp-adapter-cutover.mj
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
-const targetSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+const targetSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.1";
 const oldSource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
 const oldGitSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
 const builtinMcpExclusion = "-builtin:mcp";
