@@ -10,10 +10,7 @@ Use this workflow when changing this repository's Pi package, one-line installer
 ## Checklist
 
 1. Keep upstream Pi as the runtime unless the user explicitly asks for a forked/rebranded binary.
-2. Keep The Last Harness isolated from normal Pi:
-   - normal Pi uses `~/.pi/agent`
-   - `tlh` uses `~/.the-last-harness/agent` by default
-   - installer Pi commands must set `PI_CODING_AGENT_DIR` to the isolated agent dir
+2. Follow the isolation and safety requirements in [AGENTS.md](../../../AGENTS.md#safety-requirements).
 3. Keep the installer split clear: `install.sh` is the stage-0 Bash bootstrapper that finds/fetches support files, while `scripts/tlh-install.mjs` is the stage-1 Node helper that runs the normal install flow. Keep their support-file manifests aligned.
 4. Put shareable Pi resources in package directories:
    - `extensions/`
