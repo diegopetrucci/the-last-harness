@@ -41,8 +41,6 @@ type ResultWatcherTimers = {
 type ResultWatcherDeps = {
   fs?: ResultWatcherFs;
   timers?: ResultWatcherTimers;
-  /** Deprecated test compatibility; identities are no longer retained in memory. */
-  projectAgentTerminalRetentionMs?: number;
 };
 
 type ResultFileChild = {

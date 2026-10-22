@@ -109,8 +109,3 @@ export function claimResultArtifact(resultPath, fsApi = fs) {
         },
     };
 }
-export function isResultArtifactClaimError(error) {
-    return (error instanceof Error &&
-        "resultArtifactOperation" in error &&
-        typeof error.resultArtifactOperation === "string");
-}

@@ -1,14 +1,3 @@
-/**
- * Regression tests for shortenPath (ts-o2mn / PR 623 item 3).
- *
- * Before the fix, shortenPath abbreviated on a raw HOME prefix without
- * checking for a path separator, so a sibling directory such as
- * /home/ann-other would incorrectly render as ~-other when HOME=/home/ann.
- *
- * The fix requires the path to equal $HOME exactly, or to start with
- * $HOME followed by the platform path separator.
- */
-
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it, afterEach, beforeEach } from "node:test";

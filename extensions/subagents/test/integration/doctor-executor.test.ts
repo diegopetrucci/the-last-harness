@@ -6,6 +6,7 @@ import {
   createEventBus,
   createTempDir,
   makeMinimalCtx,
+  makeSubagentState,
   removeTempDir,
   tryImport,
 } from "../support/helpers.ts";
@@ -29,17 +30,9 @@ try {
 const createSubagentExecutor = executorMod.createSubagentExecutor;
 
 function makeState(cwd: string) {
-  return {
+  return makeSubagentState({
     baseCwd: cwd,
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  });
 }
 
 describe("doctor action executor routing", () => {

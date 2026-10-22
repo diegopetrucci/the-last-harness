@@ -36,11 +36,6 @@ import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.ts";
 import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
 
-// Child-controlled text that enters the parent transcript, message envelope,
-// or TUI is a trust boundary, not a token-tuning knob.
-// MAX_SUMMARY_CHARS (8_000) is a per-child budget, not a shared pool.
-// MAX_COMPLETION_MESSAGE_CHARS is 32_000. MAX_DISPLAY_SUMMARY_CHARS is 1_200.
-export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;
@@ -661,14 +656,4 @@ export default function registerSubagentNotify(
   };
 
   globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
-}
-
-export function isSubagentNotifyDetails(value: unknown): value is SubagentNotifyDetails {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "agent" in value &&
-    "status" in value &&
-    "resultPreview" in value
-  );
 }
