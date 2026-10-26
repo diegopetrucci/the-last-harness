@@ -1,6 +1,11 @@
 import type { AsyncStatus, Details, SubagentToolResult } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { continuationResumeBlock } from "./async-resume.ts";
+import {
+  asyncRunOwnerRejectionMessage,
+  authorizeAsyncRunOwner,
+  type AsyncRunOwnerAuthorization,
+} from "./async-owner-authorization.ts";
 import { SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "../../shared/pause-messages.ts";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.ts";
 import {
@@ -34,12 +39,42 @@ function hasResumableSiblingStep(
   );
 }
 
-/** Cancel one paused child without reviving the detached async runner. */
+type OwnerRejectionAuthorization = Exclude<AsyncRunOwnerAuthorization, { outcome: "owned" }>;
+
+class OwnerRejection extends Error {
+  readonly authorization: OwnerRejectionAuthorization;
+  constructor(authorization: OwnerRejectionAuthorization) {
+    super("async run owner rejected");
+    this.authorization = authorization;
+  }
+}
+
+function ownerRejectionResult(
+  authorization: Exclude<AsyncRunOwnerAuthorization, { outcome: "owned" }>,
+  runId: string,
+): SubagentToolResult<Details> {
+  return {
+    content: [
+      { type: "text", text: asyncRunOwnerRejectionMessage(authorization, runId, "cancelled") },
+    ],
+    isError: true,
+    details: { mode: "management", results: [] },
+  };
+}
+
+/**
+ * Cancel one paused child without reviving the detached async runner. The
+ * caller must own the run; ownership is authorized before any state read,
+ * claim recovery or write, and rechecked inside the lifecycle mutation.
+ */
 export function cancelPersistedPausedAsyncRun(
   asyncDir: string,
   runId: string,
-  index?: number,
+  index: number | undefined,
+  callerKey: string | undefined,
 ): SubagentToolResult<Details> {
+  const preAuthorization = authorizeAsyncRunOwner({ callerKey, asyncDir, runId });
+  if (preAuthorization.outcome !== "owned") return ownerRejectionResult(preAuthorization, runId);
   try {
     let current = readStatus(asyncDir);
     if (!current) {
@@ -150,6 +185,9 @@ export function cancelPersistedPausedAsyncRun(
       asyncDir,
       expectedGeneration: lifecycleGeneration(current),
       mutate: (status) => {
+        // Recheck under the lifecycle lock using the status being mutated (no re-read/re-lock).
+        const recheck = authorizeAsyncRunOwner({ callerKey, asyncDir, runId, status });
+        if (recheck.outcome !== "owned") throw new OwnerRejection(recheck);
         const nextSteps = status.steps?.map((step, stepIndex) =>
           stepIndex === targetIndex
             ? {
@@ -198,7 +236,8 @@ export function cancelPersistedPausedAsyncRun(
       ],
       details: { mode: "management", results: [] },
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof OwnerRejection) return ownerRejectionResult(error.authorization, runId);
     return {
       content: [
         {

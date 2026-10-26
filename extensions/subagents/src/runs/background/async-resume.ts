@@ -36,6 +36,7 @@ import {
   parseSubagentTerminationReason,
 } from "../../shared/context-diagnostics.ts";
 import { parseThinkingLevel } from "../../shared/model-info.ts";
+import { authorizeAsyncRunOwner } from "./async-owner-authorization.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.ts";
@@ -59,6 +60,8 @@ interface AsyncResumeParams {
 interface AsyncResumeDeps {
   asyncDirRoot?: string;
   resultsDir?: string;
+  /** Caller ownership key; scopes id-prefix resolution to caller-owned runs. */
+  callerKey?: string;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
 }
@@ -546,13 +549,22 @@ function exactResultPath(resultsDir: string, runId: string): string | null {
   return fs.existsSync(resultPath) ? resultPath : null;
 }
 
+/**
+ * The single scoped prefix path. Candidates are filtered to runs the caller
+ * owns (authorizeAsyncRunOwner outcome "owned") before any uniqueness or
+ * ambiguity decision, so foreign, ownerless and unverifiable runs are never
+ * matched or named. A missing caller key yields no matches. Read-only: no
+ * reconciliation or writes.
+ */
 export function findAsyncRunPrefixMatches(
   prefix: string,
   asyncDirRoot: string,
   resultsDir: string,
+  callerKey: string | undefined,
 ): Array<{ id: string; location: AsyncRunLocation }> {
   const requestedId = assertRunId(prefix, "id");
   if (!requestedId) return [];
+  if (typeof callerKey !== "string" || callerKey.length === 0) return [];
   const asyncRoot = path.resolve(asyncDirRoot);
   const resultRoot = path.resolve(resultsDir);
   const matchingIds = [
@@ -561,24 +573,32 @@ export function findAsyncRunPrefixMatches(
       ...prefixedRunIds(resultRoot, requestedId, ".json"),
     ]),
   ].sort();
-  return matchingIds.map((id) => {
+  const matches: Array<{ id: string; location: AsyncRunLocation }> = [];
+  for (const id of matchingIds) {
     const asyncDir = path.join(asyncRoot, id);
     assertInsideRoot(asyncRoot, asyncDir, "Async run directory");
-    return {
-      id,
-      location: {
-        asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
-        resultPath: exactResultPath(resultRoot, id),
-        resolvedId: id,
-      },
+    const location: AsyncRunLocation = {
+      asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
+      resultPath: exactResultPath(resultRoot, id),
+      resolvedId: id,
     };
-  });
+    const authorization = authorizeAsyncRunOwner({
+      callerKey,
+      runId: id,
+      ...(location.asyncDir ? { asyncDir: location.asyncDir } : {}),
+      ...(location.resultPath ? { resultPath: location.resultPath } : {}),
+      resultsDir: resultRoot,
+    });
+    if (authorization.outcome === "owned") matches.push({ id, location });
+  }
+  return matches;
 }
 
 export function resolveAsyncRunLocation(
   params: AsyncResumeParams,
   asyncDirRoot: string,
   resultsDir: string,
+  callerKey?: string,
 ): AsyncRunLocation {
   const asyncRoot = path.resolve(asyncDirRoot);
   const resultRoot = path.resolve(resultsDir);
@@ -607,7 +627,7 @@ export function resolveAsyncRunLocation(
     };
   }
 
-  const matching = findAsyncRunPrefixMatches(requestedId, asyncRoot, resultRoot);
+  const matching = findAsyncRunPrefixMatches(requestedId, asyncRoot, resultRoot, callerKey);
   if (matching.length === 0) return { asyncDir: null, resultPath: null, resolvedId: requestedId };
   if (matching.length > 1) {
     throw new Error(
@@ -992,24 +1012,43 @@ const UNREADABLE_OWNER_EVIDENCE: PersistedOwnerField = Object.freeze({ malformed
  * sentinel so the owner rule fails closed.
  */
 export function readPersistedResultOwner(resultsDir: string, runId: string): PersistedOwnerField {
-  if (runId.trim() === "" || !isPathFreeRunId(runId)) return UNREADABLE_OWNER_EVIDENCE;
+  return readPersistedResultEvidence(resultsDir, runId).owner;
+}
+
+/** Owner plus embedded identity fields from a single read/parse of one result record. */
+export interface PersistedResultEvidence {
+  owner: PersistedOwnerField;
+  /** True when the record carries a `runId`/legacy `id` that is not exactly the requested run id. */
+  identityMismatch: boolean;
+}
+
+export function readPersistedResultEvidence(
+  resultsDir: string,
+  runId: string,
+): PersistedResultEvidence {
+  const unreadable = { owner: UNREADABLE_OWNER_EVIDENCE, identityMismatch: false };
+  if (runId.trim() === "" || !isPathFreeRunId(runId)) return unreadable;
   const resultPath = path.join(resultsDir, `${runId}.json`);
-  if (!isInsideRoot(resultsDir, resultPath)) return UNREADABLE_OWNER_EVIDENCE;
+  if (!isInsideRoot(resultsDir, resultPath)) return unreadable;
   let raw: string;
   try {
     raw = fs.readFileSync(resultPath, "utf-8");
   } catch (error) {
     return (error as NodeJS.ErrnoException)?.code === "ENOENT"
-      ? undefined
-      : UNREADABLE_OWNER_EVIDENCE;
+      ? { owner: undefined, identityMismatch: false }
+      : unreadable;
   }
   try {
     const parsed: unknown = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as { sessionId?: PersistedOwnerField }).sessionId
-      : UNREADABLE_OWNER_EVIDENCE;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return unreadable;
+    const record = parsed as { sessionId?: PersistedOwnerField; runId?: unknown; id?: unknown };
+    const mismatched = (value: unknown) => value !== undefined && value !== runId;
+    return {
+      owner: record.sessionId,
+      identityMismatch: mismatched(record.runId) || mismatched(record.id),
+    };
   } catch {
-    return UNREADABLE_OWNER_EVIDENCE;
+    return unreadable;
   }
 }
 
@@ -1328,7 +1367,7 @@ export function resolveAsyncResumeTarget(
   const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
   const resultsDir = deps.resultsDir ?? RESULTS_DIR;
   const requireSessionFile = options.requireSessionFile ?? true;
-  const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
+  const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir, deps.callerKey);
   if (!location.asyncDir && !location.resultPath) {
     throw new Error("Async run not found. Provide id or dir.");
   }

@@ -50,7 +50,7 @@ function newRunId(label: string): string {
 function writeRun(
   label: string,
   opts: {
-    state?: "complete" | "running" | "paused";
+    state?: "complete" | "running" | "paused" | "cancelled" | "failed" | "continued";
     statusOwner?: Owner;
     resultOwner?: Owner;
     withStatus?: boolean;
@@ -333,6 +333,82 @@ describe("durable revival owner gate for ordinary runs", () => {
       assert.ok(launches[0]!.continuationSource.claimToken);
     });
   }
+
+  // #826: every non-owned run gets the ownership rejection before any
+  // state-detail error (cancelled / exhausted / continued), with no writes.
+  const gatedStates = ["cancelled", "failed", "complete", "paused", "continued"] as const;
+  const gatedOwners: Array<[string, Owner, Owner]> = [
+    ["foreign", OTHER_FILE, OTHER_FILE],
+    ["ownerless", undefined, undefined],
+    ["conflicting", PARENT_FILE, OTHER_FILE],
+  ];
+  for (const state of gatedStates) {
+    for (const [label, statusOwner, resultOwner] of gatedOwners) {
+      for (const addressing of ["id", "prefix", "dir"] as const) {
+        it(`rejects a ${label} ${state} run by ${addressing} with the ownership message and no writes`, async () => {
+          const { runId, asyncDir, resultPath } = writeRun(`g-${state}-${label}`, {
+            state,
+            statusOwner,
+            withResult: true,
+            resultOwner,
+          });
+          const before = snapshot(asyncDir, resultPath);
+          const params =
+            addressing === "id"
+              ? { id: runId }
+              : addressing === "prefix"
+                ? { id: runId.slice(0, -2) }
+                : { dir: asyncDir };
+          const result = await resume(makeExecutor(), params, PARENT_A);
+          assert.equal(result.isError, true);
+          if (addressing === "prefix") {
+            // Prefix resolution is caller-scoped: non-owned runs are simply not found.
+            assert.match(text(result), /not found/i);
+          } else {
+            assert.match(text(result), /recovering-ownerless-or-foreign-runs/);
+          }
+          assert.doesNotMatch(
+            text(result),
+            /was cancelled|already launched|cannot be resumed again/,
+          );
+          assert.equal(launches.length, 0);
+          assert.deepEqual(snapshot(asyncDir, resultPath), before);
+        });
+      }
+    }
+  }
+
+  it("rejects a foreign result-only terminal run with the ownership message", async () => {
+    const { runId, resultPath } = writeRun("g-resultonly", {
+      withStatus: false,
+      withResult: true,
+      resultOwner: OTHER_FILE,
+    });
+    const before = snapshot(resultPath);
+    const result = await resume(makeExecutor(), { id: runId }, PARENT_A);
+    assert.equal(result.isError, true);
+    assert.match(text(result), /recovering-ownerless-or-foreign-runs/);
+    assert.equal(launches.length, 0);
+    assert.deepEqual(snapshot(resultPath), before);
+  });
+
+  it("keeps the existing cancelled message for an owned cancelled run", async () => {
+    const { runId } = writeRun("g-owned-cancelled", {
+      state: "cancelled",
+      statusOwner: PARENT_FILE,
+    });
+    const result = await resume(makeExecutor(), { id: runId }, PARENT_A);
+    assert.equal(result.isError, true);
+    assert.match(text(result), /was cancelled and cannot be resumed/);
+    assert.equal(launches.length, 0);
+  });
+
+  it("keeps not-found for an id that resolves to no run", async () => {
+    const result = await resume(makeExecutor(), { id: "ordown-does-not-exist-zzz" }, PARENT_A);
+    assert.equal(result.isError, true);
+    assert.doesNotMatch(text(result), /owned by another session|ownership/);
+    assert.match(text(result), /not found/i);
+  });
 
   it("does not reconcile a stale running run for a foreign caller", async () => {
     const dead = () => {

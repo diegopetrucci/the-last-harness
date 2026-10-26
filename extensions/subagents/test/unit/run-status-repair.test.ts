@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
-import { errno, textContent } from "../support/run-status-fixtures.ts";
+import { errno, textContent, ownerState, OWNER_SESSION } from "../support/run-status-fixtures.ts";
 
 describe("async run status inspection", () => {
   it("repairs stale running status and reports diagnosis plus result path", () => {
@@ -21,6 +21,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             runId: "run-stale",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "running",
             pid: 12345,
@@ -39,6 +40,7 @@ describe("async run status inspection", () => {
       const result = inspectSubagentStatus(
         { id: "run-stale" },
         {
+          state: ownerState,
           asyncDirRoot: asyncRoot,
           resultsDir,
           kill: () => {
@@ -92,6 +94,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             runId: "run-parallel",
+            sessionId: OWNER_SESSION,
             mode: "parallel",
             state: "running",
             error: "top-level async status error",
@@ -126,6 +129,7 @@ describe("async run status inspection", () => {
       const result = inspectSubagentStatus(
         { id: "run-parallel" },
         {
+          state: ownerState,
           asyncDirRoot: asyncRoot,
           resultsDir: path.join(root, "results"),
           kill: () => true,
@@ -170,6 +174,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             runId: "run-steered",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "running",
             pid: 12345,
@@ -197,6 +202,7 @@ describe("async run status inspection", () => {
       const exact = inspectSubagentStatus(
         { id: "run-steered" },
         {
+          state: ownerState,
           asyncDirRoot: asyncRoot,
           resultsDir: path.join(root, "results"),
           kill: () => true,
@@ -243,6 +249,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             runId: "run-multi",
+            sessionId: OWNER_SESSION,
             mode: "parallel",
             state: "complete",
             startedAt: 100,
@@ -261,6 +268,7 @@ describe("async run status inspection", () => {
       const result = inspectSubagentStatus(
         { id: "run-multi" },
         {
+          state: ownerState,
           asyncDirRoot: asyncRoot,
           resultsDir: path.join(root, "results"),
         },
@@ -292,6 +300,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             runId: "run-exhausted-mixed",
+            sessionId: OWNER_SESSION,
             mode: "parallel",
             state: "failed",
             startedAt: 100,
@@ -317,7 +326,7 @@ describe("async run status inspection", () => {
       const text = textContent(
         inspectSubagentStatus(
           { id: "run-exhausted-mixed" },
-          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
         ),
       );
       assert.match(text, /Budget exhausted: this child instance is permanently expired/);
@@ -338,6 +347,7 @@ describe("async run status inspection", () => {
         path.join(oldRunDeadlineDir, "status.json"),
         JSON.stringify({
           runId: "run-old-deadline",
+          sessionId: OWNER_SESSION,
           mode: "single",
           state: "failed",
           startedAt: 100,
@@ -358,7 +368,7 @@ describe("async run status inspection", () => {
       const oldDeadlineText = textContent(
         inspectSubagentStatus(
           { id: "run-old-deadline" },
-          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
         ),
       );
       assert.doesNotMatch(oldDeadlineText, /Budget exhausted/);
@@ -384,6 +394,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             id: "run-result-index",
+            sessionId: OWNER_SESSION,
             success: false,
             state: "failed",
             results: [
@@ -399,7 +410,7 @@ describe("async run status inspection", () => {
 
       const result = inspectSubagentStatus(
         { id: "run-result-index" },
-        { asyncDirRoot: asyncRoot, resultsDir },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
       );
 
       const text = textContent(result);
@@ -416,14 +427,27 @@ describe("async run status inspection", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-ambiguous-"));
     try {
       const asyncRoot = path.join(root, "runs");
-      fs.mkdirSync(path.join(asyncRoot, "run-aa"), { recursive: true });
-      fs.mkdirSync(path.join(asyncRoot, "run-ab"), { recursive: true });
+      // Prefix lookup is scoped to caller-owned runs, so both need an owner.
+      for (const id of ["run-aa", "run-ab"]) {
+        fs.mkdirSync(path.join(asyncRoot, id), { recursive: true });
+        fs.writeFileSync(
+          path.join(asyncRoot, id, "status.json"),
+          JSON.stringify({
+            runId: id,
+            sessionId: "owner-session",
+            mode: "single",
+            state: "running",
+            startedAt: 1,
+          }),
+        );
+      }
 
       const result = inspectSubagentStatus(
         { id: "run-a" },
         {
           asyncDirRoot: asyncRoot,
           resultsDir: path.join(root, "results"),
+          state: { currentSessionId: "owner-session" } as never,
         },
       );
 
@@ -443,6 +467,7 @@ describe("async run status inspection", () => {
       const result = inspectSubagentStatus(
         { id: "../run" },
         {
+          state: ownerState,
           asyncDirRoot: path.join(root, "runs"),
           resultsDir: path.join(root, "results"),
         },
@@ -469,6 +494,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             id: "run-session-only",
+            sessionId: OWNER_SESSION,
             success: false,
             state: "failed",
             sessionFile,
@@ -483,6 +509,7 @@ describe("async run status inspection", () => {
       const result = inspectSubagentStatus(
         { id: "run-session-only" },
         {
+          state: ownerState,
           asyncDirRoot: asyncRoot,
           resultsDir,
         },
@@ -511,6 +538,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             id: "run-result-only",
+            sessionId: OWNER_SESSION,
             agent: "worker",
             success: false,
             state: "failed",
@@ -526,6 +554,7 @@ describe("async run status inspection", () => {
       const result = inspectSubagentStatus(
         { id: "run-result-only" },
         {
+          state: ownerState,
           asyncDirRoot: asyncRoot,
           resultsDir,
         },
@@ -558,6 +587,7 @@ describe("async run status inspection", () => {
         path.join(asyncDir, "status.json"),
         JSON.stringify({
           runId: "run-indexed",
+          sessionId: OWNER_SESSION,
           mode: "parallel",
           state: "continued",
           startedAt: 100,
@@ -579,7 +609,7 @@ describe("async run status inspection", () => {
       const childOne = textContent(
         inspectSubagentStatus(
           { id: "run-indexed", index: 1 },
-          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
         ),
       );
       assert.match(childOne, /Continuation: continuation-one/);
@@ -588,7 +618,7 @@ describe("async run status inspection", () => {
       const childZero = textContent(
         inspectSubagentStatus(
           { id: "run-indexed", index: 0 },
-          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
         ),
       );
       assert.match(childZero, /Continuation: continuation-zero/);
@@ -611,6 +641,7 @@ describe("async run status inspection", () => {
         JSON.stringify(
           {
             runId: "run-exhausted-single",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "failed",
             startedAt: 100,
@@ -635,7 +666,7 @@ describe("async run status inspection", () => {
       const text = textContent(
         inspectSubagentStatus(
           { id: "run-exhausted-single" },
-          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
         ),
       );
       assert.match(text, /Budget exhausted: this child instance is permanently expired/);

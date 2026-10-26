@@ -247,6 +247,7 @@ extensions/subagents/src/tui/render-primitives.js linguist-generated=true
 extensions/subagents/src/tui/render-result.js linguist-generated=true
 extensions/subagents/src/tui/render-widget.js linguist-generated=true
 extensions/subagents/src/tui/whimsical-phrases.js linguist-generated=true
+extensions/subagents/src/runs/background/async-owner-authorization.js linguist-generated=true
 extensions/subagents/src/runs/background/async-control-resume.js linguist-generated=true
 extensions/subagents/src/runs/shared/run-control.js linguist-generated=true
 extensions/subagents/src/runs/shared/run-support.js linguist-generated=true

@@ -8,6 +8,7 @@ import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { readStatus } from "../../shared/utils.js";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
 import { projectRunAuthorizationError, authorizePersistedProjectAgentRun, embeddedControlRestrictionError, } from "./project-agent-control.js";
+import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "../background/async-owner-authorization.js";
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.js";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.js";
@@ -81,7 +82,7 @@ export function getRequestedModeLabel(params) {
         return "single";
     return "single";
 }
-function getAsyncInterruptTarget(state, runId, location) {
+function getAsyncInterruptTarget(state, runId, location, callerKey) {
     if (location) {
         if (location.asyncDir) {
             return {
@@ -106,6 +107,9 @@ function getAsyncInterruptTarget(state, runId, location) {
     for (const job of state.asyncJobs.values()) {
         if (job.status !== "running")
             continue;
+        if (authorizeAsyncRunOwner({ callerKey, asyncDir: job.asyncDir, runId: job.asyncId }).outcome !==
+            "owned")
+            continue;
         if (!newest || (job.updatedAt ?? 0) > newest.updatedAt) {
             newest = { asyncId: job.asyncId, asyncDir: job.asyncDir, updatedAt: job.updatedAt ?? 0 };
         }
@@ -123,10 +127,10 @@ function resolvedAsyncInterruptTarget(target) {
         },
     };
 }
-export function selectInterruptTarget(params, state) {
+export function selectInterruptTarget(params, state, callerKey = state.currentSessionId ?? undefined) {
     const requestedId = params.id?.trim();
     if (requestedId) {
-        const resolved = resolveSubagentRunId(requestedId, { state });
+        const resolved = resolveSubagentRunId(requestedId, { state, callerKey });
         if (resolved)
             return { target: resolved, params: { ...params, id: resolved.id } };
         const asyncTarget = getAsyncInterruptTarget(state, requestedId);
@@ -139,7 +143,7 @@ export function selectInterruptTarget(params, state) {
         }
         return { target: undefined, params };
     }
-    const asyncTarget = getAsyncInterruptTarget(state, undefined);
+    const asyncTarget = getAsyncInterruptTarget(state, undefined, undefined, callerKey);
     if (!asyncTarget)
         return { target: undefined, params };
     const target = resolvedAsyncInterruptTarget(asyncTarget);
@@ -148,11 +152,18 @@ export function selectInterruptTarget(params, state) {
         params: { ...params, id: target.id, dir: asyncTarget.asyncDir },
     };
 }
-function requestAsyncInterruptForTarget(state, target, kill) {
+function requestAsyncInterruptForTarget(state, target, callerKey, kill) {
+    const authorizeTarget = () => authorizeAsyncRunOwner({ callerKey, asyncDir: target.asyncDir, runId: target.asyncId });
+    const preAuthorization = authorizeTarget();
+    if (preAuthorization.outcome !== "owned")
+        return { ok: false, kind: "unauthorized", authorization: preAuthorization };
     const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
     if (!status || status.state !== "running" || typeof status.pid !== "number") {
         return { ok: false, kind: "not_running" };
     }
+    const deliveryAuthorization = authorizeTarget();
+    if (deliveryAuthorization.outcome !== "owned")
+        return { ok: false, kind: "unauthorized", authorization: deliveryAuthorization };
     try {
         deliverInterruptRequest({
             asyncDir: target.asyncDir,
@@ -175,20 +186,7 @@ function requestAsyncInterruptForTarget(state, target, kill) {
 function isNotFoundError(error) {
     return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
-function normalizeComparableCwd(cwd) {
-    const resolved = path.resolve(cwd);
-    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-function diskOnlyAsyncStatusBelongsElsewhere(state, status) {
-    if (state.currentSessionId && status.sessionId)
-        return state.currentSessionId !== status.sessionId;
-    if (state.baseCwd &&
-        status.cwd &&
-        normalizeComparableCwd(state.baseCwd) !== normalizeComparableCwd(status.cwd))
-        return true;
-    return false;
-}
-function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
+function discoverDiskOnlyRunningAsyncTargets(callerKey, knownAsyncDirs) {
     const targets = [];
     const errors = [];
     const candidates = [];
@@ -213,10 +211,20 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
         if (knownAsyncDirs.has(candidate.asyncDir))
             continue;
         try {
+            const authorization = authorizeAsyncRunOwner({
+                callerKey,
+                asyncDir: candidate.asyncDir,
+                runId: candidate.fallbackId,
+            });
+            if (authorization.outcome !== "owned")
+                continue;
+        }
+        catch {
+            continue;
+        }
+        try {
             const rawStatus = readStatus(candidate.asyncDir);
-            if (!rawStatus ||
-                rawStatus.state !== "running" ||
-                diskOnlyAsyncStatusBelongsElsewhere(state, rawStatus))
+            if (!rawStatus || rawStatus.state !== "running")
                 continue;
             const status = reconcileAsyncRun(candidate.asyncDir).status;
             if (status?.state === "running") {
@@ -232,21 +240,23 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
     }
     return { targets, errors };
 }
-export function requestInterruptAllRunningSubagentRuns(state) {
+export function requestInterruptAllRunningSubagentRuns(state, callerKey) {
     const result = {
         asyncRunIds: [],
         skippedAsyncRunIds: [],
         errors: [],
     };
+    if (typeof callerKey !== "string" || callerKey.length === 0)
+        return result;
     const knownAsyncDirs = new Set();
     for (const job of state.asyncJobs.values()) {
         knownAsyncDirs.add(job.asyncDir);
-        const interruptResult = requestAsyncInterruptForTarget(state, {
-            asyncId: job.asyncId,
-            asyncDir: job.asyncDir,
-        });
+        const interruptResult = requestAsyncInterruptForTarget(state, { asyncId: job.asyncId, asyncDir: job.asyncDir }, callerKey);
         if (!isAsyncInterruptFailure(interruptResult)) {
             result.asyncRunIds.push(job.asyncId);
+        }
+        else if (interruptResult.kind === "unauthorized") {
+            continue;
         }
         else if (interruptResult.kind === "error") {
             result.errors.push(`Failed to interrupt async run ${job.asyncId}: ${interruptResult.error ?? "unknown error"}`);
@@ -255,11 +265,14 @@ export function requestInterruptAllRunningSubagentRuns(state) {
             result.skippedAsyncRunIds.push(job.asyncId);
         }
     }
-    const diskOnly = discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs);
+    const diskOnly = discoverDiskOnlyRunningAsyncTargets(callerKey, knownAsyncDirs);
     for (const target of diskOnly.targets) {
-        const interruptResult = requestAsyncInterruptForTarget(state, target);
+        const interruptResult = requestAsyncInterruptForTarget(state, target, callerKey);
         if (!isAsyncInterruptFailure(interruptResult)) {
             result.asyncRunIds.push(target.asyncId);
+        }
+        else if (interruptResult.kind === "unauthorized") {
+            continue;
         }
         else if (interruptResult.kind === "error") {
             result.errors.push(`Failed to interrupt async run ${target.asyncId}: ${interruptResult.error ?? "unknown error"}`);
@@ -271,11 +284,11 @@ export function requestInterruptAllRunningSubagentRuns(state) {
     result.errors.push(...diskOnly.errors);
     return result;
 }
-export function interruptAsyncRun(state, runId, kill, location) {
-    const target = getAsyncInterruptTarget(state, runId, location);
+export function interruptAsyncRun(state, runId, kill, location, callerKey) {
+    const target = getAsyncInterruptTarget(state, runId, location, callerKey);
     if (!target)
         return null;
-    const interruptResult = requestAsyncInterruptForTarget(state, target, kill);
+    const interruptResult = requestAsyncInterruptForTarget(state, target, callerKey, kill);
     if (!isAsyncInterruptFailure(interruptResult)) {
         return {
             content: [{ type: "text", text: `Interrupt requested for async run ${target.asyncId}.` }],
@@ -286,20 +299,16 @@ export function interruptAsyncRun(state, runId, kill, location) {
         content: [
             {
                 type: "text",
-                text: isAsyncInterruptNotRunning(interruptResult)
-                    ? `No running async run with an interrupt-capable pid was found for '${runId ?? "current"}'.`
-                    : `Failed to interrupt async run ${target.asyncId}: ${interruptResult.error ?? "unknown error"}`,
+                text: interruptResult.kind === "unauthorized"
+                    ? asyncRunOwnerRejectionMessage(interruptResult.authorization, target.asyncId, "interrupted")
+                    : isAsyncInterruptNotRunning(interruptResult)
+                        ? `No running async run with an interrupt-capable pid was found for '${runId ?? "current"}'.`
+                        : `Failed to interrupt async run ${target.asyncId}: ${interruptResult.error ?? "unknown error"}`,
             },
         ],
         isError: true,
         details: { mode: "management", results: [] },
     };
-}
-function asyncControlOwnedByCurrentSession(state, status) {
-    return (typeof state.currentSessionId === "string" &&
-        state.currentSessionId.length > 0 &&
-        typeof status.sessionId === "string" &&
-        status.sessionId === state.currentSessionId);
 }
 export function steerAsyncRun(input) {
     if (!input.location.asyncDir) {
@@ -311,25 +320,32 @@ export function steerAsyncRun(input) {
             details: { mode: "management", results: [] },
         };
     }
-    const status = reconcileAsyncRun(input.location.asyncDir, { kill: input.kill }).status;
+    const steerDir = input.location.asyncDir;
+    const authorizeTarget = () => authorizeAsyncRunOwner({
+        callerKey: input.callerKey,
+        asyncDir: steerDir,
+        runId: input.runId,
+    });
+    const steerRejection = (authorization) => ({
+        content: [
+            {
+                type: "text",
+                text: asyncRunOwnerRejectionMessage(authorization, input.runId, "steered"),
+            },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+    });
+    const preAuthorization = authorizeTarget();
+    if (preAuthorization.outcome !== "owned")
+        return steerRejection(preAuthorization);
+    const status = reconcileAsyncRun(steerDir, { kill: input.kill }).status;
     if (!status || (status.state !== "running" && status.state !== "queued")) {
         return {
             content: [
                 {
                     type: "text",
                     text: `Async run '${input.runId}' is not running or queued and cannot be steered.`,
-                },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-        };
-    }
-    if (!asyncControlOwnedByCurrentSession(input.state, status)) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: `Async run '${status.runId}' is owned by another session and cannot be steered from this session.`,
                 },
             ],
             isError: true,
@@ -379,7 +395,10 @@ export function steerAsyncRun(input) {
             };
         }
     }
-    requestAsyncSteer(input.location.asyncDir, {
+    const deliveryAuthorization = authorizeTarget();
+    if (deliveryAuthorization.outcome !== "owned")
+        return steerRejection(deliveryAuthorization);
+    requestAsyncSteer(steerDir, {
         message: input.message,
         targetIndex: input.index,
         source: "steer-action",
@@ -401,7 +420,7 @@ export function steerAsyncRun(input) {
 export async function authorizeProjectSteerTarget(input) {
     let location;
     try {
-        location = resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR);
+        location = resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR, input.deps.state.currentSessionId ?? undefined);
     }
     catch (error) {
         throw projectRunAuthorizationError(error instanceof Error ? error.message : "the persisted control target is invalid.");
@@ -447,7 +466,7 @@ export async function authorizeProjectSteerTarget(input) {
 export async function authorizeProjectInterruptTarget(input) {
     let location;
     try {
-        location = resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR);
+        location = resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR, input.deps.state.currentSessionId ?? undefined);
     }
     catch (error) {
         throw projectRunAuthorizationError(error instanceof Error ? error.message : "the persisted interrupt target is invalid.");
