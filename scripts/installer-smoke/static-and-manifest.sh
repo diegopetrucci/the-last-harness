@@ -34,7 +34,6 @@ run_static_checks() {
   node --check scripts/tlh-wrapper.mjs
   node --check scripts/tlh-install-state.mjs
   node --check scripts/tlh-install.mjs
-  node --check scripts/tlh-install-query.mjs
   node --check scripts/lib/tlh-install-package-source.mjs
   node --check scripts/lib/tlh-install-paths.mjs
   node --check scripts/lib/tlh-install-utils.mjs
@@ -46,6 +45,5 @@ run_static_checks() {
   node --check scripts/lib/tlh-install-support-manifest.mjs
   node --check scripts/release-notes.mjs
   node --check scripts/generate-release-installer.mjs
-  node -e 'JSON.parse(require("node:fs").readFileSync("config/librarian.defaults.json", "utf8"))'
   check_extension_load_syntax
 }
