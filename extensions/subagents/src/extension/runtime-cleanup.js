@@ -1,8 +1,10 @@
+// Generated from extensions/subagents/src/extension/runtime-cleanup.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.js";
 import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.js";
 import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.js";
+import { MAX_ASYNC_STATUS_BYTES } from "../shared/utils.js";
 import { ASYNC_DIR, TEMP_ROOT_DIR } from "../shared/types.js";
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const TERMINAL_ASYNC_DIR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -74,38 +76,72 @@ function listNestedEventRoutes(nestedEventsDir, strict) {
     }
     return entries;
 }
+const CLEANUP_OPEN_FLAGS = fs.constants.O_RDONLY |
+    (fs.constants.O_NONBLOCK ?? 0) |
+    (fs.constants.O_NOFOLLOW ?? 0);
 function readAsyncStatus(asyncDir) {
     const statusPath = path.join(asyncDir, "status.json");
-    let stat;
+    let fd;
     try {
-        stat = fs.statSync(statusPath);
+        try {
+            fd = fs.openSync(statusPath, CLEANUP_OPEN_FLAGS);
+        }
+        catch (error) {
+            const code = error.code;
+            if (code === "ENOENT")
+                return { status: null, invalid: false };
+            return { status: null, invalid: true };
+        }
+        let stat;
+        try {
+            stat = fs.fstatSync(fd);
+        }
+        catch {
+            return { status: null, invalid: true };
+        }
         if (!stat.isFile())
             return { status: null, invalid: true };
-    }
-    catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
-        if (code === "ENOENT")
-            return { status: null, invalid: false };
-        return { status: null, invalid: true };
-    }
-    try {
-        const parsed = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+        if (stat.size > MAX_ASYNC_STATUS_BYTES)
+            return { status: null, invalid: true };
+        let content;
+        try {
+            const chunks = [];
+            let bytesRead = 0;
+            const chunkSize = 64 * 1024;
+            while (bytesRead <= MAX_ASYNC_STATUS_BYTES) {
+                const remaining = MAX_ASYNC_STATUS_BYTES + 1 - bytesRead;
+                const buffer = Buffer.allocUnsafe(Math.min(chunkSize, remaining));
+                const n = fs.readSync(fd, buffer, 0, buffer.byteLength, null);
+                if (n === 0)
+                    break;
+                chunks.push(buffer.subarray(0, n));
+                bytesRead += n;
+            }
+            if (bytesRead > MAX_ASYNC_STATUS_BYTES)
+                return { status: null, invalid: true };
+            content = Buffer.concat(chunks, bytesRead).toString("utf-8");
+        }
+        catch {
+            return { status: null, invalid: true };
+        }
+        let parsed;
+        try {
+            parsed = JSON.parse(content);
+        }
+        catch {
+            return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
+        }
         if (parsed === null) {
             return { status: null, statusMtimeMs: stat.mtimeMs, invalid: false };
         }
         if (typeof parsed !== "object" || Array.isArray(parsed)) {
             return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
         }
-        return {
-            status: parsed,
-            statusMtimeMs: stat.mtimeMs,
-            invalid: false,
-        };
+        return { status: parsed, statusMtimeMs: stat.mtimeMs, invalid: false };
     }
-    catch {
-        return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
+    finally {
+        if (fd !== undefined)
+            fs.closeSync(fd);
     }
 }
 function newestTreeMtimeMs(dirPath) {

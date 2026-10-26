@@ -4,13 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
+import { createFakeTimers } from "./support/fake-timers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const {
-  createTlhEffectiveActivityTracker,
-  registerTlhEffectiveActivityTracker,
-  TLH_EFFECTIVE_ACTIVITY_EVENT,
-} = await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { createTlhEffectiveActivityTracker, registerTlhEffectiveActivityTracker } =
+  await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { TLH_EFFECTIVE_ACTIVITY_EVENT } = await jiti.import(
+  "../extensions/shared/tlh-effective-activity.ts",
+);
 const { announceBundledSubagentRestoreProvider } = await jiti.import(
   "../extensions/shared/subagent-restore-contract.ts",
 );
@@ -41,39 +42,6 @@ function createEventPiHarness() {
     pi,
     fire(event, payload = {}, ctx) {
       for (const handler of eventHandlers.get(event) ?? []) handler(payload, ctx);
-    },
-  };
-}
-
-function createFakeTimers() {
-  let now = 0;
-  let nextId = 1;
-  const timers = new Map();
-  return {
-    now: () => now,
-    setTimeout(fn, delay = 0) {
-      const id = nextId++;
-      timers.set(id, { fn, at: now + delay });
-      return id;
-    },
-    clearTimeout(id) {
-      timers.delete(id);
-    },
-    advance(ms) {
-      now += ms;
-      let ran = true;
-      while (ran) {
-        ran = false;
-        for (const [id, timer] of [...timers.entries()].sort((a, b) => a[1].at - b[1].at)) {
-          if (timer.at > now) continue;
-          timers.delete(id);
-          timer.fn();
-          ran = true;
-        }
-      }
-    },
-    pendingCount() {
-      return timers.size;
     },
   };
 }
@@ -185,6 +153,8 @@ test("tracker tracks nested Pi UI prompts separately from primary activity", () 
   assert.deepEqual(tracker.getSnapshot(), {
     inProgress: false,
     waitingForUser: true,
+    waitingForUserKind: "confirm",
+    waitingForUserTitle: "Approve change?",
     primaryReasons: [],
     activeAsyncJobIds: [],
   });
@@ -344,15 +314,10 @@ test("tracker keeps concurrent async jobs active across duplicate, out-of-order,
   }
 });
 
-test("tracker ignores foreground control notices and only tracks safe async control contexts", () => {
+test("tracker ignores control notices without async context and honors asyncDir precedence", () => {
   const root = mkdtempSync(join(tmpdir(), "tlh-control-context-"));
   try {
-    const asyncDirBackground = makeAsyncDir(root, "job-background", {
-      runId: "job-background",
-      state: "running",
-      pid: 99980,
-    });
-    const asyncDirAsync = makeAsyncDir(root, "job-async", {
+    const asyncDir = makeAsyncDir(root, "job-async", {
       runId: "job-async",
       state: "running",
       pid: 99981,
@@ -361,20 +326,54 @@ test("tracker ignores foreground control notices and only tracks safe async cont
       checkPidLiveness: () => "alive",
     });
 
-    tracker.handleAsyncControl({ event: { runId: "foreground-source", source: "foreground" } });
-    tracker.handleAsyncControl({ event: { runId: "foreground-mode", mode: "foreground" } });
+    tracker.handleAsyncControl({ event: { runId: "unknown-source", source: "unknown" } });
+    tracker.handleAsyncControl({ event: { runId: "unknown-mode", mode: "unknown" } });
     tracker.handleAsyncControl({ event: { runId: "missing-context" } });
     assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, []);
 
     tracker.handleAsyncControl({
-      event: { runId: "job-background", mode: "background" },
-      asyncDir: asyncDirBackground,
+      event: { runId: "job-async", source: "async", mode: "unknown" },
+      asyncDir,
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["job-async"]);
+    assert.equal(tracker.isInProgress(), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tracker classifies async control events from event asyncDir and prefers payload asyncDir", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-async-control-context-"));
+  try {
+    const eventAsyncDir = makeAsyncDir(root, "job-event-dir", {
+      runId: "job-event-dir",
+      state: "running",
+      pid: 99979,
+    });
+    const staleAsyncDir = makeAsyncDir(root, "stale-event-dir", {
+      runId: "job-payload-dir",
+      state: "complete",
+      pid: 99978,
+    });
+    const payloadAsyncDir = makeAsyncDir(root, "job-payload-dir", {
+      runId: "job-payload-dir",
+      state: "running",
+      pid: 99977,
+    });
+    const tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+
+    tracker.handleAsyncControl({
+      event: { runId: "job-event-dir", source: "async", asyncDir: eventAsyncDir },
     });
     tracker.handleAsyncControl({
-      event: { runId: "job-async", mode: "async" },
-      asyncDir: asyncDirAsync,
+      asyncDir: payloadAsyncDir,
+      event: { runId: "job-payload-dir", source: "async", asyncDir: staleAsyncDir },
     });
-    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["job-async", "job-background"]);
+
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["job-event-dir", "job-payload-dir"]);
+    assert.equal(tracker.isInProgress(), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -810,26 +809,38 @@ test("tracker notifies snapshot listeners only when effective state changes", ()
   unsubscribe();
   tracker.handleAsyncStarted({ id: "job-1" });
 
+  // With settle-based outcomes: runActive=true from before_agent_start until
+  // agent_settled. lastRunOutcome is only committed at agent_settled (not called
+  // here), so all snapshots show lastRunOutcome=undefined.
   assert.deepEqual(snapshots, [
     {
       inProgress: true,
       waitingForUser: false,
+      runActive: true,
       primaryReasons: ["primary:pending-start"],
       activeAsyncJobIds: [],
     },
     {
       inProgress: true,
       waitingForUser: false,
+      runActive: true,
       primaryReasons: ["primary:agent-loop", "primary:pending-start"],
       activeAsyncJobIds: [],
     },
     {
       inProgress: true,
       waitingForUser: false,
+      runActive: true,
       primaryReasons: ["primary:retry-grace"],
       activeAsyncJobIds: [],
     },
-    { inProgress: false, waitingForUser: false, primaryReasons: [], activeAsyncJobIds: [] },
+    {
+      inProgress: false,
+      waitingForUser: false,
+      runActive: true,
+      primaryReasons: [],
+      activeAsyncJobIds: [],
+    },
   ]);
 });
 
@@ -1400,17 +1411,21 @@ test("registered tracker emits tlh:effective-activity on pi.events when snapshot
   fire("agent_start");
   fire("agent_end", { messages: [] });
 
-  // There should be exactly 3 emissions corresponding to the 3 state changes.
+  // Bus payload only includes inProgress/waitingForUser/activeAsyncJobIds.
+  // agent_start changes inProgress from pending-start→agent-loop but the bus
+  // payload is identical (inProgress=true in both). Deduplication suppresses
+  // the redundant emission, so 2 distinct bus payloads are emitted:
+  // before_agent_start (inProgress=true) and agent_end (inProgress=false).
   const activityEmits = emitted.filter((e) => e.channel === TLH_EFFECTIVE_ACTIVITY_EVENT);
-  assert.equal(activityEmits.length, 3);
+  assert.equal(activityEmits.length, 2);
 
   // First emission: inProgress=true (before_agent_start).
   assert.equal(activityEmits[0].payload.inProgress, true);
   assert.deepEqual(activityEmits[0].payload.activeAsyncJobIds, []);
 
   // Last emission: inProgress=false (agent_end with no retry).
-  assert.equal(activityEmits[2].payload.inProgress, false);
-  assert.deepEqual(activityEmits[2].payload.activeAsyncJobIds, []);
+  assert.equal(activityEmits[1].payload.inProgress, false);
+  assert.deepEqual(activityEmits[1].payload.activeAsyncJobIds, []);
 });
 
 test("registered tracker handles Pi 0.84.4 compaction and UI prompt event order", () => {
@@ -1483,6 +1498,12 @@ test("registered tracker handles Pi 0.84.4 compaction and UI prompt event order"
   assert.equal(tracker.getSnapshot().waitingForUser, false);
 
   const activityEmits = emitted.filter((entry) => entry.channel === TLH_EFFECTIVE_ACTIVITY_EVENT);
+  // Bus deduplication suppresses payloads identical to the previous emit.
+  // Nested prompt kind changes (confirm→custom→confirm) mutate the internal snapshot
+  // key but do not change the bus payload (waitingForUser=true in all three), so only
+  // the first transition to waitingForUser=true is emitted. 4 distinct bus payloads:
+  //   compaction start (inProgress=true), compact_failed (inProgress=false),
+  //   first ui_prompt_start (waitingForUser=true), last ui_prompt_end (waitingForUser=false).
   assert.equal(activityEmits.length, 4);
   assert.equal(activityEmits[0].payload.inProgress, true);
   assert.equal(activityEmits[0].payload.waitingForUser, false);
@@ -1529,10 +1550,11 @@ test("registered tracker does not emit tlh:effective-activity when pi.events is 
     },
   };
   registerTlhEffectiveActivityTracker(pi);
-  for (const handler of eventHandlers.get("before_agent_start") ?? []) handler({});
-  // No assertion needed beyond "does not throw"; the test just verifies the
-  // absence-of-events-bus path is safe.
-  assert.ok(true);
+  const handlers = eventHandlers.get("before_agent_start") ?? [];
+  assert.ok(handlers.length >= 1, "expected a before_agent_start handler to be registered");
+  assert.doesNotThrow(() => {
+    for (const handler of handlers) handler({});
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1611,4 +1633,283 @@ test("periodic drain timer is cleared on dispose", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ─── waitingForUserKind tracking ─────────────────────────────────────────────
+
+test("tracker exposes waitingForUserKind from ui_prompt_start event.kind", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+
+  // No prompt open → waitingForUserKind is absent.
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, "confirm");
+
+  tracker.handleUIPromptEnd({});
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+});
+
+test("tracker tracks all recognised UIPromptKind values", () => {
+  for (const kind of ["select", "confirm", "input", "editor", "custom"]) {
+    const tracker = createTlhEffectiveActivityTracker();
+    tracker.handleUIPromptStart({ kind });
+    assert.equal(tracker.getSnapshot().waitingForUserKind, kind, `kind=${kind} should be tracked`);
+    tracker.handleUIPromptEnd({});
+    assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+  }
+});
+
+test("tracker stores undefined waitingForUserKind for unrecognised kind values", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({ kind: "unknown-future-kind" });
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  assert.equal(
+    tracker.getSnapshot().waitingForUserKind,
+    undefined,
+    "unrecognised kind → undefined",
+  );
+  tracker.handleUIPromptEnd({});
+});
+
+test("tracker stores undefined waitingForUserKind when event.kind is absent", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({});
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined, "missing kind → undefined");
+  tracker.handleUIPromptEnd({});
+});
+
+test("tracker uses the most recently opened prompt kind for nested prompts", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+
+  // Open outer prompt (confirm)
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  assert.equal(tracker.getSnapshot().waitingForUserKind, "confirm");
+
+  // Open inner prompt (select) on top
+  tracker.handleUIPromptStart({ kind: "select" });
+  assert.equal(
+    tracker.getSnapshot().waitingForUserKind,
+    "select",
+    "inner prompt kind takes precedence",
+  );
+
+  // Close inner → back to outer
+  tracker.handleUIPromptEnd({});
+  assert.equal(
+    tracker.getSnapshot().waitingForUserKind,
+    "confirm",
+    "returns to outer prompt kind after inner closes",
+  );
+
+  // Close outer → no prompt
+  tracker.handleUIPromptEnd({});
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+});
+
+test("tracker clears waitingForUserKind when depth returns to 0", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({ kind: "input" });
+  tracker.handleUIPromptStart({ kind: "editor" });
+  tracker.handleUIPromptEnd({});
+  tracker.handleUIPromptEnd({});
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined, "kind cleared at depth 0");
+});
+
+test("tracker includes waitingForUserKind in snapshot change detection", () => {
+  const snapshots = [];
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.subscribe((s) => snapshots.push({ ...s }));
+
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  tracker.handleUIPromptStart({ kind: "select" });
+  tracker.handleUIPromptEnd({});
+  tracker.handleUIPromptEnd({});
+
+  // Expect: confirm open, select open (kind change), back to confirm, closed.
+  assert.equal(snapshots.length, 4, "each depth or kind change should emit a new snapshot");
+  assert.equal(snapshots[0].waitingForUserKind, "confirm");
+  assert.equal(snapshots[1].waitingForUserKind, "select");
+  assert.equal(snapshots[2].waitingForUserKind, "confirm");
+  assert.equal(snapshots[3].waitingForUserKind, undefined);
+});
+
+test("tracker resets waitingForUserKind on dispose", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  assert.equal(tracker.getSnapshot().waitingForUserKind, "confirm");
+  tracker.dispose();
+  // After dispose getSnapshot still works (drains eagerly)
+  const snap = tracker.getSnapshot();
+  assert.equal(snap.waitingForUser, false);
+  assert.equal(snap.waitingForUserKind, undefined);
+});
+
+// ─── lastRunOutcome derivation ───────────────────────────────────────────────
+
+test("tracker lastRunOutcome is undefined before any agent_end", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleBeforeAgentStart();
+  tracker.handleAgentStart();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+});
+
+test("tracker lastRunOutcome is completed after normal agent_end + agent_settled", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "stop" }] });
+  // lastRunOutcome is only committed at agent_settled, not at agent_end.
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined, "not committed before settle");
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome is aborted when last assistant stopReason is aborted", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "aborted" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "aborted");
+});
+
+test("tracker lastRunOutcome is error when last assistant stopReason is error", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "error" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "error");
+});
+
+test("tracker lastRunOutcome is error when last assistant has errorMessage", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({
+    messages: [{ role: "assistant", stopReason: "stop", errorMessage: "something went wrong" }],
+  });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "error");
+});
+
+test("tracker lastRunOutcome is completed when messages is empty array", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome is completed when no messages field", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({});
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome reflects the last run's outcome after agent_settled", () => {
+  const timers = createFakeTimers();
+  const tracker = createTlhEffectiveActivityTracker({
+    now: timers.now,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    retryGraceMs: 25,
+  });
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "error" }] });
+  // lastRunOutcome is not committed until agent_settled.
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined, "not committed before settle");
+  // Retry: a second agent_end (success) overwrites the pending outcome.
+  tracker.handleTurnStart();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "stop" }] });
+  assert.equal(
+    tracker.getSnapshot().lastRunOutcome,
+    undefined,
+    "still not committed before settle",
+  );
+  // agent_settled commits the most recent pending outcome.
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome is reset by beginSession", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  const sm = { getSessionFile: () => undefined, getSessionId: () => "s1" };
+  tracker.beginSession({ sessionManager: sm });
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "aborted" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "aborted");
+  tracker.beginSession({
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s2" },
+  });
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+});
+
+test("tracker lastRunOutcome is reset by dispose", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "aborted" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "aborted");
+  tracker.dispose();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+});
+
+test("tracker lastRunOutcome change triggers snapshot notification at agent_settled", () => {
+  const snapshots = [];
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.subscribe((s) => snapshots.push(s.lastRunOutcome));
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "stop" }] });
+  // lastRunOutcome is not committed until agent_settled; ensure no premature notification.
+  assert.ok(!snapshots.includes("completed"), "notification must not fire before agent_settled");
+  tracker.handleAgentSettled();
+  assert.ok(
+    snapshots.includes("completed"),
+    "notification must fire with lastRunOutcome=completed after agent_settled",
+  );
+});
+
+// ─── runActive + handleAgentSettled ──────────────────────────────────────────
+
+test("tracker runActive is set on before_agent_start and cleared at agent_settled", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  assert.equal(tracker.getSnapshot().runActive, undefined, "not set initially");
+  tracker.handleBeforeAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true, "set by before_agent_start");
+  tracker.handleAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true, "still set after agent_start");
+  tracker.handleAgentEnd({ messages: [] });
+  assert.equal(tracker.getSnapshot().runActive, true, "still set after agent_end");
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().runActive, undefined, "cleared by agent_settled");
+});
+
+test("tracker runActive is reset by beginSession and dispose", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  const sm = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  tracker.handleBeforeAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true);
+  tracker.beginSession({ sessionManager: sm });
+  assert.equal(tracker.getSnapshot().runActive, undefined, "reset by beginSession");
+  tracker.handleAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true);
+  tracker.dispose();
+  assert.equal(tracker.getSnapshot().runActive, undefined, "reset by dispose");
+});
+
+test("tracker agent_settled with no preceding agent_end leaves lastRunOutcome unchanged", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleBeforeAgentStart();
+  tracker.handleAgentStart();
+  // No agent_end; pendingOutcome is undefined.
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+  assert.equal(tracker.getSnapshot().runActive, undefined);
 });

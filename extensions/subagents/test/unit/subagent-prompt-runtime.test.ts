@@ -20,10 +20,7 @@ import {
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { writeChildMessageRequestToDir } from "../../src/runs/background/control-channel.ts";
-import {
-  PACKAGED_MINOR_AGENT_ROLES,
-  projectAgentGuidanceFilename,
-} from "../../../shared/project-agent-guidance.ts";
+import { PACKAGED_MINOR_AGENT_ROLES } from "../../../shared/project-agent-guidance.ts";
 import { setStructuredChildPromptRuntime } from "../../../shared/subagent-child-boundary.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
@@ -36,7 +33,6 @@ import {
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
   SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import registerSubagentPromptRuntime, {
   CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
   NATIVE_SUPERVISOR_GUIDANCE,
@@ -180,7 +176,7 @@ async function emitChainedBeforeAgentStart(
     SessionManager.inMemory(cwd),
     {} as ConstructorParameters<typeof ExtensionRunner>[4],
   );
-  return runner.emitBeforeAgentStart("child task", undefined, options);
+  return runner.emitBeforeAgentStart({ messageType: "user", prompt: "child task" }, options);
 }
 
 function countOccurrences(value: string, needle: string): number {
@@ -191,7 +187,6 @@ const envSnapshot = {
   PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
   PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
   PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
-  PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
   PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: process.env.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID,
   PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: process.env.PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR,
   PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
@@ -228,8 +223,6 @@ afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_STEER_INBOX === undefined)
     delete process.env[SUBAGENT_STEER_INBOX_ENV];
   else process.env[SUBAGENT_STEER_INBOX_ENV] = envSnapshot.PI_SUBAGENT_STEER_INBOX;
-  if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
-  else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
   if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID === undefined)
     delete process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV];
   else
@@ -283,8 +276,7 @@ function writeProjectGuidance(
   role: string,
   content: string,
 ): string {
-  const filename = projectAgentGuidanceFilename(role);
-  assert.ok(filename, `expected a packaged project-guidance filename for ${role}`);
+  const filename = `${role.toUpperCase()}_PROMPT_APPEND.md`;
   const directory = path.join(fixture.cwd, ".tlh", "agents", "builtin");
   fs.mkdirSync(directory, { recursive: true });
   const filePath = path.join(directory, filename);
@@ -698,37 +690,6 @@ describe("subagent prompt runtime", () => {
     );
   });
 
-  it("nudges after the tool budget soft limit and blocks configured tools after hard", () => {
-    const handlers = new Map<TestEventName, TestEventHandler>();
-    const sent: string[] = [];
-    process.env[TOOL_BUDGET_ENV] = JSON.stringify({ soft: 2, hard: 2, block: ["read"] });
-
-    registerSubagentPromptRuntime(
-      makeExtensionAPI({
-        on: recordEvents(handlers),
-        sendUserMessage(content, options) {
-          if (typeof content !== "string" || options?.deliverAs === undefined) {
-            throw new Error("test sendUserMessage expected string steer input");
-          }
-          sent.push(content);
-        },
-      }),
-    );
-
-    const toolCall = handlers.get("tool_call");
-    assert.ok(toolCall, "tool_call handler should be registered");
-    assert.equal(toolCall({ toolName: "grep" }), undefined);
-    assert.equal(toolCall({ toolName: "grep" }), undefined);
-    assert.equal(sent.length, 1);
-    assert.match(sent[0] ?? "", /soft limit reached/);
-    assert.deepEqual(toolCall({ toolName: "read" }), {
-      block: true,
-      reason:
-        "Tool budget hard limit reached after 3 tool calls (hard 2). The 'read' tool is blocked so you can finalize from the context you already have.",
-    });
-    assert.equal(toolCall({ toolName: "write" }), undefined);
-  });
-
   it("delivers steering inbox requests as mid-run user messages", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-runtime-"));
     try {
@@ -1043,8 +1004,15 @@ describe("subagent prompt runtime", () => {
         const prompt = renderPrompt(event);
         assert.match(prompt, /Developer ticket assignment:/);
         assert.match(prompt, /Ticket ID: tlhm-o1qg/);
-        assert.match(prompt, /tk show tlhm-o1qg/);
-        assert.equal((prompt.match(/tlhm-o1qg/g) ?? []).length, 2);
+        assert.match(
+          prompt,
+          /Before making any changes, treat the injected `## Ticket tlhm-o1qg` body as the source of truth\. You may run `tk show tlhm-o1qg` only to re-read it\./,
+        );
+        assert.doesNotMatch(
+          prompt,
+          /run `tk show tlhm-o1qg` and treat that ticket as the source of truth/,
+        );
+        assert.equal((prompt.match(/tlhm-o1qg/g) ?? []).length, 3);
         assert.ok(prompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       },
       { tkTicketId: "tlhm-o1qg" },

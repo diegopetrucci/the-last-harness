@@ -2,15 +2,14 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 import {
-  SettingsManager,
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
-import type { TlhSettings } from "./types.js";
 
 const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
@@ -45,15 +44,6 @@ type TlhTicketWorkflowUiRuntimeOptions = {
   now?: () => number;
 };
 
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-    return isRecord(settings) ? (settings as TlhSettings) : {};
-  } catch {
-    return {};
-  }
-}
-
 function firstOutputLine(result: TkCommandResult): string | undefined {
   return `${result.stdout || ""}\n${result.stderr || ""}`
     .split(/\r?\n/)
@@ -87,7 +77,18 @@ function parseJsonLines(output: string): TkWorkflowTicket[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.map((line) => JSON.parse(line) as TkWorkflowTicket);
+  return lines.flatMap((line) => {
+    const parsed: unknown = JSON.parse(line);
+    if (!isRecord(parsed)) {
+      return [];
+    }
+    return [
+      {
+        id: typeof parsed.id === "string" ? parsed.id : undefined,
+        status: typeof parsed.status === "string" ? parsed.status : undefined,
+      },
+    ];
+  });
 }
 
 function parseListLines(output: string): string[] {
@@ -324,10 +325,16 @@ function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
     );
   }
   if (snapshot.ready.length > 0) {
-    lines.push("Ready:", ...snapshot.ready.slice(0, 3).map((line) => `- ${line}`));
+    lines.push(
+      "Ready:",
+      ...snapshot.ready.slice(0, 3).map((line) => `- ${stripTerminalControlSequences(line)}`),
+    );
   }
   if (snapshot.blocked.length > 0) {
-    lines.push("Blocked:", ...snapshot.blocked.slice(0, 3).map((line) => `- ${line}`));
+    lines.push(
+      "Blocked:",
+      ...snapshot.blocked.slice(0, 3).map((line) => `- ${stripTerminalControlSequences(line)}`),
+    );
   }
   return lines.join("\n");
 }

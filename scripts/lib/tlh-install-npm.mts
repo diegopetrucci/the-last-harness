@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -18,6 +19,11 @@ import {
   packageSourceOf,
   readDefaultExtensions,
 } from "./default-extensions.mjs";
+import {
+  evaluateMcpAdapterCutover,
+  mcpAdapterPackageIdentities,
+  MCP_ADAPTER_CUTOVER_EXTENSION_ID,
+} from "./mcp-adapter-cutover.mjs";
 import type { InstallerPathConfig } from "./tlh-install-paths.mjs";
 import { assertProfilePathWithinAgent, isSymlink } from "./tlh-install-paths.mjs";
 import { readJsonFile } from "./tlh-install-utils.mjs";
@@ -46,6 +52,110 @@ export interface NpmPreinstallIo {
   inheritedCommandEnv(): NodeJS.ProcessEnv;
 }
 
+export interface McpAdapterInstallConfig {
+  agentDir: string;
+  homeDir: string;
+  settingsPath: string;
+  supportFilePaths: Record<string, string>;
+}
+
+// Read a settings file for a gate-check layer.  Returns:
+//   { kind: "absent" }   — file does not exist (ENOENT); contributes no hold
+//   { kind: "held" }     — any other error, symlink, non-file, parse failure,
+//                          non-object, or non-array packages; means held
+//   { kind: "settings"; value: JsonRecord } — successfully read
+function readSettingsLayerForInstall(
+  settingsPath: string,
+): { kind: "absent" } | { kind: "held" } | { kind: "settings"; value: JsonRecord } {
+  let status;
+  try {
+    status = lstatSync(settingsPath);
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT"
+    ) {
+      return { kind: "absent" };
+    }
+    return { kind: "held" };
+  }
+  if (status.isSymbolicLink() || !status.isFile()) return { kind: "held" };
+  try {
+    const raw: unknown = JSON.parse(readFileSync(settingsPath, "utf8"));
+    if (!isJsonRecord(raw)) return { kind: "held" };
+    if (raw.packages !== undefined && !Array.isArray(raw.packages)) return { kind: "held" };
+    return { kind: "settings", value: raw };
+  } catch {
+    return { kind: "held" };
+  }
+}
+
+export function mcpAdapterCutoverHeldForInstall(config: McpAdapterInstallConfig): boolean {
+  try {
+    if (!config.supportFilePaths.DEFAULT_EXTENSIONS_FILE) return true;
+
+    // Profile layer: a missing profile settings file is neutral for this layer
+    // only; it must not short-circuit to false before the project layer is
+    // checked.
+    const profileResult = readSettingsLayerForInstall(config.settingsPath);
+    if (profileResult.kind === "held") return true;
+
+    // Project layer: <agentDir>/.pi/settings.json, mirroring tlh-update's
+    // readSettingsForPackageGuard.  ENOENT is neutral; all other errors are
+    // fail-closed (held).
+    const projectSettingsPath = join(config.agentDir, ".pi", "settings.json");
+    const projectResult = readSettingsLayerForInstall(projectSettingsPath);
+    if (projectResult.kind === "held") return true;
+
+    // Both layers absent → no hold
+    if (profileResult.kind === "absent" && projectResult.kind === "absent") return false;
+
+    const defaultExtensions = readDefaultExtensions(
+      config.supportFilePaths.DEFAULT_EXTENSIONS_FILE,
+    );
+    const extension = defaultExtensions.find(
+      (entry) => entry.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID,
+    );
+    if (!extension) return false;
+
+    // Evaluate the gate independently of load opt-outs so that a filtered or
+    // marker-disabled selection cannot bypass the legacy-adapter hold that
+    // protects the bulk settings-wide `pi update --extensions` refresh.  Opt-out
+    // semantics (whether the adapter is installed/enabled) are preserved
+    // separately: marker-disabled adapters are excluded by `disabledIds` in the
+    // loop, and filter-disabled entries are never rewritten.
+
+    // Profile layer
+    if (profileResult.kind === "settings") {
+      const decision = evaluateMcpAdapterCutover(profileResult.value, extension, {
+        agentDir: config.agentDir,
+        homeDir: config.homeDir,
+        optedOut: false,
+        preserveOptOut: false,
+      });
+      if (decision.action === "hold") return true;
+    }
+
+    // Project layer: agentDir is <agentDir>/.pi so that the metadata lookup
+    // resolves to <agentDir>/.pi/npm/node_modules/<name>/package.json.
+    if (projectResult.kind === "settings") {
+      const decision = evaluateMcpAdapterCutover(projectResult.value, extension, {
+        agentDir: join(config.agentDir, ".pi"),
+        homeDir: config.homeDir,
+        optedOut: false,
+        preserveOptOut: false,
+      });
+      if (decision.action === "hold") return true;
+    }
+
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function spawnErrorCode(error: unknown): string | number | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
   return (error as NodeJS.ErrnoException).code;
@@ -66,6 +176,30 @@ function npmPinnedSpec(source: string): string | undefined {
   const version = spec.slice(separator + 1);
   if (!EXACT_NPM_VERSION_RE.test(version)) return undefined;
   return spec;
+}
+
+/** True when the pinned npm source is already installed at that exact version (Pi's launch check). */
+export function pinnedNpmInstallPresent(
+  config: { agentDir: string },
+  source: string,
+  io: Pick<NpmPreinstallIo, "verboseLog">,
+): boolean {
+  const spec = npmPinnedSpec(source);
+  if (!spec) return false;
+  const separator = spec.startsWith("@") ? spec.indexOf("@", 1) : spec.lastIndexOf("@");
+  const name = spec.slice(0, separator);
+  const version = spec.slice(separator + 1);
+  try {
+    const manifest = join(config.agentDir, "npm", "node_modules", name, "package.json");
+    const installed: unknown = JSON.parse(readFileSync(manifest, "utf8"));
+    if (!isJsonRecord(installed) || installed.version !== version) return false;
+  } catch {
+    return false;
+  }
+  io.verboseLog(
+    `Skipping pi install for ${source}: pinned version already present in the npm root.`,
+  );
+  return true;
 }
 
 function readNpmPreinstallSettings(
@@ -255,14 +389,14 @@ function promoteNpmStage(stagePath: string, npmRoot: string, io: NpmPreinstallIo
 export function preInstallNpmDefaultExtensions(
   config: NpmPreinstallConfig,
   io: NpmPreinstallIo,
-): void {
+): boolean {
   if (config.noSettings) {
     io.log("Skipping pinned npm default-extension pre-install (--no-settings).");
-    return;
+    return false;
   }
   if (truthyEnvironmentValue(config.env?.PI_OFFLINE)) {
     io.log("Skipping pinned npm default-extension pre-install (PI_OFFLINE is set).");
-    return;
+    return false;
   }
   if (
     !config.supportFilePaths.DEFAULT_EXTENSIONS_FILE ||
@@ -271,14 +405,14 @@ export function preInstallNpmDefaultExtensions(
     if (config.dryRun) {
       io.log("Would pre-install pinned npm default extensions after settings merge.");
     }
-    return;
+    return false;
   }
 
   const settingsExists = existsSync(config.settingsPath);
   const settings =
     settingsExists || !config.dryRun ? readNpmPreinstallSettings(config, io) : undefined;
-  if (settingsExists && !settings) return;
-  if (!settingsExists && !config.dryRun) return;
+  if (settingsExists && !settings) return false;
+  if (!settingsExists && !config.dryRun) return false;
 
   let defaultExtensions;
   try {
@@ -286,12 +420,31 @@ export function preInstallNpmDefaultExtensions(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.warn(`could not read bundled default extensions for npm pre-install: ${message}`);
-    return;
+    return false;
   }
 
   const disabledIds = settings
     ? disabledDefaultExtensionIds(settings, defaultExtensions)
     : new Set<string>();
+  const mcpExtension = defaultExtensions.find(
+    (extension) => extension.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID,
+  );
+  // Evaluate the gate independently of load opt-outs.  A filtered or
+  // marker-disabled selection must not allow the pre-install to bypass the
+  // held-identity exclusion that protects a cached legacy adapter.  Marker
+  // opt-out is still enforced below by the `disabledIds` skip in the loop;
+  // filter entries are never rewritten.
+  const mcpDecision =
+    settings && mcpExtension
+      ? evaluateMcpAdapterCutover(settings, mcpExtension, {
+          agentDir: config.agentDir,
+          homeDir: config.env.HOME || "",
+          optedOut: false,
+          preserveOptOut: false,
+        })
+      : undefined;
+  const heldMcpIdentities =
+    mcpDecision?.action === "hold" ? mcpAdapterPackageIdentities(mcpExtension) : new Set<string>();
   const configuredEntries = settings && Array.isArray(settings.packages) ? settings.packages : [];
   const configuredSources = configuredEntries
     .map(packageSourceOf)
@@ -305,6 +458,12 @@ export function preInstallNpmDefaultExtensions(
   const npmSpecs: string[] = [];
   for (const extension of defaultExtensions) {
     if (disabledIds.has(extension.id)) continue;
+    if (extension.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID && heldMcpIdentities.size > 0) {
+      io.log(
+        "Skipping held MCP adapter pre-install; the existing selection must remain unchanged.",
+      );
+      continue;
+    }
     const spec = npmPinnedSpec(extension.source);
     if (!spec) continue;
     const sourceMatches = configuredSources.some((source) => source === extension.source);
@@ -317,7 +476,7 @@ export function preInstallNpmDefaultExtensions(
 
   if (npmSpecs.length === 0) {
     io.verboseLog("No enabled pinned npm default extensions match merged settings.");
-    return;
+    return false;
   }
 
   const npmCommand = configuredPlainNpmCommand(settings || {});
@@ -325,7 +484,7 @@ export function preInstallNpmDefaultExtensions(
     io.log(
       "Skipping pinned npm default-extension pre-install because Pi's configured npmCommand is not plain npm.",
     );
-    return;
+    return false;
   }
 
   const npmRoot = join(config.agentDir, "npm");
@@ -334,13 +493,13 @@ export function preInstallNpmDefaultExtensions(
       io.verboseLog(
         `Skipping pinned npm default-extension pre-install because the npm root already exists (left untouched): ${npmRoot}`,
       );
-      return;
+      return false;
     }
   } catch (error) {
     io.warn(
       `could not inspect the npm root safely; skipping pinned npm default-extension pre-install: ${String(error)}`,
     );
-    return;
+    return false;
   }
 
   const displayStagePath = join(config.agentDir, `${NPM_PREINSTALL_STAGE_PREFIX}<fresh>`);
@@ -361,10 +520,11 @@ export function preInstallNpmDefaultExtensions(
     );
     io.runCommand(installArgs.map((arg) => (arg === "<staging-root>" ? displayStagePath : arg)));
     io.log(`Would atomically promote the successful staging root to ${npmRoot}.`);
-    return;
+    return false;
   }
 
   let stagePath: string | undefined;
+  let promoted = false;
   try {
     const stageParent = ensureNpmStageParent(config);
     stagePath = mkdtempSync(join(stageParent, NPM_PREINSTALL_STAGE_PREFIX));
@@ -386,7 +546,10 @@ export function preInstallNpmDefaultExtensions(
     ];
     io.runCommand(commandArgs);
     assertNpmStageDirectory(config, stagePath, "after npm install");
-    if (promoteNpmStage(stagePath, npmRoot, io)) stagePath = undefined;
+    if (promoteNpmStage(stagePath, npmRoot, io)) {
+      stagePath = undefined;
+      promoted = true;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.warn(
@@ -395,4 +558,5 @@ export function preInstallNpmDefaultExtensions(
   } finally {
     cleanupNpmStage(config, stagePath, io);
   }
+  return promoted;
 }

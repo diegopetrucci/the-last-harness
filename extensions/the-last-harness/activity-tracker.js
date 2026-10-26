@@ -1,9 +1,9 @@
+// Generated from extensions/the-last-harness/activity-tracker.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 import { isBundledSubagentRestoreProviderActive, resetBundledSubagentRestoreProvider, SUBAGENT_ASYNC_RESTORED_EVENT, } from "../shared/subagent-restore-contract.js";
-export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
@@ -55,6 +55,39 @@ function isAsyncControlContext(data, event) {
     const source = (readNonEmptyStringField(data, "source") ?? readNonEmptyStringField(event, "source"))?.toLowerCase();
     return source === "async" || source === "background";
 }
+function isAwaitedRecord(raw) {
+    if (raw.awaited === true)
+        return true;
+    const run = isRecord(raw.telemetry) ? raw.telemetry.run : undefined;
+    return isRecord(run) && run.execution === "foreground";
+}
+function readAsyncAgentNames(data) {
+    const valid = (value) => typeof value === "string" && value.trim().length > 0 ? [value.trim()] : [];
+    if (Array.isArray(data.agents) && data.agents.length > 0) {
+        const names = data.agents.flatMap(valid);
+        if (names.length > 0)
+            return names;
+    }
+    return valid(data.agent);
+}
+function deriveAgentEndErrorLine(messages) {
+    if (!Array.isArray(messages))
+        return undefined;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (!isRecord(message) || message.role !== "assistant")
+            continue;
+        if (typeof message.errorMessage !== "string")
+            return undefined;
+        for (const line of message.errorMessage.split(/\r\n|[\r\n\u2028\u2029]/)) {
+            const trimmed = line.trim();
+            if (trimmed.length > 0)
+                return trimmed;
+        }
+        return undefined;
+    }
+    return undefined;
+}
 function looksLikeRetryableAgentEnd(messages) {
     if (!Array.isArray(messages) || messages.length === 0) {
         return false;
@@ -68,6 +101,50 @@ function looksLikeRetryableAgentEnd(messages) {
     }
     return false;
 }
+function deriveAgentEndOutcome(messages) {
+    if (Array.isArray(messages)) {
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+            const message = messages[index];
+            if (!isRecord(message) || message.role !== "assistant") {
+                continue;
+            }
+            if (message.stopReason === "aborted")
+                return "aborted";
+            if (message.stopReason === "error" || typeof message.errorMessage === "string")
+                return "error";
+            return "completed";
+        }
+    }
+    return "completed";
+}
+function readStatusStepAgents(raw) {
+    if (!Array.isArray(raw.steps))
+        return [];
+    return raw.steps.flatMap((step) => {
+        if (!isRecord(step))
+            return [];
+        const agent = step.agent;
+        return typeof agent === "string" && agent.trim().length > 0 ? [agent.trim()] : [];
+    });
+}
+function readAsyncDirAwaited(asyncDir) {
+    try {
+        const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+        return isRecord(raw) && isAwaitedRecord(raw);
+    }
+    catch {
+        return false;
+    }
+}
+function readAsyncDirAgentNames(asyncDir) {
+    try {
+        const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+        return isRecord(raw) ? readStatusStepAgents(raw) : [];
+    }
+    catch {
+        return [];
+    }
+}
 function readRestorableAsyncJob(asyncDir) {
     const statusPath = path.join(asyncDir, "status.json");
     const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
@@ -80,10 +157,13 @@ function readRestorableAsyncJob(asyncDir) {
         return undefined;
     }
     const pid = toValidPid(raw.pid);
+    const agents = readStatusStepAgents(raw);
     return {
         runId: raw.runId,
         sessionId: raw.sessionId,
+        ...(agents.length > 0 ? { agents } : {}),
         ...(pid !== undefined ? { pid } : {}),
+        ...(isAwaitedRecord(raw) ? { awaited: true } : {}),
     };
 }
 export function createTlhEffectiveActivityTracker(options = {}) {
@@ -102,8 +182,15 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     const listeners = new Set();
     let disposed = false;
     let activeSessionId;
+    let runActive = false;
+    let pendingOutcome = undefined;
+    let lastRunOutcome = undefined;
+    let pendingErrorLine;
+    let lastRunErrorLine;
     let uiPromptDepth = 0;
-    let lastSnapshotKey = "0::0::::";
+    const uiPromptKindStack = [];
+    const uiPromptTitleStack = [];
+    let lastSnapshotKey = "0::0::0::::::";
     let livenessTimer;
     const stopLivenessTimer = () => {
         if (livenessTimer !== undefined) {
@@ -187,8 +274,12 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         const asyncDir = incomingAsyncDir ?? existingAsyncDir;
         const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
         const sessionId = incoming.sessionId ?? existing?.sessionId;
+        const agents = incoming.agents && incoming.agents.length > 0 ? incoming.agents : existing?.agents;
+        const awaited = incoming.awaited ?? existing?.awaited;
         return {
             source: incoming.source,
+            ...(awaited ? { awaited } : {}),
+            ...(agents && agents.length > 0 ? { agents } : {}),
             ...(asyncDir ? { asyncDir } : {}),
             ...(pid !== undefined ? { pid } : {}),
             ...(sessionId ? { sessionId } : {}),
@@ -225,6 +316,8 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             activeAsyncJobs.set(job.runId, {
                 source: job.source,
                 asyncDir: job.asyncDir,
+                ...(job.agents && job.agents.length > 0 ? { agents: [...job.agents] } : {}),
+                ...(job.awaited ? { awaited: true } : {}),
                 ...(job.sessionId ? { sessionId: job.sessionId } : {}),
                 ...(pid !== undefined ? { pid } : {}),
             });
@@ -302,17 +395,51 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         const sessionId = sessionManager?.getSessionFile?.() ?? sessionManager?.getSessionId?.();
         return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
     };
-    const buildSnapshot = () => ({
-        inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
-        waitingForUser: uiPromptDepth > 0,
-        primaryReasons: [...primaryReasons.keys()].sort(),
-        activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
-    });
+    const buildSnapshot = () => {
+        const waitingForUser = uiPromptDepth > 0;
+        const topKind = waitingForUser ? uiPromptKindStack[uiPromptKindStack.length - 1] : undefined;
+        const waitingForUserKind = topKind !== undefined ? topKind : undefined;
+        const waitingForUserTitle = waitingForUser
+            ? uiPromptTitleStack[uiPromptTitleStack.length - 1]
+            : undefined;
+        const compacting = [...primaryReasons.keys()].some((reason) => reason.startsWith("primary:compaction:"));
+        const activeAsyncJobAgents = {};
+        const awaitedAsyncJobIds = [];
+        for (const [runId, record] of [...activeAsyncJobs].sort(([a], [b]) => (a < b ? -1 : 1))) {
+            if (record.awaited)
+                awaitedAsyncJobIds.push(runId);
+            if (record.agents && record.agents.length > 0)
+                activeAsyncJobAgents[runId] = [...record.agents];
+        }
+        return {
+            inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+            waitingForUser,
+            ...(runActive ? { runActive: true } : {}),
+            ...(waitingForUserKind !== undefined ? { waitingForUserKind } : {}),
+            primaryReasons: [...primaryReasons.keys()].sort(),
+            activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
+            ...(lastRunOutcome !== undefined ? { lastRunOutcome } : {}),
+            ...(waitingForUserTitle !== undefined ? { waitingForUserTitle } : {}),
+            ...(compacting ? { compacting: true } : {}),
+            ...(lastRunOutcome === "error" && lastRunErrorLine !== undefined ? { lastRunErrorLine } : {}),
+            ...(Object.keys(activeAsyncJobAgents).length > 0 ? { activeAsyncJobAgents } : {}),
+            ...(awaitedAsyncJobIds.length > 0 ? { awaitedAsyncJobIds } : {}),
+        };
+    };
     const snapshotKey = (snapshot) => [
         snapshot.inProgress ? "1" : "0",
         snapshot.waitingForUser ? "1" : "0",
+        snapshot.runActive ? "1" : "0",
+        snapshot.waitingForUserKind ?? "",
         snapshot.primaryReasons.join(","),
         snapshot.activeAsyncJobIds.join(","),
+        Object.entries(snapshot.activeAsyncJobAgents ?? {})
+            .map(([runId, names]) => `${runId}=${names.join("+")}`)
+            .join(","),
+        (snapshot.awaitedAsyncJobIds ?? []).join(","),
+        snapshot.lastRunOutcome ?? "",
+        snapshot.waitingForUserTitle ?? "",
+        snapshot.lastRunErrorLine ?? "",
     ].join("::");
     const notifyIfChanged = () => {
         drainDeadAsyncJobs();
@@ -347,6 +474,11 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         },
         beginSession(ctx) {
             activeSessionId = currentSessionId(ctx.sessionManager);
+            runActive = false;
+            pendingOutcome = undefined;
+            lastRunOutcome = undefined;
+            pendingErrorLine = undefined;
+            lastRunErrorLine = undefined;
         },
         rehydrateFromArtifacts(ctx) {
             if (disposed)
@@ -378,6 +510,8 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                             asyncDir: candidateAsyncDir,
                             sessionId: status.sessionId,
                             ...(status.pid !== undefined ? { pid: status.pid } : {}),
+                            ...(status.agents ? { agents: status.agents } : {}),
+                            ...(status.awaited ? { awaited: true } : {}),
                             source: "rehydrated",
                         });
                     }
@@ -396,17 +530,26 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             activeAsyncJobs.clear();
             recentlyCompletedAsyncJobs.clear();
             activeSessionId = undefined;
+            runActive = false;
+            pendingOutcome = undefined;
+            lastRunOutcome = undefined;
+            pendingErrorLine = undefined;
+            lastRunErrorLine = undefined;
             uiPromptDepth = 0;
+            uiPromptKindStack.length = 0;
+            uiPromptTitleStack.length = 0;
             notifyIfChanged();
             listeners.clear();
         },
         handleBeforeAgentStart() {
             clearRetryGrace();
+            runActive = true;
             addPrimaryReason("primary:pending-start");
             notifyIfChanged();
         },
         handleAgentStart() {
             clearRetryGrace();
+            runActive = true;
             removePrimaryReason("primary:pending-start");
             addPrimaryReason("primary:agent-loop");
             notifyIfChanged();
@@ -414,9 +557,26 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         handleAgentEnd(event) {
             removePrimaryReason("primary:agent-loop");
             removePrimaryReason("primary:pending-start");
+            pendingOutcome = deriveAgentEndOutcome(Array.isArray(event.messages) ? event.messages : undefined);
+            pendingErrorLine = deriveAgentEndErrorLine(Array.isArray(event.messages) ? event.messages : undefined);
             if (looksLikeRetryableAgentEnd(event.messages)) {
                 scheduleRetryGrace("agent-end");
             }
+            notifyIfChanged();
+        },
+        handleAgentSettled(event = { aborted: false }) {
+            if (event.aborted) {
+                lastRunOutcome = "aborted";
+                lastRunErrorLine = undefined;
+            }
+            else if (pendingOutcome !== undefined) {
+                lastRunOutcome = pendingOutcome;
+                lastRunErrorLine = pendingOutcome === "error" ? pendingErrorLine : undefined;
+            }
+            pendingOutcome = undefined;
+            pendingErrorLine = undefined;
+            runActive = false;
+            clearRetryGrace();
             notifyIfChanged();
         },
         handleTurnStart() {
@@ -451,16 +611,33 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
             notifyIfChanged();
         },
-        handleUIPromptStart() {
+        handleUIPromptStart(event) {
             if (disposed)
                 return;
             uiPromptDepth += 1;
+            const kind = event?.kind;
+            const recordedKind = kind === "select" ||
+                kind === "confirm" ||
+                kind === "input" ||
+                kind === "editor" ||
+                kind === "custom"
+                ? kind
+                : undefined;
+            uiPromptKindStack.push(recordedKind);
+            const title = typeof event?.title === "string" ? event.title.trim() : "";
+            uiPromptTitleStack.push(title.length > 0 ? title : undefined);
             notifyIfChanged();
         },
-        handleUIPromptEnd() {
+        handleUIPromptEnd(_event) {
             if (uiPromptDepth === 0)
                 return;
             uiPromptDepth -= 1;
+            uiPromptKindStack.pop();
+            uiPromptTitleStack.pop();
+            if (uiPromptDepth === 0) {
+                uiPromptTitleStack.length = 0;
+                uiPromptKindStack.length = 0;
+            }
             notifyIfChanged();
         },
         handleAsyncRestored(data) {
@@ -479,11 +656,15 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                 if (!runId || !asyncDir || sessionId !== activeSessionId)
                     continue;
                 const pid = toValidPid(candidate.pid);
+                const agents = readAsyncDirAgentNames(asyncDir);
+                const awaited = readAsyncDirAwaited(asyncDir);
                 restoredJobs.push({
                     runId,
                     asyncDir,
                     sessionId,
                     ...(pid !== undefined ? { pid } : {}),
+                    ...(agents.length > 0 ? { agents } : {}),
+                    ...(awaited ? { awaited: true } : {}),
                     source: "restored",
                 });
             }
@@ -504,6 +685,11 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             const pid = toValidPid(data.pid);
             if (pid !== undefined)
                 record.pid = pid;
+            const agents = readAsyncAgentNames(data);
+            if (agents.length > 0)
+                record.agents = agents;
+            if (isAwaitedRecord(data))
+                record.awaited = true;
             setAsyncJobActive(data.id, record);
             notifyIfChanged();
         },
@@ -557,7 +743,12 @@ export function registerTlhEffectiveActivityTracker(pi, options = {}) {
         ]
         : [];
     if (pi.events) {
+        let lastBusKey = "";
         tracker.subscribe((snapshot) => {
+            const busKey = `${snapshot.inProgress ? "1" : "0"}:${snapshot.waitingForUser ? "1" : "0"}:${snapshot.activeAsyncJobIds.join(",")}`;
+            if (busKey === lastBusKey)
+                return;
+            lastBusKey = busKey;
             try {
                 pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
                     inProgress: snapshot.inProgress,
@@ -585,6 +776,9 @@ export function registerTlhEffectiveActivityTracker(pi, options = {}) {
     });
     pi.on("agent_end", (event) => {
         tracker.handleAgentEnd(event);
+    });
+    pi.on("agent_settled", (event) => {
+        tracker.handleAgentSettled(event);
     });
     pi.on("turn_start", () => {
         tracker.handleTurnStart();

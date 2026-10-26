@@ -49,6 +49,7 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
     const pathNotice = `warning: ${runtimePiPath} installed but ${runtimeBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${runtimeBinDir}:$PATH"`;
     const refreshDetailPattern =
       /Running settings-wide extension refresh from merged settings; fallback retries only 7 non-critical bundled default source\(s\) individually\./;
+    const defaultCountPattern = /Installing bundled default extensions \(8\)\.\.\./;
 
     assert.equal(result.status, 0, output);
     assert.deepEqual(
@@ -60,9 +61,11 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
     if (verbose) {
       assert.ok(output.includes(pathNotice), output);
       assert.match(output, refreshDetailPattern);
+      assert.match(output, defaultCountPattern);
     } else {
       assert.equal(output.includes(pathNotice), false, output);
       assert.doesNotMatch(output, refreshDetailPattern);
+      assert.doesNotMatch(output, defaultCountPattern);
     }
   }
 });

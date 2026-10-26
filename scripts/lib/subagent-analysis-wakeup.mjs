@@ -1,3 +1,4 @@
+// Generated from scripts/lib/subagent-analysis-wakeup.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createHash } from "node:crypto";
 import { BACKGROUND_COMPLETION_NUDGE, CONTROL_NOTICE_NUDGE, SUBAGENT_ACTIONS, SUBAGENT_CONTROL_TYPE, SUBAGENT_NOTIFY_TYPE, TARGETING_ACTIONS, controlSourceKey, hasOwn, isCompletionBatchCandidate, isLegacyCompletionText, isLegacyControlText, isObject, MAX_COMPLETION_BATCH_STATES, parseCompletionBatchDetails, parseDirectSubagentControlEvent, parseLegacyUsage, parseNormalizedTelemetry, parseSubagentControlEvent, parsedCallOperation, safeMetadataString, safeOpaqueRunId, safeRunId, syntheticNudgeKind, } from "./subagent-analysis-parser.mjs";
 import { tupleKey } from "./subagent-analysis-keys.mjs";
@@ -73,9 +74,19 @@ function abandonPendingSource(context, state) {
     context.counters.wakeupsMissingNudge++;
     state.pendingSource = undefined;
 }
+/** Only a literal boolean `true` marks a native wake; anything else is legacy. */
+function detailsTriggerTurn(details) {
+    return details?.triggersTurn === true;
+}
 function registerSource(context, state, source) {
-    if (state.pendingSource)
-        abandonPendingSource(context, state);
+    if (state.pendingSource) {
+        // A replaced native source is not a missing nudge: its message never
+        // reached the assistant turn as the run starter.
+        if (state.pendingSource.native)
+            context.counters.supersededSources++;
+        else
+            context.counters.wakeupsMissingNudge++;
+    }
     state.pendingSource = source;
 }
 function detailsIndicateAsync(details) {
@@ -228,6 +239,10 @@ function revokeWakeup(context, registration) {
         return;
     context.wakeups.splice(recordIndex, 1);
     context.counters.wakeupsObserved--;
+    if (registration.origin === "native")
+        context.counters.nativeWakeupsObserved--;
+    else
+        context.counters.legacyWakeupsObserved--;
     if (!registration.finalized)
         return;
     if (registration.record.attributed)
@@ -451,6 +466,7 @@ function processCompletionBatchNotification(context, state, scanResult, entryInd
             runIds: new Set(),
             sawFinalChunk: false,
             sawFinalTrigger: false,
+            triggerNative: false,
             invalid: false,
             structurallyInvalid: false,
             mixedLegacy: false,
@@ -512,6 +528,7 @@ function processCompletionBatchNotification(context, state, scanResult, entryInd
         }
         else {
             batch.sawFinalTrigger = true;
+            batch.triggerNative = parsed.nativeWakeMode;
         }
     }
     for (const completion of parsed.completions)
@@ -536,6 +553,10 @@ function processCompletionBatchNotification(context, state, scanResult, entryInd
                 key: wakeSourceKey,
                 runIds: [...new Set(flushMembers.flatMap((member) => [...member.runIds]))],
                 nudgeKind: "completion",
+                // Native only when the triggering final chunk has `triggersTurn: true`
+                // and the exact `wakeMode: "native"` marker; pre-marker batches meant
+                // "a nudge follows" and keep the legacy nudge rules.
+                native: batch.triggerNative,
             });
             for (const member of flushMembers) {
                 member.wakeSourceKey = wakeSourceKey;
@@ -597,12 +618,18 @@ function processCompletionNotification(context, state, scanResult, entryIndex, m
     const duplicate = context.seenCompletionSources.has(sourceKey);
     context.seenCompletionSources.add(sourceKey);
     const completionEvidenceValid = telemetry !== undefined || (statusValid && details.agent !== undefined && agentValid);
-    if (!duplicate && completionEvidenceValid && sourceExecution !== "foreground") {
+    // An explicit `triggersTurn: false` is a known non-waking message (steered or
+    // lifecycle flush): it never registers or displaces a wake source.
+    if (!duplicate &&
+        completionEvidenceValid &&
+        sourceExecution !== "foreground" &&
+        details.triggersTurn !== false) {
         registerSource(context, state, {
             kind: "completion",
             key: sourceKey,
             runIds: runId ? [runId] : [],
             nudgeKind: "completion",
+            native: detailsTriggerTurn(details),
         });
     }
 }
@@ -618,12 +645,14 @@ function processControlNotification(context, state, scanResult, entryIndex, mess
         context.counters.malformedControlDetails++;
         if (message.legacyNotification === "control" || isLegacyControlText(message.content)) {
             context.counters.legacyProseNotifications++;
-            registerSource(context, state, {
-                kind: "control",
-                key: tupleKey("control", scanResult.filePath, entryIndex),
-                runIds: [],
-                nudgeKind: "control",
-            });
+            // An explicit `triggersTurn: false` still never displaces a wake source.
+            if (details?.triggersTurn !== false)
+                registerSource(context, state, {
+                    kind: "control",
+                    key: tupleKey("control", scanResult.filePath, entryIndex),
+                    runIds: [],
+                    nudgeKind: "control",
+                });
         }
         return;
     }
@@ -635,29 +664,25 @@ function processControlNotification(context, state, scanResult, entryIndex, mess
     const sourceKey = controlSourceKey(parsed.event, parsed.runId);
     const duplicate = context.seenControlSources.has(sourceKey);
     context.seenControlSources.add(sourceKey);
-    if (effectiveSource !== "foreground" && !duplicate) {
+    if (effectiveSource !== "foreground" && !duplicate && details?.triggersTurn !== false) {
         registerSource(context, state, {
             kind: "control",
             key: sourceKey,
             runIds: [parsed.runId],
             nudgeKind: "control",
+            native: detailsTriggerTurn(details),
         });
     }
 }
-function handleNudge(context, state, nudgeKind) {
-    if (state.activeWake) {
-        finishWakeup(context, state.activeWake, "ambiguous-next-turn");
-        state.activeWake = undefined;
-    }
-    if (!state.pendingSource) {
-        context.counters.unmatchedNudges++;
-        return;
-    }
-    const source = state.pendingSource;
-    state.pendingSource = undefined;
+function startWake(context, state, source, origin) {
     context.counters.wakeupsObserved++;
+    if (origin === "native")
+        context.counters.nativeWakeupsObserved++;
+    else
+        context.counters.legacyWakeupsObserved++;
     const registration = {
         record: makeWakeupRecord(source, false, undefined, null, emptyManagementCalls()),
+        origin,
         finalized: false,
     };
     context.wakeups.push(registration.record);
@@ -670,7 +695,20 @@ function handleNudge(context, state, nudgeKind) {
             batch.wakeupRegistration = registration;
     }
     state.activeWake = { source: { ...source }, registration };
-    if (source.nudgeKind !== nudgeKind) {
+}
+function handleNudge(context, state, nudgeKind) {
+    if (state.activeWake) {
+        finishWakeup(context, state.activeWake, "ambiguous-next-turn");
+        state.activeWake = undefined;
+    }
+    if (!state.pendingSource) {
+        context.counters.unmatchedNudges++;
+        return;
+    }
+    const source = state.pendingSource;
+    state.pendingSource = undefined;
+    startWake(context, state, source, "legacy");
+    if (source.nudgeKind !== nudgeKind && state.activeWake) {
         finishWakeup(context, state.activeWake, "mismatched-nudge");
         state.activeWake = undefined;
     }
@@ -680,10 +718,27 @@ function processOrdinaryUserMessage(context, state) {
         finishWakeup(context, state.activeWake, "interrupted-by-human-input");
         state.activeWake = undefined;
     }
+    if (state.pendingSource?.native) {
+        // A native wake run was started by the custom message, then the human
+        // interrupted it before any assistant turn.
+        startWake(context, state, state.pendingSource, "native");
+        state.pendingSource = undefined;
+        if (state.activeWake)
+            finishWakeup(context, state.activeWake, "interrupted-by-human-input");
+        state.activeWake = undefined;
+        return;
+    }
     if (state.pendingSource)
         abandonPendingSource(context, state);
 }
 function processAssistantMessage(context, state, message) {
+    if (state.pendingSource?.native && !state.activeWake) {
+        // Nudge-less wake: the turn-triggering custom message directly precedes
+        // this assistant turn. Earlier native-eligible sources were flushed or
+        // superseded by it.
+        startWake(context, state, state.pendingSource, "native");
+        state.pendingSource = undefined;
+    }
     if (state.activeWake) {
         const usage = assistantUsage(message);
         const runIds = new Set(state.activeWake.source.runIds);
@@ -751,13 +806,23 @@ export function analyzeWakeupsForScan(scanResult, context) {
         .filter((pair) => pair.toolName === "subagent")
         .map((pair) => pair.toolCallId));
     for (let entryIndex = 0; entryIndex < scanResult.entries.length; entryIndex++) {
+        context.setCurrentEntryIndex(entryIndex);
         processWakeupEntry(context, state, scanResult, entryIndex, pairedSubagentCallIds);
     }
+    context.setCurrentEntryIndex(undefined);
     if (state.activeWake) {
         finishWakeup(context, state.activeWake, "missing-assistant-turn");
         state.activeWake = undefined;
     }
-    if (state.pendingSource)
+    if (state.pendingSource?.native) {
+        // Native source with the run still in flight or never persisted.
+        startWake(context, state, state.pendingSource, "native");
+        state.pendingSource = undefined;
+        if (state.activeWake)
+            finishWakeup(context, state.activeWake, "missing-assistant-turn");
+        state.activeWake = undefined;
+    }
+    else
         abandonPendingSource(context, state);
     for (const batch of state.completionBatches.values())
         finalizeCompletionBatch(context, batch);

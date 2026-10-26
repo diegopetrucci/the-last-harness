@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, } from "node:fs";
+// Generated from scripts/tlh-wrapper.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
+import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -118,10 +119,22 @@ function wrapperPath(args) {
 function assertNotNormalPiPath(path, label) {
     assertNotInNormalPiConfig(path, `refusing to modify normal Pi config from The Last Harness wrapper command (${label}): ${path}`);
 }
-function wrapperIsManaged(path, marker = DEFAULT_MARKER) {
-    if (!existsSync(path))
-        return false;
+/** True when anything exists at path, including dangling symlinks (lstat, never follows). */
+function entryExists(path) {
     try {
+        lstatSync(path);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/** Follows symlinks: a live link to a managed wrapper is managed; dangling/non-file entries are not. */
+function wrapperIsManaged(path, marker = DEFAULT_MARKER) {
+    try {
+        // Never open FIFOs/devices (or symlinks to them): reading could block forever.
+        if (!statSync(path).isFile())
+            return false;
         const line = readFileSync(path, "utf8").split(/\r?\n/)[2] || "";
         return line === `# ${marker}`;
     }
@@ -373,7 +386,19 @@ function renderWrapper(args) {
         "tlh_package_sessions_script_is_usable() {",
         '  tlh_package_script_is_usable "${default_tlh_package_root}/scripts/tlh-sessions.mjs"',
         "}",
+        "tlh_package_version_script_is_usable() {",
+        '  tlh_package_script_is_usable "${default_tlh_package_root}/scripts/tlh-version.mjs"',
+        "}",
+        "tlh_package_mcp_adapter_guard_is_usable() {",
+        '  local tlh_guard_script="${default_tlh_package_root}/scripts/lib/mcp-adapter-cutover.mjs"',
+        '  local tlh_default_extensions="${default_tlh_package_root}/config/default-extensions.json"',
+        '  [[ -f "${tlh_guard_script}" && -f "${tlh_default_extensions}" ]] || return 1',
+        '  tlh_package_script_is_usable "${tlh_guard_script}"',
+        "}",
         'export PI_CODING_AGENT_DIR="${default_agent_dir}"',
+        // Pre-disable upstream Pi's native OSC 7501 emitter (see GitHub issue #748;
+        // available since Pi 1.1.0) so it cannot fight TLH's root-record reporter.
+        'export PI_PROGRAM_STATUS="${PI_PROGRAM_STATUS:-0}"',
         "",
         'if [[ "${1:-}" == "update" ]]; then',
         "  shift",
@@ -445,6 +470,31 @@ function renderWrapper(args) {
         '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-sessions.mjs" --agent-dir "${default_agent_dir}" "$@"',
         "fi",
         "",
+        'if [[ "${1:-}" == "version" ]]; then',
+        "  shift",
+        "  if ! tlh_package_version_script_is_usable; then",
+        "    printf 'error: tlh version package support files are missing or corrupt; run `tlh update` to recover.\\n' >&2",
+        "    exit 1",
+        "  fi",
+        "  tlh_resolve_node",
+        '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-version.mjs" --agent-dir "${default_agent_dir}" --package-root "${default_tlh_package_root}" --pi-cmd "${default_pi_cmd}" "$@"',
+        "fi",
+        "",
+        "tlh_mcp_adapter_guard_required=1",
+        'case "${1:-}" in',
+        "  --version|-v|install|remove|uninstall|list|mcp) tlh_mcp_adapter_guard_required=0 ;;",
+        "esac",
+        'if [[ "${tlh_mcp_adapter_guard_required}" == "1" ]]; then',
+        "  if ! tlh_package_mcp_adapter_guard_is_usable; then",
+        "    printf 'error: tlh MCP adapter startup guard support files are missing or corrupt; run `tlh update` to recover.\\n' >&2",
+        "    exit 1",
+        "  fi",
+        "  tlh_resolve_node",
+        '  if ! PATH="${tlh_sanitized_path}" "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/lib/mcp-adapter-cutover.mjs" --startup-guard --agent-dir "${default_agent_dir}" --defaults "${default_tlh_package_root}/config/default-extensions.json" --cwd "${tlh_wrapper_cwd_physical}"; then',
+        "    exit 1",
+        "  fi",
+        "fi",
+        "",
         // Validate the private pinned runtime and exec it.  No global PATH search:
         // default_pi_cmd is always the absolute private runtime binary.
         'if [[ -z "${default_pi_cmd}" ]]; then',
@@ -470,12 +520,12 @@ function renderWrapper(args) {
     return `${lines.join("\n")}\n`;
 }
 function dryRun(args, path) {
-    if (existsSync(path) && !wrapperIsManaged(path) && !args.force) {
+    if (entryExists(path) && !wrapperIsManaged(path) && !args.force) {
         warn(`would not overwrite unmanaged existing wrapper: ${path}`);
         return;
     }
     printCommand(["mkdir", "-p", args.binDir]);
-    if (existsSync(path)) {
+    if (entryExists(path)) {
         log(args, `Would overwrite wrapper: ${path}`);
     }
     else {
@@ -483,13 +533,16 @@ function dryRun(args, path) {
     }
 }
 function writeWrapper(args, path) {
-    if (existsSync(path) && !wrapperIsManaged(path) && !args.force) {
+    if (entryExists(path) && !wrapperIsManaged(path) && !args.force) {
         throw new Error(`${path} already exists and is not managed by this installer; use --force or --bin-dir`);
     }
     mkdirSync(args.binDir, { recursive: true });
     const tmpPath = `${path}.tmp.${process.pid}`;
     try {
-        writeFileSync(tmpPath, renderWrapper(args), "utf8");
+        // Drop any pre-existing entry at the temp path (a symlink is removed, not followed),
+        // then create exclusively so a racing symlink can never redirect the write.
+        rmSync(tmpPath, { force: true });
+        writeFileSync(tmpPath, renderWrapper(args), { encoding: "utf8", flag: "wx", mode: 0o755 });
         chmodSync(tmpPath, 0o755);
         renameSync(tmpPath, path);
     }
@@ -540,4 +593,4 @@ if (isMainModule()) {
         process.exitCode = 1;
     }
 }
-export { DEFAULT_MARKER, parseArgs, renderWrapper, usage, validateArgs, wrapperPath };
+export { DEFAULT_MARKER, parseArgs, renderWrapper, usage, validateArgs, wrapperPath, writeWrapper };

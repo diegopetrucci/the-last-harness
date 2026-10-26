@@ -4,17 +4,13 @@ import {
   findValidatedGitWorktree,
   type ValidatedGitWorktreeSearch,
 } from "./project-agent-worktree.js";
-import {
-  getAgentDir,
-  ProjectTrustStore,
-  type ProjectTrustDecision,
-} from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore, type ProjectTrustDecision } from "@earendil-works/pi-coding-agent";
 
-export { resolveValidatedGitWorktreeRoot } from "./project-agent-worktree.js";
+export { isCanonicalPackagedMinorAgent } from "./project-agent-provenance.js";
 
 /** Maximum UTF-8 bytes accepted from one project-agent guidance file. */
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
-export const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
+const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
 const PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY = "agents";
 const PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY = "builtin";
 
@@ -113,8 +109,8 @@ export interface ProjectAgentGuidanceResult {
   inventory: ProjectAgentGuidanceInventory;
 }
 
-export const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
-export const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
+const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
+const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
 
 function errorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
@@ -880,38 +876,6 @@ function addSkippedSourceDiagnostic(
 }
 
 /**
- * Return whether an agent config is the installer-managed TLH minor-agent file.
- *
- * The loader intentionally reports copied TLH prompts as `source: "user"`, so
- * source metadata cannot establish first-party provenance. Require both the
- * exact unqualified packaged role and the exact profile-relative path instead;
- * this keeps same-name user/project/package/extra agents out while allowing
- * settings overrides to clone the canonical config without losing provenance.
- */
-export function isCanonicalPackagedMinorAgent(agent: unknown): boolean {
-  if (typeof agent !== "object" || agent === null || Array.isArray(agent)) return false;
-  const candidate = agent as { name?: unknown; filePath?: unknown };
-  if (typeof candidate.name !== "string" || typeof candidate.filePath !== "string") return false;
-
-  const role = PACKAGED_MINOR_AGENT_ROLES.find((packagedRole) => packagedRole === candidate.name);
-  if (!role) return false;
-
-  let canonicalPath: string;
-  try {
-    canonicalPath = resolve(getAgentDir(), "tlh", "agents", "subagents", `${role}.md`);
-    return resolve(candidate.filePath) === canonicalPath;
-  } catch {
-    return false;
-  }
-}
-
-/** Map one exact packaged role id to its required uppercase guidance filename. */
-export function projectAgentGuidanceFilename(role: unknown): string | undefined {
-  if (typeof role !== "string" || !Object.hasOwn(ROLE_FILENAMES, role)) return undefined;
-  return ROLE_FILENAMES[role as ProjectAgentGuidanceRole];
-}
-
-/**
  * Build one safe, read-bounded inventory for all packaged roles. Unknown and
  * embedded role names are intentionally absent from this inventory.
  */
@@ -1014,19 +978,6 @@ export function resolveProjectAgentGuidanceFromInventory(
   return file?.content === undefined
     ? { role, inventory }
     : { role, guidance: file.content, sourcePath: file.path, inventory };
-}
-
-/**
- * Resolve one packaged role and retain the complete inventory for callers that
- * need to report all recognized files and diagnostics once.
- */
-export function resolveProjectAgentGuidance(
-  cwdInput: unknown,
-  agentDirInput: unknown,
-  roleInput: unknown,
-): ProjectAgentGuidanceResult {
-  const inventory = inventoryProjectAgentGuidance(cwdInput, agentDirInput);
-  return resolveProjectAgentGuidanceFromInventory(inventory, roleInput);
 }
 
 function encodeProjectGuidanceSourceLabel(value: string): string {

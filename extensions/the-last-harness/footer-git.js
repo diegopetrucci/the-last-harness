@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/footer-git.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const BRANCH_HEAD_PREFIX = "# branch.head ";
 const BRANCH_UPSTREAM_PREFIX = "# branch.upstream ";
 const BRANCH_AB_PREFIX = "# branch.ab ";

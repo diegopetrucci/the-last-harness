@@ -1,3 +1,4 @@
+// Generated from extensions/annotate-git-diff/watch.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { watch } from "node:fs";
 const DEFAULT_DEBOUNCE_MS = 2000;
 const ignoredPathSegments = new Set([
@@ -82,6 +83,3 @@ export function createRepoChangeWatcher(repoRoot, onChange, options = {}) {
         },
     };
 }
-export const __testing = {
-    isIgnoredWatchPath,
-};

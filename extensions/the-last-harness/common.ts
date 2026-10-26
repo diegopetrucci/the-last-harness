@@ -147,3 +147,18 @@ export function formatCompactTokenCount(count: number): string {
   }
   return `${Math.round(count / 1000000)}M`;
 }
+
+export function createRetryableLazyImport<TModule>(
+  loader: () => Promise<TModule>,
+): () => Promise<TModule> {
+  let modulePromise: Promise<TModule> | undefined;
+  return () => {
+    if (!modulePromise) {
+      modulePromise = loader().catch((error) => {
+        modulePromise = undefined;
+        throw error;
+      });
+    }
+    return modulePromise;
+  };
+}

@@ -1,3 +1,4 @@
+// Generated from extensions/shared/project-agent-worktree.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 const DEFAULT_FILE_SYSTEM = {
@@ -222,7 +223,3 @@ export function resolveValidatedGitWorktreeRoot(cwdInput, options = {}) {
         return undefined;
     return strictCanonicalPath(search.root, fileSystem);
 }
-export const __testing = {
-    findValidatedGitWorktreeRootAt,
-    inspectGitWorktreeMarker,
-};

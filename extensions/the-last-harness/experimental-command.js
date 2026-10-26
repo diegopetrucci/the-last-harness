@@ -1,6 +1,8 @@
+// Generated from extensions/the-last-harness/experimental-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { availableExperimentalFeatureList, EXPERIMENTAL_COMMAND_HELP, getExperimentalFeature, getTlhExperimentalConfig, hasRegisteredExperimentalFeatures, isTlhExperimentalFeatureEnabled, noExperimentalFeaturesMessage, normalizeEnabledFeatures, parseExperimentalSlashAction, TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, TLH_EXPERIMENTAL_FEATURES, unknownExperimentalFeatureMessage, } from "./experimental.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
 function validateTlhExperimentalSettings(settings) {
     if (!isRecord(settings)) {
         throw new Error("settings.json must contain a JSON object");
@@ -21,14 +23,6 @@ function validateTlhExperimentalSettings(settings) {
         enabledFeatures.some((feature) => typeof feature !== "string")) {
         throw new Error("settings field 'tlh.experimental.enabledFeatures' must contain only strings");
     }
-}
-function parseTlhSettingsContent(content) {
-    if (!content) {
-        return {};
-    }
-    const parsed = JSON.parse(content);
-    validateTlhExperimentalSettings(parsed);
-    return parsed;
 }
 function ensureMutableExperimentalSettings(settings) {
     validateTlhExperimentalSettings(settings);
@@ -143,6 +137,7 @@ function writeExperimentalFeaturePreference(cwd, featureId, action) {
     }
     return withLockedTlhSettingsWrite(cwd, "Refusing to write experimental settings outside the isolated TLH profile.", (current) => {
         const settings = parseTlhSettingsContent(current);
+        validateTlhExperimentalSettings(settings);
         const currentEnabledFeatures = normalizeEnabledFeatures(settings.tlh?.experimental?.enabledFeatures);
         const currentEnabled = currentEnabledFeatures.includes(feature.id);
         const enabled = nextEnabledState(currentEnabled, action);

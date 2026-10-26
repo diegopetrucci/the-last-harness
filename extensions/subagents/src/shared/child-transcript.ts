@@ -11,7 +11,7 @@ const MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES = 64 * 1024;
 const MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS = 32 * 1024;
 const CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER = " … [truncated for child transcript storage]";
 
-type ChildTranscriptSource = "foreground" | "async";
+type ChildTranscriptSource = "async";
 type ChildTranscriptRecordType =
   | "message"
   | "tool_start"

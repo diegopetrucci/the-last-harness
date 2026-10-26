@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { createRetryableLazyImport } from "./common.js";
 import type {
   TlhSubscriptionUsageSnapshot,
   TlhSubscriptionUsageSnapshotProvider,
@@ -13,29 +14,25 @@ type TlhSubscriptionUsageServiceLike = TlhSubscriptionUsageSnapshotProvider & {
   ): Promise<TlhSubscriptionUsageSnapshot | undefined>;
 };
 
-function createRetryableLazyImport<TModule>(
-  loader: () => Promise<TModule>,
-): () => Promise<TModule> {
-  let modulePromise: Promise<TModule> | undefined;
-  return () => {
-    if (!modulePromise) {
-      modulePromise = loader().catch((error) => {
-        modulePromise = undefined;
-        throw error;
-      });
-    }
-    return modulePromise;
-  };
-}
-
 class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotProvider {
   private readonly loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
   private service: TlhSubscriptionUsageServiceLike | undefined;
   private servicePromise: Promise<TlhSubscriptionUsageServiceLike> | undefined;
-  private readonly requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();
+  private currentFooterRender: (() => void) | undefined;
+  private usageChangeListener: (() => void) | undefined;
 
-  registerFooterRenderRequest(ctx: ExtensionContext, requestRender: () => void): void {
-    this.requestFooterRenderByContext.set(ctx, requestRender);
+  registerFooterRenderRequest(requestRender: () => void): void {
+    this.currentFooterRender = requestRender;
+  }
+
+  clearFooterRenderRequest(): void {
+    this.currentFooterRender = undefined;
+  }
+
+  // Separate from the footer render callback so non-TUI hosts (RPC) can observe
+  // usage changes without a footer component.
+  setUsageChangeListener(listener: (() => void) | undefined): void {
+    this.usageChangeListener = listener;
   }
 
   getSnapshot(provider?: string): TlhSubscriptionUsageSnapshot | undefined {
@@ -71,7 +68,8 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
           nextProviderSnapshot !== previousProviderSnapshot ||
           nextProviderEligible !== previousProviderEligible
         ) {
-          this.requestFooterRenderByContext.get(ctx)?.();
+          this.currentFooterRender?.();
+          this.usageChangeListener?.();
         }
       })
       .catch(() => undefined);

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/parallel-utils.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 20;
 export class Semaphore {
     available;

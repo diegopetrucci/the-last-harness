@@ -14,7 +14,7 @@ import {
   type AsyncRunSummary,
 } from "../../src/runs/background/async-status.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
-import { formatForegroundNativeSubagentResult } from "../../src/shared/result-formatting.ts";
+import { formatAwaitedNativeSubagentResult } from "../../src/shared/result-formatting.ts";
 
 const unsafe = "visible \x1b[31mred\x1b[0m\x07tail";
 
@@ -134,11 +134,11 @@ describe("background display boundaries", () => {
   });
 });
 
-describe("immediate foreground diagnostics", () => {
+describe("immediate awaited diagnostics", () => {
   it("preserves binary placeholders in multiline native summaries", () => {
     const binary = "\x01\x02A".repeat(30) + "\x00";
-    const result = formatForegroundNativeSubagentResult({
-      runId: "foreground-binary-display",
+    const result = formatAwaitedNativeSubagentResult({
+      runId: "awaited-binary-display",
       mode: "single",
       children: [
         {
@@ -162,8 +162,8 @@ describe("immediate foreground diagnostics", () => {
       index: 0,
       artifactPath: `/tmp/${unsafe}.log`,
     };
-    const result = formatForegroundNativeSubagentResult({
-      runId: "foreground-display",
+    const result = formatAwaitedNativeSubagentResult({
+      runId: "awaited-display",
       mode: "single",
       children: [child],
     });

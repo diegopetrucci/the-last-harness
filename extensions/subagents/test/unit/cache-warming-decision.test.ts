@@ -13,6 +13,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import { handleCacheWarmingDecision } from "../../src/extension/cache-warming-decision.ts";
 import type { AsyncJobState, SubagentState } from "../../src/shared/types.ts";
 import type { CacheWarmingDecisionEvent, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -75,24 +76,13 @@ function makeJobsMap(
 function makeState(
   overrides: Partial<Pick<SubagentState, "currentSessionId" | "asyncJobs">> = {},
 ): SubagentState {
-  return {
+  return makeSubagentState({
     baseCwd: "/tmp",
     currentSessionId: SESSION_FILE,
     subagentInProgress: false,
     asyncJobs: makeJobsMap([["job-1", "running"]]),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
     ...overrides,
-  };
+  });
 }
 
 // Session file used as the "matching" session identity in all tests.

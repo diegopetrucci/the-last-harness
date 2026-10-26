@@ -5,9 +5,9 @@
  * This exercises all three collapsed/expanded routes:
  *   - collapsed single job  → compactSingleWidgetLines
  *   - collapsed multi-job   → widgetParallelAgentDetails
- *   - expanded              → foregroundStyleWidgetStepLines (original wired path)
+ *   - expanded              → awaitedStyleWidgetStepLines (original wired path)
  *
- * Secondary tests cover the foreground renderSubagentResult paths.
+ * Secondary tests cover the awaited renderSubagentResult paths.
  *
  * For each context: absent case, five content cases, and narrow-terminal wrapping.
  */
@@ -21,6 +21,7 @@ import {
   parsePersistedChildLocationSnapshot,
   type ChildLocationSnapshot,
 } from "../../src/shared/child-location.ts";
+import { withStdoutSize } from "../support/render-widget-fixtures.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal theme (no ANSI escape sequences so assertions are on plain text)
@@ -273,10 +274,10 @@ describe("child-location widget parallel", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Foreground compact: single result
+// Awaited compact: single result
 // ---------------------------------------------------------------------------
 
-describe("child-location foreground compact single", () => {
+describe("child-location awaited compact single", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(makeToolResult(loc), { expanded: false }, theme as any);
     return component.render(width).join("\n");
@@ -330,10 +331,10 @@ describe("child-location foreground compact single", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Foreground compact: parallel results
+// Awaited compact: parallel results
 // ---------------------------------------------------------------------------
 
-describe("child-location foreground compact multi", () => {
+describe("child-location awaited compact multi", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(
       makeToolResult(loc, "parallel"),
@@ -377,10 +378,10 @@ describe("child-location foreground compact multi", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Foreground expanded: single result
+// Awaited expanded: single result
 // ---------------------------------------------------------------------------
 
-describe("child-location foreground expanded single", () => {
+describe("child-location awaited expanded single", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(makeToolResult(loc), { expanded: true }, theme as any);
     return component.render(width).join("\n");
@@ -418,10 +419,10 @@ describe("child-location foreground expanded single", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Foreground expanded: parallel results
+// Awaited expanded: parallel results
 // ---------------------------------------------------------------------------
 
-describe("child-location foreground expanded multi", () => {
+describe("child-location awaited expanded multi", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(
       makeToolResult(loc, "parallel"),
@@ -639,7 +640,7 @@ describe("child-location ordering", () => {
 // These test the three routing paths inside buildWidgetComponent:
 //   1. collapsed single job  → compactSingleWidgetLines compact loop
 //   2. collapsed multi-job   → widgetParallelAgentDetails
-//   3. expanded              → foregroundStyleWidgetStepLines
+//   3. expanded              → awaitedStyleWidgetStepLines
 //
 // The compact loop in compactSingleWidgetLines only triggers when
 // buildSingleWidgetLines produces > 10 lines for a parallel-mode single job.
@@ -672,40 +673,6 @@ function makeManyStepJob(
     })),
     stepsTotal: stepCount,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Terminal-dimension pinning helpers
-//
-// Mirrors the pattern in tests/integration/render-widget.test.ts (lines 120-144).
-// process.stdout.rows may be a getter on a TTY, so we must restore the original
-// property descriptor rather than writing back a plain value.
-// ---------------------------------------------------------------------------
-
-function restoreDescriptor(
-  target: NodeJS.WriteStream,
-  key: string,
-  descriptor: PropertyDescriptor | undefined,
-): void {
-  if (descriptor) {
-    Object.defineProperty(target, key, descriptor);
-    return;
-  }
-  Reflect.deleteProperty(target, key);
-}
-
-function withStdoutSize<T>(rows: number, columns: number, fn: () => T): T {
-  const stdout = process.stdout as NodeJS.WriteStream & { rows?: number; columns?: number };
-  const rowsDescriptor = Object.getOwnPropertyDescriptor(stdout, "rows");
-  const columnsDescriptor = Object.getOwnPropertyDescriptor(stdout, "columns");
-  Object.defineProperty(stdout, "rows", { configurable: true, value: rows });
-  Object.defineProperty(stdout, "columns", { configurable: true, value: columns });
-  try {
-    return fn();
-  } finally {
-    restoreDescriptor(stdout, "rows", rowsDescriptor);
-    restoreDescriptor(stdout, "columns", columnsDescriptor);
-  }
 }
 
 /**
@@ -833,7 +800,7 @@ describe("buildWidgetComponent — collapsed multi-job (widgetParallelAgentDetai
   });
 });
 
-describe("buildWidgetComponent — expanded (foregroundStyleWidgetStepLines)", () => {
+describe("buildWidgetComponent — expanded (awaitedStyleWidgetStepLines)", () => {
   beforeEach(() => {
     resetWidgetLayoutSession();
   });
@@ -1032,19 +999,15 @@ describe("childLocationLine — newline in displayPath", () => {
 // ---------------------------------------------------------------------------
 
 describe("childLocation boundary validation — render safety", () => {
-  it("passing a non-string displayPath directly to the renderer throws (demonstrating the threat)", () => {
-    // This confirms the vulnerability: if a malformed object bypasses the
-    // boundary validator and reaches the renderer, safeTerminalText will call
-    // string methods on a non-string and throw.
-    // Use JSON.parse for a single any-typed assertion, avoiding a chained
-    // `as unknown as T` which the linter rejects.
+  it("omits location text when displayPath is not a string", () => {
     const malformedLoc = JSON.parse(
       JSON.stringify({ childCwd: "/repo", displayPath: {} }),
     ) as ChildLocationSnapshot;
-    assert.throws(
-      () => buildWidgetLines([makeJob(malformedLoc)], theme as any, 120, false),
-      "renderer must throw when displayPath is not a string",
-    );
+    let lines: string[] = [];
+    assert.doesNotThrow(() => {
+      lines = buildWidgetLines([makeJob(malformedLoc)], theme as any, 120, false);
+    });
+    assert.ok(lines.every((line) => !line.includes("cwd:")));
   });
 
   it("boundary validator rejects malformed displayPath and renderer receives undefined", () => {

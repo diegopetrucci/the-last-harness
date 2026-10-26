@@ -20,14 +20,24 @@ import { createInterface } from "node:readline";
 import { pairToolCalls } from "../../extensions/the-last-harness/tool-pairing.js";
 import type { ToolPair } from "../../extensions/the-last-harness/tool-pairing.js";
 import {
+  BACKGROUND_COMPLETION_NUDGE,
+  CONTROL_NOTICE_NUDGE,
   isCompletionBatchCandidate,
   MAX_COMPLETION_BATCH_COUNT,
   MAX_COMPLETION_CHUNK_ENTRIES,
   MAX_COMPLETION_BATCH_ID_LENGTH,
   projectCompletionBatchFlushFields,
+  SUBAGENT_ACTIONS,
   SUBAGENT_COMPLETION_BATCH_KIND,
   SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
+  SUBAGENT_CONTROL_TYPE,
+  SUBAGENT_NOTIFY_TYPE,
 } from "./subagent-analysis-parser.mjs";
+import {
+  ACCEPTANCE_STATUSES,
+  OUTCOME_STATES,
+  TERMINATION_REASONS,
+} from "./subagent-analysis-validation.mjs";
 import type { CorrelationEvidenceRescanFailureReason } from "./session-analysis-coverage.mjs";
 
 // ---------------------------------------------------------------------------
@@ -203,53 +213,7 @@ const MAX_NOTIFICATION_TEXT_LENGTH = 4096;
 const MAX_OPAQUE_ID_LENGTH = 512;
 const MAX_CORRELATION_TRACKED_IDS = 4096;
 const MAX_CORRELATION_OCCURRENCES_PER_ID = 128;
-const BACKGROUND_COMPLETION_NUDGE = "[tlh] Background subagent completed — see notification above.";
-const CONTROL_NOTICE_NUDGE = "[tlh] Subagent run needs attention — see notice above.";
-const SUBAGENT_NOTIFY_TYPE = "subagent-notify";
-const SUBAGENT_CONTROL_TYPE = "subagent_control_notice";
-const SUBAGENT_ACTIONS = new Set([
-  "list",
-  "get",
-  "status",
-  "interrupt",
-  "resume",
-  "steer",
-  "doctor",
-]);
-const TELEMETRY_OUTCOME_STATES = new Set([
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "paused",
-  "cancelled",
-  "continued",
-]);
-const TELEMETRY_TERMINATION_REASONS = new Set([
-  "completed",
-  "output_limit",
-  "model_error",
-  "interrupted",
-  "timed_out",
-  "tool_budget_blocked",
-  "paused",
-  "cancelled",
-  "process_exit",
-  "context_exhausted",
-  "unknown",
-]);
-const TELEMETRY_ACCEPTANCE_STATUSES = new Set([
-  "not-required",
-  "claimed",
-  "attested",
-  "checked",
-  "verified",
-  "reviewed",
-  "accepted",
-  "rejected",
-  "skipped",
-]);
-const LEGACY_OUTCOME_STATES = new Set([...TELEMETRY_OUTCOME_STATES, "complete"]);
+const LEGACY_OUTCOME_STATES = new Set([...OUTCOME_STATES, "complete"]);
 // Include values from persisted pre-telemetry/control-channel records. The
 // supervisor reasons are retained as bounded labels when they appear on a
 // control event; they are not display text.
@@ -438,21 +402,17 @@ function projectTelemetryOutcome(value: unknown): {
   invalid: boolean;
 } {
   if (!isObject(value)) return { invalid: true };
-  const state = projectAllowedStringFields(value, ["state"], TELEMETRY_OUTCOME_STATES);
-  const termination = projectAllowedStringFields(
-    value,
-    ["terminationReason"],
-    TELEMETRY_TERMINATION_REASONS,
-  );
+  const state = projectAllowedStringFields(value, ["state"], OUTCOME_STATES);
+  const termination = projectAllowedStringFields(value, ["terminationReason"], TERMINATION_REASONS);
   const acceptanceStatus = projectAllowedStringFields(
     value,
     ["acceptanceStatus"],
-    TELEMETRY_ACCEPTANCE_STATUSES,
+    ACCEPTANCE_STATUSES,
   );
   const booleans = projectBooleanFields(value, ["timedOut", "interrupted", "success"]);
   const numbers = projectFiniteFields(value, ["exitCode"], { nonNegative: false });
   const acceptance = isObject(value.acceptance)
-    ? projectAllowedStringFields(value.acceptance, ["status"], TELEMETRY_ACCEPTANCE_STATUSES)
+    ? projectAllowedStringFields(value.acceptance, ["status"], ACCEPTANCE_STATUSES)
     : { value: {}, invalid: hasOwn(value, "acceptance") };
   return {
     value: {
@@ -817,15 +777,11 @@ function projectLegacyChild(value: unknown): { value?: Record<string, unknown>; 
   }
   invalid = projectLegacyModelFields(value, result) || invalid;
   const states = projectAllowedStringFields(value, ["status", "state"], LEGACY_OUTCOME_STATES);
-  const termination = projectAllowedStringFields(
-    value,
-    ["terminationReason"],
-    TELEMETRY_TERMINATION_REASONS,
-  );
+  const termination = projectAllowedStringFields(value, ["terminationReason"], TERMINATION_REASONS);
   const acceptanceStatus = projectAllowedStringFields(
     value,
     ["acceptanceStatus"],
-    TELEMETRY_ACCEPTANCE_STATUSES,
+    ACCEPTANCE_STATUSES,
   );
   Object.assign(result, states.value, termination.value, acceptanceStatus.value);
   if (states.invalid || termination.invalid || acceptanceStatus.invalid) invalid = true;
@@ -844,7 +800,7 @@ function projectLegacyChild(value: unknown): { value?: Record<string, unknown>; 
       const acceptance = projectAllowedStringFields(
         value.acceptance,
         ["status"],
-        TELEMETRY_ACCEPTANCE_STATUSES,
+        ACCEPTANCE_STATUSES,
       );
       result.acceptance = acceptance.value;
       if (acceptance.invalid) invalid = true;
@@ -911,15 +867,11 @@ function projectSubagentDetails(
   invalid = projectLegacyModelFields(value, result) || invalid;
   const agent = projectStringFields(value, ["agent"], { metadata: true });
   const states = projectAllowedStringFields(value, ["status", "state"], LEGACY_OUTCOME_STATES);
-  const termination = projectAllowedStringFields(
-    value,
-    ["terminationReason"],
-    TELEMETRY_TERMINATION_REASONS,
-  );
+  const termination = projectAllowedStringFields(value, ["terminationReason"], TERMINATION_REASONS);
   const acceptanceStatus = projectAllowedStringFields(
     value,
     ["acceptanceStatus"],
-    TELEMETRY_ACCEPTANCE_STATUSES,
+    ACCEPTANCE_STATUSES,
   );
   Object.assign(result, agent.value, states.value, termination.value, acceptanceStatus.value);
   if (agent.invalid || states.invalid || termination.invalid || acceptanceStatus.invalid)
@@ -934,12 +886,14 @@ function projectSubagentDetails(
   const booleans = projectBooleanFields(value, ["timedOut", "interrupted", "success"]);
   Object.assign(result, booleans.value);
   if (booleans.invalid) invalid = true;
+  // Native wake flag: only a literal boolean is retained; anything else reads as absent.
+  if (typeof value.triggersTurn === "boolean") result.triggersTurn = value.triggersTurn;
   if (hasOwn(value, "acceptance")) {
     if (isObject(value.acceptance)) {
       const acceptance = projectAllowedStringFields(
         value.acceptance,
         ["status"],
-        TELEMETRY_ACCEPTANCE_STATUSES,
+        ACCEPTANCE_STATUSES,
       );
       result.acceptance = acceptance.value;
       if (acceptance.invalid) invalid = true;
@@ -1043,6 +997,7 @@ function projectCompletionBatchDetails(value: unknown): Record<string, unknown> 
   else invalid = true;
   if (typeof value.triggersTurn === "boolean") result.triggersTurn = value.triggersTurn;
   else invalid = true;
+  if (value.wakeMode === "native") result.wakeMode = "native"; // exact marker only
 
   if (!Array.isArray(value.completions)) {
     invalid = true;
@@ -1454,8 +1409,7 @@ function projectionGapCountForMessage(
  * - Throws immediately if the resolved path is `run-history.jsonl`.
  */
 export async function scanSessionFile(filePath: string): Promise<SessionScanResult> {
-  // Fix 1: reject run-history.jsonl at the public API boundary as well, so
-  // any direct caller gets a clear error even if readJsonlLines is bypassed.
+  // Reject run-history.jsonl here so a direct caller still fails if readJsonlLines is bypassed.
   assertNotRunHistory(filePath);
 
   const sizeBefore = safeFileSize(filePath);
@@ -1567,7 +1521,7 @@ export async function scanSessionFile(filePath: string): Promise<SessionScanResu
  * Throws immediately if the resolved path is `run-history.jsonl`.
  */
 export async function readSessionHeader(filePath: string): Promise<SessionHeader | null> {
-  // Fix 1: also guard the header-only reader.
+  // Reject run-history.jsonl on the header-only reader as well.
   assertNotRunHistory(filePath);
 
   for await (const parsed of readJsonlLines(filePath)) {
@@ -1963,12 +1917,6 @@ export async function extractSubagentCorrelationsWithStatus(
   }
   return { correlations, failureReasons };
 }
-export async function extractSubagentCorrelations(
-  scanResult: SessionScanResult,
-  sessionsDir?: string,
-): Promise<SubagentCorrelation[]> {
-  return (await extractSubagentCorrelationsWithStatus(scanResult, sessionsDir)).correlations;
-}
 // ---------------------------------------------------------------------------
 export {
   aggregateCoverage,
@@ -1980,7 +1928,7 @@ export type {
   ExtraCoverageData,
   ScanCoverage,
 } from "./session-analysis-coverage.mjs";
-export { analyzeSubagentSessions, analyzeSubagents } from "./subagent-analysis.mjs";
+export { analyzeSubagentSessions } from "./subagent-analysis.mjs";
 export type {
   SubagentAggregate,
   SubagentAggregateMap,

@@ -1,3 +1,4 @@
+// Generated from extensions/annotate-git-diff/ui.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";

@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 
+import { tempFixture, runMerge, readJson } from "./support/merge-settings-fixtures.mjs";
+
 const _tmpDirs = [];
 after(() => {
   for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
@@ -36,45 +38,6 @@ const retiredUpstreamRtkPackage = "npm:pi-rtk";
 const retiredSherifNpmRtkPackage = "npm:@sherif-fanous/pi-rtk";
 const retiredSherifGitRtkPackage = "git:github.com/sherif-fanous/pi-rtk@v0.5.0";
 const changelogSentinel = "9999.0.0";
-
-function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
-  const dir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-test-"));
-  _tmpDirs.push(dir);
-  const defaults = join(dir, "settings.defaults.json");
-  const extensions = join(dir, "default-extensions.json");
-  const settings = join(dir, "settings.json");
-  writeFileSync(defaults, JSON.stringify(defaultsValue, null, 2));
-  writeFileSync(extensions, `${JSON.stringify(extensionsValue, null, 2)}\n`);
-  writeFileSync(settings, JSON.stringify(settingsValue, null, 2));
-  return { defaults, extensions, settings };
-}
-
-function runMerge(
-  fixture,
-  { dryRun = false, force = false, quiet = true, packageSource = "", env = process.env } = {},
-) {
-  const args = [
-    mergeScript,
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    fixture.extensions,
-  ];
-  if (packageSource) args.push("--package-source", packageSource);
-  if (dryRun) args.push("--dry-run");
-  if (force) args.push("--force");
-  if (quiet) args.push("--quiet");
-  return execFileSync(process.execPath, args, {
-    cwd: repoRoot,
-    env,
-    encoding: "utf8",
-  });
-}
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
-}
 
 function writePackageManifest(packageDir, value) {
   mkdirSync(packageDir, { recursive: true });
@@ -655,6 +618,60 @@ test("merge replaces the harness package when a slash ref keeps the same git ide
   assert.deepEqual(readJson(fixture.settings).packages, [branchHarnessPackage]);
 });
 
+test("merge preserves pinned and branch sources when the package source is omitted", () => {
+  for (const source of [`${harnessPackage}@v0.45.0`, branchHarnessPackage]) {
+    const fixture = tempFixture(
+      { packages: [harnessPackage], quietStartup: true },
+      {
+        packages: [
+          {
+            source,
+            extensions: ["keep"],
+            customField: { preserve: true },
+          },
+        ],
+      },
+    );
+
+    runMerge(fixture);
+
+    assert.deepEqual(readJson(fixture.settings).packages, [
+      {
+        source,
+        extensions: ["keep"],
+        customField: { preserve: true },
+      },
+    ]);
+    assert.equal(readJson(fixture.settings).quietStartup, true);
+  }
+});
+
+test("merge keeps source-object filters during an explicit harness source migration", () => {
+  const pinnedSource = `${harnessPackage}@v0.45.0`;
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [
+        {
+          source: pinnedSource,
+          extensions: ["keep"],
+          customField: { preserve: true },
+        },
+      ],
+    },
+  );
+
+  runMerge(fixture, { packageSource: branchHarnessPackage });
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
+    {
+      source: branchHarnessPackage,
+      extensions: ["keep"],
+      customField: { preserve: true },
+    },
+  ]);
+});
+
 test("merge dedupes duplicate harness entries when rerun with a branch package source", () => {
   const fixture = tempFixture(
     { packages: [] },
@@ -677,7 +694,7 @@ test("merge dedupes duplicate harness entries when rerun with a branch package s
   ]);
 });
 
-test("merge dedupes duplicate harness entries when rerun from main", () => {
+test("merge dedupes duplicate harness entries without switching the selected source", () => {
   const fixture = tempFixture(
     { packages: [] },
     {
@@ -693,7 +710,7 @@ test("merge dedupes duplicate harness entries when rerun from main", () => {
   runMerge(fixture);
 
   assert.deepEqual(readJson(fixture.settings).packages, [
-    harnessPackage,
+    branchHarnessPackage,
     "npm:unrelated-package@1.0.0",
     "npm:unrelated-package",
   ]);
@@ -745,7 +762,41 @@ test("omitting the package source preserves a confirmed local TLH registration",
       extensions: ["keep"],
       customField: { preserve: true },
     },
+  ]);
+});
+
+test("omitting the package source preserves mixed canonical and local TLH registrations", () => {
+  const fixture = tempFixture(
+    { packages: [harnessPackage] },
+    {
+      packages: [
+        harnessPackage,
+        {
+          source: "./local-tlh",
+          extensions: ["keep"],
+          customField: { preserve: true },
+        },
+      ],
+    },
+  );
+  writePackageManifest(join(dirname(fixture.settings), "local-tlh"), {
+    name: "the-last-harness",
+  });
+
+  const beforeDryRun = readFileSync(fixture.settings, "utf8");
+  const dryRunOutput = runMerge(fixture, { dryRun: true, quiet: false });
+  assert.doesNotMatch(dryRunOutput, /remove canonical TLH package superseded by local source/);
+  assert.equal(readFileSync(fixture.settings, "utf8"), beforeDryRun);
+
+  runMerge(fixture);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
     harnessPackage,
+    {
+      source: "./local-tlh",
+      extensions: ["keep"],
+      customField: { preserve: true },
+    },
   ]);
 });
 
@@ -1652,83 +1703,93 @@ test("merge removes TLH-managed subagents from a modern profile where provenance
   );
 });
 
-// ── quiet-tools stale opt-out pruner tests ────────────────────────────────
+// ── mandatory quiet-tools critical-default migration tests ─────────────────
 
-test("merge prunes quiet-tools from tlh.disabledDefaultExtensions and emits a changes line", () => {
+const mandatoryQuietTools = {
+  id: "quiet-tools",
+  aliases: ["compact-bash"],
+  replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+  migrateReplacements: true,
+  critical: true,
+  source: "npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+};
+
+test("merge restores mandatory quiet-tools and removes canonical opt-outs while preserving unrelated ones", () => {
   const fixture = tempFixture(
     { packages: [] },
     {
       packages: [harnessPackage],
       tlh: { disabledDefaultExtensions: ["quiet-tools", "notify"] },
     },
+    [mandatoryQuietTools],
   );
 
   const output = runMerge(fixture, { quiet: false });
   const settings = readJson(fixture.settings);
 
-  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("quiet-tools"),
-    false,
-    "stale quiet-tools opt-out must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
+  assert.match(output, /remove invalid critical default extension opt-out/);
+  assert.deepEqual(settings.packages, [harnessPackage, mandatoryQuietTools.source]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"]);
 });
 
-test("merge prunes compact-bash (legacy alias) from tlh.disabledDefaultExtensions and emits a changes line", () => {
+test("merge treats compact-bash as the mandatory quiet-tools alias", () => {
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage],
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-compact-bash@0.1.5"],
       tlh: { disabledDefaultExtensions: ["compact-bash", "notify"] },
     },
+    [mandatoryQuietTools],
   );
 
   const output = runMerge(fixture, { quiet: false });
   const settings = readJson(fixture.settings);
 
-  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("compact-bash"),
-    false,
-    "stale compact-bash opt-out must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
+  assert.match(output, /remove invalid critical default extension opt-out/);
+  assert.deepEqual(settings.packages, [harnessPackage, mandatoryQuietTools.source]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"]);
 });
 
-test("merge prunes both quiet-tools and compact-bash together while preserving unrelated entries", () => {
+test("merge enforces quiet-tools loading on filtered objects while preserving metadata and idempotence", () => {
+  const filteredCanonical = {
+    source: "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
+    extensions: [],
+    resources: ["README.md"],
+    userMetadata: { preserve: true },
+  };
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage],
+      packages: [
+        harnessPackage,
+        filteredCanonical,
+        "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+        "npm:unrelated@1.0.0",
+      ],
       tlh: { disabledDefaultExtensions: ["quiet-tools", "compact-bash", "notify"] },
     },
+    [mandatoryQuietTools],
   );
 
   const output = runMerge(fixture, { quiet: false });
   const settings = readJson(fixture.settings);
 
-  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some(
-      (v) => v === "quiet-tools" || v === "compact-bash",
-    ),
-    false,
-    "stale quiet-tools and compact-bash opt-outs must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
+  assert.match(output, /remove invalid critical default extension opt-out/);
+  assert.deepEqual(settings.packages, [
+    harnessPackage,
+    {
+      source: mandatoryQuietTools.source,
+      resources: ["README.md"],
+      userMetadata: { preserve: true },
+    },
+    "npm:unrelated@1.0.0",
+  ]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"]);
+
+  const afterFirst = readFileSync(fixture.settings, "utf8");
+  const secondOutput = runMerge(fixture, { quiet: false });
+  assert.match(secondOutput, /No settings changes needed\./);
+  assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst);
 });
 
 test("merge subagents retirement cleanup is idempotent after first run", () => {

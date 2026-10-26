@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/frontmatter.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/string-utils.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function sliceSafe(value, end) {
     const sliced = value.slice(0, end);
     const last = sliced.charCodeAt(sliced.length - 1);
@@ -9,14 +10,4 @@ export function truncateWithMarker(value, maxChars, marker) {
     if (marker.length >= maxChars)
         return sliceSafe(marker, maxChars);
     return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
-}
-const REJECTION_REASON_MAX_LENGTH = 200;
-function normalizeRejectionReason(reason) {
-    return reason
-        .replace(/[\r\n\t\v\f]+/g, " ")
-        .replace(/ {2,}/g, " ")
-        .trim();
-}
-export function formatRejectionReason(reason) {
-    return truncateWithMarker(normalizeRejectionReason(reason), REJECTION_REASON_MAX_LENGTH, "\u2026");
 }

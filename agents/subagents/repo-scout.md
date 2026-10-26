@@ -7,18 +7,16 @@ tlhModelDefaults:
     models: [gpt-5.6-luna]
     effort: medium
   - provider: anthropic
-    models: [claude-sonnet-4-6]
+    models: [claude-haiku-5-5]
     effort: medium
   - provider: xai
     models: [grok-4.3]
     effort: medium
   - provider: openrouter
     effort: high
-toolBudget: {"soft":20,"hard":30}
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-acceptanceRole: read-only
 ---
 You are the TLH repo scout. Your job is to quickly inspect the current repository and return a concise, evidence-backed report so the architect and developer avoid wrong-stack assumptions.
 

@@ -201,59 +201,14 @@ Explore the codebase
     );
     const diagnostic = discovered.agentDiagnostics?.find((entry) => entry.filePath === filePath);
     assert.ok(diagnostic);
+    assert.equal(diagnostic.kind, undefined);
     assert.match(diagnostic.error, /maxExecutionTimeMs/);
   });
 });
 
-describe("agent acceptance-role frontmatter", () => {
-  it("parses and validates acceptance roles", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-acceptance-role-"));
-    tempDirs.push(dir);
-    const filePath = path.join(canonicalAgentDir(dir), "code-reviewer.md");
-    writeAgent(
-      filePath,
-      `---
-name: code-reviewer
-description: Explorer
-acceptanceRole: read-only
----
-
-Explore the codebase
-`,
-    );
-
-    const explorer = discoverAgents(dir, "project").agents.find(
-      (agent) => agent.name === "code-reviewer",
-    );
-    assert.equal(explorer?.acceptanceRole, "read-only");
-    assert.equal(explorer?.extraFields?.acceptanceRole, undefined);
-
-    writeAgent(
-      filePath,
-      `---
-name: code-reviewer
-description: Explorer
-acceptanceRole: observer
----
-
-Explore the codebase
-`,
-    );
-    const discovered = discoverAgentsAll(dir);
-    assert.equal(
-      discovered.user.some((agent) => agent.name === "code-reviewer"),
-      false,
-      "malformed agent must be skipped",
-    );
-    const diagnostic = discovered.agentDiagnostics?.find((entry) => entry.filePath === filePath);
-    assert.ok(diagnostic);
-    assert.match(diagnostic.error, /acceptanceRole/);
-  });
-});
-
 describe("agent frontmatter malformed-file isolation", () => {
-  it("skips malformed toolBudget while retaining valid peers and a diagnostic", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-tool-budget-invalid-"));
+  it("skips malformed execution settings while retaining valid peers and a diagnostic", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-execution-invalid-"));
     tempDirs.push(dir);
     const agentsDir = canonicalAgentDir(dir);
     writeAgent(
@@ -261,7 +216,7 @@ describe("agent frontmatter malformed-file isolation", () => {
       `---
 name: developer
 description: Broken
-toolBudget: {not-json
+supervisorBridge: maybe
 ---
 
 Broken
@@ -289,68 +244,7 @@ Valid
     );
     assert.ok(diagnostic);
     assert.match(diagnostic.error, /developer/);
-    assert.match(diagnostic.error, /toolBudget/);
-  });
-
-  it("skips semantically invalid toolBudgets while retaining normalized valid peers", () => {
-    const dir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "pi-subagents-agent-tool-budget-semantic-invalid-"),
-    );
-    tempDirs.push(dir);
-    const agentsDir = canonicalAgentDir(dir);
-    const invalidBudgets: Array<{
-      name: string;
-      config: Record<string, unknown>;
-      field: string;
-    }> = [
-      { name: "developer", config: { hard: 0 }, field: "hard" },
-      { name: "code-reviewer", config: { soft: 5, hard: 4 }, field: "soft" },
-      { name: "repo-scout", config: { hard: 4, block: [] }, field: "block" },
-    ];
-    for (const { name, config } of invalidBudgets) {
-      writeAgent(
-        path.join(agentsDir, `${name}.md`),
-        `---
-name: ${name}
-description: Invalid ${name}
-toolBudget: ${JSON.stringify(config)}
----
-
-Invalid ${name}
-`,
-      );
-    }
-    writeAgent(
-      path.join(agentsDir, "diff-summarizer.md"),
-      `---
-name: diff-summarizer
-description: Valid normalized budget
-toolBudget: ${JSON.stringify({ soft: 2, hard: 4, block: [" read ", "read", "write"] })}
----
-
-Valid budget
-`,
-    );
-
-    const result = discoverAgentsAll(dir);
-    const valid = result.user.find((agent) => agent.name === "diff-summarizer");
-    assert.deepEqual(valid?.toolBudget, {
-      soft: 2,
-      hard: 4,
-      block: ["read", "write"],
-    });
-    for (const { name, field } of invalidBudgets) {
-      assert.equal(
-        result.user.some((agent) => agent.name === name),
-        false,
-        `invalid ${name} agent must be skipped`,
-      );
-      const diagnostic = result.agentDiagnostics?.find((entry) =>
-        entry.filePath.endsWith(`${name}.md`),
-      );
-      assert.ok(diagnostic);
-      assert.match(diagnostic.error, new RegExp(`toolBudget\\.${field}`));
-    }
+    assert.match(diagnostic.error, /supervisorBridge/);
   });
 
   it("silently skips README.md and empty frontmatter files", () => {
@@ -1065,36 +959,7 @@ Named tools field.
   });
 });
 
-describe("agent frontmatter completionGuard", () => {
-  it("loads test-runner completionGuard false with bash and generic MCP tools", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-completion-guard-"));
-    tempDirs.push(dir);
-    const agentsDir = canonicalAgentDir(dir);
-    fs.mkdirSync(agentsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(agentsDir, "test-runner.md"),
-      `---
-name: test-runner
-description: Test runner
-tools: bash, mcp
-completionGuard: false
-supervisorBridge: false
----
-
-Validate changes without edits.
-`,
-      "utf-8",
-    );
-
-    const result = discoverAgents(dir, "project");
-    const runner = result.agents.find((agent) => agent.name === "test-runner");
-    assert.equal(runner?.completionGuard, false);
-    assert.equal(runner?.supervisorBridge, false);
-    assert.deepEqual(runner?.tools, ["bash", "mcp"]);
-    assert.equal(runner?.extraFields?.completionGuard, undefined);
-    assert.equal(runner?.extraFields?.supervisorBridge, undefined);
-  });
-
+describe("agent frontmatter supervisorBridge", () => {
   it("preserves omitted supervisorBridge as the default behavior and rejects invalid values", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-supervisor-bridge-"));
     tempDirs.push(dir);

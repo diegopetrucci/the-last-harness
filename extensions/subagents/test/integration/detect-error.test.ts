@@ -13,7 +13,6 @@ type DetectSubagentError = (messages: unknown[]) => DetectErrorResult;
 const { detectSubagentError } = (await import("../../src/shared/utils.ts")) as {
   detectSubagentError: DetectSubagentError;
 };
-const available = true;
 
 /**
  * Helper to create a tool result message (success or error).
@@ -49,7 +48,7 @@ function assistantToolCall(toolName: string): Record<string, unknown> {
   };
 }
 
-describe("detectSubagentError", { skip: !available ? "utils not importable" : undefined }, () => {
+describe("detectSubagentError", () => {
   // ---- Basic detection (must still work) ----
 
   it("returns no error for empty messages", () => {

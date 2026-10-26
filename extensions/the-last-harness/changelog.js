@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/changelog.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { readFileSync } from "node:fs";
 import { DynamicBorder, getMarkdownTheme, } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Text, matchesKey } from "@earendil-works/pi-tui";

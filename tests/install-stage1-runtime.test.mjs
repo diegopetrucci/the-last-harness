@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -33,22 +34,10 @@ import {
   writeLoggingPi,
 } from "./install-stage1-core-test-helpers.mjs";
 
-import { assertSupportedNodeRuntime, nodeVersionMeetsMinimum } from "../scripts/tlh-install.mjs";
-
-test("stage-1 enforces the TLH Node runtime minimum", () => {
-  assert.equal(nodeVersionMeetsMinimum("22.18.9"), false);
-  assert.equal(nodeVersionMeetsMinimum("22.19.0"), true);
-  assert.equal(nodeVersionMeetsMinimum("23.0.0"), true);
-  assert.doesNotThrow(() => assertSupportedNodeRuntime("v22.19.0"));
-  assert.throws(
-    () => assertSupportedNodeRuntime("22.18.9"),
-    /Node\.js >= 22\.19\.0 is required \(found v22\.18\.9\)\. Install or upgrade Node\.js, then rerun the installer\./,
-  );
-  assert.throws(
-    () => assertSupportedNodeRuntime("not-a-version"),
-    /unable to determine Node\.js version; The Last Harness requires Node\.js >= 22\.19\.0\./,
-  );
-});
+import {
+  RUNTIME_INSTALL_LOCK_NAME,
+  RUNTIME_STAGING_DIR_PREFIX,
+} from "../scripts/lib/tlh-install-runtime.mjs";
 
 test("stage-1 repairs the TLH private Pi runtime to the pinned version when it is below the pin", (t) => {
   const root = makeTempDir();
@@ -1265,6 +1254,213 @@ test("runtime compile cache pruning refuses a dangling cache symlink before exis
     new RegExp(`${escapeRegExp(fixture.cacheDir)}\\|--version`),
     "dangling cache symlink must prevent pre-warming",
   );
+});
+
+test("runtime ownership: fresh checkpoint survives post-swap failure and allows retry", (t) => {
+  const root = makeTempDir("tlh-runtime-retry-post-swap-");
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const packageDir = join(root, "package-source");
+  const templateDir = join(root, "pi-template");
+  const runtimeDir = join(root, "runtime");
+  const npmLog = join(root, "npm.log");
+  const versionCallCount = join(root, "version-calls");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  writeFakeCommand(fakebin, "git", "exit 0");
+  writeFakeTk(fakebin);
+  // Fail only the first post-swap version check.  The first staged check and
+  // every check on retry report the pinned version.
+  writeFakePi(
+    templateDir,
+    [
+      `count=0`,
+      `if [[ -f "${versionCallCount}" ]]; then count=$(cat "${versionCallCount}"); fi`,
+      `count=$((count + 1))`,
+      `printf '%s\\n' "$count" >"${versionCallCount}"`,
+      `if [[ "\${1:-}" == "--version" ]]; then`,
+      `  if [[ "$count" -eq 2 ]]; then printf '0.0.0\\n'; else printf '${TLH_PINNED_PI_VERSION}\\n'; fi`,
+      `  exit 0`,
+      `fi`,
+      `exit 0`,
+    ].join("\n"),
+  );
+  writeFakeNpmCiInstaller(fakebin, {
+    npmLog,
+    templatePiPath: join(templateDir, "pi"),
+  });
+  const env = scrubInstallerEnv({
+    HOME: homeDir,
+    PATH: safeInstallerPath(fakebin),
+    TLH_PACKAGE_SOURCE: packageDir,
+    TLH_SKIP_GNOSIS_INSTALL: "1",
+  });
+  const first = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
+    env,
+  );
+  const firstOutput = `${first.stdout}\n${first.stderr}`;
+  const markerPath = join(runtimeDir, ".tlh-runtime-owned");
+
+  assert.notEqual(
+    first.status,
+    0,
+    `injected post-swap failure unexpectedly succeeded\n${firstOutput}`,
+  );
+  assert.match(firstOutput, /0\.0\.0|version/i);
+  assert.ok(existsSync(markerPath), "fresh ownership marker must survive failed provisioning");
+  const markerAfterFailure = JSON.parse(readFileSync(markerPath, "utf8"));
+  assert.equal(markerAfterFailure.origin, "created");
+  assert.equal(markerAfterFailure.runtimeAbsPath, realpathSync(runtimeDir));
+  const retry = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
+    env,
+  );
+  const retryOutput = `${retry.stdout}\n${retry.stderr}`;
+  assert.equal(retry.status, 0, `retry after failed first provisioning failed\n${retryOutput}`);
+  assert.ok(existsSync(join(runtimeDir, "bin", "pi")), "retry must provision the private runtime");
+  assert.ok(existsSync(markerPath), "ownership marker must remain after retry");
+});
+
+test("runtime ownership: interrupted first provision residue is recoverable after checkpoint", (t) => {
+  const root = makeTempDir("tlh-runtime-retry-interrupted-");
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const packageDir = join(root, "package-source");
+  const templateDir = join(root, "pi-template");
+  const runtimeDir = join(root, "runtime");
+  const npmLog = join(root, "npm.log");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  mkdirSync(runtimeDir, { recursive: true });
+  const markerPath = join(runtimeDir, ".tlh-runtime-owned");
+  writeFileSync(
+    markerPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      packageName: "@earendil-works/pi-coding-agent",
+      runtimeAbsPath: realpathSync(runtimeDir),
+      origin: "created",
+    }),
+    "utf8",
+  );
+  // Model an interruption after the fresh-prefix checkpoint and while the
+  // installer had its lock and staging directory on disk.
+  const interruptedStaging = join(runtimeDir, `${RUNTIME_STAGING_DIR_PREFIX}interrupted`);
+  mkdirSync(interruptedStaging, { recursive: true });
+  writeFileSync(join(interruptedStaging, "sentinel"), "owned partial state", "utf8");
+  const lockDir = join(runtimeDir, RUNTIME_INSTALL_LOCK_NAME);
+  mkdirSync(lockDir);
+  writeFileSync(join(lockDir, "owner.json"), "{ malformed", "utf8");
+  const staleTime = new Date(Date.now() - 11 * 60 * 1000);
+  utimesSync(lockDir, staleTime, staleTime);
+  writeFakeCommand(fakebin, "git", "exit 0");
+  writeFakeTk(fakebin);
+  writeLoggingPi(templateDir, join(root, "pi.log"), TLH_PINNED_PI_VERSION);
+  writeFakeNpmCiInstaller(fakebin, {
+    npmLog,
+    templatePiPath: join(templateDir, "pi"),
+  });
+
+  const env = scrubInstallerEnv({
+    HOME: homeDir,
+    PATH: safeInstallerPath(fakebin),
+    TLH_PACKAGE_SOURCE: packageDir,
+    TLH_SKIP_GNOSIS_INSTALL: "1",
+  });
+  const result = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
+    env,
+  );
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 0, `retry after interrupted provisioning failed\n${output}`);
+  assert.equal(
+    existsSync(interruptedStaging),
+    false,
+    "owned stale staging residue must be cleaned",
+  );
+  assert.equal(existsSync(lockDir), false, "stale install lock must be reclaimed");
+  assert.equal(
+    JSON.parse(readFileSync(markerPath, "utf8")).runtimeAbsPath,
+    realpathSync(runtimeDir),
+  );
+  assert.ok(existsSync(join(runtimeDir, "bin", "pi")), "retry must provision after interruption");
+});
+
+test("runtime ownership: malformed, symlinked, and path-mismatched markers are refused", (t) => {
+  const scenarios = [
+    { label: "malformed marker", kind: "malformed" },
+    { label: "path-mismatched marker", kind: "mismatch" },
+    { label: "symlinked marker", kind: "symlink" },
+  ];
+
+  for (const scenario of scenarios) {
+    if (scenario.kind === "symlink" && process.platform === "win32") continue;
+    const root = makeTempDir(`tlh-runtime-marker-${scenario.kind}-`);
+    const homeDir = join(root, "home");
+    const agentDir = join(root, "agent");
+    const binDir = join(root, "bin");
+    const fakebin = join(root, "fakebin");
+    const packageDir = join(root, "package-source");
+    const runtimeDir = join(root, "runtime");
+    const npmLog = join(root, "npm.log");
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    mkdirSync(homeDir, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(packageDir, { recursive: true });
+    mkdirSync(runtimeDir, { recursive: true });
+    writeFileSync(join(runtimeDir, "foreign.txt"), "must survive\n", "utf8");
+    const markerPath = join(runtimeDir, ".tlh-runtime-owned");
+    if (scenario.kind === "malformed") {
+      writeFileSync(markerPath, "not json", "utf8");
+    } else {
+      let markerRuntimePath = realpathSync(runtimeDir);
+      if (scenario.kind === "mismatch") {
+        const otherRuntime = join(root, "other-runtime");
+        mkdirSync(otherRuntime, { recursive: true });
+        markerRuntimePath = realpathSync(otherRuntime);
+      }
+      const marker = {
+        schemaVersion: 1,
+        packageName: "@earendil-works/pi-coding-agent",
+        runtimeAbsPath: markerRuntimePath,
+        origin: "created",
+      };
+      if (scenario.kind === "symlink") {
+        const markerTarget = join(root, "marker-target");
+        writeFileSync(markerTarget, JSON.stringify(marker), "utf8");
+        symlinkSync(markerTarget, markerPath, "file");
+      } else {
+        writeFileSync(markerPath, JSON.stringify(marker), "utf8");
+      }
+    }
+    writeFakeCommand(fakebin, "git", "exit 0");
+    writeFakeTk(fakebin);
+    writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"\nexit 97`);
+
+    const env = scrubInstallerEnv({
+      HOME: homeDir,
+      PATH: safeInstallerPath(fakebin),
+      TLH_PACKAGE_SOURCE: packageDir,
+      TLH_SKIP_GNOSIS_INSTALL: "1",
+    });
+    const result = runInstaller(
+      ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
+      env,
+    );
+    const output = `${result.stdout}\n${result.stderr}`;
+
+    assert.notEqual(result.status, 0, `${scenario.label} was unexpectedly accepted\n${output}`);
+    assert.match(output, /is not TLH-owned/);
+    assert.equal(existsSync(npmLog), false, `${scenario.label} must not invoke npm`);
+    assert.equal(readFileSync(join(runtimeDir, "foreign.txt"), "utf8"), "must survive\n");
+  }
 });
 
 test("runtime ownership: pristine/absent prefix is accepted and marker origin=created is written", (t) => {

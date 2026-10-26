@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/model-scope.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
 function stripThinkingSuffix(model) {
     return splitKnownThinkingSuffix(model).baseModel;

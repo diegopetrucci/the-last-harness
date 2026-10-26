@@ -7,7 +7,7 @@ Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.gith
 3. runs the release checks;
 4. builds an npm-style package tarball;
 5. generates a pinned stage-0 `install.sh` asset with the tag and SHA-256 inventory for every stage-0 support fetch baked in, plus the `latest-release` update track for future updates;
-6. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
+6. creates a GitHub Release whose body is `release-notes/v<version>.md` plus a full-changelog link, along with release assets.
 
 There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-0 release asset verifies the bytes it fetches for stage 1 before executing them; explicitly repeating that asset's baked tag is still verified, while raw source/custom-ref/custom-base installers intentionally do not reuse another tag's hashes. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
 
@@ -27,7 +27,7 @@ For pin-PR title and body conventions (PRs updating `config/default-extensions.j
 
 ## Prepare a release
 
-From a clean `main` branch with Node.js >=22.19.0:
+From a clean `main` branch (Node.js per `engines.node` in `package.json`):
 
 ```sh
 version=0.1.0
@@ -36,7 +36,9 @@ npm version "$version" --no-git-tag-version
 git diff -- package.json
 ```
 
-Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section.
+Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section; the entry rules are in [CONTRIBUTING.md](../CONTRIBUTING.md#style-and-change-expectations).
+
+Then draft or edit `release-notes/v$version.md`, the user-facing release body. The TLH architect drafts it from the `CHANGELOG.md` section and the maintainer edits it; follow [`release-notes/README.md`](../release-notes/README.md). Release creation fails if this file is missing or empty.
 
 Before validation, update release-sensitive docs that include concrete versioned install guidance or runtime pins:
 
@@ -46,7 +48,7 @@ Before validation, update release-sensitive docs that include concrete versioned
 
 For architect-managed work, keep implementation-ticket checks narrow and ticket-scoped, then put the exact validation steps in a separate final-validation `tk` ticket and dispatch it to `test-runner`. The ticket must contain ordered shell commands (with arguments) and/or exact adapter-shaped generic MCP inputs containing only the fields required by the selected status, discovery, search, connect, or call operation; `server`, `tool`, and `args` are optional overall, and `args` is a JSON string for tool calls. Derive the steps from `VALIDATING.md` or repository discovery; assigned MCP calls may invoke tools that change server-side state. `test-runner` executes that list and reports the outcomes without planning, editing, installing dependencies, or fixing failures. Keep dependency installation and release-preparation commands outside the execution-only runner.
 
-Then run the aggregate validation script and release-notes check:
+Then run the aggregate validation script and release-notes check (the latter fails if `release-notes/v$version.md` is missing):
 
 ```sh
 npm ci
@@ -60,7 +62,7 @@ Then run the startup performance checker as release-tier manual validation:
 npm run check:startup-performance
 ```
 
-Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. All measured runs in an invocation share one stable temporary profile path; run 1 is the cold sample and later runs are warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved. The release objective is a steady-state first TLH header mean below `1000ms`. The every-PR startup-performance workflow is informational and budgets `2500ms`. Release preparation still uses this `1000ms` objective.
+Keep this separate from `npm run validate`. The checker's behavior, the `1000ms` release objective, and the informational every-PR budget are described in [VALIDATING.md](../VALIDATING.md#release-tier-manual-validation).
 
 If the checker fails, investigate before release rather than treating it like a normal deterministic test failure.
 

@@ -1,3 +1,4 @@
+// Generated from extensions/annotate-git-diff/clipboard.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 const MAX_CLIPBOARD_BYTES = 16 * 1024 * 1024;
 const defaultRunner = (command, args, options) => spawnSync(command, args, options);
@@ -103,7 +104,5 @@ export function writeSystemClipboard(text, options = {}) {
     runFirstAvailable(platform, clipboardWriteCommands(platform), runner, text);
 }
 export const __testing = {
-    clipboardReadCommands,
-    clipboardWriteCommands,
     MAX_CLIPBOARD_BYTES,
 };

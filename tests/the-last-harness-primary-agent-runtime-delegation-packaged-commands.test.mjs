@@ -445,13 +445,14 @@ test("disabled primary mode enforces architect-equivalent subagent safety and sc
   });
 });
 
-test("Rush blocks subagent resume with a Rush-specific reason", async () => {
+test("Rush delegates subagent resume enforcement to the executor", async () => {
   const { toolCall } = registerRuntimeHarness({
     primaryAgents: selectablePrimaryAgents(),
     subagentMetadata: [],
   });
   const event = {
     toolName: "subagent",
+    toolCallId: "call-resume-1",
     input: {
       action: "resume",
       id: "run-123",
@@ -463,33 +464,28 @@ test("Rush blocks subagent resume with a Rush-specific reason", async () => {
     { type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
   ]);
 
-  const result = await toolCall(event, ctx);
-  assert.deepEqual(result, {
-    block: true,
-    reason:
-      "TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.",
-  });
+  // The hook delegates to the executor, which enforces the embedded-only rule per
+  // exact child (see the embedded-authorization end-to-end test).
+  assert.equal(await toolCall(event, ctx), undefined);
 });
 
-test("Rush blocks subagent steer with a Rush-specific reason", async () => {
+test("Rush delegates subagent steer enforcement to the executor", async () => {
   const { toolCall } = registerRuntimeHarness({
     primaryAgents: selectablePrimaryAgents(),
     subagentMetadata: [],
   });
   const event = {
     toolName: "subagent",
+    toolCallId: "call-steer-1",
     input: { action: "steer", id: "run-123", message: "Please wrap up the current subtask." },
   };
   const ctx = createToolCallContext([
     { type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
   ]);
 
-  const result = await toolCall(event, ctx);
-  assert.deepEqual(result, {
-    block: true,
-    reason:
-      "TLH Rush may not use subagent action=steer because an opaque steer carries no agent field, so TLH cannot prove the steered child is not a developer subagent. Rush must edit directly.",
-  });
+  // The hook delegates to the executor, which enforces the embedded-only rule per
+  // exact child (see the embedded-authorization end-to-end test).
+  assert.equal(await toolCall(event, ctx), undefined);
 });
 
 test("Rush blocks developer delegation in task-based subagent plans", async () => {
@@ -744,6 +740,58 @@ test("/switch-primary-agent default writes tlh.primaryAgent with a backup", asyn
   }
 });
 
+test("primary-agent settings writers read BOM-prefixed settings like plain JSON and preserve unrelated values", async (t) => {
+  const writtenSettings = [];
+
+  for (const prefix of ["", "\uFEFF"]) {
+    const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", {
+      cwd: true,
+      test: t,
+    });
+    const settingsPath = join(fixture.agent, "settings.json");
+    const initialSettings = {
+      unrelated: { keep: true },
+      tlh: {
+        primaryAgent: { selected: "architect", custom: "keep-me" },
+        modelVisibility: { hidden: ["keep-me"] },
+      },
+    };
+    const initialContent = `${prefix}${JSON.stringify(initialSettings, null, 2)}\n`;
+    writeFileSync(settingsPath, initialContent);
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const { pi } = registerRuntimeHarness({
+        primaryAgents: selectablePrimaryAgents(),
+        subagentMetadata: [],
+      });
+      const command = pi.commands.get("switch-primary-agent");
+      assert.ok(command, "registers /switch-primary-agent");
+
+      const writeDefault = createCommandContext([], { cwd: fixture.cwd });
+      await command.handler("default rush", writeDefault.ctx);
+
+      const content = readFileSync(settingsPath, "utf8");
+      assert.notEqual(content.charCodeAt(0), 0xfeff, "successful writes should normalize BOMs");
+      writtenSettings.push(JSON.parse(content));
+      const backups = readdirSync(fixture.agent).filter((entry) =>
+        entry.startsWith("settings.json.bak-"),
+      );
+      assert.equal(backups.length, 1);
+      assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialContent);
+      assert.equal(writeDefault.notifications.at(-1)?.type, "info");
+    });
+  }
+
+  assert.deepEqual(writtenSettings[0], writtenSettings[1]);
+  assert.deepEqual(writtenSettings[0], {
+    unrelated: { keep: true },
+    tlh: {
+      primaryAgent: { selected: "rush", custom: "keep-me", enabled: true },
+      modelVisibility: { hidden: ["keep-me"] },
+    },
+  });
+});
+
 test("primary-agent settings writers preserve malformed-object diagnostics", async (t) => {
   const cases = [
     {
@@ -794,6 +842,39 @@ test("primary-agent settings writers preserve malformed-object diagnostics", asy
       });
     });
   }
+});
+
+test("primary-agent settings writers preserve malformed JSON and report the guarded write failure", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", {
+    cwd: true,
+    test: t,
+  });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = '\uFEFF{"tlh":{"primaryAgent":';
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { pi } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    const command = pi.commands.get("switch-primary-agent");
+    assert.ok(command, "registers /switch-primary-agent");
+
+    const attempt = createCommandContext([], { cwd: fixture.cwd });
+    await command.handler("default rush", attempt.ctx);
+
+    assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+    assert.deepEqual(
+      readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+      [],
+    );
+    assert.equal(attempt.notifications.at(-1)?.type, "error");
+    assert.match(
+      attempt.notifications.at(-1)?.message ?? "",
+      /Could not update TLH primary-agent persistent default/,
+    );
+  });
 });
 
 test("/switch-primary-agent default refuses normal Pi settings", async () => {

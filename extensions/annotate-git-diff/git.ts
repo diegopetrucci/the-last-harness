@@ -1,6 +1,6 @@
 import { lstatSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { extname, relative, resolve } from "node:path";
+import { extname, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type {
   ChangeStatus,
@@ -67,10 +67,14 @@ async function runBashAllowFailure(
   pi: ExtensionAPI,
   repoRoot: string,
   script: string,
-): Promise<string> {
-  const result = await pi.exec("bash", ["-lc", script], { cwd: repoRoot });
+): Promise<string | null> {
+  const result = await pi.exec(
+    "env",
+    ["-u", "BASH_ENV", "bash", "--noprofile", "--norc", "-c", script],
+    { cwd: repoRoot },
+  );
   if (result.code !== 0) {
-    return "";
+    return null;
   }
   return result.stdout;
 }
@@ -149,35 +153,35 @@ async function findReviewBase(pi: ExtensionAPI, repoRoot: string): Promise<Revie
   return null;
 }
 
-function parseNameStatusLine(parts: string[]): ChangedPath | null {
-  const code = (parts[0] ?? "")[0];
-
-  if (code === "R") {
-    const oldPath = parts[1] ?? null;
-    const newPath = parts[2] ?? null;
-    if (oldPath == null || newPath == null) return null;
-    return { status: "renamed", oldPath, newPath };
-  }
-
-  const path = parts[1] ?? null;
-  if (path == null) return null;
-
-  if (code === "M") return { status: "modified", oldPath: path, newPath: path };
-  if (code === "A") return { status: "added", oldPath: null, newPath: path };
-  if (code === "D") return { status: "deleted", oldPath: path, newPath: null };
-  return null;
-}
-
 function parseNameStatus(output: string): ChangedPath[] {
-  const lines = output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
+  // Output of `git ... --name-status -z`: `STATUS\0path\0` and, for R/C,
+  // `STATUS\0old\0new\0`. Paths are kept verbatim (no trimming/unquoting).
+  const tokens = output.split("\0");
   const changes: ChangedPath[] = [];
-  for (const line of lines) {
-    const change = parseNameStatusLine(line.split("\t"));
-    if (change != null) changes.push(change);
+  for (let i = 0; i < tokens.length;) {
+    const code = (tokens[i] ?? "")[0];
+    if (code == null) {
+      i += 1;
+      continue;
+    }
+    if (code === "R" || code === "C") {
+      const oldPath = tokens[i + 1];
+      const newPath = tokens[i + 2];
+      i += 3;
+      if (oldPath == null || newPath == null) break;
+      if (code === "R") changes.push({ status: "renamed", oldPath, newPath });
+      continue;
+    }
+    const path = tokens[i + 1];
+    i += 2;
+    if (path == null) break;
+    if (code === "M" || code === "T") {
+      changes.push({ status: "modified", oldPath: path, newPath: path });
+    } else if (code === "A") {
+      changes.push({ status: "added", oldPath: null, newPath: path });
+    } else if (code === "D") {
+      changes.push({ status: "deleted", oldPath: path, newPath: null });
+    }
   }
   return changes;
 }
@@ -297,11 +301,11 @@ function inspectWorkingTreePath(repoRoot: string, path: string): WorkingTreeEntr
   const repoBase = resolve(repoRoot);
   const candidate = resolve(repoBase, path);
   const relativePath = relative(repoBase, candidate);
-  if (relativePath.length === 0 || /^(\.\.(?:[/\\]|$))/.test(relativePath)) {
+  if (relativePath.length === 0 || relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
     return { kind: "unsafe" };
   }
 
-  const parts = relativePath.split(/[\\/]+/).filter(Boolean);
+  const parts = relativePath.split(sep).filter(Boolean);
   let currentPath = repoBase;
   for (let index = 0; index < parts.length; index += 1) {
     currentPath = resolve(currentPath, parts[index]);
@@ -358,11 +362,9 @@ async function getRevisionBytes(
   path: string,
 ): Promise<Buffer | null> {
   const spec = shellQuote(`${revision}:${path}`);
-  const result = await pi.exec("bash", ["-lc", `git show ${spec} | base64 | tr -d '\\n'`], {
-    cwd: repoRoot,
-  });
-  if (result.code !== 0) return null;
-  const encoded = (result.stdout ?? "").trim();
+  const output = await runBashAllowFailure(pi, repoRoot, `git show ${spec} | base64`);
+  if (output == null) return null;
+  const encoded = output.trim();
   try {
     return Buffer.from(encoded, "base64");
   } catch {
@@ -517,6 +519,7 @@ async function getTrackedBranchReviewChanges(
       "--find-renames",
       "-M",
       "--name-status",
+      "-z",
       branchComparisonBase,
       "--",
     ]),
@@ -542,11 +545,11 @@ async function getWorkingTreeSnapshotChanges(
   scriptLines.push("git add -A -- .");
   scriptLines.push(
     baseRevision != null
-      ? `git diff --cached --find-renames -M --name-status ${shellQuote(baseRevision)} --`
-      : "git diff --cached --find-renames -M --name-status --root --",
+      ? `git diff --cached --find-renames -M --name-status -z ${shellQuote(baseRevision)} --`
+      : "git diff --cached --find-renames -M --name-status -z --root --",
   );
   const output = await runBashAllowFailure(pi, repoRoot, scriptLines.join("\n"));
-  return parseNameStatus(output);
+  return parseNameStatus(output ?? "");
 }
 
 async function getBranchReviewChanges(
@@ -766,6 +769,7 @@ export async function getCommitFiles(
     "--find-renames",
     "-M",
     "--name-status",
+    "-z",
     "--no-commit-id",
     "-r",
     sha,
@@ -1022,6 +1026,7 @@ export async function loadReviewFileContents(
 }
 
 export const __testing = {
+  parseNameStatus,
   parseStatusPorcelainZ,
   shouldNormalizeBranchChanges,
 };

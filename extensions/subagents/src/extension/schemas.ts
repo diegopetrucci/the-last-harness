@@ -48,15 +48,16 @@ const TaskItem = Type.Object(
   {
     agent: Type.String(),
     task: Type.String(),
+    ticket: Type.Optional(
+      Type.String({
+        maxLength: 128,
+        description:
+          "Optional ticket ID; TLH loads `tk show <id>` in this task's cwd before launch.",
+      }),
+    ),
     cwd: Type.Optional(
       Type.String({
         description: "Task working directory; relative paths resolve against the run cwd.",
-      }),
-    ),
-    count: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        description: "Repeat this parallel task N times with the same settings.",
       }),
     ),
     output: Type.Optional(OutputOverride),
@@ -74,10 +75,16 @@ const SubagentParamsSchema = Type.Object(
     task: Type.Optional(
       Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" }),
     ),
+    ticket: Type.Optional(
+      Type.String({
+        maxLength: 128,
+        description: "Optional ticket ID; TLH loads `tk show <id>` in the task cwd before launch.",
+      }),
+    ),
     tasks: Type.Optional(
       Type.Array(TaskItem, {
         description:
-          "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, model?}, ...]",
+          "PARALLEL mode: [{agent, task, ticket?, cwd?, output?, outputMode?, model?}, ...]",
       }),
     ),
     async: Type.Optional(

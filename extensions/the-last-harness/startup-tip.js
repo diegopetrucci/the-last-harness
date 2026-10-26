@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/startup-tip.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const TLH_STARTUP_TIPS = [
     "Run /annotate-git-diff for a native review window across branch, commit, or all-files scopes.",
     "Use /annotate-last-message to mark up the latest assistant reply before your next prompt.",
@@ -8,7 +9,7 @@ export const TLH_STARTUP_TIPS = [
     "Press Shift+Tab to switch to bug-hunter for read-only debugging and root-cause analysis.",
     "Use “disabled” mode (Shift+Tab) to keep TLH’s tools and subagents without architect-specific guidance.",
     "Project custom subagents live in .tlh/agents/custom/<UPPERCASE-SLUG>.md; ask TLH to use one by name.",
-    "Pin model or effort defaults per role for a project using .tlh/defaults.json at the repository root.",
+    "Pin stored model or effort overrides per role through /subagent-settings.",
     "Run /fork to branch from an earlier user message and explore an alternate path.",
     "Run /tree to rewind to previous messages.",
     "Use /name to give the current session a label you can spot later.",

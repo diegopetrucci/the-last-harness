@@ -26,6 +26,7 @@ import {
 
 import {
   backupFiles,
+  bundledExtensionsPath,
   bundledSource,
   defaultsScript,
   disablingExtensionFilterCases,
@@ -199,6 +200,64 @@ test("tlh-defaults rejects disabling critical defaults without changing settings
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /critical default extension 'subagents' cannot be disabled/i);
   assert.equal(readFileSync(fixture.settings, "utf8"), before);
+});
+
+test("bundled quiet-tools is mandatory for canonical and alias IDs and remains discoverable as critical", () => {
+  const fixture = tempFixture();
+  const oldSettings = {
+    packages: ["npm:@diegopetrucci/pi-quiet-tools@0.1.12"],
+    tlh: { disabledDefaultExtensions: ["quiet-tools", "compact-bash"] },
+  };
+  writeFileSync(fixture.settings, JSON.stringify(oldSettings, null, 2));
+
+  const sources = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    bundledExtensionsPath,
+    "sources",
+  ])
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  const criticalSources = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    bundledExtensionsPath,
+    "critical-sources",
+  ])
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  assert.deepEqual(
+    sources.filter((source) => source.includes("pi-quiet-tools")),
+    ["npm:@diegopetrucci/pi-quiet-tools@0.1.14"],
+  );
+  assert.deepEqual(
+    criticalSources.filter((source) => source.includes("pi-quiet-tools")),
+    ["npm:@diegopetrucci/pi-quiet-tools@0.1.14"],
+  );
+
+  for (const id of ["quiet-tools", "compact-bash"]) {
+    const before = readFileSync(fixture.settings, "utf8");
+    const result = spawnSync(
+      process.execPath,
+      [
+        defaultsScript,
+        "--settings",
+        fixture.settings,
+        "--defaults",
+        bundledExtensionsPath,
+        "disable",
+        id,
+      ],
+      { cwd: repoRoot, env: process.env, encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0, `${id} must not be disableable`);
+    assert.match(result.stderr, /critical default extension 'quiet-tools' cannot be disabled/i);
+    assert.equal(readFileSync(fixture.settings, "utf8"), before);
+  }
 });
 
 test("tlh-defaults refuses to mutate normal Pi config paths", () => {
@@ -744,6 +803,68 @@ test("tlh-defaults sources emit bundled pinned npm sources for existing unpinned
   assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
 });
 
+test("tlh-defaults sources and enable hold legacy MCP selections without emitting the native pin", () => {
+  const fixture = tempFixture();
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [{ id: "mcporter", source: nativeSource, aliases: [], replaces: [legacySource] }],
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [legacySource],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const runDefaults = (command) =>
+    spawnSync(
+      process.execPath,
+      [
+        defaultsScript,
+        "--settings",
+        fixture.settings,
+        "--defaults",
+        fixture.extensions,
+        ...command,
+      ],
+      { cwd: repoRoot, env: process.env, encoding: "utf8" },
+    );
+  const sources = runDefaults(["sources"]);
+  assert.equal(sources.status, 0, sources.stderr);
+  assert.equal(sources.stdout.trim(), "");
+  assert.match(sources.stderr, /selected adapter is pre-v5/);
+
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [legacySource],
+        tlh: { disabledDefaultExtensions: ["mcporter"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const enabled = runDefaults(["enable", "mcporter"]);
+  assert.equal(enabled.status, 0, enabled.stderr);
+  assert.match(enabled.stderr, /selected adapter is pre-v5/);
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [legacySource]);
+  assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], []);
+  assert.doesNotMatch(JSON.stringify(settings), /pi-mcp-adapter@5\.0\.0/);
+});
+
 test("tlh-defaults sources emit the bundled npm pin when the installed managed package has an older same-identity pin", () => {
   const fixture = tempFixture();
   writeFileSync(
@@ -1113,6 +1234,183 @@ test("tlh-defaults disable anthropic-auth preserves explicit warnings.anthropicE
   assert(settings.warnings !== undefined, "warnings object should remain intact");
 });
 
+// ---------------------------------------------------------------------------
+// syncDefaultExtensionProvenance shrink regression (pma-ru86 fix A)
+// ---------------------------------------------------------------------------
+
+test("tlh-defaults disable removes a managed identity from managedPackageIdentities", () => {
+  const fixture = tempFixture();
+  const webAccessSrc = bundledSource("pi-web-access");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "pi-web-access",
+          source: webAccessSrc,
+          aliases: [],
+          replaces: [],
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [webAccessSrc],
+        tlh: {
+          defaultExtensionProvenance: {
+            managedPackageIdentities: ["npm:@diegopetrucci/pi-web-access"],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "pi-web-access",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(
+    settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [],
+    [],
+    "disabling should remove the identity from managedPackageIdentities",
+  );
+});
+
+test("tlh-defaults non-frozen enable drops stale managed identities not in the recomputed set", () => {
+  const fixture = tempFixture();
+  const webAccessSrc = bundledSource("pi-web-access");
+  const anthropicSrc = "npm:@gotgenes/pi-anthropic-auth";
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "pi-web-access",
+          source: webAccessSrc,
+          aliases: [],
+          replaces: [],
+        },
+        {
+          id: "anthropic-auth",
+          source: anthropicSrc,
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  // pi-web-access is disabled; both identities are stale in managedPackageIdentities.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [webAccessSrc, anthropicSrc],
+        tlh: {
+          disabledDefaultExtensions: ["pi-web-access"],
+          defaultExtensionProvenance: {
+            managedPackageIdentities: [
+              "npm:@diegopetrucci/pi-web-access",
+              "npm:@gotgenes/pi-anthropic-auth",
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  // enable anthropic-auth (non-mcporter, so mcpDecision is undefined — not frozen)
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "anthropic-auth",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  // anthropic-auth is now enabled and present in packages → identity is managed
+  // pi-web-access is still disabled → its identity must be dropped
+  assert.deepEqual(
+    settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities,
+    ["npm:@gotgenes/pi-anthropic-auth"],
+    "stale disabled-extension identity must not survive a non-frozen enable",
+  );
+});
+
+test("tlh-defaults frozen MCP enable preserves only MCP adapter identity in managedPackageIdentities", () => {
+  const fixture = tempFixture();
+  const nativeSrc = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySrc = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const anthropicSrc = "npm:@gotgenes/pi-anthropic-auth";
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        { id: "mcporter", source: nativeSrc, aliases: [], replaces: [legacySrc] },
+        { id: "anthropic-auth", source: anthropicSrc },
+      ],
+      null,
+      2,
+    ),
+  );
+  // mcporter and anthropic-auth are both disabled; legacy pin is in packages.
+  // Both identities are stale in managedPackageIdentities.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [legacySrc, anthropicSrc],
+        tlh: {
+          disabledDefaultExtensions: ["mcporter", "anthropic-auth"],
+          defaultExtensionProvenance: {
+            managedPackageIdentities: [
+              "npm:@diegopetrucci/pi-mcp-adapter",
+              "npm:@gotgenes/pi-anthropic-auth",
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  // enable mcporter → mcpDecision is set and is frozen (legacy pre-v5 selection)
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  // MCP identity is preserved by frozen preservation (it was previously managed)
+  // anthropic-auth identity is dropped: not recomputed (disabled) and not an MCP identity
+  assert.deepEqual(
+    settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities,
+    ["npm:@diegopetrucci/pi-mcp-adapter"],
+    "frozen MCP enable must preserve only the MCP adapter identity, not other stale identities",
+  );
+});
+
 test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth is in disabledDefaultExtensions", () => {
   const fixture = tempFixture();
   // Synthetic defaults with the warnings suppression that ships in config/settings.defaults.json.
@@ -1422,4 +1720,117 @@ test("tlh-defaults mcporter enable/disable cycles keep ownership idempotent", ()
   settings = readJson(fixture.settings);
   assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
   assert.equal(settings.tlh?.builtinMcpExclusionManaged, true);
+});
+
+test("tlh-defaults enable on already-enabled extension with retired toolBudget key removes the key and writes a backup", () => {
+  const fixture = tempFixture();
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "helper",
+          source: "npm:helper",
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  // Settings already has helper enabled; the only mutation is the retired toolBudget key.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: ["npm:helper"],
+        subagents: {
+          agentOverrides: {
+            developer: { toolBudget: 50 },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "helper",
+  ]);
+
+  const saved = readJson(fixture.settings);
+  assert.equal(
+    saved.subagents?.agentOverrides?.developer?.toolBudget,
+    undefined,
+    "retired toolBudget key must be removed",
+  );
+  const backups = backupFiles(fixture.settings);
+  assert.equal(backups.length, 1, "a backup must be written when the scrub changes settings");
+  assert.doesNotMatch(
+    result,
+    /No settings changes were needed/,
+    "must not report no-op when toolBudget was scrubbed",
+  );
+});
+
+test("tlh-defaults disable on already-disabled extension with retired toolBudget key removes the key and writes a backup", () => {
+  const fixture = tempFixture();
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "helper",
+          source: "npm:helper",
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  // Settings already has helper disabled; the only mutation is the retired toolBudget key.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [],
+        tlh: { disabledDefaultExtensions: ["helper"] },
+        subagents: {
+          agentOverrides: {
+            developer: { toolBudget: 50 },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "helper",
+  ]);
+
+  const saved = readJson(fixture.settings);
+  assert.equal(
+    saved.subagents?.agentOverrides?.developer?.toolBudget,
+    undefined,
+    "retired toolBudget key must be removed",
+  );
+  const backups = backupFiles(fixture.settings);
+  assert.equal(backups.length, 1, "a backup must be written when the scrub changes settings");
+  assert.doesNotMatch(
+    result,
+    /No settings changes were needed/,
+    "must not report no-op when toolBudget was scrubbed",
+  );
 });

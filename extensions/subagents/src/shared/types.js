@@ -1,11 +1,14 @@
+// Generated from extensions/subagents/src/shared/types.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { resolveTempRootDir } from "../../../shared/subagent-temp-root.js";
+import { MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.js";
 export function normalizeSubagentRunMode(value) {
     return value === "parallel" ? "parallel" : "single";
 }
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+export const SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT = "subagent:async-owner-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_ASYNC_RESTORED_EVENT = "subagent:async-restored";
 export const DEFAULT_MAX_OUTPUT = {
@@ -23,7 +26,7 @@ export const DEFAULT_ARTIFACT_CONFIG = {
     includeMetadata: true,
     cleanupDays: 7,
 };
-const MAX_PARALLEL = 8;
+export { MAX_TOP_LEVEL_PARALLEL_TASKS };
 const MAX_CONCURRENCY = 4;
 export { resolveTempRootDir };
 export const TEMP_ROOT_DIR = resolveTempRootDir();
@@ -34,7 +37,7 @@ export const WIDGET_KEY = "subagent-async";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
-export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
+const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const SUBAGENT_ACTIONS = [
     "list",
     "get",
@@ -51,7 +54,10 @@ function normalizeTopLevelParallelValue(value) {
     return parsed;
 }
 export function resolveTopLevelParallelMaxTasks(value) {
-    return normalizeTopLevelParallelValue(value) ?? MAX_PARALLEL;
+    const normalized = normalizeTopLevelParallelValue(value);
+    return normalized === undefined
+        ? MAX_TOP_LEVEL_PARALLEL_TASKS
+        : Math.min(normalized, MAX_TOP_LEVEL_PARALLEL_TASKS);
 }
 export function resolveTopLevelParallelConcurrency(configValue) {
     return normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;

@@ -8,7 +8,7 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { registerLazyTlhTicketWorkflowUi } = await jiti.import(
+const { registerTlhTicketWorkflowUi } = await jiti.import(
   "../extensions/the-last-harness/ticket-workflow-ui-facade.ts",
 );
 
@@ -72,7 +72,7 @@ test("lazy ticket workflow facade loads the runtime at UI session start and reus
     { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined },
     async () => {
       const pi = createPiHarness();
-      registerLazyTlhTicketWorkflowUi(pi, {
+      registerTlhTicketWorkflowUi(pi, {
         createRuntime: () => {
           createCalls.push("create");
           return runtime;
@@ -108,7 +108,7 @@ test("lazy ticket workflow facade skips runtime creation for non-UI sessions", a
     { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined },
     async () => {
       const pi = createPiHarness();
-      registerLazyTlhTicketWorkflowUi(pi, {
+      registerTlhTicketWorkflowUi(pi, {
         createRuntime: () => {
           createCalls.push("create");
           throw new Error("should not be called for non-UI sessions");
@@ -134,7 +134,7 @@ test("lazy ticket workflow facade retries runtime creation after an initial sess
     { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined },
     async () => {
       const pi = createPiHarness();
-      registerLazyTlhTicketWorkflowUi(pi, {
+      registerTlhTicketWorkflowUi(pi, {
         createRuntime: () => {
           attempts += 1;
           if (attempts === 1) {
@@ -173,7 +173,7 @@ test("lazy ticket workflow facade rescopes each session before reapplying the lo
     { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined },
     async () => {
       const pi = createPiHarness();
-      registerLazyTlhTicketWorkflowUi(pi, {
+      registerTlhTicketWorkflowUi(pi, {
         createRuntime: () => ({
           applyCurrentSettings(ctx) {
             runtimeCalls.push([ctx.cwd, process.env.TICKETS_DIR]);

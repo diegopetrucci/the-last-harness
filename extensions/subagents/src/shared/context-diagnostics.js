@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/context-diagnostics.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { closeSync, openSync, readSync } from "node:fs";
 import { contextWindowForChildModel, findModelInfo, splitKnownThinkingSuffix, } from "./model-info.js";
 const DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT = 80;
@@ -13,7 +14,6 @@ const KNOWN_TERMINATION_REASONS = new Set([
     "model_error",
     "interrupted",
     "timed_out",
-    "tool_budget_blocked",
     "paused",
     "cancelled",
     "process_exit",
@@ -348,8 +348,6 @@ export function resolveSubagentTerminationReason(input) {
         return "paused";
     if (input.timedOut)
         return "timed_out";
-    if (input.toolBudgetBlocked)
-        return "tool_budget_blocked";
     if (input.interrupted)
         return "interrupted";
     switch (input.assistantStopReason) {

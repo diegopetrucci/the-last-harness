@@ -1,56 +1,24 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
-  AcceptanceLedger,
-  AcceptanceRuntimeCheck,
-  AcceptanceVerifyCommand,
-  AcceptanceVerifyResult,
   AsyncResultArtifact,
   AsyncResultArtifactResultItem,
   AsyncStatus,
   ContextPressureProjection,
   ContextPressureThreshold,
   ContextUsageDiagnostics,
-  ResolvedAcceptanceConfig,
-  ResolvedAcceptanceGate,
   SubagentModelResolution,
   SubagentTerminationReason,
 } from "../../src/shared/types.ts";
 
-export type AcceptanceConfigFixture = Omit<
-  Partial<ResolvedAcceptanceConfig>,
-  "criteria" | "verify"
-> & {
-  criteria?: Array<Partial<ResolvedAcceptanceGate> | null>;
-  verify?: Array<Partial<AcceptanceVerifyCommand>>;
-};
-
-export type AcceptanceLedgerFixture = Omit<
-  Partial<AcceptanceLedger>,
-  "effectiveAcceptance" | "criteria" | "runtimeChecks" | "verifyRuns"
-> & {
-  effectiveAcceptance?: AcceptanceConfigFixture;
-  criteria?: Array<Partial<ResolvedAcceptanceGate>>;
-  runtimeChecks?: Array<Partial<AcceptanceRuntimeCheck>>;
-  verifyRuns?: Array<Partial<AcceptanceVerifyResult>>;
-};
-
 type AsyncStatusStepFixture = Pick<NonNullable<AsyncStatus["steps"]>[number], "agent" | "status"> &
-  Omit<Partial<NonNullable<AsyncStatus["steps"]>[number]>, "agent" | "status" | "acceptance"> & {
-    acceptance?: AcceptanceLedgerFixture;
-  };
+  Omit<Partial<NonNullable<AsyncStatus["steps"]>[number]>, "agent" | "status">;
 
 type AsyncResultItemFixture = Pick<AsyncResultArtifactResultItem, "agent"> &
   Omit<
     Partial<AsyncResultArtifactResultItem>,
-    | "agent"
-    | "acceptance"
-    | "contextUsage"
-    | "modelResolution"
-    | "sessionFile"
-    | "terminationReason"
+    "agent" | "contextUsage" | "modelResolution" | "sessionFile" | "terminationReason"
   > & {
-    acceptance?: AcceptanceLedgerFixture;
     contextUsage?: ContextUsageDiagnostics | { contextTokens: string };
     modelResolution?: SubagentModelResolution | { kind: "invalid"; reason: number };
     sessionFile?: AsyncResultArtifactResultItem["sessionFile"] | { path: string };

@@ -1,22 +1,19 @@
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
-}
+// Generated from extensions/the-last-harness/subscription-usage-facade.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
+import { createRetryableLazyImport } from "./common.js";
 class LazyTlhSubscriptionUsageService {
     loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
     service;
     servicePromise;
-    requestFooterRenderByContext = new WeakMap();
-    registerFooterRenderRequest(ctx, requestRender) {
-        this.requestFooterRenderByContext.set(ctx, requestRender);
+    currentFooterRender;
+    usageChangeListener;
+    registerFooterRenderRequest(requestRender) {
+        this.currentFooterRender = requestRender;
+    }
+    clearFooterRenderRequest() {
+        this.currentFooterRender = undefined;
+    }
+    setUsageChangeListener(listener) {
+        this.usageChangeListener = listener;
     }
     getSnapshot(provider) {
         return this.service?.getSnapshot(provider);
@@ -44,7 +41,8 @@ class LazyTlhSubscriptionUsageService {
                 nextEligible !== previousEligible ||
                 nextProviderSnapshot !== previousProviderSnapshot ||
                 nextProviderEligible !== previousProviderEligible) {
-                this.requestFooterRenderByContext.get(ctx)?.();
+                this.currentFooterRender?.();
+                this.usageChangeListener?.();
             }
         })
             .catch(() => undefined);

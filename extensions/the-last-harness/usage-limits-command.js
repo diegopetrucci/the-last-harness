@@ -1,5 +1,7 @@
+// Generated from extensions/the-last-harness/usage-limits-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
 import { getCachedTlhUsageWeeklyVisibility, getPersistedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, setCachedTlhUsageWeeklyVisibility, USAGE_COMMAND_HELP, } from "./usage-limits.js";
 function validateTlhUsageLimitsSettings(settings) {
     if (!isRecord(settings)) {
@@ -18,14 +20,6 @@ function ensureMutableUsageLimitsSettings(settings) {
     validateTlhUsageLimitsSettings(settings);
     settings.tlh ??= {};
     settings.tlh.usageLimits ??= {};
-}
-function parseTlhSettingsContent(content) {
-    if (!content) {
-        return {};
-    }
-    const parsed = JSON.parse(content);
-    validateTlhUsageLimitsSettings(parsed);
-    return parsed;
 }
 function writeTlhUsageWeeklyPreference(cwd, showWeekly) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write usage-limit settings outside the isolated TLH profile.", (current) => {
@@ -73,7 +67,7 @@ function formatUsageWeeklyStatus(showWeekly) {
     }
     return "TLH usage weekly window follows the default auto mode: it shows only when weekly remaining capacity is below 25%. Use /usage weekly on to always show it, /usage weekly off to always hide it, or /usage weekly toggle.";
 }
-export async function handleUsageCommand(args, ctx) {
+export async function handleUsageCommand(args, ctx, onWeeklyPreferenceChanged) {
     const command = parseUsageSlashAction(args);
     if (!command) {
         ctx.ui.notify(USAGE_COMMAND_HELP, "error");
@@ -91,6 +85,7 @@ export async function handleUsageCommand(args, ctx) {
     try {
         const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
         setCachedTlhUsageWeeklyVisibility(nextShowWeekly);
+        onWeeklyPreferenceChanged?.();
         const changedLabel = result.changed ? "Updated" : "No change to";
         const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
         ctx.ui.notify(`${changedLabel} TLH usage weekly-window preference at ${formatHomePath(result.settingsPath)}. ${formatUsageWeeklyStatus(nextShowWeekly)}${backupLabel}`, "info");

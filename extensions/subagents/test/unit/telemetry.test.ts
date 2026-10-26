@@ -33,7 +33,6 @@ const provenance: SubagentTelemetryProvenance = {
 const controls: ResolvedControlConfig = {
   enabled: true,
   needsAttentionAfterMs: 2_000,
-  failedToolAttemptsBeforeAttention: 3,
   notifyOn: ["needs_attention"],
   notifyChannels: ["event", "async"],
 };
@@ -161,7 +160,7 @@ describe("subagent run telemetry", () => {
     assert.deepEqual(normalized.provenance, provenance);
     assert.deepEqual(normalized.controls, {
       needsAttentionAfterMs: controls.needsAttentionAfterMs,
-      failedToolAttemptsBeforeAttention: controls.failedToolAttemptsBeforeAttention,
+      failedToolAttemptsBeforeAttention: 0,
       notifyOn: controls.notifyOn,
       notifyChannels: controls.notifyChannels,
     });
@@ -647,7 +646,7 @@ describe("subagent run telemetry", () => {
     });
     const current = buildTelemetry({
       provenance: { ...provenance, tlhVersion: "stale", loadedAt: 20 },
-      controls: { ...controls, notifyChannels: ["async"] },
+      controls: { ...controls, failedToolAttemptsBeforeAttention: 0, notifyChannels: ["async"] },
       timing: { startedAt: 100 },
       outcome: { state: "paused", terminationReason: "paused" },
     });
@@ -881,12 +880,17 @@ describe("subagent run telemetry", () => {
   it("guards every generated detached-runner import transitively", () => {
     const sourceRoot = path.resolve("extensions/subagents/src");
     const runnerPath = path.join(sourceRoot, "runs/background/subagent-runner.js");
-    // types.js intentionally shares this one generated helper with the parent
-    // extension. Keep the exception exact instead of opening the whole sibling
-    // directory or allowing arbitrary imports outside the detached-runner tree.
-    const allowedGeneratedDependency = path.resolve("extensions/shared/subagent-temp-root.js");
+    // types.js intentionally shares one generated helper with the parent extension.
+    // async-status-boundary.js needs project-agent-loader.js (for normalizeProjectAgentIdentity)
+    // which transitively pulls project-agent-worktree.js and project-agent-provenance.js.
+    // Keep exceptions exact rather than opening the whole sibling directory.
+    const allowedGeneratedDependencies = new Set([
+      path.resolve("extensions/shared/subagent-temp-root.js"),
+      path.resolve("extensions/shared/project-agent-worktree.js"),
+      path.resolve("extensions/shared/project-agent-provenance.js"),
+    ]);
     const isAllowedImport = (resolved: string): boolean =>
-      resolved.startsWith(`${sourceRoot}${path.sep}`) || resolved === allowedGeneratedDependency;
+      resolved.startsWith(`${sourceRoot}${path.sep}`) || allowedGeneratedDependencies.has(resolved);
     const pending = [runnerPath];
     const visited = new Set<string>();
     const violations: string[] = [];
@@ -937,9 +941,17 @@ describe("subagent run telemetry", () => {
     }
 
     assert.deepEqual(violations, []);
-    assert.equal(isAllowedImport(allowedGeneratedDependency), true);
+    assert.equal(isAllowedImport(path.resolve("extensions/shared/subagent-temp-root.js")), true);
     assert.equal(
       isAllowedImport(path.resolve("extensions/shared/project-agent-worktree.js")),
+      true,
+    );
+    assert.equal(
+      isAllowedImport(path.resolve("extensions/shared/project-agent-provenance.js")),
+      true,
+    );
+    assert.equal(
+      isAllowedImport(path.resolve("extensions/shared/project-agent-guidance.js")),
       false,
     );
   });

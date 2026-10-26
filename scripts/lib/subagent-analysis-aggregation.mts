@@ -71,6 +71,12 @@ export type MutableRun = {
   execution: SubagentExecution;
   mode: SubagentMode;
   telemetry?: NormalizedTelemetry;
+  /** Transcript position of the newest merged snapshot (undefined when unknown). */
+  telemetrySnapshots?: {
+    telemetry: NormalizedTelemetry;
+    order: { scan: number; entry: number };
+    arrival: number;
+  }[];
   telemetryRecordCount: number;
   legacyUsage?: TelemetryUsage;
   legacyRuntime?: { durationMs?: number; activeRuntimeMs?: number };

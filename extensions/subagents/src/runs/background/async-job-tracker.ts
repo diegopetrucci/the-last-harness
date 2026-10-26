@@ -5,7 +5,6 @@ import { renderWidget, widgetPhraseSlotKey, widgetRenderKey } from "../../tui/re
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.ts";
 import {
   type AsyncJobState,
-  type AsyncStatus,
   type AsyncStartedEvent,
   type SubagentState,
   normalizeSubagentRunMode,
@@ -17,34 +16,21 @@ import {
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
-import {
-  normalizeActiveRuntimeCheckpointAt,
-  normalizeActiveRuntimeMs,
-} from "../shared/lifecycle-state.ts";
 import { scanAsyncRunsForRestore, type AsyncRunSummary } from "./async-status.ts";
-import {
-  quarantineCorruptAsyncRun,
-  type AsyncStatusQuarantineOptions,
-} from "./async-status-quarantine.ts";
-import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import type { AsyncStatusReadOptions } from "../../shared/utils.ts";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.ts";
+import { isAwaitedRun } from "./awaited-run-registry.ts";
+import { canonicalLifecycleState } from "./async-status-boundary.ts";
+import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.ts";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
-import {
-  PROJECT_AGENT_TERMINAL_RETENTION_MS,
-  lookupProjectAgentRunReference,
-  releaseProjectAgentRunReference,
-  type ProjectAgentRunCapture,
-} from "../../agents/project-agent-snapshot.ts";
 
 interface AsyncJobTrackerOptions {
   completionRetentionMs?: number;
-  /** Test seam; production defaults to the shared project terminal retention window. */
-  projectAgentTerminalRetentionMs?: number;
   pollIntervalMs?: number;
   resultsDir?: string;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
-  quarantine?: AsyncStatusQuarantineOptions;
+  statusRead?: AsyncStatusReadOptions;
   /** Test seam for failures while probing restored control-event logs. */
   fs?: Pick<typeof fs, "statSync" | "openSync" | "readSync" | "closeSync">;
 }
@@ -52,59 +38,10 @@ interface AsyncJobTrackerOptions {
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
 const CONTROL_EVENT_SCAN_WINDOW_BYTES = 2 * 1024 * 1024;
-const COMPLETION_RETENTION_STATES = new Set<string>([
-  "complete",
-  "failed",
-  "paused",
-  "cancelled",
-  "continued",
-]);
+const COMPLETION_RETENTION_STATES = new Set<string>(["complete", "failed", "paused", "cancelled"]);
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasUsableProjectSessionFile(sessionFile: unknown): boolean {
-  if (typeof sessionFile !== "string" || sessionFile.trim().length === 0) return false;
-  const resolved = path.resolve(sessionFile);
-  return path.extname(resolved) === ".jsonl" && fs.existsSync(resolved);
-}
-
-function hasResumableProjectSibling(
-  asyncDir: string | undefined,
-  includeTerminalProjectSibling = true,
-): boolean {
-  if (!asyncDir) return true;
-  let status: AsyncStatus | null;
-  try {
-    status = readStatus(asyncDir);
-  } catch {
-    return true;
-  }
-  if (!status || !status.steps || status.steps.length === 0) return true;
-  return status.steps.some((step) => {
-    const stepStatus = step.status as string;
-    if (
-      stepStatus === "paused" ||
-      stepStatus === "pausing" ||
-      stepStatus === "pending" ||
-      stepStatus === "running" ||
-      stepStatus === "queued"
-    ) {
-      return true;
-    }
-    if (stepStatus === "complete" || stepStatus === "completed" || stepStatus === "failed") {
-      return (
-        includeTerminalProjectSibling &&
-        step.projectAgent !== undefined &&
-        hasUsableProjectSessionFile(step.sessionFile)
-      );
-    }
-    if (stepStatus === "continued" || stepStatus === "cancelled") return false;
-    // Unknown status is retained conservatively rather than allowing an
-    // unrecognized persisted state to release a project generation.
-    return true;
-  });
 }
 
 export function createAsyncJobTracker(
@@ -120,16 +57,10 @@ export function createAsyncJobTracker(
   restoreActiveJobs: (ctx?: ExtensionContext) => void;
 } {
   const completionRetentionMs = options.completionRetentionMs ?? 10000;
-  const projectAgentTerminalRetentionMs =
-    options.projectAgentTerminalRetentionMs ?? PROJECT_AGENT_TERMINAL_RETENTION_MS;
   const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
   const resultsDir = options.resultsDir ?? RESULTS_DIR;
   const restoreWarningDedupe = new Set<string>();
   const restoreControlEventProbeFailures = new Set<string>();
-  const projectReferenceCleanupTimers = new Map<
-    string,
-    { timer: ReturnType<typeof setTimeout>; captures: readonly ProjectAgentRunCapture[] }
-  >();
   const eventFs = options.fs ?? fs;
   const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
     renderWidget(ctx, jobs, state.liveDetailController);
@@ -179,7 +110,9 @@ export function createAsyncJobTracker(
     return {
       asyncId: run.id,
       asyncDir: run.asyncDir,
+      ...(run.awaited ? { awaited: true } : {}),
       status: run.state,
+      ...(run.lifecycle ? { lifecycle: run.lifecycle } : {}),
       ...(run.telemetry ? { telemetry: run.telemetry } : {}),
       sessionId: run.sessionId,
       activityState: run.activityState,
@@ -195,14 +128,10 @@ export function createAsyncJobTracker(
       steps: visibleSteps,
       stepsTotal: visibleSteps.length,
       runningSteps: visibleSteps.filter((step) => step.status === "running").length,
-      completedSteps: visibleSteps.filter(
-        (step) =>
-          step.status === "complete" || step.status === "completed" || step.status === "continued",
-      ).length,
+      completedSteps: visibleSteps.filter((step) => isCompletedLifecycleStepState(step.status))
+        .length,
       startedAt: run.startedAt,
       updatedAt: run.lastUpdate ?? run.startedAt,
-      activeRuntimeMs: run.activeRuntimeMs,
-      activeRuntimeCheckpointAt: run.activeRuntimeCheckpointAt,
       timeoutMs: run.timeoutMs,
       deadlineAt: run.deadlineAt,
       timedOut: run.timedOut,
@@ -218,7 +147,6 @@ export function createAsyncJobTracker(
           controlEventSkippingOversizedLine: restoredCursor.skippingOversizedLine,
         };
       })(),
-      tkTicket: run.tkTicket,
       projectAgents: run.projectAgents,
     };
   };
@@ -228,79 +156,10 @@ export function createAsyncJobTracker(
     clearTimeout(existingTimer);
     state.cleanupTimers.delete(asyncId);
   };
-  const cancelProjectReferenceCleanup = (asyncId: string) => {
-    const existingTimer = projectReferenceCleanupTimers.get(asyncId);
-    if (!existingTimer) return;
-    clearTimeout(existingTimer.timer);
-    projectReferenceCleanupTimers.delete(asyncId);
-  };
-  const scheduleProjectReferenceCleanup = (
-    asyncId: string,
-    asyncDir: string | undefined,
-    options: { siblingSafe: boolean; delayMs?: number },
-  ) => {
-    const lookup = lookupProjectAgentRunReference(asyncId);
-    if (lookup.status !== "found" || lookup.runId !== asyncId) return;
-    cancelProjectReferenceCleanup(asyncId);
-    const expectedCaptures = lookup.captures;
-    const timer = setTimeout(() => {
-      const pending = projectReferenceCleanupTimers.get(asyncId);
-      if (!pending || pending.timer !== timer) return;
-      projectReferenceCleanupTimers.delete(asyncId);
-      const current = lookupProjectAgentRunReference(asyncId);
-      // Do not let a stale timer release a newer reference that reused this
-      // run id after the original reference was released.
-      if (
-        current.status !== "found" ||
-        current.runId !== asyncId ||
-        current.captures !== expectedCaptures
-      )
-        return;
-      if (options.siblingSafe) {
-        // A missing directory is an uninspectable cohort, not proof that all
-        // siblings are terminal. Never release a sibling-safe reference from
-        // an undefined path.
-        if (!asyncDir) return;
-        // Terminal project siblings are protected by this timer only. Active,
-        // paused, and unknown siblings remain conservatively retained and are
-        // checked again after the next retention window.
-        if (hasResumableProjectSibling(asyncDir, false)) {
-          scheduleProjectReferenceCleanup(asyncId, asyncDir, options);
-          return;
-        }
-      }
-      releaseProjectAgentRunReference(asyncId);
-    }, options.delayMs ?? projectAgentTerminalRetentionMs);
-    timer.unref?.();
-    projectReferenceCleanupTimers.set(asyncId, { timer, captures: expectedCaptures });
-  };
-  const retainOrReleaseProjectReference = (asyncId: string, asyncDir: string | undefined): void => {
-    const lookup = lookupProjectAgentRunReference(asyncId);
-    if (lookup.status !== "found" || lookup.runId !== asyncId) return;
-    if (hasResumableProjectSibling(asyncDir)) {
-      scheduleProjectReferenceCleanup(asyncId, asyncDir, { siblingSafe: true });
-      return;
-    }
-    cancelProjectReferenceCleanup(asyncId);
-    releaseProjectAgentRunReference(asyncId);
-  };
   const scheduleCleanup = (asyncId: string) => {
     cancelCleanup(asyncId);
     const timer = setTimeout(() => {
       state.cleanupTimers.delete(asyncId);
-      const job = state.asyncJobs.get(asyncId);
-      if (job && job.status !== "paused") {
-        if (
-          (job.status === "cancelled" || job.status === "continued") &&
-          !projectReferenceCleanupTimers.has(asyncId)
-        ) {
-          retainOrReleaseProjectReference(asyncId, job.asyncDir);
-        } else if (!projectReferenceCleanupTimers.has(asyncId)) {
-          // This is a fallback for terminal jobs whose project retention
-          // was deferred while sibling references were still live.
-          scheduleProjectReferenceCleanup(asyncId, job.asyncDir, { siblingSafe: false });
-        }
-      }
       state.asyncJobs.delete(asyncId);
       lastPhraseSlotKeys.delete(asyncId);
       if (state.lastUiContext) {
@@ -308,16 +167,6 @@ export function createAsyncJobTracker(
       }
     }, completionRetentionMs);
     state.cleanupTimers.set(asyncId, timer);
-  };
-  const formatRestoreIssueCounts = (counts: {
-    jsonParse: number;
-    persistedValidation: number;
-  }): string => {
-    const parts: string[] = [];
-    if (counts.jsonParse > 0) parts.push(`${counts.jsonParse} malformed JSON`);
-    if (counts.persistedValidation > 0)
-      parts.push(`${counts.persistedValidation} invalid persisted status`);
-    return parts.join(", ");
   };
   const formatRestoredActiveJobsCount = (count: number): string =>
     `restored ${count} valid active ${count === 1 ? "job" : "jobs"}`;
@@ -488,22 +337,14 @@ export function createAsyncJobTracker(
             resultsDir,
             kill: options.kill,
             now: options.now,
-            startedRun: {
-              runId: job.asyncId,
-              pid: job.pid,
-              sessionId: job.sessionId,
-              mode: job.mode,
-              agents: job.agents,
-              startedAt: job.startedAt,
-              sessionFile: job.sessionFile,
-              projectAgents: job.projectAgents,
-              telemetry: job.telemetry,
-            },
+            statusRead: options.statusRead,
           });
-          const status = reconciliation.status ?? readStatus(job.asyncDir);
+          const status = reconciliation.status ?? readStatus(job.asyncDir, options.statusRead);
           if (status) {
             const previousStatus = job.status;
+            if (status.awaited) job.awaited = true;
             job.status = status.state;
+            job.lifecycle = status.lifecycle;
             if (!COMPLETION_RETENTION_STATES.has(job.status)) cancelCleanup(job.asyncId);
             job.sessionId = status.sessionId ?? job.sessionId;
             job.activityState = status.activityState;
@@ -516,32 +357,7 @@ export function createAsyncJobTracker(
             job.mode = normalizeSubagentRunMode(status.mode);
             job.currentStep = status.currentStep ?? job.currentStep;
             job.startedAt = status.startedAt ?? job.startedAt;
-            const persistedRuntime = normalizeActiveRuntimeMs(status.activeRuntimeMs);
-            const observedRuntime = normalizeActiveRuntimeMs(job.activeRuntimeMs);
-            if (persistedRuntime !== undefined || observedRuntime !== undefined) {
-              job.activeRuntimeMs = Math.max(persistedRuntime ?? 0, observedRuntime ?? 0);
-            }
-            const persistedCheckpoint = normalizeActiveRuntimeCheckpointAt(
-              status.activeRuntimeCheckpointAt,
-            );
-            const observedCheckpoint = normalizeActiveRuntimeCheckpointAt(
-              job.activeRuntimeCheckpointAt,
-            );
-            if (persistedCheckpoint !== undefined || observedCheckpoint !== undefined) {
-              job.activeRuntimeCheckpointAt = Math.max(
-                persistedCheckpoint ?? 0,
-                observedCheckpoint ?? 0,
-              );
-            }
             if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
-            if (
-              job.status !== "complete" &&
-              job.status !== "failed" &&
-              job.status !== "continued" &&
-              job.status !== "cancelled"
-            ) {
-              cancelProjectReferenceCleanup(job.asyncId);
-            }
             if (status.steps?.length) {
               const visibleSteps = status.steps.map((step, index) => ({
                 ...step,
@@ -556,13 +372,9 @@ export function createAsyncJobTracker(
               job.steps = visibleSteps;
               job.stepsTotal = visibleSteps.length;
               job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
-              job.completedSteps = visibleSteps.filter(
-                (step) =>
-                  step.status === "complete" ||
-                  step.status === "completed" ||
-                  step.status === "continued",
+              job.completedSteps = visibleSteps.filter((step) =>
+                isCompletedLifecycleStepState(step.status),
               ).length;
-              if (status.state === "complete") job.completedSteps = visibleSteps.length;
             }
             job.sessionDir = status.sessionDir ?? job.sessionDir;
             job.outputFile = status.outputFile ?? job.outputFile;
@@ -571,16 +383,9 @@ export function createAsyncJobTracker(
             job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
             job.timedOut = status.timedOut ?? job.timedOut;
             job.sessionFile = status.sessionFile ?? job.sessionFile;
-            if (status.telemetry !== undefined) job.telemetry = status.telemetry;
-            if (status.tkTicket !== undefined)
-              job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
+            if (status.telemetry !== undefined)
+              job.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
             if (status.projectAgents !== undefined) job.projectAgents = status.projectAgents;
-            if (
-              (job.status === "complete" || job.status === "failed") &&
-              !projectReferenceCleanupTimers.has(job.asyncId)
-            ) {
-              scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
-            }
             if (
               COMPLETION_RETENTION_STATES.has(job.status) &&
               (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))
@@ -590,12 +395,6 @@ export function createAsyncJobTracker(
             if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
               widgetChanged = true;
             continue;
-          }
-          if (
-            (job.status === "complete" || job.status === "failed") &&
-            !projectReferenceCleanupTimers.has(job.asyncId)
-          ) {
-            scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
           }
           if (
             COMPLETION_RETENTION_STATES.has(job.status) &&
@@ -613,7 +412,9 @@ export function createAsyncJobTracker(
             job.status = "failed";
             job.updatedAt = Date.now();
           }
-          if (!state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
+          if (!state.cleanupTimers.has(job.asyncId)) {
+            scheduleCleanup(job.asyncId);
+          }
         }
         if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
           widgetChanged = true;
@@ -631,13 +432,12 @@ export function createAsyncJobTracker(
     if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId)
       return;
     const now = Date.now();
-    cancelProjectReferenceCleanup(info.id);
     const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
     const agents = info.agents?.length ? info.agents : info.agent ? [info.agent] : undefined;
-    const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
     const newJob: AsyncJobState = {
       asyncId: info.id,
       asyncDir,
+      ...(isAwaitedRun(info.id) ? { awaited: true } : {}),
       status: "queued",
       ...(telemetry ? { telemetry } : {}),
       pid: typeof info.pid === "number" ? info.pid : undefined,
@@ -650,7 +450,6 @@ export function createAsyncJobTracker(
       timeoutMs: info.timeoutMs,
       deadlineAt: info.deadlineAt,
       controlEventCursor: 0,
-      tkTicket: normalizedTkTicket,
       projectAgents: info.projectAgents,
     };
     state.asyncJobs.set(info.id, newJob);
@@ -668,6 +467,7 @@ export function createAsyncJobTracker(
       asyncDir?: string;
       sessionId?: string;
       state?: AsyncJobState["status"];
+      awaited?: boolean;
       telemetry?: unknown;
     };
     if (typeof state.currentSessionId === "string" && result.sessionId !== state.currentSessionId)
@@ -678,24 +478,16 @@ export function createAsyncJobTracker(
     const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
     if (job && telemetry) job.telemetry = telemetry;
     if (job) {
+      if (result.awaited) job.awaited = true;
+      const eventState = canonicalLifecycleState(result.state);
       job.status =
-        result.state === "continued" || result.state === "cancelled"
-          ? result.state
-          : result.success
+        eventState === "cancelled"
+          ? "cancelled"
+          : result.success || eventState === "complete"
             ? "complete"
             : "failed";
       job.updatedAt = Date.now();
       if (result.asyncDir) job.asyncDir = result.asyncDir;
-    }
-    if (result.state === "cancelled" || result.state === "continued") {
-      retainOrReleaseProjectReference(asyncId, job?.asyncDir ?? result.asyncDir);
-    } else if (
-      (job?.status === "complete" || job?.status === "failed") &&
-      !projectReferenceCleanupTimers.has(asyncId)
-    ) {
-      scheduleProjectReferenceCleanup(asyncId, job?.asyncDir ?? result.asyncDir, {
-        siblingSafe: false,
-      });
     }
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);
@@ -708,27 +500,8 @@ export function createAsyncJobTracker(
       clearTimeout(timer);
     }
     state.cleanupTimers.clear();
-    // Keep same-session project retention timers alive across /reload. They
-    // are private registry ownership, not UI state; clearing them here would
-    // strand terminal references after their result/status files are removed.
-    // A timer from another session is stale and must not survive into an id
-    // reuse in the new session.
-    for (const [asyncId, pending] of projectReferenceCleanupTimers) {
-      const sameSession =
-        typeof state.currentSessionId === "string" &&
-        pending.captures.length > 0 &&
-        pending.captures.every(
-          (capture) => capture.provenance.sessionId === state.currentSessionId,
-        );
-      if (!sameSession) {
-        clearTimeout(pending.timer);
-        projectReferenceCleanupTimers.delete(asyncId);
-      }
-    }
     state.asyncJobs.clear();
     lastPhraseSlotKeys.clear();
-    state.foregroundControls?.clear();
-    state.lastForegroundControlId = null;
     state.resultFileCoalescer.clear();
     if (ctx?.hasUI) {
       state.lastUiContext = ctx;
@@ -786,6 +559,7 @@ export function createAsyncJobTracker(
         resultsDir,
         kill: options.kill,
         now: options.now,
+        statusRead: options.statusRead,
       }));
     } catch (error) {
       console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
@@ -796,44 +570,28 @@ export function createAsyncJobTracker(
     }
 
     try {
-      const quarantined = { jsonParse: 0, persistedValidation: 0 };
-      const deferred = { jsonParse: 0, persistedValidation: 0 };
-      const failed = { jsonParse: 0, persistedValidation: 0 };
-      const skippedUnsafe = new Set<string>();
+      const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
+
+      // Deduplicate unsafe (non-regular) status artifacts and add a safe count-only warning.
+      const unsafeEntries = new Set<string>();
+      let skippedUnsafeCount = 0;
       for (const issue of unsafeIssues) {
-        const dedupeKey = `unsafe-status\u0000${issue.entry}\u0000${issue.reason}`;
+        const dedupeKey = `unsafe-status\0${issue.entry}`;
+        unsafeEntries.add(issue.entry);
         if (restoreWarningDedupe.has(dedupeKey)) continue;
         restoreWarningDedupe.add(dedupeKey);
-        skippedUnsafe.add(dedupeKey);
+        skippedUnsafeCount += 1;
       }
-      for (const issue of issues) {
-        const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
-        if (result.outcome === "quarantined") {
-          if (result.kind === "json_parse") quarantined.jsonParse += 1;
-          else quarantined.persistedValidation += 1;
-          continue;
-        }
-        if (
-          (result.outcome === "deferred" || result.outcome === "failed") &&
-          !restoreWarningDedupe.has(result.dedupeKey)
-        ) {
-          restoreWarningDedupe.add(result.dedupeKey);
-          const bucket = result.outcome === "deferred" ? deferred : failed;
-          if (result.kind === "json_parse") bucket.jsonParse += 1;
-          else bucket.persistedValidation += 1;
-        }
-      }
-      const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
-      if (skippedUnsafe.size > 0)
+      if (skippedUnsafeCount > 0)
         warnings.push(
-          `skipped ${skippedUnsafe.size} unsafe status artifact${skippedUnsafe.size === 1 ? "" : "s"}`,
+          `skipped ${skippedUnsafeCount} unsafe status artifact${skippedUnsafeCount === 1 ? "" : "s"}`,
         );
-      const quarantinedSummary = formatRestoreIssueCounts(quarantined);
-      if (quarantinedSummary) warnings.push(`quarantined ${quarantinedSummary}`);
-      const deferredSummary = formatRestoreIssueCounts(deferred);
-      if (deferredSummary) warnings.push(`deferred ${deferredSummary}`);
-      const failedSummary = formatRestoreIssueCounts(failed);
-      if (failedSummary) warnings.push(`left ${failedSummary} in place`);
+
+      // Exclude non-regular entries that are already counted as unsafe: those
+      // go through the unsafe deduplication above and must not generate a
+      // separate "left unreadable statuses in place" warning on each scan.
+      const nonUnsafeIssues = issues.filter((issue) => !unsafeEntries.has(issue.entry));
+      if (nonUnsafeIssues.length > 0) warnings.push("left unreadable statuses in place");
       if (warnings.length > 1)
         warnRestoreIssues(`Async restore skipped startup runs: ${warnings.join("; ")}.`);
       for (const run of runs) {

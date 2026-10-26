@@ -201,6 +201,21 @@ test("reclaimRetiredExtensionResidues case 2: skips pi remove when retired ident
   );
 });
 
+test("reclaimRetiredExtensionResidues never reclaims restored quiet-tools or compact-bash identities", (t) => {
+  const { config, agentDir, piLog } = makeConfig(t, {
+    settings: { packages: [] },
+    fakePiBody: `printf '%s|%s|%s\\n' "$PI_CODING_AGENT_DIR" "$PWD" "$*" >>"$PI_LOG"`,
+  });
+  const quietToolsDir = createNpmPackageDir(agentDir, "@diegopetrucci/pi-quiet-tools");
+  const compactBashDir = createNpmPackageDir(agentDir, "@diegopetrucci/pi-compact-bash");
+
+  reclaimRetiredExtensionResidues(config);
+
+  assert.equal(existsSync(piLog), false, "restored identities must not invoke pi remove");
+  assert.ok(existsSync(quietToolsDir), "quiet-tools residue must not be reclaimed");
+  assert.ok(existsSync(compactBashDir), "compact-bash residue must not be reclaimed");
+});
+
 // ---------------------------------------------------------------------------
 // Case 3: Not-on-disk — package is absent from disk → no pi invocation.
 // ---------------------------------------------------------------------------

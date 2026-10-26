@@ -1,5 +1,7 @@
 # Retired subagent pin-bump checklist
 
+> **Historical record only.** This file preserves dated verification evidence. [VALIDATING.md](../VALIDATING.md#release-tier-manual-validation) owns the current release-tier checks; nothing here is a live or pending checklist.
+
 > **Historical status:** the standalone package pin checklist is retired now that the subagent runtime is first-party TLH code. It must not be used to publish, release, or pin a subagent package.
 
 Older TLH releases installed and pinned a separate `@diegopetrucci/pi-subagents` package. The former live-session checklist and GitHub issue [#346](https://github.com/diegopetrucci/the-last-harness/issues/346) tracked that package's pin bumps. `config/default-extensions.json` no longer contains a subagent package pin, and current TLH install/update does not publish or fetch a standalone subagent release.
@@ -8,9 +10,9 @@ Older TLH releases installed and pinned a separate `@diegopetrucci/pi-subagents`
 
 The imported unit/integration/E2E suites, focused TLH regressions, package assertions, and provenance checks now run through the root repository. They cover the compact parent-facing description, the closed action surface, bundled-agent safety, async status, steering, and resume mechanics.
 
-`npm run validate` does **not** replace the former live-session checks. Rendering and real parent/child coordination still require release-tier validation in an installed TLH session. The checklist in this file is the completed `v0.43.0` record. Current Pi 1.0.3 release-tier checks are owned by the release-tier section in [VALIDATING.md](../VALIDATING.md). Issue #346 and the historical identifier `tlh-2ej0` remain historical context for the old delivery mechanism.
+`npm run validate` does **not** replace the former live-session checks. Rendering and real parent/child coordination still require release-tier validation in an installed TLH session. Current release-tier checks are owned by [VALIDATING.md](../VALIDATING.md#release-tier-manual-validation). Issue #346 and the historical identifier `tlh-2ej0` remain historical context for the old delivery mechanism.
 
-## Current release-tier live checklist
+## Historical release-tier live checklist
 
 Run these checks against the packaged TLH release candidate, without creating or changing any standalone subagent pin:
 
@@ -80,10 +82,9 @@ These are offline interaction checks. No credentialed provider turn, no model-ca
 
 - [subagents.md](subagents.md) for user-visible runtime, migration, diagnostics, and undo behavior;
 - [VALIDATING.md](../VALIDATING.md) for automated checks and the current release-tier live checklist;
-- [subagents-history/HISTORY.md](subagents-history/HISTORY.md) for the exact source checkpoint and integration history;
 - `npm run validate` for the standard repository gate.
 
-The old package-release, pin-bump, and fork-sync procedures are preserved only in the immutable archive under `docs/subagents-history/source/`. They are historical evidence and must not be followed as current TLH instructions. This retirement makes no claim about deprecating or unpublishing any npm package, changing repository hosting state, deleting source, or archiving a GitHub repository.
+The old package-release, pin-bump, and fork-sync procedures are retired and available only in git history. They must not be followed as current TLH instructions. This retirement makes no claim about deprecating or unpublishing any npm package, changing repository hosting state, deleting source, or archiving a GitHub repository.
 
 ## Pi 0.87.1 isolated verification record — `tlhf-i8ly` (2026-09-23 UTC)
 
@@ -214,3 +215,20 @@ At the time of this candidate-only run, published-ref update convergence was **n
 ## Pi 0.87.1 published-ref update convergence record — `tlhf-wgno` (2026-09-25 UTC)
 
 The post-publication check used a ticket-owned isolated `v0.42.1` latest-release install. Updating it converged to ref `v0.43.0` with `track=latest-release` and private Pi `0.87.1`. The isolated profile, runtime, wrapper, and temporary artifacts were cleaned up after verification; no secrets or ephemeral credential material were recorded.
+
+## Historical Pi 1.3.0 comparison status (reviewed 2026-10-15)
+
+The dated 1.2.0→1.3.0 package comparison is complete and recorded in [the upstream-sync inventory](upstream-sync-inventory.md#historical-pi-130-review-evidence). The original source/package inspection was not live release validation: it ran no provider, credential, installed-profile, or release-tier checks. Separately, a clean isolated unpacked-package installation on 2026-10-15 verified Pi 1.3.0 from both the private runtime and generated wrapper, verified the runtime and wrapper ownership markers and that the runtime lock matched the shipped lock, and observed the runtime top level `.tlh-runtime-owned`, `bin`, `lib`, and `node-compile-cache`; isolated doctor reported 7 OK / 3 WARN / 0 FAIL, with one unresolved packaged-settings append and expected missing EXA/gh auth prerequisites. No paid-provider, normal home-profile, or publication checks were run. The permanent deterministic/isolated regression suites — [resume](../tests/the-last-harness-pi-1-3-resume-regressions.test.mjs) and [model resolution](../tests/the-last-harness-pi-1-3-model-resolution-regressions.test.mjs) — pass with Pi 1.3.0 without live providers. The provider-backed and packaged release-candidate checks below remain pending:
+
+- **Kimi Code transport and custom base URL:** with an authorized Kimi Code setup, verify Chat Completions behavior, tool additions during a session, prompt-cache retention, and that every custom `models.json` base URL includes `/v1`.
+- **OpenAI GPT-6 cache retention:** with an OpenAI API-key model, verify a mid-session thinking-level change preserves the prompt cache. This check does not cover the OpenAI Codex subscription provider, where that cache benefit does not apply.
+- **Provider/model ambiguity (deterministic isolated):** the [model-resolution regression](../tests/the-last-harness-pi-1-3-model-resolution-regressions.test.mjs) passes credential-preferred, no-credential ambiguity, provider-qualified, and TLH child override → `buildPiArgs` → `parseArgs` → real `resolveCliModel` checks. Provider-backed release validation remains pending.
+- **Resumed active tools (deterministic isolated):** the [resume regression](../tests/the-last-harness-pi-1-3-resume-regressions.test.mjs) passes primary allowlist precedence at policy application and before provider execution, explicit child `--tools` precedence over transcript state, and omitted-child transcript restoration. It accepts upstream's transient late-tool activation after registration as non-security-boundary behavior while retaining late-tool registration, inactive control behavior, provider exclusion, rejected attempted execution with zero executor count, and allowed-read assertions. Provider-backed release validation remains pending.
+- **Clean model switching:** verify thinking from the previous model is not presented to the next model as plain text.
+- **TLH policy boundaries:** with the default cap enabled, `gpt-6.1-sol` has a native 500k window (272k → 500k), the non-child primary effective window is 350k (272k → 350k), non-developer children use native 500k, and canonical developer children use `min(native, 272k)`; `tlh.contextCap.disabled=true` follows native windows. Verify model defaults, MCP exclusion/adapter policy, OSC root ownership, and user settings remain unchanged.
+
+## Historical Pi 1.2.0 comparison status (reviewed 2026-10-13)
+
+The dated 1.0.4→1.1.0 and 1.1.0→1.2.0 comparisons are recorded in [the upstream-sync inventory](upstream-sync-inventory.md). They were not live release validation: no provider, credential, or installed-profile checks were run. The native OSC overlap blocker found during the 1.1.0 review was resolved on inherited base `a72786a5`: the wrapper defaults `PI_PROGRAM_STATUS=0`, leaving TLH's effective-activity writer as the default root owner.
+
+Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05; these are historical results, not Pi 1.1.0 or 1.2.0 validation. v0.44.0 shipped on 2026-10-12, v0.45.0 shipped on 2026-10-14, and v0.46.0 shipped on 2026-10-20, without running the then-carried-forward release-tier checklist, by maintainer decision. Pending checks are tracked only in [VALIDATING.md](../VALIDATING.md#release-tier-manual-validation).

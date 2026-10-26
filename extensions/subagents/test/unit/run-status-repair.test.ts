@@ -277,6 +277,100 @@ describe("async run status inspection", () => {
     }
   });
 
+  it("suppresses poisoned-child resume hints while preserving recoverable siblings", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-exhausted-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-exhausted-mixed");
+      const exhaustedSession = path.join(root, "exhausted.jsonl");
+      const pausedSession = path.join(root, "paused.jsonl");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(exhaustedSession, "", "utf-8");
+      fs.writeFileSync(pausedSession, "", "utf-8");
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-exhausted-mixed",
+            mode: "parallel",
+            state: "failed",
+            startedAt: 100,
+            lastUpdate: 200,
+            steps: [
+              {
+                agent: "developer",
+                status: "failed",
+                timedOut: true,
+                timeoutOwner: "role",
+                terminationReason: "timed_out",
+                sessionFile: exhaustedSession,
+              },
+              { agent: "reviewer", status: "paused", sessionFile: pausedSession },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-exhausted-mixed" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        ),
+      );
+      assert.match(text, /Budget exhausted: this child instance is permanently expired/);
+      assert.match(
+        text,
+        /Revive child: subagent\(\{ action: "resume", id: "run-exhausted-mixed", index: 1, message: "\.\.\." \}\)/,
+      );
+      assert.doesNotMatch(
+        text,
+        /Revive child: subagent\(\{ action: "resume", id: "run-exhausted-mixed", index: 0/,
+      );
+
+      const oldRunDeadlineDir = path.join(asyncRoot, "run-old-deadline");
+      const oldRunSession = path.join(root, "old-run.jsonl");
+      fs.mkdirSync(oldRunDeadlineDir, { recursive: true });
+      fs.writeFileSync(oldRunSession, "", "utf-8");
+      fs.writeFileSync(
+        path.join(oldRunDeadlineDir, "status.json"),
+        JSON.stringify({
+          runId: "run-old-deadline",
+          mode: "single",
+          state: "failed",
+          startedAt: 100,
+          lastUpdate: 200,
+          steps: [
+            {
+              agent: "legacy-worker",
+              status: "failed",
+              timedOut: true,
+              timeoutOwner: "run",
+              terminationReason: "timed_out",
+              sessionFile: oldRunSession,
+            },
+          ],
+        }),
+        "utf-8",
+      );
+      const oldDeadlineText = textContent(
+        inspectSubagentStatus(
+          { id: "run-old-deadline" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        ),
+      );
+      assert.doesNotMatch(oldDeadlineText, /Budget exhausted/);
+      assert.match(
+        oldDeadlineText,
+        /Revive: subagent\(\{ action: "resume", id: "run-old-deadline", message: "\.\.\." \}\)/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses original child indexes when result metadata contains invalid children", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-original-index-"));
     try {
@@ -499,6 +593,53 @@ describe("async run status inspection", () => {
       );
       assert.match(childZero, /Continuation: continuation-zero/);
       assert.doesNotMatch(childZero, /continuation-one/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("suppresses revive hint for single-child run when runExhausted is true even if child is unmarked", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-run-exhausted-single-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-exhausted-single");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-exhausted-single",
+            mode: "single",
+            state: "failed",
+            startedAt: 100,
+            lastUpdate: 200,
+            timedOut: true,
+            timeoutOwner: "role",
+            terminationReason: "timed_out",
+            steps: [
+              {
+                agent: "developer",
+                status: "failed",
+                sessionFile,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-exhausted-single" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        ),
+      );
+      assert.match(text, /Budget exhausted: this child instance is permanently expired/);
+      assert.doesNotMatch(text, /Revive:/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

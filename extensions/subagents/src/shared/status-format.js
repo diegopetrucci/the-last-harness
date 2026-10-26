@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/status-format.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 function formatActivityAge(ms) {
     if (ms < 1000)
         return "now";
@@ -25,7 +26,7 @@ export function formatActivityLabel(lastActivityAt, activityState, now = Date.no
     return `active ${age} ago`;
 }
 function isCompletedStepStatus(status) {
-    return status === "complete" || status === "completed";
+    return status === "complete";
 }
 function formatAgentRunningLabel(count) {
     return count === 1 ? "1 agent running" : `${count} agents running`;

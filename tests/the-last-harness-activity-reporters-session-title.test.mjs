@@ -9,41 +9,12 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import { createJiti } from "jiti";
+import { createFakeTimers } from "./support/fake-timers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { createHerdrActivityReporter, registerTlhActivityReporters } = await jiti.import(
   "../extensions/the-last-harness/activity-reporters.ts",
 );
-
-function createFakeTimers() {
-  let now = 0;
-  let nextId = 1;
-  const timers = new Map();
-  return {
-    now: () => now,
-    setTimeout(fn, delay = 0) {
-      const id = nextId++;
-      timers.set(id, { fn, at: now + delay, delay });
-      return { id, unref() {} };
-    },
-    clearTimeout(handle) {
-      timers.delete(handle.id ?? handle);
-    },
-    advance(ms) {
-      now += ms;
-      let ran = true;
-      while (ran) {
-        ran = false;
-        for (const [id, timer] of [...timers.entries()].sort((a, b) => a[1].at - b[1].at)) {
-          if (timer.at > now) continue;
-          timers.delete(id);
-          timer.fn();
-          ran = true;
-        }
-      }
-    },
-  };
-}
 
 async function flushAsyncWork() {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();

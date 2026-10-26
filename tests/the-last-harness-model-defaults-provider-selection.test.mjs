@@ -541,10 +541,10 @@ test("OpenRouter registry-missing fallback preserves stored effort and distingui
     { thinking: "high" },
   );
   assert.equal(unsupportedResolution.thinking, "high");
-  assert.equal(unsupportedResolution.fallbackModels[0].thinking, "off");
+  assert.equal(unsupportedResolution.fallbackModels[0].thinking, "high");
   assert.equal(
     unsupportedResolution.fallbackWarning,
-    'TLH stored minor-agent effort "high" is not supported by generated fallback openrouter/anthropic/claude-sonnet-4-6; that fallback will use explicit off for this run.',
+    'TLH stored minor-agent effort "high" is not advertised by generated fallback openrouter/anthropic/claude-sonnet-4-6; the :high suffix is forwarded and Pi will validate it.',
   );
 });
 

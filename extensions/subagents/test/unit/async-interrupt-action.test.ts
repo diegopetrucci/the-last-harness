@@ -3,31 +3,19 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import {
   consumeChildMessageRequests,
   steerRequestsDir,
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 function createState(): SubagentState {
-  return {
+  return makeSubagentState({
     baseCwd: "",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  });
 }
 
 function createRunningAsync(
@@ -114,16 +102,6 @@ function createMissingStatusDirectory(runId: string): string {
   const asyncDir = path.join(ASYNC_DIR, runId);
   fs.mkdirSync(asyncDir, { recursive: true });
   return asyncDir;
-}
-
-function rememberCompletedForeground(state: SubagentState, runId: string): void {
-  state.foregroundRuns!.set(runId, {
-    runId,
-    mode: "single",
-    cwd: os.tmpdir(),
-    updatedAt: 100,
-    children: [{ agent: "worker", index: 0, status: "completed" }],
-  });
 }
 
 function cleanup(runId: string, asyncDir: string): void {
@@ -571,105 +549,51 @@ describe("async interrupt action", () => {
     }
   });
 
-  it("keeps persisted interrupt cancellation semantics across foreground and async routes", async () => {
-    const states = [
-      "paused",
-      "continued",
-      "cancelled",
-      "running",
-      "failed",
-      "complete",
-      "missing",
-    ] as const;
+  it("keeps persisted interrupt cancellation semantics across async lifecycle states", async () => {
+    const states = ["paused", "cancelled", "running", "failed", "complete", "missing"] as const;
     let caseNumber = 0;
-    for (const route of ["foreground", "async"] as const) {
-      for (const persistedState of states) {
-        const state = createState();
-        const runId = `interrupt-${route}-${persistedState}-${Date.now().toString(36)}-${caseNumber++}`;
-        if (route === "foreground") rememberCompletedForeground(state, runId);
-        const asyncDir =
-          persistedState === "missing"
-            ? createMissingStatusDirectory(runId)
-            : writeInterruptStatus(runId, persistedState);
-        const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
-        try {
-          const result = await executorWithKill(state, (pid, signal) => {
-            kills.push({ pid, signal });
-            return true;
-          }).execute(
-            "interrupt",
-            { action: "interrupt", id: runId },
-            new AbortController().signal,
-            undefined,
-            ctx(),
-          );
+    for (const persistedState of states) {
+      const state = createState();
+      const runId = `interrupt-async-${persistedState}-${Date.now().toString(36)}-${caseNumber++}`;
+      const asyncDir =
+        persistedState === "missing"
+          ? createMissingStatusDirectory(runId)
+          : writeInterruptStatus(runId, persistedState);
+      const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
+      try {
+        const result = await executorWithKill(state, (pid, signal) => {
+          kills.push({ pid, signal });
+          return true;
+        }).execute(
+          "interrupt",
+          { action: "interrupt", id: runId },
+          new AbortController().signal,
+          undefined,
+          ctx(),
+        );
 
-          if (persistedState === "paused" || persistedState === "cancelled") {
-            assert.equal(result.isError, undefined, `${route}/${persistedState}`);
-            assert.match(
-              text(result),
-              persistedState === "paused" ? /Cancelled paused foreground run/ : /already cancelled/,
-            );
-          } else if (persistedState === "continued") {
-            assert.equal(result.isError, true, `${route}/${persistedState}`);
-            assert.match(text(result), /already continued/);
-          } else if (route === "async" && persistedState === "running") {
-            assert.equal(result.isError, undefined);
-            assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
-            assert.deepEqual(kills, [
-              { pid: 12345, signal: 0 },
-              { pid: 12345, signal: process.platform === "win32" ? "SIGBREAK" : "SIGUSR2" },
-            ]);
-          } else {
-            assert.equal(result.isError, true, `${route}/${persistedState}`);
-            assert.match(
-              text(result),
-              route === "foreground"
-                ? /No interrupt-capable run found in this session/
-                : /No running async run with an interrupt-capable pid/,
-            );
-            assert.deepEqual(kills, []);
-          }
-          assert.equal(
-            fs.existsSync(path.join(asyncDir, "control", "interrupt.json")),
-            route === "async" && persistedState === "running",
+        if (persistedState === "paused" || persistedState === "cancelled") {
+          assert.equal(result.isError, undefined, `async/${persistedState}`);
+          assert.match(
+            text(result),
+            persistedState === "paused" ? /Cancelled paused (?:awaited )?run/ : /already cancelled/,
           );
-        } finally {
-          cleanup(runId, asyncDir);
+        } else if (persistedState === "running") {
+          assert.equal(result.isError, undefined);
+          assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
+          assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
+        } else {
+          assert.equal(result.isError, true, `async/${persistedState}`);
+          assert.match(text(result), /No running async run with an interrupt-capable pid/);
+          assert.deepEqual(kills, []);
         }
+        assert.equal(
+          fs.existsSync(path.join(asyncDir, "control", "interrupt.json")),
+          persistedState === "running",
+        );
+      } finally {
+        cleanup(runId, asyncDir);
       }
-    }
-  });
-
-  it("rejects an unauthorized project interrupt before cancellation or interrupt request", async () => {
-    const state = createState();
-    const runId = `interrupt-project-marker-${Date.now().toString(36)}`;
-    const asyncDir = writeInterruptStatus(runId, "paused", true);
-    const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
-    try {
-      const result = await executorWithKill(state, (pid, signal) => {
-        kills.push({ pid, signal });
-        return true;
-      }).execute(
-        "interrupt",
-        { action: "interrupt", id: runId },
-        new AbortController().signal,
-        undefined,
-        ctx(),
-      );
-
-      assert.equal(result.isError, true);
-      assert.match(
-        text(result),
-        /persisted run carries a project-agent marker, but its process-private reference is unavailable/,
-      );
-      assert.deepEqual(kills, []);
-      assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
-      const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-      assert.equal(persisted.state, "paused");
-      assert.equal(persisted.cancel, undefined);
-    } finally {
-      cleanup(runId, asyncDir);
     }
   });
 
@@ -693,25 +617,37 @@ describe("async interrupt action", () => {
       assert.equal(result.isError, undefined);
       assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
       assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), true);
-      assert.deepEqual(kills, [
-        { pid: 12345, signal: 0 },
-        { pid: 12345, signal: process.platform === "win32" ? "SIGBREAK" : "SIGUSR2" },
-      ]);
+      assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
     } finally {
       cleanup(runId, asyncDir);
     }
   });
 
-  it("reports success and writes the portable request when the signal is unavailable", async () => {
+  it("does not signal a recycled persisted pid during a direct interrupt", async () => {
     const state = createState();
-    const runId = `interrupt-enosys-${Date.now().toString(36)}`;
-    const asyncDir = createRunningAsync(state, runId);
+    const runId = `interrupt-recycled-pid-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const persistedAt = Date.now() - 60 * 60 * 1000;
+    const sessionFile = path.join(asyncDir, "worker.jsonl");
+    fs.mkdirSync(asyncDir, { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    writeJson(path.join(asyncDir, "status.json"), {
+      runId,
+      mode: "single",
+      state: "running",
+      pid: 12345,
+      sessionId: "session",
+      cwd: os.tmpdir(),
+      startedAt: persistedAt,
+      lastUpdate: persistedAt,
+      sessionFile,
+      steps: [{ agent: "worker", status: "running", startedAt: persistedAt, sessionFile }],
+    });
+    const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
     try {
-      const result = await executorWithKill(state, (_pid, signal) => {
-        if (signal === 0) return true;
-        const error = new Error("kill ENOSYS") as NodeJS.ErrnoException;
-        error.code = "ENOSYS";
-        throw error;
+      const result = await executorWithKill(state, (pid, signal) => {
+        kills.push({ pid, signal });
+        return true;
       }).execute(
         "interrupt",
         { action: "interrupt", id: runId },
@@ -723,6 +659,7 @@ describe("async interrupt action", () => {
       assert.equal(result.isError, undefined);
       assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
       assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), true);
+      assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
     } finally {
       cleanup(runId, asyncDir);
     }

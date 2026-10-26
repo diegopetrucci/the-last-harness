@@ -1,13 +1,12 @@
+// Generated from extensions/the-last-harness/footer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { keyText, } from "@earendil-works/pi-coding-agent";
-import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import { getTlhSubscriptionUsageFooterState, } from "./footer-subscription-usage.js";
 import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
-export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
@@ -27,11 +26,16 @@ function getCurrentThinkingLevel(pi) {
 function collectUsageTotals(ctx) {
     const totals = { cost: 0 };
     for (const entry of ctx.sessionManager.getEntries()) {
-        if (entry.type !== "message" || entry.message.role !== "assistant") {
-            continue;
+        const raw = entry;
+        let usage;
+        if (raw.type === "usage" || raw.type === "branch_summary" || raw.type === "compaction") {
+            usage = raw.usage;
         }
-        const usage = entry.message.usage;
-        if (!usage) {
+        else if (raw.type === "message" &&
+            (raw.message?.role === "assistant" || raw.message?.role === "toolResult")) {
+            usage = raw.message.usage;
+        }
+        if (!usage || typeof usage !== "object") {
             continue;
         }
         totals.cost += Number(usage.cost?.total) || 0;
@@ -261,9 +265,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 contextPercentStr = theme.fg("dim", contextPercentDisplay);
             }
             agentLine2Str += dimSep + contextPercentStr;
-            if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
-                agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
-            }
             const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
             const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
             const agentLine2 = fastLine2SuffixWidth <= width

@@ -1,12 +1,4 @@
-export const KNOWN_PI_MCP_ADAPTER_SOURCES = [
-    "npm:pi-mcp-adapter",
-    "npm:@diegopetrucci/pi-mcp-adapter",
-    "git:github.com/diegopetrucci/pi-mcp-adapter",
-];
-export function hasKnownPiMcpAdapterSource(source) {
-    return (typeof source === "string" &&
-        KNOWN_PI_MCP_ADAPTER_SOURCES.some((knownSource) => source === knownSource || source.startsWith(`${knownSource}@`)));
-}
+// Generated from extensions/the-last-harness/mcp-tools.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function hasPersistedDirectMcpResultDetails(toolName, details) {
     if (!details || typeof details !== "object") {
         return false;
@@ -31,9 +23,6 @@ export function getMcpToolKind(toolName, toolInfo) {
         return "proxy";
     }
     const source = toolInfo?.sourceInfo?.source;
-    if (hasKnownPiMcpAdapterSource(source)) {
-        return "direct";
-    }
     if (typeof source === "string" && /^(npm|git):/.test(source) && /mcp/i.test(source)) {
         return "direct";
     }

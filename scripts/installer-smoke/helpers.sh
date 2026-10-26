@@ -89,6 +89,35 @@ assert_safe_uninstall_smoke_paths() {
   assert_under_tmp_root "${bin_dir}"
 }
 
+filesystem_identity_smoke() {
+  local path="$1"
+  local identity=""
+
+  identity="$(stat -c '%d:%i' "${path}" 2>/dev/null || true)"
+  if [[ -n "${identity}" ]]; then
+    printf '%s\n' "${identity}"
+    return 0
+  fi
+  identity="$(stat -f '%d:%i' "${path}" 2>/dev/null || true)"
+  if [[ -n "${identity}" ]]; then
+    printf '%s\n' "${identity}"
+    return 0
+  fi
+  return 1
+}
+
+case_alias_smoke_supported() {
+  local canonical_path="$1"
+  local alias_path="$2"
+  local canonical_identity alias_identity
+
+  [[ -e "${canonical_path}" || -L "${canonical_path}" ]] || return 1
+  [[ -e "${alias_path}" || -L "${alias_path}" ]] || return 1
+  canonical_identity="$(filesystem_identity_smoke "${canonical_path}" || true)"
+  alias_identity="$(filesystem_identity_smoke "${alias_path}" || true)"
+  [[ -n "${canonical_identity}" && "${canonical_identity}" == "${alias_identity}" ]]
+}
+
 assert_contains() {
   local file="$1"
   local expected="$2"

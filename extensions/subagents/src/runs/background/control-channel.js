@@ -1,9 +1,9 @@
+// Generated from extensions/subagents/src/runs/background/control-channel.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { POLL_INTERVAL_MS } from "../../shared/types.js";
-export const INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 const STEER_REQUESTS_DIR = "steer-requests";
 const STEER_TARGETS_DIR = "steer-targets";
 const CHILD_MESSAGE_ACKS_DIR = "message-acks";
@@ -267,27 +267,47 @@ export function consumeChildMessageRequestsFromDir(dir, fsImpl = fs) {
 export function consumeChildMessageRequests(asyncDir, fsImpl = fs) {
     return consumeChildMessageRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
+function parseInterruptRequest(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const request = value;
+    return request.type === "interrupt" ? request : undefined;
+}
 export function readInterruptRequest(asyncDir, fsImpl = fs) {
-    const requestPath = interruptRequestPath(asyncDir);
     try {
-        return JSON.parse(fsImpl.readFileSync(requestPath, "utf-8"));
+        return parseInterruptRequest(JSON.parse(fsImpl.readFileSync(interruptRequestPath(asyncDir), "utf-8")));
     }
-    catch (error) {
-        if (error.code === "ENOENT")
-            return undefined;
-        throw error;
+    catch {
+        return undefined;
     }
 }
-export function consumeInterruptRequest(asyncDir, fsImpl = fs) {
+function consumeInterruptRequestPayload(asyncDir, fsImpl = fs) {
     const requestPath = interruptRequestPath(asyncDir);
-    if (!fsImpl.existsSync(requestPath))
-        return false;
+    const claimedPath = `${requestPath}.claim-${randomUUID()}`;
     try {
-        fsImpl.rmSync(requestPath, { force: true, recursive: true });
+        fsImpl.renameSync(requestPath, claimedPath);
+    }
+    catch (error) {
+        if (error?.code === "ENOENT") {
+            return { present: false, claimed: false };
+        }
+        return { present: true, claimed: false };
+    }
+    let request;
+    try {
+        request = parseInterruptRequest(JSON.parse(fsImpl.readFileSync(claimedPath, "utf-8")));
     }
     catch {
     }
-    return true;
+    try {
+        fsImpl.rmSync(claimedPath, { force: true, recursive: true });
+    }
+    catch {
+    }
+    return { present: true, claimed: true, ...(request ? { request } : {}) };
+}
+export function consumeInterruptRequest(asyncDir, fsImpl = fs) {
+    return consumeInterruptRequestPayload(asyncDir, fsImpl).claimed;
 }
 function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     const requestPath = timeoutRequestPath(asyncDir);
@@ -301,28 +321,7 @@ function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     return true;
 }
 export function deliverInterruptRequest(input) {
-    const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
-        now: input.now,
-    });
-    if (typeof input.pid === "number" && input.pid > 0) {
-        try {
-            (input.kill ?? process.kill)(input.pid, input.signal ?? INTERRUPT_SIGNAL);
-        }
-        catch (error) {
-            if (error?.code === "ENOSYS") {
-                return;
-            }
-            try {
-                fs.rmSync(requestPath, { force: true });
-            }
-            catch {
-            }
-            throw error;
-        }
-    }
-}
-export function deliverTimeoutRequest(input) {
-    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+    requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
         now: input.now,
     });
 }
@@ -342,8 +341,9 @@ export function watchAsyncControlInbox(asyncDir, opts) {
         try {
             if (consumeTimeoutRequest(asyncDir, fsImpl))
                 opts.onTimeout?.();
-            if (consumeInterruptRequest(asyncDir, fsImpl))
-                opts.onInterrupt();
+            const interruptRequest = consumeInterruptRequestPayload(asyncDir, fsImpl);
+            if (interruptRequest.claimed)
+                opts.onInterrupt(interruptRequest.request);
             for (const request of consumeChildMessageRequests(asyncDir, fsImpl)) {
                 if (request.type === "resume")
                     opts.onResume?.(request);
@@ -377,4 +377,9 @@ export function watchAsyncControlInbox(asyncDir, opts) {
         }
         timers.clearInterval(interval);
     };
+}
+export function deliverTimeoutRequest(input) {
+    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+        now: input.now,
+    });
 }

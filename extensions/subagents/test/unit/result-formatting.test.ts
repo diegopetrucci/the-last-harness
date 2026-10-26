@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  formatForegroundNativeSubagentResult,
+  formatAwaitedNativeSubagentResult,
   resolveSubagentResultStatus,
 } from "../../src/shared/result-formatting.ts";
 
 describe("result formatter", () => {
   it("formats native foreground results with bounded failed-first previews and explicit omissions", () => {
-    const grouped = formatForegroundNativeSubagentResult({
+    const grouped = formatAwaitedNativeSubagentResult({
       runId: "run-native",
       mode: "parallel",
       children: [
@@ -57,7 +57,7 @@ describe("result formatter", () => {
 
   it("bounds direct error and summary text exactly once within the native ceiling", () => {
     const errorSummary = `Collected output validation failed: ${"E".repeat(2_000)}`;
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-direct-bounds",
       mode: "parallel",
       errorSummary,
@@ -83,12 +83,12 @@ describe("result formatter", () => {
     assert.ok(text.length <= 8_000);
   });
 
-  it("summary truncation is surrogate-safe in formatForegroundNativeSubagentResult", () => {
+  it("summary truncation is surrogate-safe in formatAwaitedNativeSubagentResult", () => {
     // MEASURE the cut point by passing a long pure-ASCII summary and counting
     // how many content characters survive. This avoids hard-coding an offset
     // that might drift when constants or markers change.
     const ascii = "A".repeat(5_000);
-    const measured = formatForegroundNativeSubagentResult({
+    const measured = formatAwaitedNativeSubagentResult({
       runId: "run-surr-measure",
       mode: "parallel",
       children: [{ agent: "a", status: "completed", summary: ascii, index: 0 }],
@@ -105,7 +105,7 @@ describe("result formatter", () => {
     // keeps the high surrogate but drops the low surrogate → ill-formed.
     const emoji = "\u{1F30D}"; // 🌍 — two UTF-16 code units
     const surrogateAtCut = "B".repeat(cutPoint - 1) + emoji + "C".repeat(5_000);
-    const result = formatForegroundNativeSubagentResult({
+    const result = formatAwaitedNativeSubagentResult({
       runId: "run-surr-safe",
       mode: "parallel",
       children: [{ agent: "a", status: "completed", summary: surrogateAtCut, index: 0 }],
@@ -124,24 +124,12 @@ describe("result formatter", () => {
   });
 });
 
-// =========================================================================
-// formatForegroundNativeSubagentText ceiling-contract sweep.
-//
-// Derived from measured behaviour on this file. Do NOT import notify.ts
-// fixtures — the caps, scaffolding, and structure differ.
-//
-// Five properties are checked per combination:
-//   1. Output never exceeds MAX_NATIVE_FOREGROUND_CHARS (8 000).
-//   2. Every displayed child retains BOTH recovery pointers (artifact + session).
-//   4. No mangled truncation-marker fragments (e.g. '… [su').
-//   5. Output is always well-formed UTF-16.
-// =========================================================================
-describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
+describe("formatAwaitedNativeSubagentText ceiling-contract sweep", () => {
   const ART_PATH =
     "/home/user/.the-last-harness/agent/runs/run-12345678-abcd-efgh-ijkl/artifacts/subagent-output.md";
   const SESS_PATH =
     "/home/user/.the-last-harness/agent/runs/run-12345678-abcd-efgh-ijkl/run-0/session.jsonl";
-  const LONG_SUMMARY = "S".repeat(2_000); // well above MAX_NATIVE_FOREGROUND_SUMMARY_CHARS (1 200)
+  const LONG_SUMMARY = "S".repeat(2_000); // well above MAX_NATIVE_AWAITED_SUMMARY_CHARS (1 200)
   const MAX_CHARS = 8_000;
 
   // Every marker this module emits has the shape '… [<text>]'. A bare '…' that is not
@@ -178,13 +166,13 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
         index: i,
       }));
 
-      const { text } = formatForegroundNativeSubagentResult({
+      const { text } = formatAwaitedNativeSubagentResult({
         runId: `run-sweep-${n}`,
         mode: "parallel",
         children,
       });
 
-      const displayedN = Math.min(n, 8); // MAX_NATIVE_FOREGROUND_CHILDREN
+      const displayedN = Math.min(n, 8); // MAX_NATIVE_AWAITED_CHILDREN
 
       // 1. Must not exceed the ceiling.
       assert.ok(
@@ -231,7 +219,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-long-refs",
       mode: "parallel",
       children,
@@ -242,24 +230,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
     assert.ok(text.isWellFormed());
   });
 
-  // -------------------------------------------------------------------------
-  // Premature-drop guard: no child is dropped while its bare
-  // scaffolding would fit.
-  //
-  // Before the fix the per-child fit decision included a 1-char summary-line
-  // placeholder in fixedCost, making the loop think each child cost 1 char more
-  // than its bare scaffolding actually does. With 8 children the overcount was
-  // 8 chars, causing a premature drop whenever the true scaffold total was in
-  // [7993, 8000] — a range the loop saw as [8001, 8008].
-  //
-  // Boundary measured with: runId="" (outerCost=85), artifactPath=425 chars,
-  // sessionPath=500 chars. Per-child fixedCost (new, 8-child sum): 7909.
-  // Scaffold_new = 85 + 7909 = 7994 ≤ 8000 → all 8 fit.
-  // Scaffold_old = 7994 + 8 = 8002 > 8000 → premature drop to 7.
-  //
-  // At artifactPath=426 the new scaffold is 8002 > 8000, so the drop to 7 is
-  // legitimate and expected in both old and new code.
-  // -------------------------------------------------------------------------
+  // No child is dropped while its bare scaffolding fits.
   it("no child dropped while bare scaffolding fits", () => {
     const artPath = "a".repeat(425); // 425 chars — scaffold_new = 7994 ≤ 8000
     const sessPath = "b".repeat(500); // 500 chars (at the reference cap)
@@ -272,7 +243,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "", // empty runId gives outerCost=85
       mode: "parallel",
       children,
@@ -296,7 +267,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       sessionPath: sessPath,
       index: i,
     }));
-    const { text: textPlus } = formatForegroundNativeSubagentResult({
+    const { text: textPlus } = formatAwaitedNativeSubagentResult({
       runId: "",
       mode: "parallel",
       children: childrenPlus,
@@ -311,24 +282,6 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
     assert.ok(textPlus.length <= MAX_CHARS, `length ${textPlus.length} exceeds ceiling`);
   });
 
-  // -------------------------------------------------------------------------
-  // Bare-heading guard: orphaned 'Summary:' heading when per-child summary budget is exhausted.
-  //
-  // When the per-child summary budget is smaller than any well-formed truncation
-  // marker, boundedNativeForegroundSummary returns "", and the caller must NOT
-  // emit the 'Summary:' heading at all — an orphaned heading is worse than none.
-  //
-  // Measured shape: 8 children, 7 with 500-char artifact and session paths
-  // (budget too tight for any marker), 1 with no references (budget fits the
-  // shorter no-references marker). Before the fix: 7 bare 'Summary:' headings.
-  // After the fix: 0 bare 'Summary:' headings.
-  //
-  // Detector note: the previous search for this defect only treated a heading as
-  // bare when the next line was a child header or end of input, missing the case
-  // where scaffolding lines (e.g. 'Output artifact:') follow. The correct detector
-  // below treats a 'Summary:' heading as bare when its next non-blank line is
-  // scaffolding, an omission marker, or end of input.
-  // -------------------------------------------------------------------------
   it("no bare 'Summary:' heading emitted when per-child summary budget is exhausted", () => {
     // 7 children carry 500-char paths that push the per-child budget below any
     // well-formed marker length; 1 child has no references and receives the shorter
@@ -344,7 +297,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-finding-a-regression",
       mode: "parallel",
       children,
@@ -372,7 +325,6 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       const isEndOfInput = j >= lines.length;
       if (isScaffolding || isOmissionMarker || isEndOfInput || isChildHeader) bareSummaryCount++;
     }
-    // Before the fix: 7 bare headings. After the fix: 0.
     assert.equal(
       bareSummaryCount,
       0,
@@ -384,17 +336,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
     assert.ok(text.isWellFormed());
   });
 
-  // -------------------------------------------------------------------------
-  // Omission-marker guard: marker must not direct reader to paths of retained children.
-  //
-  // When some (not all) children are dropped for size, the omitted children's
-  // paths are never emitted. The marker must not imply those results are
-  // reachable through paths that belong to retained children.
-  //
-  // Measured shape: 8 children at 499-char paths; 7 display, 1 is dropped.
-  // Before the fix: marker said "see listed paths above" (misdirected).
-  // After the fix: marker states output is not reachable from this envelope.
-  // -------------------------------------------------------------------------
+  // Omission markers must not direct readers to retained children's paths.
   it("partial-drop omission marker does not point at retained children's paths", () => {
     // 499-char paths push the fixed cost just over the ceiling at 8 children,
     // causing exactly 1 child to be dropped.
@@ -409,7 +351,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-finding-b-regression",
       mode: "parallel",
       children,

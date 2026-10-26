@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/model-visibility.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { InteractiveMode, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { isRecord, readText, uniqueSorted } from "./common.js";
 import { safeTlhProfileFilePath } from "./profile-state.js";
@@ -29,6 +30,7 @@ const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
     "anthropic/claude-3-sonnet-20240229",
     "anthropic/claude-haiku-4-5",
     "anthropic/claude-haiku-4-5-20251001",
+    "anthropic/claude-haiku-5-5",
     "anthropic/claude-opus-4-0",
     "anthropic/claude-opus-4-1",
     "anthropic/claude-opus-4-1-20250805",
@@ -37,16 +39,24 @@ const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
     "anthropic/claude-opus-4-5-20251101",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-opus-4-7",
+    "anthropic/claude-opus-4-8",
+    "anthropic/claude-opus-5",
     "anthropic/claude-sonnet-4-0",
     "anthropic/claude-sonnet-4-20250514",
     "anthropic/claude-sonnet-4-5",
     "anthropic/claude-sonnet-4-5-20250929",
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-sonnet-5",
+    "anthropic/claude-sonnet-5-5",
     "openai-codex/gpt-5.3-codex-spark",
     "openai-codex/gpt-5.4",
     "openai-codex/gpt-5.4-mini",
+    "openai-codex/gpt-5.5",
     "openai-codex/gpt-5.6-luna",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-terra",
+    "openai-codex/gpt-6-luna",
+    "openai-codex/gpt-6-sol",
 ]);
 function normalizePatternList(value) {
     if (!Array.isArray(value)) {
@@ -77,7 +87,7 @@ function readTlhSettings() {
         return settingsPath ? {} : undefined;
     }
     try {
-        const parsed = JSON.parse(content);
+        const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
         return isRecord(parsed) ? parsed : {};
     }
     catch {

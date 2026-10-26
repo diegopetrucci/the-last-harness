@@ -1,5 +1,7 @@
+// Generated from extensions/the-last-harness/attribution-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
 import { resolveTlhCommitAttribution } from "./attribution.js";
 const TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP = "Usage: /toggle-tlh-git-attribution";
 function validateTlhAttributionSettings(settings) {
@@ -19,14 +21,6 @@ function validateTlhAttributionSettings(settings) {
         throw new Error("settings field 'tlh.attribution.commit' must be a boolean if present");
     }
 }
-function parseTlhSettingsContent(content) {
-    if (!content) {
-        return {};
-    }
-    const parsed = JSON.parse(content);
-    validateTlhAttributionSettings(parsed);
-    return parsed;
-}
 function ensureMutableAttributionSettings(settings) {
     validateTlhAttributionSettings(settings);
     settings.tlh ??= {};
@@ -35,6 +29,7 @@ function ensureMutableAttributionSettings(settings) {
 function toggleTlhCommitAttribution(cwd) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write attribution settings outside the isolated TLH profile.", (current) => {
         const settings = parseTlhSettingsContent(current);
+        validateTlhAttributionSettings(settings);
         const currentState = resolveTlhCommitAttribution(settings.tlh?.attribution);
         const nextEnabled = !currentState.enabled;
         ensureMutableAttributionSettings(settings);

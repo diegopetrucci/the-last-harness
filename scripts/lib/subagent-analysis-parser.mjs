@@ -1,3 +1,4 @@
+// Generated from scripts/lib/subagent-analysis-parser.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { parseProviderModelReference } from "../../extensions/the-last-harness/model-defaults.js";
@@ -111,7 +112,9 @@ export function isCompletionBatchCandidate(value) {
     if (!isObject(value))
         return false;
     return (value.kind === SUBAGENT_COMPLETION_BATCH_KIND ||
-        ["schemaVersion", "batchId", "batchIndex", "batchCount", "triggersTurn", "completions"].some((field) => hasOwn(value, field)));
+        // `triggersTurn` is deliberately not a carrier marker: single completion
+        // messages persist it too.
+        ["schemaVersion", "batchId", "batchIndex", "batchCount", "completions"].some((field) => hasOwn(value, field)));
 }
 /** Parse only the bounded, telemetry-only v1 grouped completion carrier. */
 export function parseCompletionBatchDetails(value) {
@@ -210,6 +213,7 @@ export function parseCompletionBatchDetails(value) {
         flushIndex,
         flushCount,
         triggersTurn: value.triggersTurn,
+        nativeWakeMode: value.wakeMode === "native",
         completions,
         invalid,
     };

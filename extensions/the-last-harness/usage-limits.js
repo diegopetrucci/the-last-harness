@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/usage-limits.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 export const USAGE_COMMAND_HELP = "Usage: /usage [status|weekly on|weekly off|weekly toggle]. With no argument, /usage shows status.";
 const USAGE_COMMAND_COMPLETIONS = [
@@ -42,10 +43,10 @@ function usageCommandCompletions(prefix) {
     }));
     return completions.length > 0 ? completions : null;
 }
-export function registerUsageCommand(pi) {
+export function registerUsageCommand(pi, onWeeklyPreferenceChanged) {
     pi.registerCommand("usage", {
         description: "Show or change TLH usage-limit footer preferences",
         getArgumentCompletions: usageCommandCompletions,
-        handler: (args, ctx) => handleUsageCommand(args, ctx),
+        handler: (args, ctx) => handleUsageCommand(args, ctx, onWeeklyPreferenceChanged),
     });
 }

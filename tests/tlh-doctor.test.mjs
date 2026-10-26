@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -24,6 +25,8 @@ const doctorScript = join(repoRoot, "scripts", "tlh-doctor.mjs");
 const mergeSettingsScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const settingsDefaultsPath = join(repoRoot, "config", "settings.defaults.json");
 const defaultExtensionsPath = join(repoRoot, "config", "default-extensions.json");
+const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
+const branchHarnessPackage = "git:github.com/diegopetrucci/the-last-harness@feature/doctor-source";
 
 function tempFixture(t) {
   const root = mkdtempSync(join(tmpdir(), "tlh-doctor-test-"));
@@ -379,7 +382,134 @@ test("tlh doctor returns success for a healthy isolated profile", (t) => {
   assert.match(output, /OK\s+managed tk validation:/);
   assert.match(output, /OK\s+gh availability\/auth:/);
   assert.match(output, /OK\s+MCP\/web-search prerequisites:/);
+  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.1; target=5\.0\.1/);
   assert.match(output, /Summary: .*0 FAIL/);
+});
+
+test("tlh doctor recognizes global and selected project adapter configs without reading their contents", (t) => {
+  const fixture = configureHealthyFixture(t);
+  writeFileSync(
+    join(fixture.agentDir, "mcp-adapter.json"),
+    JSON.stringify({ settings: { authToken: "secret-value" } }, null, 2),
+  );
+  mkdirSync(join(fixture.root, ".pi"), { recursive: true });
+  writeFileSync(
+    join(fixture.root, ".pi", "mcp-adapter.json"),
+    JSON.stringify({ imports: ["./shared.json"] }, null, 2),
+  );
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    cwd: fixture.root,
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(output, /MCP config present \(3; 2 adapter-owned\)/);
+  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.1; target=5\.0\.1/);
+  assert.doesNotMatch(output, /secret-value|shared\.json/);
+});
+
+test("tlh doctor reports a held pre-v5 adapter with sanitized versions and no writes", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const adapterIndex = settings.packages.findIndex((entry) =>
+    String(typeof entry === "string" ? entry : entry.source).includes("pi-mcp-adapter"),
+  );
+  assert.notEqual(adapterIndex, -1);
+  settings.packages[adapterIndex] = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  writeFileSync(
+    join(fixture.agentDir, "mcp-adapter.json"),
+    JSON.stringify({ settings: { authToken: "secret-value" } }, null, 2),
+  );
+  const settingsBeforeDoctor = readFileSync(settingsPath, "utf8");
+  const backupsBeforeDoctor = readdirSync(fixture.agentDir).filter((entry) =>
+    entry.startsWith("settings.json.backup-"),
+  ).length;
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(
+    output,
+    /WARN\s+MCP adapter cutover: state=hold; reason=selected-pre-v5; selected=2\.36\.0; target=5\.0\.1; held/,
+  );
+  assert.doesNotMatch(output, /secret-value|@diegopetrucci|https?:\/\//i);
+  assert.equal(readFileSync(settingsPath, "utf8"), settingsBeforeDoctor);
+  assert.equal(
+    readdirSync(fixture.agentDir).filter((entry) => entry.startsWith("settings.json.backup-"))
+      .length,
+    backupsBeforeDoctor,
+  );
+});
+
+test("tlh doctor does not label a newer native adapter as held", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const adapterIndex = settings.packages.findIndex((entry) =>
+    String(typeof entry === "string" ? entry : entry.source).includes("pi-mcp-adapter"),
+  );
+  assert.notEqual(adapterIndex, -1);
+  settings.packages[adapterIndex] = "npm:@diegopetrucci/pi-mcp-adapter@5.1.0";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(
+    output,
+    /^OK[ \t]+MCP adapter cutover: state=native; selected=5\.1\.0; target=5\.0\.1$/m,
+  );
+  assert.doesNotMatch(output, /^.*MCP adapter cutover:.*held.*$/m);
+});
+
+test("tlh doctor holds an unresolved adapter selector without exposing its source", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const adapterIndex = settings.packages.findIndex((entry) =>
+    String(typeof entry === "string" ? entry : entry.source).includes("pi-mcp-adapter"),
+  );
+  assert.notEqual(adapterIndex, -1);
+  settings.packages[adapterIndex] = "npm:@diegopetrucci/pi-mcp-adapter@^5";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(
+    output,
+    /WARN\s+MCP adapter cutover: state=hold; reason=selected-version-unresolved; selected=unresolved; target=5\.0\.1; held/,
+  );
+  assert.doesNotMatch(output, /@diegopetrucci|\^5/);
 });
 
 test("tlh doctor ignores RTK executables on PATH", (t) => {
@@ -404,7 +534,11 @@ exit 97
 
   assert.equal(result.status, 0, output);
   assert.equal(existsSync(rtkMarkerPath), false, "doctor must not execute RTK from PATH");
-  assert.doesNotMatch(output, /rtk/i);
+  // Strip temp paths first: mkdtemp suffixes are random and can contain "rtk".
+  const rootForms = [...new Set([fixture.root, realpathSync(fixture.root)])];
+  let scrubbed = output;
+  for (const form of rootForms) scrubbed = scrubbed.split(form).join("<fixture-root>");
+  assert.doesNotMatch(scrubbed, /\brtk\b/i);
 });
 
 test("tlh doctor fails when pointed at normal Pi config without running protected profile helpers", (t) => {
@@ -536,6 +670,85 @@ test("tlh doctor reports repairable settings drift without mutating settings or 
   assert.doesNotMatch(output, /Repair actions:/);
 });
 
+test("tlh doctor --repair reports malformed settings and continues its summary", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  writeFileSync(settingsPath, "{ not valid json\n", "utf8");
+
+  const result = runDoctor(
+    ["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot],
+    {
+      env: {
+        HOME: fixture.home,
+        PATH: `${fixture.fakebin}:${process.env.PATH}`,
+        EXA_API_KEY: "hidden",
+      },
+    },
+  );
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 1, output);
+  assert.match(output, /Repair actions:/);
+  assert.match(output, /FAIL\s+settings drift:/);
+  assert.match(output, /OK\s+bundled subagent resources:/);
+  assert.match(output, /managed gn install/);
+  assert.match(output, /Summary:/);
+  assert.doesNotMatch(output, /uncaught|exit 2/i);
+});
+
+test("tlh doctor drift checks preserve selected TLH package sources", (t) => {
+  const cases = [
+    { source: `${harnessPackage}@v0.45.0`, local: false },
+    { source: branchHarnessPackage, local: false },
+    { source: "./local-tlh", local: true },
+  ];
+  for (const testCase of cases) {
+    const fixture = configureHealthyFixture(t);
+    const settingsPath = join(fixture.agentDir, "settings.json");
+    if (testCase.local) {
+      mkdirSync(join(fixture.agentDir, "local-tlh"), { recursive: true });
+      writeFileSync(
+        join(fixture.agentDir, "local-tlh", "package.json"),
+        JSON.stringify({ name: "the-last-harness" }),
+      );
+    }
+    const settingsBefore = {
+      packages: [
+        {
+          source: testCase.source,
+          extensions: ["keep"],
+          customField: { preserve: true },
+        },
+      ],
+    };
+    writeFileSync(settingsPath, JSON.stringify(settingsBefore, null, 2));
+    const rawBefore = readFileSync(settingsPath, "utf8");
+    const backupsBefore = readdirSync(fixture.agentDir).filter((entry) =>
+      entry.startsWith("settings.json.backup-"),
+    ).length;
+
+    const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+      env: {
+        HOME: fixture.home,
+        PATH: `${fixture.fakebin}:${process.env.PATH}`,
+        EXA_API_KEY: "hidden",
+      },
+    });
+    const output = `${result.stdout}\n${result.stderr}`;
+
+    assert.equal(result.status, 0, output);
+    assert.match(output, /WARN\s+settings drift:/);
+    assert.equal(readFileSync(settingsPath, "utf8"), rawBefore);
+    assert.equal(
+      readdirSync(fixture.agentDir).filter((entry) => entry.startsWith("settings.json.backup-"))
+        .length,
+      backupsBefore,
+    );
+    assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), settingsBefore);
+  }
+});
+
 test("tlh doctor drift summary does not disclose credential-like package sources", (t) => {
   const fixture = configureHealthyFixture(t);
   const settingsPath = join(fixture.agentDir, "settings.json");
@@ -615,6 +828,7 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
         activeNoticeAfterMs: 1,
         activeNoticeAfterTurns: 2,
         activeNoticeAfterTokens: 3,
+        failedToolAttemptsBeforeAttention: 4,
         needsAttentionAfterMs: 4,
         notifyOn: ["active_long_running", "needs_attention"],
       },
@@ -705,6 +919,95 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
   assert.match(output, /OK\s+settings drift:/);
   assert.match(output, /OK\s+bundled subagent resources:/);
   assert.match(output, /Summary: .*0 FAIL/);
+});
+
+test("tlh doctor --repair preserves selected TLH package sources and is idempotent", (t) => {
+  const cases = [
+    {
+      name: "pinned tag",
+      source: `${harnessPackage}@v0.45.0`,
+      entry: `${harnessPackage}@v0.45.0`,
+    },
+    {
+      name: "branch ref source object",
+      source: branchHarnessPackage,
+      entry: {
+        source: branchHarnessPackage,
+        extensions: ["keep"],
+        customField: { preserve: true },
+      },
+    },
+    {
+      name: "local source object",
+      source: "./local-tlh",
+      entry: {
+        source: "./local-tlh",
+        extensions: ["keep"],
+        customField: { preserve: true },
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const fixture = configureHealthyFixture(t);
+    const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+    const settingsPath = join(fixture.agentDir, "settings.json");
+    if (testCase.source === "./local-tlh") {
+      mkdirSync(join(fixture.agentDir, "local-tlh"), { recursive: true });
+      writeFileSync(
+        join(fixture.agentDir, "local-tlh", "package.json"),
+        JSON.stringify({ name: "the-last-harness" }),
+      );
+    }
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ packages: [testCase.entry], userSetting: "preserve" }, null, 2),
+    );
+    const backupsBeforeRepair = readdirSync(fixture.agentDir).filter((entry) =>
+      entry.startsWith("settings.json.backup-"),
+    ).length;
+
+    const repairArgs = ["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot];
+    const env = {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    };
+    const firstResult = runDoctor(repairArgs, { env });
+    const firstOutput = `${firstResult.stdout}\n${firstResult.stderr}`;
+    assert.equal(firstResult.status, 0, `${testCase.name}: ${firstOutput}`);
+
+    const firstSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const selectedEntry = firstSettings.packages.find((entry) => {
+      const source = typeof entry === "string" ? entry : entry?.source;
+      return source === testCase.source;
+    });
+    assert.deepEqual(selectedEntry, testCase.entry, testCase.name);
+    assert.equal(
+      firstSettings.packages.some(
+        (entry) => (typeof entry === "string" ? entry : entry?.source) === harnessPackage,
+      ),
+      false,
+      `${testCase.name}: repair must not add the unpinned canonical source`,
+    );
+    assert.equal(firstSettings.quietStartup, true, `${testCase.name}: packaged drift repaired`);
+    assert.equal(firstSettings.userSetting, "preserve");
+    const firstRaw = readFileSync(settingsPath, "utf8");
+    const backupsAfterFirstRepair = readdirSync(fixture.agentDir).filter((entry) =>
+      entry.startsWith("settings.json.backup-"),
+    );
+    assert.equal(backupsAfterFirstRepair.length, backupsBeforeRepair + 1);
+
+    const secondResult = runDoctor(repairArgs, { env });
+    const secondOutput = `${secondResult.stdout}\n${secondResult.stderr}`;
+    assert.equal(secondResult.status, 0, `${testCase.name}: ${secondOutput}`);
+    assert.equal(readFileSync(settingsPath, "utf8"), firstRaw, `${testCase.name}: idempotent`);
+    assert.deepEqual(
+      readdirSync(fixture.agentDir).filter((entry) => entry.startsWith("settings.json.backup-")),
+      backupsAfterFirstRepair,
+      `${testCase.name}: no redundant backup`,
+    );
+  }
 });
 
 test("tlh doctor --repair physically uninstalls legacy managed npm subagents and reports it", (t) => {

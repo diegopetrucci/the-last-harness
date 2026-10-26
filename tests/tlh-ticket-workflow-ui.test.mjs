@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url);
 const { createTlhTicketWorkflowUiRuntime } = await jiti.import(
   "../extensions/the-last-harness/ticket-workflow-ui.ts",
 );
-const { registerLazyTlhTicketWorkflowUi } = await jiti.import(
+const { registerTlhTicketWorkflowUi } = await jiti.import(
   "../extensions/the-last-harness/ticket-workflow-ui-facade.ts",
 );
 
@@ -71,7 +71,7 @@ function createCtx(cwd, ui) {
 }
 
 function registerTicketWorkflowFacade(pi, options = {}) {
-  registerLazyTlhTicketWorkflowUi(pi, {
+  registerTlhTicketWorkflowUi(pi, {
     createRuntime: () => createTlhTicketWorkflowUiRuntime(pi, options),
   });
 }
@@ -416,7 +416,51 @@ test("ticket workflow /tickets falls back to the ticket id when the sole in-prog
   });
 });
 
-test("ticket workflow UI sanitizes decoded terminal controls from fallback ticket ids in /tickets", async (t) => {
+test("ticket workflow /tickets ignores non-object query lines and non-string ids", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+  mkdirSync(join(fixture.cwd, ".tickets"));
+  const statePath = join(fixture.dir, "tk-state");
+  writeFileSync(statePath, "default\n");
+  installFakeTk(fixture.agent, statePath);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const runner = (_command, _cwd, args) => {
+      if (args[0] === "query") {
+        return {
+          status: 0,
+          stdout: [
+            "null",
+            "42",
+            "true",
+            '"ticket"',
+            "[]",
+            "{}",
+            '{"id":123,"status":"in_progress"}',
+            '{"id":null,"status":"open"}',
+            '{"id":"tlhf-valid","status":"open"}',
+          ].join("\n"),
+          stderr: "",
+        };
+      }
+      assert.ok(args[0] === "ready" || args[0] === "blocked");
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    const pi = createPiHarness();
+    const uiHarness = createUiHarness();
+    const ctx = createCtx(fixture.cwd, uiHarness.ui);
+    const runtime = createTlhTicketWorkflowUiRuntime(pi, { runner });
+    runtime.applyCurrentSettings(ctx);
+
+    await pi.commands.get("tickets").handler("", ctx);
+
+    assert.equal(
+      uiHarness.notifications.at(-1)?.message,
+      "tk: 0 ready • 0 blocked • 0 in progress • 3 active • 4 total\nIn progress: none.",
+    );
+  });
+});
+
+test("ticket workflow UI sanitizes terminal controls from fallback ids and ready/blocked lines", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   mkdirSync(join(fixture.cwd, ".tickets"));
   const statePath = join(fixture.dir, "tk-state");
@@ -436,7 +480,11 @@ test("ticket workflow UI sanitizes decoded terminal controls from fallback ticke
           };
         case "ready":
         case "blocked":
-          return { status: 0, stdout: "", stderr: "" };
+          return {
+            status: 0,
+            stdout: `\u001b[31m${args[0]} ticket\u001b[0m\u0007\u001b]0;hidden title\u0007\n`,
+            stderr: "",
+          };
         case "show":
           showCalls += 1;
           assert.equal(args[1], decodedUnsafeTicketId);
@@ -456,7 +504,7 @@ test("ticket workflow UI sanitizes decoded terminal controls from fallback ticke
     assert.equal(showCalls, 1);
     assert.equal(
       uiHarness.notifications.at(-1)?.message,
-      "tk: 0 ready • 0 blocked • 1 in progress • 1 active • 1 total\nIn progress: tlhf-safe-red",
+      "tk: 1 ready • 1 blocked • 1 in progress • 1 active • 1 total\nIn progress: tlhf-safe-red\nReady:\n- ready ticket\nBlocked:\n- blocked ticket",
     );
   });
 });

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMockPi as _createMockPi } from "./mock-pi.ts";
 import type { MockPi } from "./mock-pi.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
-import type { AgentProgress, SubagentState } from "../../src/shared/types.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import type { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
 import {
@@ -172,19 +172,6 @@ const defaultExtensionAPI = {
 // real shape; exporting it lets test files import the type from this helper.
 export type { AgentConfig };
 
-export function makeAgentConfigs(names: string[]): AgentConfig[] {
-  return names.map((name) => ({
-    name,
-    description: `Test agent: ${name}`,
-    systemPrompt: "",
-    systemPromptMode: "replace" as const,
-    inheritProjectContext: false,
-    inheritSkills: false,
-    source: "user" as const,
-    filePath: "",
-  }));
-}
-
 /**
  * Creates a minimal AgentConfig for test fixtures.
  */
@@ -222,25 +209,6 @@ export function makeRunnerStep(
 }
 
 /**
- * Creates a complete AgentProgress fixture typed from the production interface.
- * `agent`, `status`, and `task` are required parameters; all other required
- * fields default to inert/zero values so call sites express only what they test.
- */
-export function makeAgentProgress(
-  overrides: Pick<AgentProgress, "agent" | "status" | "task"> & Partial<AgentProgress>,
-): AgentProgress {
-  return {
-    index: 0,
-    recentTools: [],
-    recentOutput: [],
-    toolCount: 0,
-    tokens: 0,
-    durationMs: 0,
-    ...overrides,
-  };
-}
-
-/**
  * Creates a complete SubagentState fixture with inert runtime services. Tests
  * can override only the state maps relevant to the behavior under inspection.
  */
@@ -249,14 +217,9 @@ export function makeSubagentState(overrides: Partial<SubagentState> = {}): Subag
     baseCwd: process.cwd(),
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {
@@ -454,7 +417,6 @@ export function makeAsyncCtx(
     cwd,
     currentSessionId: "session-1",
     currentModel: undefined,
-    currentModelProvider: undefined,
     modelScope: undefined,
     ...overrides,
   };

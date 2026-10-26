@@ -2,7 +2,7 @@
  * Integration tests for async execution – supervisor pause and concurrent
  * terminal-state races.
  *
- * Requires pi packages to be importable. Skips gracefully if unavailable.
+ * Requires pi packages to be importable.
  */
 
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
@@ -15,6 +15,7 @@ import {
   createTempDir,
   events,
   makeAgent,
+  makeExtensionAPI,
   makeMinimalCtx,
   makeSubagentState,
   removeTempDir,
@@ -22,7 +23,7 @@ import {
 import type { MockPi } from "../support/helpers.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
-import { createSubagentExecutor, runSync } from "../support/single-execution-fixtures.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 import {
   lifecycleGeneration,
   transitionLifecycleStatus,
@@ -56,7 +57,10 @@ import {
   type ResolvedControlConfig,
 } from "../../src/shared/types.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
-import { appendSubagentTelemetryContinuation } from "../../src/shared/telemetry.ts";
+import {
+  appendSubagentTelemetryContinuation,
+  transitionSubagentRunTelemetryLifecycle,
+} from "../../src/shared/telemetry.ts";
 
 function recordStartedPid(pids: Set<number>, payload: unknown): void {
   if (typeof payload !== "object" || payload === null) return;
@@ -88,7 +92,7 @@ function killPids(pids: readonly (number | undefined)[]): void {
   }
 }
 
-describe("async execution utilities", () => {
+describe("async execution lifecycle supervisor races", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -149,7 +153,6 @@ describe("async execution utilities", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       const pausingStatus = await waitForAsyncStatusPredicate(
@@ -169,8 +172,11 @@ describe("async execution utilities", () => {
       ) as AsyncStatusPayload;
       assert.equal(lockedStatus.state, "pausing");
       const payload = await readAsyncPayload(id);
-      assert.equal(payload.state, "paused");
-      assert.equal(payload.pause?.kind, "awaiting_supervisor");
+      // The result artifact is private and can report the failed in-memory
+      // supervisor attempt, but the incomplete lock keeps canonical status
+      // untouched until an owner is proven dead.
+      assert.equal(payload.state, "failed");
+      assert.equal(lockedStatus.pause?.kind, "awaiting_supervisor");
       assert.equal(fs.readdirSync(RESULTS_DIR).filter((name) => name === `${id}.json`).length, 1);
       await waitForPidsToExit(
         [pausingStatus.pid as number | undefined, ...childPids],
@@ -181,14 +187,14 @@ describe("async execution utilities", () => {
         resultsDir: RESULTS_DIR,
         now: () => Date.now(),
       });
-      assert.equal(typeof repaired.repaired, "boolean");
-      assert.equal(repaired.status?.state, "paused");
-      assert.equal(repaired.status?.pause?.kind, "awaiting_supervisor");
+      assert.equal(repaired.repaired, true);
+      assert.equal(repaired.status?.state, "failed");
+      assert.equal(repaired.status?.lifecycle?.resumeBlockedReason, undefined);
       const reconciledStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
-      assert.equal(reconciledStatus.state, "paused");
-      assert.equal(reconciledStatus.pause?.kind, "awaiting_supervisor");
+      assert.equal(reconciledStatus.state, "failed");
+      assert.equal(reconciledStatus.pause, undefined);
     },
   );
 
@@ -233,7 +239,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -357,7 +362,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -419,11 +423,6 @@ describe("async execution utilities", () => {
 
       const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 
-      // FIX 10: adoption must happen in-memory at the writeStatusPayload call,
-      // not deferred to a CAS block that only runs when supervisorPauseRequest
-      // is set. Without the fix resultState falls through to `interrupted ? "paused"`
-      // and the artifact says `state: "paused"`.
-      // flag in resultState precedence (concurrentTerminalStatusAdopted wins).
       assert.equal(
         resultPayload.state,
         "cancelled",
@@ -433,7 +432,7 @@ describe("async execution utilities", () => {
   );
 
   it(
-    "adopts canonical continuation telemetry when a resumed source settles concurrently",
+    "resumes after proven source cleanup and preserves canonical continuation telemetry",
     {
       skip:
         process.platform === "win32"
@@ -469,14 +468,13 @@ describe("async execution utilities", () => {
       const controlConfig: ResolvedControlConfig = {
         enabled: true,
         needsAttentionAfterMs: 2_000,
-        failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       };
 
-      // Keep the source child alive after the interrupt. The real resume action
-      // can then commit the continuation edge and terminal source state before
-      // the source runner performs its post-child terminal write.
+      // Keep the source child alive after the interrupt so the resume gate is
+      // exercised while the old session owner is still stopping. The real
+      // continuation is launched only after the source cleanup is proven.
       mockPi.onCall({
         ignoreSigint: true,
         ignoreSigterm: true,
@@ -495,6 +493,7 @@ describe("async execution utilities", () => {
 
       let continuationRunId: string | undefined;
       let cleanupFailure: Error | undefined;
+      const watcherConsumedResultIds = new Set<string>();
       try {
         const sourceStart = executeAsyncSingle!(sourceRunId, {
           agent: "worker",
@@ -515,7 +514,6 @@ describe("async execution utilities", () => {
           },
           sessionRoot: path.join(tempDir, "sessions"),
           sessionFile: sourceSessionFile,
-          maxSubagentDepth: 2,
           controlConfig,
           telemetryProvenance: provenance,
         });
@@ -525,27 +523,76 @@ describe("async execution utilities", () => {
         requestAsyncInterrupt(sourceAsyncDir, { source: "async-telemetry-adoption-test" });
         await waitForAsyncState(sourceAsyncDir, "paused");
 
-        assert.ok(createSubagentExecutor, "foreground executor fixture is available");
-        assert.ok(runSync, "foreground execution fixture is available");
         const executor = createSubagentExecutor({
-          pi: { events: continuationEvents, getSessionName: () => undefined },
+          pi: makeExtensionAPI(),
           state: makeSubagentState({ baseCwd: tempDir }),
-          config: { maxSubagentDepth: 2, control: controlConfig },
+          config: { control: controlConfig },
           tempArtifactsDir: tempDir,
           getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
           expandTilde: (value: string) => value,
           discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-          runSync,
           telemetryProvenance: provenance,
         });
-        const resume = await executor.execute(
-          "async-telemetry-adoption-resume",
-          { action: "resume", id: sourceRunId, message: "Continue the source work." },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
+        const resumeSource = () =>
+          executor.execute(
+            "async-telemetry-adoption-resume",
+            { action: "resume", id: sourceRunId, message: "Continue the source work." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+        const blockedResume = await resumeSource();
+        assert.equal(blockedResume.isError, true, "live source ownership must block resume");
+        assert.match(
+          (blockedResume.content[0] as { text?: string })?.text ?? "",
+          /still stopping.*persisted owner pid/i,
+          "blocked resume must report the live persisted owner",
         );
-        assert.equal(resume.isError, undefined, resume.content[0]?.text ?? "");
+        assert.equal(
+          continuationRunnerPids.size,
+          0,
+          "blocked resume must not launch a continuation runner",
+        );
+        const blockedStatus = JSON.parse(
+          fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8"),
+        ) as { state?: string; pid?: unknown };
+        assert.equal(blockedStatus.state, "paused");
+        assert.equal(
+          typeof blockedStatus.pid,
+          "number",
+          "blocked resume must preserve the live source owner evidence",
+        );
+
+        const sourceChildPids = startedMockPiPids(mockPi);
+        assert.equal(sourceChildPids.length, 1, "the source child must still be owned and live");
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        const sourceResultPath = await waitForAsyncResultFile(sourceRunId);
+        await waitForPidsToExit(
+          [...sourceRunnerPids, ...sourceChildPids],
+          `source cleanup before telemetry resume ${sourceRunId}`,
+        );
+        const cleanedSourceStatus = await waitForAsyncStatusPredicate(
+          sourceAsyncDir,
+          (status) =>
+            status.state === "paused" &&
+            status.pid === undefined &&
+            status.pause?.ownerPid === undefined &&
+            (status.steps?.every((step) => step.pause?.ownerPid === undefined) ?? true),
+          "source ownership cleared after child cleanup",
+        );
+        assert.equal(cleanedSourceStatus.state, "paused");
+        assert.equal(
+          (JSON.parse(fs.readFileSync(sourceResultPath, "utf-8")) as AsyncResultPayload).state,
+          "paused",
+          "source result must be paused before the real resume",
+        );
+
+        const resume = await resumeSource();
+        assert.equal(
+          resume.isError,
+          undefined,
+          (resume.content[0] as { text?: string })?.text ?? "",
+        );
         continuationRunId = resume.details?.asyncId;
         assert.ok(continuationRunId, "resume must return the continuation run id");
 
@@ -572,35 +619,65 @@ describe("async execution utilities", () => {
           "continuation result must not exist while its child is deliberately held",
         );
 
-        await waitForAsyncStatusPredicate(
+        // The source runner was proven stopped before the real resume. The
+        // continuation launch now owns the source terminal transition, while
+        // its child remains held for deterministic telemetry observation.
+        const status = await waitForAsyncStatusPredicate(
           sourceAsyncDir,
-          (status) =>
-            status.state === "continued" &&
-            status.telemetry?.lineage?.continuations?.some(
+          (current) =>
+            (current.state === "continued" || current.state === "complete") &&
+            current.telemetry?.lineage?.continuations?.some(
               (continuation) => continuation.continuationRunId === continuationRunId,
             ) === true,
           "source continuation terminal telemetry",
         );
+        const historicalSourceResult = JSON.parse(
+          fs.readFileSync(sourceResultPath, "utf-8"),
+        ) as AsyncResultPayload;
 
-        // The source runner is still draining its interrupted child. Releasing
-        // it now forces the concurrent-terminal adoption path before result write.
-        fs.writeFileSync(releaseMarker, "", "utf-8");
-        const resultPath = await waitForAsyncResultFile(sourceRunId);
-        const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-        const status = JSON.parse(
-          fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8"),
-        ) as AsyncStatusPayload;
-
-        assert.equal(status.state, "continued");
-        assert.equal(result.state, "continued");
+        // The branch normalizes "continued" to "complete" in lifecycle state.
+        assert.ok(
+          ["complete", "continued"].includes(status.state),
+          `unexpected state ${status.state}`,
+        );
+        assert.equal(
+          historicalSourceResult.state,
+          "paused",
+          "the pre-resume source result remains a historical paused artifact",
+        );
+        assert.equal(historicalSourceResult.telemetry?.outcome?.state, "paused");
         assert.ok(status.telemetry, "source status must retain canonical telemetry");
-        assert.deepEqual(result.telemetry, status.telemetry);
         assert.deepEqual(status.telemetry?.provenance, provenance);
         assert.deepEqual(status.telemetry?.lineage?.continuations, [
           { sourceStepIndex: 0, continuationRunId },
         ]);
-        assert.equal(status.telemetry?.outcome?.state, "continued");
-        assert.equal(status.telemetry?.steps[0]?.outcome?.state, "continued");
+        // Branch lifecycle state is "complete" (branch semantics); telemetry outcome
+        // must be "continued" to correctly report the run continued into a new run.
+        assert.equal(
+          status.telemetry?.outcome?.state,
+          "continued",
+          "source run telemetry outcome must be 'continued'",
+        );
+        assert.equal(
+          status.telemetry?.steps[0]?.outcome?.state,
+          "continued",
+          "source run step telemetry must be 'continued'",
+        );
+
+        // The source result was already published before resume. Release the
+        // actual continuation and validate its own result and notification
+        // carriers instead of treating that historical source artifact as new.
+        fs.writeFileSync(continuationReleaseMarker, "", "utf-8");
+        const continuationResultPath = await waitForAsyncResultFile(continuationRunId);
+        const continuationResult = JSON.parse(
+          fs.readFileSync(continuationResultPath, "utf-8"),
+        ) as AsyncResultPayload;
+        assert.equal(continuationResult.state, "complete");
+        assert.deepEqual(continuationResult.telemetry?.provenance, provenance);
+        assert.deepEqual(continuationResult.telemetry?.lineage?.continuationFrom, {
+          sourceRunId,
+          sourceStepIndex: 0,
+        });
 
         const completionEvents: unknown[] = [];
         const completionEventsBus = createEventBus();
@@ -611,9 +688,16 @@ describe("async execution utilities", () => {
           { events: completionEventsBus },
           makeSubagentState({ currentSessionId: "session-123" }),
           RESULTS_DIR,
-          60_000,
+          {},
         );
         try {
+          // The watcher unlinks result files it processes; record them so cleanup
+          // does not wait for files that no longer exist.
+          for (const id of [sourceRunId, continuationRunId]) {
+            if (id && fs.existsSync(path.join(RESULTS_DIR, `${id}.json`))) {
+              watcherConsumedResultIds.add(id);
+            }
+          }
           watcher.primeExistingResults();
           const deadline = Date.now() + scaleTestTimeout(10_000);
           while (
@@ -621,11 +705,11 @@ describe("async execution utilities", () => {
               (payload) =>
                 typeof payload === "object" &&
                 payload !== null &&
-                (payload as { runId?: unknown }).runId === sourceRunId,
+                (payload as { runId?: unknown }).runId === continuationRunId,
             )
           ) {
             if (Date.now() > deadline)
-              assert.fail("Timed out waiting for adopted source completion telemetry");
+              assert.fail("Timed out waiting for continuation completion telemetry");
             await new Promise((resolve) => setTimeout(resolve, 25));
           }
         } finally {
@@ -635,25 +719,15 @@ describe("async execution utilities", () => {
           (payload): payload is AsyncResultPayload & { runId: string } =>
             typeof payload === "object" &&
             payload !== null &&
-            (payload as { runId?: unknown }).runId === sourceRunId,
+            (payload as { runId?: unknown }).runId === continuationRunId,
         );
-        assert.ok(completion, "completion notification must include the source run");
-        assert.deepEqual(completion.telemetry, status.telemetry);
+        assert.ok(completion, "continuation completion notification must be published");
+        assert.deepEqual(completion.telemetry, continuationResult.telemetry);
         assert.deepEqual(completion.telemetry?.provenance, provenance);
-        assert.deepEqual(completion.telemetry?.lineage?.continuations, [
-          { sourceStepIndex: 0, continuationRunId },
-        ]);
-        assert.equal(completion.telemetry?.outcome?.state, "continued");
-
-        // The source result is intentionally observed while the continuation is
-        // still live. Release it only after all source telemetry assertions, then
-        // wait for its own terminal artifact before teardown removes its directory.
-        fs.writeFileSync(continuationReleaseMarker, "", "utf-8");
-        const continuationResultPath = await waitForAsyncResultFile(continuationRunId);
-        const continuationResult = JSON.parse(
-          fs.readFileSync(continuationResultPath, "utf-8"),
-        ) as AsyncResultPayload;
-        assert.equal(continuationResult.state, "complete");
+        assert.deepEqual(completion.telemetry?.lineage?.continuationFrom, {
+          sourceRunId,
+          sourceStepIndex: 0,
+        });
       } finally {
         // Release both deterministic gates before cleanup so an assertion failure
         // cannot strand either mock child. The normal path has observed both
@@ -670,9 +744,9 @@ describe("async execution utilities", () => {
         ];
         const cleanupTimeout = scaleTestTimeout(5_000);
         await Promise.all(
-          cleanupRunIds.map((id) =>
-            waitForAsyncResultFile(id, cleanupTimeout).catch(() => undefined),
-          ),
+          cleanupRunIds
+            .filter((id) => !watcherConsumedResultIds.has(id))
+            .map((id) => waitForAsyncResultFile(id, cleanupTimeout).catch(() => undefined)),
         );
 
         const collectOwnedPids = (): number[] => {
@@ -745,6 +819,263 @@ describe("async execution utilities", () => {
   );
 
   it(
+    "adopts canonical continued telemetry from a late synthetic source transition",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process lifecycle race unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const markerDir = path.join(tempDir, "async-telemetry-late-source-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const readyMarker = path.join(markerDir, "source-ready");
+      const releaseMarker = path.join(markerDir, "source-release");
+      const sourceRunId = `async-telemetry-late-source-${Date.now().toString(36)}`;
+      const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+      const sourceRunnerPids = new Set<number>();
+      const sourceEvents = createEventBus();
+      sourceEvents.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => {
+        recordStartedPid(sourceRunnerPids, payload);
+      });
+      const provenance = {
+        tlhVersion: "late-source-tlh",
+        piVersion: "late-source-pi",
+        installGeneration: "late-source-generation",
+        loadedAt: 456,
+      };
+      const controlConfig: ResolvedControlConfig = {
+        enabled: true,
+        needsAttentionAfterMs: 2_000,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      };
+
+      mockPi.onCall({
+        ignoreSigint: true,
+        ignoreSigterm: true,
+        steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
+        output: "late source work complete",
+      });
+
+      let cleanupFailure: Error | undefined;
+      const watcherConsumedResultIds = new Set<string>();
+      try {
+        const started = executeAsyncSingle!(sourceRunId, {
+          agent: "worker",
+          task: "Source work for the late telemetry adoption race.",
+          agentConfig: makeAgent("worker"),
+          ctx: {
+            pi: { events: sourceEvents },
+            cwd: tempDir,
+            currentSessionId: "session-late-source",
+          },
+          artifactConfig: {
+            enabled: false,
+            includeInput: false,
+            includeOutput: false,
+            includeJsonl: false,
+            includeMetadata: false,
+            cleanupDays: 7,
+          },
+          sessionRoot: path.join(tempDir, "sessions"),
+          controlConfig,
+          telemetryProvenance: provenance,
+        });
+        assert.equal(started.isError, undefined, started.content[0]?.text ?? "");
+
+        await waitForMarker(readyMarker);
+        requestAsyncInterrupt(sourceAsyncDir, { source: "late-source-telemetry-test" });
+        const pausedStatus = await waitForAsyncStatusPredicate(
+          sourceAsyncDir,
+          (status) => status.state === "paused" && typeof status.pid === "number",
+          "paused source before synthetic continued transition",
+        );
+        const sourceChildPids = startedMockPiPids(mockPi);
+        assert.equal(
+          sourceChildPids.length,
+          1,
+          "the synthetic race must retain the live source child",
+        );
+
+        const continuationRunId = `${sourceRunId}-synthetic-continuation`;
+        const edge = appendSubagentTelemetryContinuation(pausedStatus.telemetry, {
+          sourceStepIndex: 0,
+          continuationRunId,
+        });
+        assert.ok(edge, "paused source status must already carry telemetry");
+        const continuedAt = Date.now();
+        const continuedTelemetry = transitionSubagentRunTelemetryLifecycle({
+          telemetry: edge,
+          runState: "continued",
+          stepIndex: 0,
+          stepState: "continued",
+          endedAt: continuedAt,
+        });
+        assert.ok(continuedTelemetry, "synthetic continued transition must retain telemetry");
+        const syntheticTransition = transitionLifecycleStatus({
+          asyncDir: sourceAsyncDir,
+          expectedGeneration: lifecycleGeneration(pausedStatus),
+          mutate: (status) => ({
+            ...status,
+            state: "continued" as const,
+            pid: undefined,
+            pause: status.pause ? { ...status.pause, ownerPid: undefined } : status.pause,
+            endedAt: continuedAt,
+            lastUpdate: continuedAt,
+            telemetry: continuedTelemetry,
+            lifecycle: withLifecycleContinuation(status, 0, {
+              phase: "continued" as const,
+              claimToken: "late-source-synthetic-claim",
+              continuedAt,
+              continuationRunId,
+            }),
+            steps: status.steps?.map((step) => ({
+              ...step,
+              status: "continued" as const,
+              endedAt: continuedAt,
+              exitCode: 0,
+              pause: undefined,
+            })),
+          }),
+        });
+        // Branch lifecycle state normalizes "continued" to "complete"; telemetry keeps "continued".
+        assert.equal(syntheticTransition.status.state, "complete");
+        assert.deepEqual(syntheticTransition.status.telemetry?.lineage?.continuations, [
+          { sourceStepIndex: 0, continuationRunId },
+        ]);
+        assert.equal(syntheticTransition.status.telemetry?.outcome?.state, "continued");
+
+        // The source child remains live while a synthetic terminal owner writes
+        // the exact continued lifecycle the real continuation gate would publish.
+        // Releasing the child then drives the late source-runner adoption path.
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        const resultPath = await waitForAsyncResultFile(sourceRunId);
+        const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+        const status = JSON.parse(
+          fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8"),
+        ) as AsyncStatusPayload;
+        await waitForPidsToExit(
+          [...sourceRunnerPids, ...sourceChildPids],
+          `late source synthetic adoption cleanup ${sourceRunId}`,
+        );
+
+        assert.equal(status.state, "complete");
+        assert.equal(result.state, "complete");
+        assert.ok(status.telemetry, "source status must retain synthetic canonical telemetry");
+        assert.deepEqual(result.telemetry, status.telemetry);
+        assert.deepEqual(status.telemetry?.provenance, provenance);
+        assert.deepEqual(status.telemetry?.lineage?.continuations, [
+          { sourceStepIndex: 0, continuationRunId },
+        ]);
+        assert.equal(status.telemetry?.outcome?.state, "continued");
+        assert.equal(status.telemetry?.steps[0]?.outcome?.state, "continued");
+
+        const completionEvents: unknown[] = [];
+        const completionEventsBus = createEventBus();
+        completionEventsBus.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (payload) => {
+          completionEvents.push(payload);
+        });
+        const watcher = createResultWatcher(
+          { events: completionEventsBus },
+          makeSubagentState({ currentSessionId: "session-late-source" }),
+          RESULTS_DIR,
+          {},
+        );
+        try {
+          // The watcher unlinks result files it processes; record them so cleanup
+          // does not wait for files that no longer exist.
+          for (const id of [sourceRunId]) {
+            if (id && fs.existsSync(path.join(RESULTS_DIR, `${id}.json`))) {
+              watcherConsumedResultIds.add(id);
+            }
+          }
+          watcher.primeExistingResults();
+          const deadline = Date.now() + scaleTestTimeout(10_000);
+          while (
+            !completionEvents.some(
+              (payload) =>
+                typeof payload === "object" &&
+                payload !== null &&
+                (payload as { runId?: unknown }).runId === sourceRunId,
+            )
+          ) {
+            if (Date.now() > deadline)
+              assert.fail("Timed out waiting for synthetic continued completion telemetry");
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+        } finally {
+          watcher.stopResultWatcher();
+        }
+        const completion = completionEvents.find(
+          (payload): payload is AsyncResultPayload & { runId: string } =>
+            typeof payload === "object" &&
+            payload !== null &&
+            (payload as { runId?: unknown }).runId === sourceRunId,
+        );
+        assert.ok(completion, "completion notification must include the late source run");
+        assert.deepEqual(completion.telemetry, status.telemetry);
+        assert.deepEqual(completion.telemetry?.provenance, provenance);
+        assert.deepEqual(completion.telemetry?.lineage?.continuations, [
+          { sourceStepIndex: 0, continuationRunId },
+        ]);
+        assert.equal(completion.telemetry?.outcome?.state, "continued");
+      } finally {
+        // Release the owned child before attempting cleanup even when an
+        // assertion fails. Never remove a live source lifecycle directory.
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        const cleanupTimeout = scaleTestTimeout(5_000);
+        if (!watcherConsumedResultIds.has(sourceRunId)) {
+          await waitForAsyncResultFile(sourceRunId, cleanupTimeout).catch(() => undefined);
+        }
+        const collectOwnedPids = (): number[] => {
+          const pids = new Set<number>([...sourceRunnerPids, ...startedMockPiPids(mockPi)]);
+          const persistedPid = readPersistedPid(sourceAsyncDir);
+          if (persistedPid !== undefined) pids.add(persistedPid);
+          return [...pids];
+        };
+        const requestOwnedStop = (): void => {
+          if (!fs.existsSync(sourceAsyncDir)) return;
+          try {
+            requestAsyncInterrupt(sourceAsyncDir, { source: "late-source-test-cleanup" });
+          } catch {
+            // The source may already have exited or removed its control files.
+          }
+        };
+        let reaped = false;
+        let ownedPids = collectOwnedPids();
+        try {
+          await waitForPidsToExit(ownedPids, "late source telemetry cleanup", cleanupTimeout);
+          reaped = true;
+        } catch {
+          requestOwnedStop();
+          ownedPids = collectOwnedPids();
+          killPids(ownedPids);
+          try {
+            await waitForPidsToExit(
+              ownedPids,
+              "late source telemetry forced cleanup",
+              cleanupTimeout,
+            );
+            reaped = true;
+          } catch {
+            // Leave the run directory in place if an owned process cannot be reaped.
+          }
+        }
+        if (!reaped) {
+          cleanupFailure = new Error(
+            "Late source telemetry cleanup could not reap every owned process; run files were left in place.",
+          );
+        } else {
+          fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+          fs.rmSync(path.join(RESULTS_DIR, `${sourceRunId}.json`), { force: true });
+        }
+      }
+      if (cleanupFailure) throw cleanupFailure;
+    },
+  );
+
+  it(
     "uses post-write canonical telemetry when a resume edge arrives while the source remains paused",
     {
       skip:
@@ -769,7 +1100,6 @@ describe("async execution utilities", () => {
       const controlConfig: ResolvedControlConfig = {
         enabled: true,
         needsAttentionAfterMs: 2_000,
-        failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       };
@@ -796,7 +1126,6 @@ describe("async execution utilities", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
           controlConfig,
           telemetryProvenance: provenance,
         });
@@ -860,7 +1189,7 @@ describe("async execution utilities", () => {
           { events: completionEventsBus },
           makeSubagentState({ currentSessionId: sessionId }),
           RESULTS_DIR,
-          60_000,
+          {},
         );
         try {
           watcher.primeExistingResults();
@@ -942,7 +1271,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1039,7 +1367,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir2 = path.join(ASYNC_DIR, id);
@@ -1174,7 +1501,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        maxSubagentDepth: 2,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1333,7 +1659,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
 
     // The result file must appear. Without the fix (no writeAtomicJson before the

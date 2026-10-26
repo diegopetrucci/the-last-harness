@@ -26,7 +26,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import`        | Import and resume a session from a JSONL file — **hidden from TLH autocomplete**                                                                                                                          |
 | `/login`         | Configure provider authentication                                                                                                                                                                         |
 | `/logout`        | Remove provider authentication                                                                                                                                                                            |
-| `/model`         | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model selection](models.md#model-selection))    |
+| `/model`         | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model picker](#model-picker))    |
 | `/name`          | Set the session display name                                                                                                                                                                              |
 | `/new`           | Start a new session                                                                                                                                                                                       |
 | `/quit`          | Quit the TLH TUI                                                                                                                                                                                          |
@@ -58,7 +58,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/tlh-changelog`                             | Show TLH release notes from the packaged `CHANGELOG.md`                                                                                                                                                                         |
 | `/tokens`                                    | Generate and open a single no-flags local HTML token-spend report for the current session                                                                                                                                       |
 | `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions                                                                                                                                     |
-| `/toggle-context-cap`                        | Toggle the 200k effective context-window cap for auto-compaction                                                                                                                                                                |
+| `/toggle-context-cap`                        | Toggle the effective context-window cap for auto-compaction                                                                                                                                                                |
 | `/toggle-tlh-git-attribution`                | Toggle the TLH commit attribution footer for agent-created git commits                                                                                                                                                          |
 | `/usage`                                     | Show or change TLH subscription usage-limit footer preferences                                                                                                                                                                  |
 | `/version`                                   | Show the installed TLH version and the upstream Pi runtime version                                                                                                                                                              |
@@ -75,21 +75,31 @@ With no level argument in the interactive TUI, both commands use the native pick
 
 Typed `/thinking <level>` and `/effort <level>` values, plus native thinking cycles/shortcuts, are session-only. The picker and typed commands use levels supported by the active model. For an enabled primary, TLH retains explicit choices through later turns and session-tree reapplication while that primary remains selected; a model switch clamps retained intent to a supported level. A new session or explicit primary-agent mode change clears session-only state, then uses the persisted default when present or the provider-aware packaged default otherwise.
 
+### Model picker
+
+In the interactive TUI, `/model` without an exact argument and the default `Ctrl+L` shortcut open Pi's native model picker. TLH does not add a second model-scope prompt. The picker visibly offers these actions:
+
+- **Enter** changes the active model for this session only. It does not write the isolated profile default or a TLH primary override. For an active primary, TLH retains the session choice across turns and session-tree reapplication, then clears it at a new session or explicit primary-agent mode change.
+- **Ctrl+S** (default `app.models.save` keybinding) selects the model and saves it as the isolated-profile default for future sessions. For an active, overrideable primary, TLH creates or updates `tlh.primaryAgent.modelOverrides.<primary>` when the model differs from its packaged default, or clears that override when the packaged default is selected. OpenRouter selections always create or update the active primary override because OpenRouter has no packaged primary model.
+- **Esc/Ctrl+C** (default `tui.select.cancel` keybinding) cancels the picker without changing the active model or writing settings.
+
+Typed `/model <exact-name>` and model cycling are session-only and never create or edit a TLH per-primary override. To undo a persistent choice, choose the desired model through the picker and press Ctrl+S; for an active primary, `/switch-primary-agent model reset` clears its persisted override and attempts to reapply its packaged default, subject to `tlh.primaryAgent.applyModel`. Explicit `--model` and `--thinking` launch flags are session-only choices for the launch session, winning over persisted primary-agent overrides and packaged defaults; they are cleared on `/new`, `/reload`, or an explicit primary-agent mode change. How TLH observes persisted selections is described in [model selection](models.md#model-selection).
+
 ### Disabled primary-agent mode
 
 Use `/switch-primary-agent disabled` to disable the primary persona for the current session; use `/switch-primary-agent default disabled` to make it the persistent default. `Shift+Tab` also cycles into disabled mode.
 
-Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Canonical bundled minor agents and persisted-trust-authorized project custom `embedded.<slug>` agents remain available; new embedded runs are forced to the validated Git-root project scope and a fresh context. It does not inject the architect persona, architect-only project append or experimental guidance, automatic primary model/thinking defaults, any minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
+Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Canonical bundled minor agents and persisted-trust-authorized project custom `embedded.<slug>` agents remain available; new embedded runs are forced to the validated Git-root project scope and a fresh context. Disabled mode may initiate explicitly requested embedded runs but cannot resume or steer retained project-agent runs (interrupt remains available); see [custom-subagents.md](custom-subagents.md#who-may-initiate-and-how-scope-is-selected). It does not inject the architect persona, architect-only project append or experimental guidance, automatic primary model/thinking defaults, any minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
 
 ### `/experimental`
 
-`/experimental` currently registers only `session-mirror-observer`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. Project custom subagents use the exact direct Git-root `.tlh/agents/custom/<UPPERCASE-SLUG>.md` path and persisted project trust rather than an `/experimental` flag; see [custom-subagents.md](custom-subagents.md). Stale values in `tlh.experimental.enabledFeatures` are inert and do not re-enable retired behavior; users do not need to edit them, and enabling or disabling the current feature preserves unrelated values.
+`/experimental` currently registers only `session-mirror-observer`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. The bundled `contrarian` subagent is not part of the `/experimental` toggle surface. Project custom subagents use the exact direct Git-root `.tlh/agents/custom/<UPPERCASE-SLUG>.md` path and persisted project trust rather than an `/experimental` flag; see [custom-subagents.md](custom-subagents.md). Stale values in `tlh.experimental.enabledFeatures` are inert and do not re-enable retired behavior; users do not need to edit them, and enabling or disabling the current feature preserves unrelated values.
 
 `session-mirror-observer` is disabled by default and has no flag on a fresh profile. It is opt-in only for the next conversation session: use `/experimental enable session-mirror-observer`, `/experimental status session-mirror-observer`, `/session-mirror-observer status`, and `/experimental disable session-mirror-observer`. Enabling or toggling it tells the next session to mirror bounded TLH session state to a paired iPhone companion; that paired companion can submit bounded plain-text user-message replies while the feature is active. The preference is preserved in the isolated TLH profile alongside unrelated settings, and no companion is automatically installed or paired. Disabling also takes effect on the next session: a currently enabled session retains its activation until a new session, so this is not immediate revocation. `/reload` keeps the current conversation session's activation snapshot; `/new`, `/resume`, and `/fork` recapture it. `/session-mirror-observer snapshot` is explicitly deferred and nonblocking. When enabled, the observer captures bounded in-process source data and, when the installed local companion is present, attempts one bounded fail-open Unix-socket publication; a successful bridge connection remains open until observer/session shutdown and carries no durable transcript storage. If a complete snapshot exceeds protocol bounds, fallback publishes only the newest bounded section of the active branch, replacing over-bound entries or compactions outside the window with unsupported placeholders; it never truncates completed text or fabricates compaction summaries. The local bridge is a same-user trust boundary only: its Unix socket is not encrypted and provides no cross-user or cryptographic confidentiality or same-UID peer authentication/authorization. A missing, unsafe, unavailable, or timed-out bridge never blocks the agent. This does **not** prove helper recovery, cross-process backpressure, Mac/iOS behavior, notifications, or server behavior. The `/session-mirror-observer` status remains aggregate-only and omits transcript text, paths, session/entry IDs, source metadata, provider/tool details, arbitrary errors, and exact unbounded timings.
 
 ### `/subagent-settings`
 
-`/subagent-settings` configures persistent model and effort overrides for the nine bundled TLH minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `test-runner`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`. These roles are dispatched through TLH's first-party `extensions/subagents` runtime; they are not a separately installed extension. The execution-only `test-runner` is intended for exact ordered shell/MCP steps from final-validation tickets.
+`/subagent-settings` configures persistent model and effort overrides for the bundled TLH minor-agent roles (roster and runtime in [subagents.md](subagents.md)).
 
 #### Grammar
 
@@ -120,15 +130,15 @@ Use the path shown by TLH, or substitute the directory selected by `PI_CODING_AG
 For each subagent dispatch, the effective choices are resolved from highest to lowest precedence:
 
 1. A direct dispatch with an explicit model that already has a recognized `:effort` suffix is left unchanged; the suffix wins over any saved effort.
-2. A direct dispatch with an explicit model but no recognized suffix keeps that model. A saved role effort may be appended when the model supports it; a saved role model pin does not replace the caller's explicit model.
-3. When the dispatch has no explicit model, stored `/subagent-settings` values are resolved before bundled defaults. An available stored model pin is used, and a stored effort is applied when supported. A stored `model: false` means inherit the current session model and then apply the stored effort. A stored effort without a model pin applies to the resolved role model.
+2. A direct dispatch with an explicit model but no recognized suffix keeps that model. A recognized saved role effort is appended unchanged; an invalid saved value is omitted with a warning. A saved role model pin does not replace the caller's explicit model.
+3. When the dispatch has no explicit model, stored `/subagent-settings` values are resolved before bundled defaults. An available stored model pin is used, and any recognized stored effort is forwarded unchanged. A stored `model: false` means inherit the current session model and then apply the stored effort. A stored effort without a model pin applies to the resolved role model.
 4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. `code-reviewer`, `oracle`, and `contrarian` prefer an available opposite provider for independence; the other bundled roles generally follow the current session provider when TLH injects defaults.
+4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. Opposite-provider selection for review roles is described in [review independence](models.md#review-independence-for-code-reviewer-oracle-and-contrarian).
+A saved model pin that is no longer available is not silently replaced: TLH warns that `TLH saved minor-agent model override "<model>" is not in the available registry for <role>; forwarding the model argument to Pi for validation instead of swapping in bundled defaults. Update it with /subagent-settings set <role> model <provider/id> or clear it with /subagent-settings reset <role> model.` During dispatch, the subagents runtime uses fallback models from the role's saved `subagents.agentOverrides.<role>.fallbackModels` field or bundled agent frontmatter, together with TLH-generated provider-aware candidates. Caller-supplied `fallbackModels` are no longer accepted. Because TLH cannot observe every runtime fallback source, this warning does not claim that a dispatch will fail closed.
 
-A saved model pin that is no longer available is not silently replaced: TLH warns that `TLH saved minor-agent model override "<model>" for <role> is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set <role> model <provider/id> or clear it with /subagent-settings reset <role> model.` During dispatch, the subagents runtime uses fallback models from the role's saved `subagents.agentOverrides.<role>.fallbackModels` field or bundled agent frontmatter, together with TLH-generated provider-aware candidates. Caller-supplied `fallbackModels` are no longer accepted. Because TLH cannot observe every runtime fallback source, this warning does not claim that a dispatch will fail closed.
+Recognized effort overrides are forwarded unchanged on each dispatch. This includes explicit unknown models, persisted or project saved pins absent from the registry, and registry-known models whose metadata does not advertise the requested effort. Capability metadata may produce a diagnostic such as `TLH stored minor-agent effort "<level>" is not advertised by <provider/id>; the :<level> suffix is forwarded and Pi will validate it.`, but it never filters, neutralizes, or clears that suffix. An unavailable saved pin additionally reports `TLH stored minor-agent effort "<level>" had unavailable capability metadata for saved model "<provider/id>"; the :<level> suffix is forwarded and Pi will validate it for <role>.` Only syntactically invalid stored/project effort values are omitted, with an explicit invalid-effort warning naming the accepted levels.
 
-Stored effort overrides are capability-checked on each dispatch. When a recognized stored value is unsupported, TLH neutralizes it with the provider-resolved bundled level when possible and warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; using bundled defaults for this run.` If the bundled level is unavailable but `off` is supported, it warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; using explicit off for this run.` A nonstandard stored value uses the same two outcomes: `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; using bundled defaults for this run.` or `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; using explicit off for this run.`
-
-Generated opposite-provider fallbacks use the corresponding wording with `generated fallback <provider/id>` and `that fallback will use`, for example: `TLH stored minor-agent effort "<level>" is not supported by generated fallback <provider/id>; that fallback will use bundled defaults for this run.` or `TLH stored minor-agent effort "<level>" is not supported by generated fallback <provider/id>; that fallback will use explicit off for this run.` If neither bundled nor `off` is supported, TLH warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run.` If no model can be resolved for a nonstandard stored value, it warns `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.` When no bundled or current-session model is available for a thinking-only override, TLH warns `TLH stored minor-agent effort "<value>" for <role> could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.` The runtime gate resolves the known-model case by dropping unsupported values rather than emitting them; unknown or unresolvable models remain fail-open capability uncertainty, not residual known-model application.
+Generated opposite-provider fallbacks use the same `not advertised` wording with `generated fallback <provider/id>` when capability metadata is present but does not include the requested level. The subagents runtime does not perform a known-model capability gate; it forwards the exact model argument selected by the defaults layer, and Pi rejection is non-transient.
 
 #### Provider independence and headless use
 
@@ -136,7 +146,7 @@ A fixed model override cannot guarantee provider independence for `code-reviewer
 
 #### Supported effort values and undo
 
-The complete set of values accepted by `/subagent-settings set ... effort ...` is `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The command validates a new value against the currently effective model before writing. A stored value is applied when the resolved model advertises support; `max` specifically requires a `thinkingLevelMap` entry advertising it. If a model later stops supporting a stored value, TLH warns and uses bundled effort or explicit `off` when possible; if neither is supported, the runtime drops a known-unsupported value instead of emitting it, while unknown or unresolvable models fail open. `max` is a live value in bundled behavior too: the bundled `developer` role already configures `max` for its OpenAI default.
+The complete set of values accepted by `/subagent-settings set ... effort ...` is `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The command validates only the effort value's syntax before writing; dispatch forwards recognized values unchanged and Pi validates model support. `max` is a live value in bundled behavior too: the bundled `developer` role already configures `max` for its OpenAI default.
 
 To undo a persistent change:
 
@@ -145,7 +155,7 @@ To undo a persistent change:
 - use `/subagent-settings reset-all` to clear only `model` and `thinking` for bundled roles. It preserves other keys on those role entries and leaves unknown/non-TLH entries under `subagents.agentOverrides` untouched; or
 - restore the `settings.json.bak-*` file shown after a write by copying it back over the active `settings.json`.
 
-The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status" })` shows active direct dispatch status; pass `id` to inspect one run. Neither command changes these overrides.
+The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status", id: "..." })` shows active dispatch status; neither command changes these overrides.
 
 ### `/reconcile`
 
@@ -204,6 +214,14 @@ Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-stat
 
 The report is built from sanitized session analysis only. It omits raw transcript text, raw tool arguments, and raw tool-result payloads, and TLH tells you where the private local report directory lives so you can delete it when you no longer need the report.
 
+### `/usage` and RPC status for hosts
+
+`/usage` shows or changes the subscription usage-limit footer preferences, including `/usage weekly`.
+
+When TLH runs in RPC mode, it publishes the same usage segment as the TUI footer (for example `5h session 12% used, resets in 2h3m · weekly 40% used, resets in 3d 2h`) through the extension UI status key `tlh-usage`, as `ctx.ui.setStatus("tlh-usage", <text>)`. Hosts such as tlh-gui can render it as-is. The status is published at session start, after a usage refresh that changes it, on model selection, and after `/usage weekly` changes; `undefined` clears it. It applies only to Anthropic and OpenAI Codex OAuth subscription models. The reset countdown is not republished on a timer, so it can be stale while the session is idle.
+
+The bundled pi-fast extension already publishes status key `fast` with `"fast"` while fast mode is on and `undefined` otherwise.
+
 ### `/what-consumed-my-session-limit-and-tokens`
 
 `/what-consumed-my-session-limit-and-tokens` takes no flags or subcommands. Run it to generate a local HTML report covering TLH sessions within the current provider session-limit window across all projects under the same session root.
@@ -214,13 +232,13 @@ The report is built from sanitized session analysis only. It omits raw transcrip
 
 ## Model-facing subagent tools
 
-TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports only direct single or parallel execution, in the foreground by default or through TLH-tracked background mode with `async: true`, plus the closed action set `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Each child starts a fresh session; caller `context`, agent `defaultContext`, and turn budgets are not supported. TLH-tracked async work uses a detached OS child process managed by TLH, not the removed external pi-intercom detach request/result/control integration. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
+TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports only direct single or parallel execution, through the awaited async runner by default or through detached TLH-tracked background mode with explicit `async: true`, plus the closed action set `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Each child starts a fresh session; caller `context`, agent `defaultContext`, and turn budgets are not supported. TLH-tracked async work uses a detached OS child process managed by TLH, not the removed external pi-intercom detach request/result/control integration. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
 
-The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-session/user/project-scope isolation, async control and durable resume behavior, native `contact_supervisor`, tool budgets, timeouts, diagnostics, acceptance, artifacts, migration, and undo steps. Project custom embedded-agent paths and trust rules are in [custom-subagents.md](custom-subagents.md).
+The active TLH primary agent normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-session/user/project-scope isolation, async control and durable resume behavior, native `contact_supervisor`, timeouts, diagnostics, artifacts, migration, and undo steps. Project custom embedded-agent paths and trust rules are in [custom-subagents.md](custom-subagents.md).
 
 ## Project custom subagents
 
-Custom subagents are not a slash command. Project-owned agents use the exact direct Git-root path `.tlh/agents/custom/<UPPERCASE-SLUG>.md`; persist trust for the validated Git root, then request one naturally by slug from the architect. Generic profile, package, project `.pi/.agents`, configured-directory, and settings-based custom sources do not authorize targets. See [custom-subagents.md](custom-subagents.md) for strict frontmatter, trust boundaries, snapshot behavior, resume limits, troubleshooting, and removal.
+Custom subagents are not a slash command. Project-owned agents use the exact direct Git-root path `.tlh/agents/custom/<UPPERCASE-SLUG>.md`; persist trust for the validated Git root, then explicitly request one naturally by slug from an enabled primary agent or disabled mode. Generic profile, package, project `.pi/.agents`, configured-directory, and settings-based custom sources do not authorize targets. See [custom-subagents.md](custom-subagents.md) for strict frontmatter, trust boundaries, persisted-identity reauthorization, resume limits, troubleshooting, and removal.
 
 ---
 
@@ -351,6 +369,14 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/import`        | Import and resume a session from a JSONL file                                  |
 | `/scoped-models` | Enable or disable models for Ctrl+P cycling                                    |
 
+### Hidden bundled extension commands
+
+| Command        | Extension       | Description                                                                                                  |
+| -------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `/quiet-tools` | `pi-quiet-tools` | Show read-only status for the mandatory TLH-managed renderer; this command does not toggle or disable it. |
+
+The status covers only the installer-managed quiet-tools source. Separately loaded third-party extensions are outside its scope. Ctrl+O and per-row expansion remain available for native full output.
+
 ---
 
 ## TLH CLI subcommands
@@ -360,6 +386,44 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 ### `tlh sessions`
 
 `tlh sessions` is a read-only session analysis tool. It emits JSON to stdout so you can pipe to `jq`. Run `tlh sessions --mode per-session` for a per-session summary of tool-pair statistics and coverage, `tlh sessions --mode per-tool` for aggregated per-tool statistics across all sessions, or `tlh sessions --mode subagents` for a schema-v1 summary of locally persisted subagent telemetry, including foreground/async runs, usage, runtime, operation coverage, lineage, and synthetic wakeups. Coverage includes bounded correlation-evidence failure counters (`scanCaptureOverflow`, `rescanCaptureOverflow`, `digestMismatch`, and `generationMismatch`); a failed evidence join is omitted rather than trusted. Raw paths, cwd values, project labels, prompts, tasks, outputs, arguments, and raw run identifiers are omitted from the default report; bounded metadata such as roles, models, usage, and costs may still be present. Pass `--include-paths` only when you need local profile and session-directory provenance. The command reads the active isolated profile's session JSONL files, never reads `run-history.jsonl`, does not contact remote telemetry services, and never writes to session or profile files.
+
+### `tlh version`
+
+`tlh version` reports stable, machine-readable install information for external tools such as tlh-gui. It is read-only, makes no network calls, and dispatches before the MCP adapter startup guard and the runtime. Run `tlh version` for a human summary or `tlh version --json` for pretty-printed JSON on stdout. It exits 0 on success, 2 for argument errors (nothing on stdout), and 1 when the wrapper cannot run the reporter (missing or corrupt support files, or no `node`).
+
+```json
+{
+  "schemaVersion": 1,
+  "tlhVersion": "<tlh-version>",
+  "piVersion": "<pi-version>",
+  "track": "latest-release",
+  "ref": "<release-tag>",
+  "repo": "diegopetrucci/the-last-harness",
+  "agentDir": "<home>/.the-last-harness/agent"
+}
+```
+
+Every field is always present. A missing, invalid, or wrong-typed value is `null` (except `schemaVersion` and `agentDir`).
+
+| Field           | Source                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `schemaVersion` | Always `1`                                                                                                 |
+| `tlhVersion`    | Installed TLH package version; on ref tracks such as `main`, the release version that checkout is based on |
+| `piVersion`     | Version of the private Pi runtime package the wrapper execs, read from its `package.json` (no subprocess)  |
+| `track`         | Install metadata: `latest-release`, `pinned-tag`, `ref`, or `custom`                                       |
+| `ref`           | Installed tag or ref from install metadata: release tag on `latest-release`, tag on `pinned-tag`, ref on `ref`; may be `null` on `custom` or when unknown |
+| `repo`          | Install metadata: the source repository                                                                    |
+| `agentDir`      | The wrapper's authoritative isolated profile path                                                          |
+
+`track` is one of the four values above or `null`; consumers should tolerate new `track` values added in future schema-compatible releases.
+
+Known limitation: installs from a non-local custom package source (for example `github:owner/repo` or an npm source) have no resolvable package root, so `tlh version` (like `tlh doctor` and `tlh sessions`) exits 1 there; consumers fall back as for older TLH.
+
+Only `latest-release` moves to newer releases via `tlh update`. `pinned-tag` reinstalls its tag, `ref` follows that ref, and `custom` requires a manual installer rerun.
+
+Compatibility: fields may be added, but existing fields are never renamed, removed, or retyped without bumping `schemaVersion`. `tlh --version` is unchanged and still reports the Pi runtime version.
+
+Consumers should always pass `--json`. Older TLH wrappers reject the unknown `--json` option with a non-zero exit before any model call, whereas plain `tlh version` on an older TLH is treated as a prompt. Treat a non-zero exit or invalid JSON as unsupported.
 
 ---
 
@@ -373,7 +437,7 @@ tlh defaults disable <id>  # disable a separately managed default extension (e.g
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed non-critical default extensions only (those in `config/default-extensions.json`); the mandatory `quiet-tools` renderer has no supported disable/off path. First-party packaged extensions like `notify`, `/annotate-last-message`, and `/annotate-git-diff` are not managed by this flow.
 
 ### Configuring the notify extension
 

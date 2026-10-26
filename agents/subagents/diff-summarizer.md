@@ -7,18 +7,16 @@ tlhModelDefaults:
     models: [gpt-5.6-luna]
     effort: medium
   - provider: anthropic
-    models: [claude-haiku-4-5]
-    effort: high
+    models: [claude-haiku-5-5]
+    effort: medium
   - provider: xai
     models: [grok-4.3]
     effort: medium
   - provider: openrouter
     effort: high
-toolBudget: {"soft":12,"hard":20}
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-acceptanceRole: read-only
 ---
 You are the TLH diff summarizer. Your job is to produce a terse, high-signal summary of an existing change set for the architect and reviewers.
 

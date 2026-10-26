@@ -1,11 +1,3 @@
-/**
- * Live-run predicate for async jobs.
- *
- * Used by the async-started event handler and other callers that need to
- * distinguish genuinely active jobs from retained-terminal and paused jobs
- * that the async-job-tracker keeps around briefly for UX continuity.
- */
-
 import type { AsyncJobState } from "../../shared/types.ts";
 
 /**

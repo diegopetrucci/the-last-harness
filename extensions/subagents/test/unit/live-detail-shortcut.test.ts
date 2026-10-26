@@ -229,7 +229,7 @@ describe("subagent live-detail controller", () => {
       false,
     );
     assert.equal(widgetRenders, 2);
-    // Pi 0.83 redraws after widget replacement; the extension must not
+    // Pi redraws after widget replacement; the extension must not
     // call the removed direct requestRender helper.
     assert.equal(renderRequests, 0);
     assert.equal(piExpansionChanges, 0);

@@ -29,21 +29,7 @@ export interface AsyncExecutionResult {
   details: { asyncId?: string; timeoutMs?: number; deadlineAt?: number };
 }
 
-/**
- * WRITER contract: a transparent alias for AsyncResultArtifact used when tests
- * read artifacts that the production writers produced earlier in the same test
- * run — including via the readAsyncPayload() helper below. Because every field
- * reflects live writer output, the full required-field contract applies.
- *
- * This is an alias — not a re-declaration — so field names and types stay in
- * sync with AsyncResultArtifact automatically. Before PR #515 this was a
- * hand-maintained restatement that silently drifted twice and needed manual
- * patches; the alias makes that class of drift impossible.
- *
- * Tests that exercise legacy, synthetic, or malformed artifacts must use the
- * Partial-based fixtures in test/support/async-artifact-fixtures.ts instead of
- * casting to this type.
- */
+/** Alias for live writer output; fields stay in sync with AsyncResultArtifact. */
 export type AsyncResultPayload = AsyncResultArtifact;
 
 /**
@@ -55,6 +41,15 @@ export type AsyncStatusPayload = AsyncStatus;
 export interface MockPiCallRecord {
   args?: string[];
   systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
+}
+
+export interface WaitForMockPiCallOptions {
+  /** Stop polling with a diagnostic if this async result reaches a terminal state first. */
+  terminalResultPath?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +96,7 @@ interface ControlChannelModule {
 const asyncMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const typesMod = await tryImport<TypesModule>("./src/shared/types.ts");
-const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
+const executorMod = await tryImport<ExecutorModule>("./src/extension/subagent-executor.ts");
 const controlChannelMod = await tryImport<ControlChannelModule>(
   "./src/runs/background/control-channel.ts",
 );
@@ -122,71 +117,8 @@ assert.equal(isAsyncAvailable(), true, "required async runner module is unavaila
 // Utility helpers
 // ---------------------------------------------------------------------------
 
-export function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "stop") {
-  return {
-    type: "message_end",
-    message: {
-      role: "assistant",
-      content:
-        stopReason === "tool_use"
-          ? [
-              { type: "text", text },
-              { type: "toolCall", name: "bash", arguments: { command: "echo test" } },
-            ]
-          : [{ type: "text", text }],
-      model: "mock/test-model",
-      stopReason,
-      usage: {
-        input: 10,
-        output: 5,
-        cacheRead: 0,
-        cacheWrite: 0,
-        cost: { total: 0.001 },
-      },
-    },
-  };
-}
-
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-export function git(cwd: string, args: string[]): string {
-  const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8" });
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${args.join(" ")} failed`);
-  }
-  return result.stdout.trim();
-}
-
-export function createRepo(prefix: string): string {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  git(repoDir, ["init"]);
-  git(repoDir, ["config", "user.email", "tests@example.com"]);
-  git(repoDir, ["config", "user.name", "Async Tests"]);
-  fs.writeFileSync(path.join(repoDir, "input.md"), "input\n", "utf-8");
-  git(repoDir, ["add", "-A"]);
-  git(repoDir, ["commit", "-m", "initial commit"]);
-  return repoDir;
-}
-
-export function writePackageSkill(packageRoot: string, skillName: string): void {
-  const skillDir = path.join(packageRoot, "skills", skillName);
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(packageRoot, "package.json"),
-    JSON.stringify(
-      { name: `${skillName}-pkg`, version: "1.0.0", pi: { skills: [`./skills/${skillName}`] } },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
-  fs.writeFileSync(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
-    "utf-8",
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -274,10 +206,32 @@ export async function waitForAsyncControlCondition(
   }
 }
 
+function readTerminalMockPiWaitResult(
+  resultPath: string,
+): { state: string; summary?: string; error?: string; timedOut?: boolean } | undefined {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+  } catch {
+    // A result writer may still be publishing the file. Keep polling until the
+    // next pass rather than turning a transient partial read into a diagnostic.
+    return undefined;
+  }
+  if (!isRecord(payload) || typeof payload.state !== "string") return undefined;
+  if (["queued", "running", "pausing"].includes(payload.state)) return undefined;
+  return {
+    state: payload.state,
+    ...(typeof payload.summary === "string" ? { summary: payload.summary } : {}),
+    ...(typeof payload.error === "string" ? { error: payload.error } : {}),
+    ...(payload.timedOut === true ? { timedOut: true } : {}),
+  };
+}
+
 export async function waitForMockPiCall(
   mockPi: MockPi,
   index: number,
   timeoutMs: ScaledMs = scaleTestTimeout(30_000),
+  options: WaitForMockPiCallOptions = {},
 ): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -292,6 +246,22 @@ export async function waitForMockPiCall(
       ) as MockPiCallRecord;
       assert.ok(Array.isArray(payload.args), "expected recorded args");
       return { args: payload.args, systemPrompts: payload.systemPrompts ?? [] };
+    }
+    if (options.terminalResultPath && fs.existsSync(options.terminalResultPath)) {
+      const terminal = readTerminalMockPiWaitResult(options.terminalResultPath);
+      if (terminal) {
+        const detail = [
+          `state=${terminal.state}`,
+          terminal.timedOut ? "timedOut=true" : undefined,
+          terminal.error ? `error=${terminal.error}` : undefined,
+          terminal.summary ? `summary=${terminal.summary}` : undefined,
+        ]
+          .filter((value): value is string => value !== undefined)
+          .join(", ");
+        assert.fail(
+          `Async result ${options.terminalResultPath} reached terminal state before recorded mock pi call ${index}: ${detail}`,
+        );
+      }
     }
     if (Date.now() > deadline) assert.fail(`Timed out waiting for recorded mock pi call ${index}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -332,21 +302,6 @@ export function readMockPiArgs(mockPi: MockPi, index: number): string[] {
   ) as MockPiCallRecord;
   assert.ok(Array.isArray(payload.args), "expected recorded args");
   return payload.args;
-}
-
-export function readMockPiArgsMatching(mockPi: MockPi, text: string): string[] {
-  const callFiles = fs
-    .readdirSync(mockPi.dir)
-    .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-    .sort();
-  for (const callFile of callFiles) {
-    const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as {
-      args?: string[];
-    };
-    assert.ok(Array.isArray(payload.args), "expected recorded args");
-    if (payload.args.join("\n").includes(text)) return payload.args;
-  }
-  assert.fail(`expected recorded call containing ${text}`);
 }
 
 export function startedMockPiPids(mockPi: MockPi): number[] {
@@ -468,4 +423,39 @@ export function removeLifecycleLock(asyncDir: string): void {
 export async function readAsyncPayload(id: string): Promise<AsyncResultPayload> {
   const resultPath = await waitForAsyncResultFile(id);
   return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+}
+
+function git(dir: string, args: string[]): void {
+  const result = spawnSync("git", args, { cwd: dir, encoding: "utf-8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+}
+
+export function createRepo(prefix: string): string {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(repoDir, ["init"]);
+  git(repoDir, ["config", "user.email", "tests@example.com"]);
+  git(repoDir, ["config", "user.name", "Async Tests"]);
+  fs.writeFileSync(path.join(repoDir, "input.md"), "input\n", "utf-8");
+  git(repoDir, ["add", "-A"]);
+  git(repoDir, ["commit", "-m", "initial commit"]);
+  return repoDir;
+}
+
+export function writePackageSkill(packageRoot: string, skillName: string): void {
+  const skillDir = path.join(packageRoot, "skills", skillName);
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify(
+      { name: `${skillName}-pkg`, version: "1.0.0", pi: { skills: [`./skills/${skillName}`] } },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
+    "utf-8",
+  );
 }

@@ -53,7 +53,7 @@ function normalizeAgents(agents) {
   return new Map([...agents].map(([name, agent]) => [name, normalizeAgentFixture(agent)]));
 }
 
-const { applyThinkingSuffix: applyRuntimeThinkingSuffix } = await jiti.import(
+const { applyThinkingSuffix: applyRuntimeThinkingSuffix, buildPiArgs } = await jiti.import(
   "../extensions/subagents/src/runs/shared/pi-args.ts",
 );
 
@@ -256,6 +256,7 @@ export function createModelDefaultsTestContext() {
   return {
     applyProviderAwareSubagentModels,
     applyRuntimeThinkingSuffix,
+    buildPiArgs,
     anthropicAvailable,
     anthropicFirstPrimary,
     anthropicParentPrefersCodexReviewer,

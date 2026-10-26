@@ -179,6 +179,42 @@ test("model visibility settings are isolated-profile only and normalize hidden/v
   });
 });
 
+test("model visibility reads BOM-prefixed settings like plain JSON and fails closed on malformed content", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const settings = {
+    unrelated: { keep: true },
+    tlh: {
+      modelVisibility: {
+        hidden: ["anthropic/claude-opus-4-*"],
+        visible: ["anthropic/claude-opus-4-6"],
+      },
+    },
+  };
+  const configs = [];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    for (const prefix of ["", "\uFEFF"]) {
+      writeFileSync(settingsPath, `${prefix}${JSON.stringify(settings)}\n`);
+      configs.push(getTlhModelVisibilityConfig());
+    }
+
+    writeFileSync(settingsPath, '\uFEFF{"tlh":{"modelVisibility":');
+    assert.deepEqual(getTlhModelVisibilityConfig(), {
+      disabled: false,
+      hidden: [],
+      visible: [],
+    });
+  });
+
+  assert.deepEqual(configs[0], {
+    disabled: false,
+    hidden: ["anthropic/claude-opus-4-*"],
+    visible: ["anthropic/claude-opus-4-6"],
+  });
+  assert.deepEqual(configs[1], configs[0]);
+});
+
 test("installed model visibility filter is idempotent, hides defaults, and preserves an unfiltered internal escape hatch", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
   const settingsPath = join(fixture.agent, "settings.json");
@@ -187,7 +223,7 @@ test("installed model visibility filter is idempotent, hides defaults, and prese
     { provider: "anthropic", id: "claude-opus-4-6" },
     { provider: "anthropic", id: "claude-sonnet-4-6" },
     { provider: "openai-codex", id: "gpt-5.4" },
-    { provider: "openai-codex", id: "gpt-5.5" },
+    { provider: "openai-codex", id: "gpt-6-astra" },
   ]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -200,13 +236,13 @@ test("installed model visibility filter is idempotent, hides defaults, and prese
     assert.equal(ModelRegistry.prototype.getAvailable, patchedGetAvailable);
     assert.equal(InteractiveMode.prototype.findExactModelMatch, patchedFindExactModelMatch);
 
-    assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-5.5"]);
+    assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-6-astra"]);
     assert.deepEqual(modelKeys(getUnfilteredAvailableModels(registry)), [
       "anthropic/claude-haiku-4-5",
       "anthropic/claude-opus-4-6",
       "anthropic/claude-sonnet-4-6",
       "openai-codex/gpt-5.4",
-      "openai-codex/gpt-5.5",
+      "openai-codex/gpt-6-astra",
     ]);
 
     writeFileSync(
@@ -228,7 +264,7 @@ test("installed model visibility filter is idempotent, hides defaults, and prese
       "anthropic/claude-haiku-4-5",
       "anthropic/claude-sonnet-4-6",
       "openai-codex/gpt-5.4",
-      "openai-codex/gpt-5.5",
+      "openai-codex/gpt-6-astra",
     ]);
 
     writeFileSync(
@@ -240,7 +276,7 @@ test("installed model visibility filter is idempotent, hides defaults, and prese
       "anthropic/claude-opus-4-6",
       "anthropic/claude-sonnet-4-6",
       "openai-codex/gpt-5.4",
-      "openai-codex/gpt-5.5",
+      "openai-codex/gpt-6-astra",
     ]);
   });
 });
@@ -335,18 +371,18 @@ test("installed model visibility filter keeps getAll direct lookup unfiltered wh
   const registry = createFakeModelRegistry([
     { provider: "anthropic", id: "claude-opus-4-6" },
     { provider: "anthropic", id: "claude-sonnet-4-6" },
-    { provider: "openai-codex", id: "gpt-5.5" },
+    { provider: "openai-codex", id: "gpt-6-astra" },
   ]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writeFileSync(settingsPath, `${JSON.stringify({}, null, 2)}\n`);
     installTlhModelVisibilityFilter();
 
-    assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-5.5"]);
+    assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-6-astra"]);
     assert.deepEqual(modelKeys(registry.getAll()), [
       "anthropic/claude-opus-4-6",
       "anthropic/claude-sonnet-4-6",
-      "openai-codex/gpt-5.5",
+      "openai-codex/gpt-6-astra",
     ]);
     assert.deepEqual(
       registry

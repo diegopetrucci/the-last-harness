@@ -115,10 +115,7 @@ describe("subagent context and termination diagnostics", () => {
       fs.writeFileSync(oversizedWithNewline, `${exactBoundaryHeader} \n`, "utf-8");
       assert.equal(hasUsableSessionArtifact(oversizedWithNewline), false);
 
-      // Pi 0.99.0 changed when session files are written: the session file is now created when the
-      // first user message is sent instead of after the first assistant response. A session file
-      // containing only a valid header plus a first user message (no assistant turn yet) must still
-      // be recognised as a usable artifact so resume works correctly after an interrupted first turn.
+      // A valid header plus the first user message must be usable for resume before any assistant turn.
       const headerPlusUserMsg = path.join(root, "header-plus-user-msg.jsonl");
       const userMsgLine = JSON.stringify({
         type: "message",
@@ -129,7 +126,7 @@ describe("subagent context and termination diagnostics", () => {
       assert.equal(
         hasUsableSessionArtifact(headerPlusUserMsg),
         true,
-        "session with header + first user message only (Pi 0.99.0 early write) must be usable",
+        "session with header + first user message only must be usable",
       );
 
       // A session file that is just a user message with no session header must be rejected.
@@ -372,10 +369,6 @@ describe("subagent context and termination diagnostics", () => {
       "timed_out",
     );
     assert.equal(
-      resolveSubagentTerminationReason({ toolBudgetBlocked: true, assistantStopReason: "stop" }),
-      "tool_budget_blocked",
-    );
-    assert.equal(
       resolveSubagentTerminationReason({ interrupted: true, assistantStopReason: "stop" }),
       "interrupted",
     );
@@ -404,7 +397,7 @@ describe("subagent context and termination diagnostics", () => {
         { assistantStopReason: "stop", effectiveExitCode: 1 },
         "process_exit",
       ],
-      ["acceptance failure", { assistantStopReason: "stop", effectiveExitCode: 1 }, "process_exit"],
+      ["child failure", { assistantStopReason: "stop", effectiveExitCode: 1 }, "process_exit"],
       ["model error", { assistantStopReason: "error", effectiveExitCode: 1 }, "model_error"],
       ["aborted model", { assistantStopReason: "aborted", effectiveExitCode: 1 }, "interrupted"],
       ["output limit", { assistantStopReason: "length", effectiveExitCode: 1 }, "output_limit"],
@@ -565,7 +558,7 @@ describe("subagent context and termination diagnostics", () => {
       );
     }
     assert.equal(
-      classifyContextExhaustedTermination({ ...base, error: "acceptance failed" }),
+      classifyContextExhaustedTermination({ ...base, error: "child failed" }),
       undefined,
     );
     assert.equal(classifyContextExhaustedTermination({ ...base, exitCode: 1 }), undefined);

@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
   NATIVE_SUPERVISOR_TOOL_NAME,
@@ -128,38 +129,10 @@ async function pollUntil(
 }
 
 function makeParentState(sessionId: string | null, ctx: unknown): SubagentState {
-  return {
-    baseCwd: process.cwd(),
+  return makeSubagentState({
     currentSessionId: sessionId,
-    asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    cleanupTimers: new Map(),
     lastUiContext: ctx as SubagentState["lastUiContext"],
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
-}
-
-function makeControlState(): SubagentState {
-  return {
-    baseCwd: "/tmp/project",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  });
 }
 
 function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEvent {
@@ -357,27 +330,23 @@ describe("no-pi-intercom regression guard", () => {
 
   describe("needs_attention notice delivery", () => {
     it("delivers notices via pi.sendMessage", () => {
-      const state = makeControlState();
-
       const sent: Array<{ message: unknown; options: unknown }> = [];
 
-      const nudges: Array<{ text: string; options: unknown }> = [];
+      const syntheticUserMessages: string[] = [];
       const mockPi = {
         sendMessage(message: unknown, options?: unknown) {
           // Delivery goes here — not to the event bus
           sent.push({ message, options });
         },
-        sendUserMessage(text: string, options?: unknown) {
-          nudges.push({ text, options });
+        sendUserMessage(text: string) {
+          syntheticUserMessages.push(text);
         },
       };
 
       handleSubagentControlNotice({
         pi: mockPi as never,
-        state,
         visibleControlNotices: new Set(),
         details: { source: "async", event: needsAttentionEvent() },
-        foregroundDelayMs: 20,
       });
 
       assert.equal(
@@ -385,6 +354,13 @@ describe("no-pi-intercom regression guard", () => {
         1,
         `Expected exactly one delivered control notice; got ${sent.length}`,
       );
+      assert.deepEqual(sent[0]?.options, { triggerTurn: true });
+      assert.equal(
+        (sent[0]?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details
+          ?.triggersTurn,
+        true,
+      );
+      assert.deepEqual(syntheticUserMessages, []);
     });
   });
 });

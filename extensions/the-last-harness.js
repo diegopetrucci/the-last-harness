@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { basename } from "node:path";
 import { AgentSession as TlhPiAgentSession, getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
@@ -10,6 +11,7 @@ import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
+import { getTlhSubscriptionUsageFooterState } from "./the-last-harness/footer-subscription-usage.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createProviderAuthHealthStore, } from "./the-last-harness/provider-auth-health.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
@@ -29,10 +31,11 @@ import { registerSessionMirrorObserverFacade } from "./the-last-harness/session-
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
-import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
+import { registerTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, registerUsageCommand, } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, getTlhMainTrackBehindCount, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
+import { createRetryableLazyImport } from "./the-last-harness/common.js";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
@@ -61,18 +64,6 @@ function setTlhTerminalTitle(ctx) {
     }
     catch {
     }
-}
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
 }
 const EMPTY_STARTUP_RESOURCES = {
     context: [],
@@ -233,7 +224,7 @@ export default function theLastHarness(pi) {
     registerExperimentalCommand(pi);
     registerReconcileCommand(pi, primaryAgentRuntime);
     registerSubagentSettingsCommand(pi);
-    registerLazyTlhTicketWorkflowUi(pi);
+    registerTlhTicketWorkflowUi(pi);
     pi.registerCommand("tlh-changelog", {
         description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
         handler: (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
@@ -252,7 +243,6 @@ export default function theLastHarness(pi) {
             await handler(args, ctx);
         },
     });
-    registerUsageCommand(pi);
     registerVersionCommand(pi);
     pi.registerShortcut(TLH_HEADER_TOGGLE_SHORTCUT, {
         description: "Toggle TLH startup header resources",
@@ -264,14 +254,22 @@ export default function theLastHarness(pi) {
         },
     });
     const subscriptionUsageService = createLazyTlhSubscriptionUsageService();
+    let publishRpcUsageStatus;
+    registerUsageCommand(pi, () => publishRpcUsageStatus?.());
     const refreshSubscriptionUsage = (ctx, options = {}) => {
         if (!ctx.hasUI) {
             return;
         }
         subscriptionUsageService.refresh(ctx, options);
     };
+    pi.on("session_shutdown", () => {
+        subscriptionUsageService.clearFooterRenderRequest();
+        subscriptionUsageService.setUsageChangeListener(undefined);
+        publishRpcUsageStatus = undefined;
+    });
     pi.on("model_select", (_event, ctx) => {
         refreshSubscriptionUsage(ctx);
+        publishRpcUsageStatus?.();
     });
     pi.on("turn_start", (_event, ctx) => {
         setTlhTerminalTitle(ctx);
@@ -285,8 +283,38 @@ export default function theLastHarness(pi) {
     });
     pi.on("session_start", async (event, ctx) => {
         const sessionToken = invalidateActiveTlhHeaderSession();
-        await primaryAgentRuntime.applySessionStart(ctx);
+        subscriptionUsageService.setUsageChangeListener(undefined);
+        publishRpcUsageStatus = undefined;
+        await primaryAgentRuntime.applySessionStart(ctx, event.reason);
         refreshCachedTlhUsageWeeklyVisibility(ctx.cwd);
+        if (ctx.mode === "rpc" && ctx.hasUI && typeof ctx.ui.setStatus === "function") {
+            let hasPublished = false;
+            let lastText;
+            const publish = () => {
+                if (activeTlhHeaderSessionToken !== sessionToken) {
+                    return;
+                }
+                let text;
+                try {
+                    text = getTlhSubscriptionUsageFooterState(ctx, ctx.model, {
+                        subscriptionUsage: subscriptionUsageService,
+                        shouldShowWeekly: getCachedTlhUsageWeeklyVisibility,
+                    }).segment;
+                }
+                catch {
+                    return;
+                }
+                if (hasPublished && text === lastText) {
+                    return;
+                }
+                hasPublished = true;
+                lastText = text;
+                ctx.ui.setStatus("tlh-usage", text);
+            };
+            publishRpcUsageStatus = publish;
+            subscriptionUsageService.setUsageChangeListener(publish);
+            publish();
+        }
         if (!ctx.hasUI) {
             return;
         }
@@ -312,7 +340,11 @@ export default function theLastHarness(pi) {
         activeProviderAuthHealthStore = providerAuthHealthStore;
         if (typeof ctx.ui.setFooter === "function") {
             ctx.ui.setFooter((tui, theme, footerData) => {
-                subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
+                subscriptionUsageService.registerFooterRenderRequest(() => {
+                    if (activeTlhHeaderSessionToken === sessionToken) {
+                        tui.requestRender();
+                    }
+                });
                 sessionState.requestFooterRender = () => {
                     if (activeTlhHeaderSessionToken === sessionToken) {
                         tui.requestRender();

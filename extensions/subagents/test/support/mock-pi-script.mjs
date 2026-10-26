@@ -6,6 +6,9 @@ const queueDir = process.env.MOCK_PI_QUEUE_DIR;
 const processGeneration = process.env.MOCK_PI_GENERATION?.trim();
 const CURRENT_GENERATION_FILE = "current-generation.txt";
 const STALE_CALL_PREFIX = "stale-call-";
+// Fixture cleanup normally reaps these processes directly. Keep a finite
+// lifetime as a last-resort guard if a test aborts before its teardown runs.
+const STUBBORN_DESCENDANT_EMERGENCY_LIFETIME_MS = 30_000;
 
 function exitAfterFlush(code) {
   // process.exit() can truncate buffered stdout/stderr on slow runners (e.g.
@@ -38,6 +41,28 @@ function fail(message, exitCode = 1) {
   exitAfterFlush(exitCode);
 }
 
+function writeAtomicJson(filePath, value) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  fs.writeFileSync(tempPath, JSON.stringify(value), "utf-8");
+  try {
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Preserve the publication error if cleanup also fails.
+    }
+    throw error;
+  }
+}
+
+function publishOwnership(state) {
+  writeAtomicJson(path.join(queueDir, `owner-${process.pid}.json`), {
+    pid: process.pid,
+    state,
+  });
+}
+
 function readCurrentGeneration(dir) {
   try {
     return fs.readFileSync(path.join(dir, CURRENT_GENERATION_FILE), "utf-8").trim() || undefined;
@@ -66,31 +91,92 @@ function appendSignalRecord(signal) {
   );
 }
 
-async function spawnStubbornDescendants() {
+async function spawnStubbornDescendants(startMarker) {
+  if (typeof startMarker === "string" && startMarker.length > 0) {
+    await waitForMarkerFile(startMarker);
+  }
+
   const grandchildCode = [
     'import fs from "node:fs";',
-    "const [recordPath, childPid] = process.argv.slice(1);",
+    'import path from "node:path";',
+    "const [recordPath, readyGatePath] = process.argv.slice(1);",
     'process.on("SIGINT", () => {}); process.on("SIGTERM", () => {});',
-    "const record = JSON.stringify({ childPid: Number(childPid), grandchildPid: process.pid });",
-    "const tempPath = `${recordPath}.tmp-${process.pid}`;",
-    "fs.writeFileSync(tempPath, record);",
-    "fs.renameSync(tempPath, recordPath);",
+    "const emergencyPath = path.join(path.dirname(recordPath), `emergency-exit-${process.pid}.json`);",
+    "const emergencyTimer = setTimeout(() => {",
+    "  const emergencyTempPath = `${emergencyPath}.tmp-${process.pid}`;",
+    "  fs.writeFileSync(emergencyTempPath, JSON.stringify({ pid: process.pid }));",
+    "  fs.renameSync(emergencyTempPath, emergencyPath);",
+    "  process.exit(1);",
+    `}, ${STUBBORN_DESCENDANT_EMERGENCY_LIFETIME_MS});`,
+    "const readyDeadline = Date.now() + 120_000;",
+    "while (!readyGatePath || !fs.existsSync(readyGatePath)) {",
+    "  if (Date.now() >= readyDeadline) process.exit(1);",
+    "  await new Promise((resolve) => setTimeout(resolve, 20));",
+    "}",
+    "const ownerPath = path.join(path.dirname(recordPath), `owner-${process.pid}.json`);",
+    "const ownerTempPath = `${ownerPath}.tmp-${process.pid}`;",
+    'fs.writeFileSync(ownerTempPath, JSON.stringify({ pid: process.pid, state: "ready" }));',
+    "fs.renameSync(ownerTempPath, ownerPath);",
     "setInterval(() => {}, 1000);",
   ].join("");
   const childCode = [
     'import { spawn } from "node:child_process";',
+    'import fs from "node:fs";',
+    'import path from "node:path";',
     "const [recordPath] = process.argv.slice(1);",
     'process.on("SIGINT", () => {}); process.on("SIGTERM", () => {});',
-    `spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(grandchildCode)}, recordPath, String(process.pid)], { stdio: "ignore" });`,
+    "const ownerPath = path.join(path.dirname(recordPath), `owner-${process.pid}.json`);",
+    "const ownerTempPath = `${ownerPath}.tmp-${process.pid}`;",
+    'fs.writeFileSync(ownerTempPath, JSON.stringify({ pid: process.pid, state: "ready" }));',
+    "fs.renameSync(ownerTempPath, ownerPath);",
+    "const emergencyPath = path.join(path.dirname(recordPath), `emergency-exit-${process.pid}.json`);",
+    "const emergencyTimer = setTimeout(() => {",
+    "  const emergencyTempPath = `${emergencyPath}.tmp-${process.pid}`;",
+    "  fs.writeFileSync(emergencyTempPath, JSON.stringify({ pid: process.pid }));",
+    "  fs.renameSync(emergencyTempPath, emergencyPath);",
+    "  process.exit(1);",
+    `}, ${STUBBORN_DESCENDANT_EMERGENCY_LIFETIME_MS});`,
+    "const grandchildReadyGatePath = `${recordPath}.grandchild-ready`;",
+    `const grandchild = spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(grandchildCode)}, recordPath, grandchildReadyGatePath], { stdio: "ignore" });`,
+    "const grandchildPid = grandchild.pid;",
+    'if (typeof grandchildPid !== "number") process.exit(1);',
+    "const grandchildOwnerPath = path.join(path.dirname(recordPath), `owner-${grandchildPid}.json`);",
+    "const grandchildOwnerTempPath = `${grandchildOwnerPath}.tmp-${process.pid}`;",
+    'fs.writeFileSync(grandchildOwnerTempPath, JSON.stringify({ pid: grandchildPid, state: "starting" }));',
+    "fs.renameSync(grandchildOwnerTempPath, grandchildOwnerPath);",
+    'fs.writeFileSync(grandchildReadyGatePath, "", "utf-8");',
+    "const grandchildReadyDeadline = Date.now() + 120_000;",
+    "while (true) {",
+    "  let ready = false;",
+    "  try {",
+    '    const owner = JSON.parse(fs.readFileSync(grandchildOwnerPath, "utf-8"));',
+    '    ready = Boolean(owner && typeof owner === "object" && !Array.isArray(owner) && owner.state === "ready");',
+    "  } catch {}",
+    "  if (ready) break;",
+    "  if (Date.now() >= grandchildReadyDeadline) process.exit(1);",
+    "  await new Promise((resolve) => setTimeout(resolve, 20));",
+    "}",
+    "const record = JSON.stringify({ childPid: process.pid, grandchildPid });",
+    "const recordTempPath = `${recordPath}.tmp-${process.pid}`;",
+    "fs.writeFileSync(recordTempPath, record);",
+    "fs.renameSync(recordTempPath, recordPath);",
     "setInterval(() => {}, 1000);",
   ].join("");
   const recordPath = path.join(queueDir, `descendants-${process.pid}.json`);
-  spawn(process.execPath, ["--input-type=module", "-e", childCode, recordPath], {
+  const child = spawn(process.execPath, ["--input-type=module", "-e", childCode, recordPath], {
     stdio: "ignore",
+  });
+  const childPid = child.pid;
+  if (typeof childPid !== "number") throw new Error("Mock Pi stubborn child did not publish a pid");
+  // Publish the spawned child before waiting for its boot record so cleanup
+  // can signal it even if the parent is interrupted during startup.
+  writeAtomicJson(path.join(queueDir, `owner-${childPid}.json`), {
+    pid: childPid,
+    state: "starting",
   });
   // Do not publish the mock call until the process-discovery record is ready.
   // Otherwise a supervisor pause can reap the group before the grandchild has
-  // published the metadata that the cleanup assertions use.
+  // installed its signal handlers and published the metadata cleanup uses.
   await waitForMarkerFile(recordPath);
 }
 
@@ -268,47 +354,6 @@ function defaultAssistantMessage(output) {
   };
 }
 
-function taskRequestsAcceptance(args) {
-  for (const arg of args) {
-    if (typeof arg !== "string") continue;
-    if (arg.includes("## Acceptance Contract")) return true;
-    if (!arg.startsWith("@")) continue;
-    try {
-      if (fs.readFileSync(arg.slice(1), "utf-8").includes("## Acceptance Contract")) return true;
-    } catch {
-      // Ignore unreadable temp prompt references in the mock harness.
-    }
-  }
-  return false;
-}
-
-function defaultAcceptanceReport() {
-  return [
-    "```acceptance-report",
-    JSON.stringify({
-      criteriaSatisfied: [
-        { id: "criterion-1", status: "satisfied", evidence: "mock acceptance evidence" },
-        { id: "criterion-2", status: "satisfied", evidence: "mock acceptance evidence" },
-      ],
-      changedFiles: ["mock-file.ts"],
-      testsAddedOrUpdated: ["mock-file.test.ts"],
-      commandsRun: [{ command: "mock validation", result: "passed", summary: "passed" }],
-      validationOutput: ["mock validation passed"],
-      residualRisks: [],
-      noStagedFiles: true,
-      reviewFindings: [],
-      manualNotes: "mock run completed",
-      notes: "mock run completed",
-    }),
-    "```",
-  ].join("\n");
-}
-
-function withAcceptanceReport(output, args) {
-  if (!taskRequestsAcceptance(args) || output.includes("```acceptance-report")) return output;
-  return `${output}\n${defaultAcceptanceReport()}`;
-}
-
 function defaultResponse() {
   return { output: "ok", exitCode: 0 };
 }
@@ -423,24 +468,8 @@ function extractPlainText(entry) {
   return "";
 }
 
-async function writeResponseEntries(entries, jsonMode, args) {
-  let sawProviderError = false;
+async function writeResponseEntries(entries, jsonMode) {
   for (const entry of entries) {
-    if (entry?.type === "message_end") {
-      const textPart = entry.message?.content?.find?.((part) => part?.type === "text");
-      const isProviderError = Boolean(
-        entry.message?.errorMessage || entry.message?.stopReason === "error",
-      );
-      if (isProviderError) sawProviderError = true;
-      if (
-        !isProviderError &&
-        textPart &&
-        typeof textPart.text === "string" &&
-        (!sawProviderError || textPart.text.trim())
-      ) {
-        textPart.text = withAcceptanceReport(textPart.text, args);
-      }
-    }
     if (jsonMode) {
       await writeJsonlLine(normalizeProtocolEntry(entry));
       continue;
@@ -485,6 +514,7 @@ async function main() {
   if (!queueDir) fail("MOCK_PI_QUEUE_DIR is required.");
   if (!fs.existsSync(queueDir)) fail(`Mock queue dir does not exist: ${queueDir}`);
 
+  publishOwnership("starting");
   const args = process.argv.slice(2);
   const jsonMode = isJsonMode(args);
   const staleInvocation = isStaleInvocation(queueDir);
@@ -496,12 +526,29 @@ async function main() {
       appendSignalRecord("SIGTERM");
     });
   }
+  if (typeof response.flushMarkerOnSigterm === "string" && response.flushMarkerOnSigterm) {
+    // Cooperative child: flush state on SIGTERM, then exit.
+    process.on("SIGTERM", () => {
+      writeMarkerFile(response.flushMarkerOnSigterm);
+      process.exit(0);
+    });
+  }
   if (response.ignoreSigint === true) {
     process.on("SIGINT", () => {
       appendSignalRecord("SIGINT");
     });
   }
-  if (response.spawnStubbornDescendants === true) await spawnStubbornDescendants();
+  publishOwnership(response.spawnStubbornDescendants === true ? "spawning" : "ready");
+  if (response.spawnStubbornDescendants === true) {
+    await spawnStubbornDescendants(response.stubbornDescendantStartMarker);
+    publishOwnership("ready");
+  }
+  if (
+    typeof response.stubbornDescendantCallMarker === "string" &&
+    response.stubbornDescendantCallMarker.length > 0
+  ) {
+    await waitForMarkerFile(response.stubbornDescendantCallMarker);
+  }
   writeSessionFile(args);
   const callPrefix = staleInvocation ? STALE_CALL_PREFIX : "call-";
   publishCallRecord(callPrefix, args);
@@ -514,6 +561,10 @@ async function main() {
   }
   if (typeof response.delay === "number" && response.delay > 0) {
     await new Promise((resolve) => setTimeout(resolve, response.delay));
+  }
+  if (typeof response.emitAtEpochMs === "number") {
+    const waitMs = response.emitAtEpochMs - Date.now();
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
   if (typeof response.rawStdout === "string") {
@@ -530,7 +581,7 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, step.delay));
       }
       if (Array.isArray(step?.jsonl) && step.jsonl.length > 0) {
-        await writeResponseEntries(step.jsonl, jsonMode, args);
+        await writeResponseEntries(step.jsonl, jsonMode);
       }
       if (typeof step?.stderr === "string" && step.stderr.length > 0) {
         await writeStderr(step.stderr);
@@ -540,16 +591,16 @@ async function main() {
       }
     }
   } else if (Array.isArray(response.jsonl) && response.jsonl.length > 0) {
-    await writeResponseEntries(response.jsonl, jsonMode, args);
+    await writeResponseEntries(response.jsonl, jsonMode);
   } else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
     const envSnapshot = Object.fromEntries(
       response.echoEnv.map((key) => [key, process.env[key] ?? null]),
     );
-    const output = withAcceptanceReport(JSON.stringify(envSnapshot), args);
+    const output = JSON.stringify(envSnapshot);
     if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
     else await writeStdout(`${output}\n`);
   } else if (typeof response.output === "string") {
-    const output = withAcceptanceReport(response.output, args);
+    const output = response.output;
     if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
     else await writeStdout(`${output}\n`);
   }

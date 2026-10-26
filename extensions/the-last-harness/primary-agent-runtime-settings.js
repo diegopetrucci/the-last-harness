@@ -1,19 +1,9 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime-settings.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE } from "../the-last-harness-primary-agent.mjs";
 import { isThinkingLevel } from "./thinking.js";
-export function defaultProjectTrustForCwd(cwd) {
-    try {
-        const value = SettingsManager.create(cwd, getAgentDir(), {
-            projectTrusted: false,
-        }).getDefaultProjectTrust();
-        return value === "always" || value === "never" ? value : "ask";
-    }
-    catch {
-        return "ask";
-    }
-}
 export function getTlhGlobalSettings(cwd) {
     try {
         const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
@@ -50,7 +40,7 @@ export function parseTlhSettingsContent(content) {
     if (!content) {
         return {};
     }
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
     if (!isRecord(parsed)) {
         throw new Error("settings.json must contain a JSON object");
     }

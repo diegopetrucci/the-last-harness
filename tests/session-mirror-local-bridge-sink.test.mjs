@@ -15,11 +15,12 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-  SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES,
-  SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES,
-  createSessionMirrorObserverSocketSink,
-} = await jiti.import("../extensions/the-last-harness/session-mirror/local-bridge-sink.ts");
+const { createSessionMirrorObserverSocketSink } = await jiti.import(
+  "../extensions/the-last-harness/session-mirror/local-bridge-sink.ts",
+);
+const { MAX_CONTROL_BYTES, MAX_FRAME_BYTES } = await jiti.import(
+  "../extensions/the-last-harness/session-mirror/local-bridge-boundary.ts",
+);
 
 const PROTOCOL = { family: "local-bridge", major: 0, minor: 0 };
 const TOKEN = "b".repeat(32);
@@ -304,10 +305,7 @@ test("rejects malformed, unknown, closed, and oversized bridge result frames", a
     ],
     ["unknown result code", encode(Buffer.from('{"kind":"result","code":"unknown"}'))],
     ["closed result", result("closed")],
-    [
-      "oversized control frame",
-      encode(Buffer.alloc(SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES + 1)),
-    ],
+    ["oversized control frame", encode(Buffer.alloc(MAX_CONTROL_BYTES + 1))],
   ];
   for (const [name, response] of cases) {
     await t.test(name, async (nested) => {
@@ -337,17 +335,14 @@ test("accepts an exact 256 KiB body and rejects an oversized body before connect
     );
   });
   const prefix = Buffer.byteLength(JSON.stringify(envelope("")), "utf8");
-  const exact = envelope("x".repeat(SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES - prefix));
-  assert.equal(
-    Buffer.byteLength(JSON.stringify(exact), "utf8"),
-    SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES,
-  );
+  const exact = envelope("x".repeat(MAX_FRAME_BYTES - prefix));
+  assert.equal(Buffer.byteLength(JSON.stringify(exact), "utf8"), MAX_FRAME_BYTES);
   await sink(exact);
-  assert.equal(bodies[1].length, SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES);
+  assert.equal(bodies[1].length, MAX_FRAME_BYTES);
 
   await assert.rejects(
     createSessionMirrorObserverSocketSink({ bridgeDirectory: fixture.bridge })(
-      envelope("x".repeat(SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES - prefix + 1)),
+      envelope("x".repeat(MAX_FRAME_BYTES - prefix + 1)),
     ),
   );
   assert.equal(bodies.length, 2, "oversized data must not reach the bridge");
@@ -395,15 +390,47 @@ test("fails open on absent, malformed, symlinked, private-mode, and overlong bri
 test("bounds a stalled handshake and rejects hostile option/envelope accessors", async (t) => {
   const fixture = makeFixture(t);
   let frames = 0;
-  await startBridge(t, fixture, () => {
-    frames += 1;
+  let resolveHello;
+  const helloReceived = new Promise((resolve) => {
+    resolveHello = resolve;
   });
-  await assert.rejects(
-    createSessionMirrorObserverSocketSink({ bridgeDirectory: fixture.bridge, deadlineMs: 20 })(
-      envelope(),
-    ),
+  let expireHandshake;
+  const sink = createSessionMirrorObserverSocketSink({
+    bridgeDirectory: fixture.bridge,
+    // Keep a bounded native fallback, but expire the primary test scheduler
+    // only after the bridge has observed the hello frame.
+    deadlineMs: 1_000,
+    controls: {
+      setTimeout: (callback) => {
+        expireHandshake = callback;
+        return { unref() {} };
+      },
+      clearTimeout: () => {},
+    },
+  });
+  t.after(() => sink.shutdown());
+  await startBridge(t, fixture, (_socket, body) => {
+    frames += 1;
+    if (JSON.parse(body).kind === "hello") resolveHello();
+  });
+  const publication = sink(envelope());
+  const publicationOutcome = publication.then(
+    () => "publication-resolved",
+    () => "publication-rejected",
   );
-  assert.equal(frames, 1, "the hello is sent before the stalled handshake deadline");
+  const firstOutcome = await Promise.race([
+    helloReceived.then(() => "hello-received"),
+    publicationOutcome,
+  ]);
+  assert.equal(
+    firstOutcome,
+    "hello-received",
+    "the publication must not settle before the hello is observed",
+  );
+  assert.equal(frames, 1, "the hello must be observed before the controlled expiry");
+  assert.equal(typeof expireHandshake, "function");
+  expireHandshake();
+  assert.equal(await publicationOutcome, "publication-rejected");
 
   const fallbackFixture = makeFixture(t);
   await startBridge(t, fallbackFixture, () => {});

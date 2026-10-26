@@ -4,26 +4,17 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
   buildAsyncRunnerPlan,
+  buildAsyncSingleRunnerPlan,
   resolveAsyncRunnerLogPaths,
 } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
-import {
-  createProjectAgentRunCapture,
-  getProjectAgentSnapshotProvenance,
-  registerProjectAgentSnapshot,
-  resolveProjectAgentSnapshot,
-  revokeProjectAgentSnapshot,
-} from "../../src/agents/project-agent-snapshot.ts";
+import type { ProjectAgentIdentity } from "../../src/agents/project-agent-loader.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
-import { DEFAULT_ARTIFACT_CONFIG } from "../../src/shared/types.ts";
+import { DEFAULT_ARTIFACT_CONFIG, type SubagentTerminalResult } from "../../src/shared/types.ts";
 import { makeAsyncCtx } from "../support/helpers.ts";
 
-const agent = (
-  name: string,
-  toolBudget?: AgentConfig["toolBudget"],
-  maxExecutionTimeMs?: number,
-): AgentConfig => ({
+const agent = (name: string, maxExecutionTimeMs?: number): AgentConfig => ({
   name,
   description: `${name} agent`,
   systemPromptMode: "replace",
@@ -32,7 +23,6 @@ const agent = (
   systemPrompt: "You are a test agent.",
   source: "project",
   filePath: `${name}.md`,
-  ...(toolBudget ? { toolBudget } : {}),
   ...(maxExecutionTimeMs !== undefined ? { maxExecutionTimeMs } : {}),
 });
 
@@ -51,82 +41,28 @@ describe("async runner execution", () => {
     assert.equal(resolveAsyncRunnerLogPaths({}), undefined);
   });
 
-  it("carries the exact project-agent capture and supervisor bridge capability into detached runner config steps", () => {
+  it("carries the durable project-agent identity into detached runner config steps", () => {
     const selected = agent("embedded.worker");
     selected.supervisorBridge = false;
-    const capability = registerProjectAgentSnapshot({
-      projectRoot: process.cwd(),
-      sessionId: "session-1",
-      generationId: "generation-config",
-      entries: [
-        {
-          agent: selected,
-          digest: "digest-config",
-          frontmatterFields: ["tools", "supervisorBridge"],
-        },
-      ],
-    });
-    const manifest = resolveProjectAgentSnapshot(
-      capability,
-      getProjectAgentSnapshotProvenance(capability),
-    );
-    const capture = createProjectAgentRunCapture(manifest, selected);
+    const identity: ProjectAgentIdentity = {
+      slug: "worker",
+      root: process.cwd(),
+      cwd: process.cwd(),
+    };
     const result = buildAsyncRunnerPlan("run-project-config", {
       tasks: [{ agent: selected.name, task: "use captured config" }],
       agents: [selected],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
-      projectAgentCaptures: [capture],
+      projectAgentIdentities: [identity],
     });
     assert.ok("plan" in result, "expected successful plan build");
     if ("error" in result) return;
     const step = result.plan.tasks[0] as RunnerSubagentStep;
-    assert.deepEqual(step.projectAgent?.provenance, capture.provenance);
-    assert.deepEqual(step.projectAgent?.config, capture.config);
+    assert.deepEqual(step.projectAgent, identity);
     assert.equal(step.supervisorBridge, false);
     assert.equal(JSON.stringify(step).includes("capability"), false);
-    revokeProjectAgentSnapshot(capability);
-  });
-
-  it("resolves async task tool budgets with task over run over agent precedence", () => {
-    const result = buildAsyncRunnerPlan("run-1", {
-      tasks: [
-        { agent: "worker", task: "run beats agent" },
-        { agent: "worker", task: "task beats run", toolBudget: { hard: 2, block: ["grep"] } },
-      ],
-      agents: [agent("worker", { hard: 4, block: ["read"] })],
-      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
-      ctx,
-      maxSubagentDepth: 2,
-      toolBudget: { hard: 3, block: ["find"] },
-    });
-
-    assert.ok("plan" in result, "expected successful plan build");
-    assert.deepEqual((result.plan.tasks[0] as RunnerSubagentStep)?.toolBudget, {
-      hard: 3,
-      block: ["find"],
-    });
-    assert.deepEqual((result.plan.tasks[1] as RunnerSubagentStep)?.toolBudget, {
-      hard: 2,
-      block: ["grep"],
-    });
-  });
-
-  it("uses agent tool budget when no task or run override exists", () => {
-    const result = buildAsyncRunnerPlan("run-2", {
-      tasks: [{ agent: "worker", task: "agent budget applies" }],
-      agents: [agent("worker", { hard: 4, block: ["read"] })],
-      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
-      ctx,
-      maxSubagentDepth: 2,
-    });
-
-    assert.ok("plan" in result, "expected successful plan build");
-    assert.deepEqual((result.plan.tasks[0] as RunnerSubagentStep)?.toolBudget, {
-      hard: 4,
-      block: ["read"],
-    });
   });
 
   it("carries omitted, explicit-empty, and named tool policies through runner serialization", () => {
@@ -176,11 +112,7 @@ describe("async runner execution", () => {
         { agent: "slow", task: "long ceiling" },
         { agent: "caller-bound", task: "caller bound" },
       ],
-      agents: [
-        agent("fast", undefined, 100),
-        agent("slow", undefined, 300),
-        agent("caller-bound", undefined, 900),
-      ],
+      agents: [agent("fast", 100), agent("slow", 300), agent("caller-bound", 900)],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
@@ -324,6 +256,82 @@ describe("async runner plan child-location persistence", () => {
       steps[0]?.childLocation?.childCwd,
       steps[2]?.childLocation?.childCwd,
       "distinct step cwds must yield distinct snapshots",
+    );
+  });
+});
+
+describe("revival: priorTerminalResult propagation", () => {
+  it("carries priorTerminalResult into the plan task as terminalResult", () => {
+    // Regression: the merged file dropped priorTerminalResult from AsyncSingleParams
+    // so revival/resume passes silently lost the prior attempts. Verify the field
+    // is restored and propagated into the runner plan step.
+    const revivalAgent = agent("worker");
+    const prior: SubagentTerminalResult = {
+      state: "failed",
+      facts: { attempts: [] },
+    };
+    const result = buildAsyncSingleRunnerPlan(
+      {
+        agent: "worker",
+        agentConfig: revivalAgent,
+        ctx,
+        maxSubagentDepth: 2,
+        artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+        shareEnabled: false,
+        priorTerminalResult: prior,
+        sessionRoot: os.tmpdir(),
+        sessionFile: path.join(os.tmpdir(), "session.jsonl"),
+      } as any,
+      {
+        task: "retry the task",
+        taskWithOutputInstruction: "retry the task",
+        runnerCwd: process.cwd(),
+        systemPrompt: "You are a test agent.",
+        resolvedSkillNames: [],
+        outputMode: "inline",
+      },
+    );
+    assert.ok(!("error" in result), "plan build must succeed");
+    if ("error" in result) return;
+    const plan = result.buildPlan();
+    assert.equal(plan.kind, "single");
+    assert.deepEqual(
+      plan.task.terminalResult,
+      prior,
+      "terminalResult in the plan step must equal the supplied priorTerminalResult",
+    );
+  });
+
+  it("omits terminalResult from the plan step when priorTerminalResult is absent", () => {
+    const revivalAgent = agent("worker");
+    const result = buildAsyncSingleRunnerPlan(
+      {
+        agent: "worker",
+        agentConfig: revivalAgent,
+        ctx,
+        maxSubagentDepth: 2,
+        artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+        shareEnabled: false,
+        sessionRoot: os.tmpdir(),
+        sessionFile: path.join(os.tmpdir(), "session.jsonl"),
+      } as any,
+      {
+        task: "first attempt",
+        taskWithOutputInstruction: "first attempt",
+        runnerCwd: process.cwd(),
+        systemPrompt: "You are a test agent.",
+        resolvedSkillNames: [],
+        outputMode: "inline",
+      },
+    );
+    assert.ok(!("error" in result), "plan build must succeed");
+    if ("error" in result) return;
+    const plan = result.buildPlan();
+    assert.equal(plan.kind, "single");
+    assert.equal(
+      plan.task.terminalResult,
+      undefined,
+      "terminalResult must be absent when no priorTerminalResult was supplied",
     );
   });
 });

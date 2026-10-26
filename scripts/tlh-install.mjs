@@ -1,16 +1,19 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-install.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
+import { packageIdentity, readDefaultExtensions } from "./lib/default-extensions.mjs";
+import { mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
 import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
 import { LEGACY_MANAGED_PROFILE_ARTIFACTS, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
-import { preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
-import { assignRequiredEqualsValue, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
+import { mcpAdapterCutoverHeldForInstall, pinnedNpmInstallPresent, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
+import { MIN_NODE_VERSIONS, NODE_REQUIREMENT_TEXT, assertSupportedNodeRuntime, assignRequiredEqualsValue, nodeVersionMeetsMinimum, outputLines, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
@@ -19,9 +22,8 @@ import { provisionPiRuntime } from "./lib/tlh-install-runtime.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "1.0.4";
-// Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
-const MIN_NODE_VERSION = "22.19.0";
+const PINNED_PI_VERSION = "1.4.0";
+// Keep in sync with TLH_PINNED_PI_VERSION in install.sh.
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.4";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -66,46 +68,6 @@ function spawnErrorCode(error) {
         return undefined;
     return error.code;
 }
-function parseNodeVersion(version) {
-    const match = String(version)
-        .trim()
-        .replace(/^v/, "")
-        .match(/^(\d+)\.(\d+)\.(\d+)/);
-    if (!match)
-        return null;
-    return match.slice(1).map((part) => Number.parseInt(part, 10));
-}
-function compareVersionTriplets(currentVersion, expectedVersion) {
-    const current = parseNodeVersion(currentVersion);
-    const expected = parseNodeVersion(expectedVersion);
-    if (!current || !expected)
-        return null;
-    for (let index = 0; index < expected.length; index += 1) {
-        if (current[index] > expected[index])
-            return 1;
-        if (current[index] < expected[index])
-            return -1;
-    }
-    return 0;
-}
-function nodeVersionMeetsMinimum(currentVersion, minimumVersion = MIN_NODE_VERSION) {
-    const comparison = compareVersionTriplets(currentVersion, minimumVersion);
-    return comparison !== null && comparison >= 0;
-}
-function formatNodeVersion(version) {
-    const text = String(version || "").trim();
-    if (!text)
-        return "unknown";
-    return text.startsWith("v") ? text : `v${text}`;
-}
-function assertSupportedNodeRuntime(currentVersion = process.versions.node) {
-    if (!parseNodeVersion(currentVersion)) {
-        throw new Error(`unable to determine Node.js version; The Last Harness requires Node.js >= ${MIN_NODE_VERSION}.`);
-    }
-    if (!nodeVersionMeetsMinimum(currentVersion)) {
-        throw new Error(`Node.js >= ${MIN_NODE_VERSION} is required (found ${formatNodeVersion(currentVersion)}). Install or upgrade Node.js, then rerun the installer.`);
-    }
-}
 function usage() {
     return `Usage: tlh-install.mjs [options]
 
@@ -113,7 +75,7 @@ Stage-1 The Last Harness installer helper. It runs the normal install flow using
 an isolated Pi profile and installer-owned helper commands.
 
 Requirements:
-  Node.js >= ${MIN_NODE_VERSION} on PATH
+  ${NODE_REQUIREMENT_TEXT} on PATH
   Upstream Pi ${PINNED_PI_VERSION} (installed per-user into a private TLH runtime prefix,
   default: ~/.the-last-harness/runtime (release) or ~/.the-last-harness-main/runtime (main);
   install or repair failures stop with an actionable error)
@@ -702,15 +664,7 @@ function absolutePiCmd(config) {
     // sensible display output without breaking the dry-run flow.
     return config.piCmd || join(runtimePrefix(config), "bin", "pi");
 }
-/**
- * Assert that the private runtime prefix is either absent/empty (safe for a
- * fresh install) or affirmatively TLH-owned via the ownership marker.  Throws
- * on symlinked prefix, or on a non-empty prefix with no valid marker and no
- * recorded provenance (the shared-prefix data-loss scenario).
- *
- * Returns { origin } that must be forwarded to writeRuntimeMarker after
- * a successful provision/repair/reuse.
- */
+/** Assert a fresh prefix or affirmative ownership; reject foreign leftovers. */
 function assertRuntimePrefixOwnedOrEmpty(config) {
     const prefix = piInstallPrefix(config);
     // Refuse symlinked runtime directory up-front — a symlink could resolve to a
@@ -721,28 +675,22 @@ function assertRuntimePrefixOwnedOrEmpty(config) {
             `Remove the symlink or choose a dedicated profile directory (e.g. ~/.the-last-harness/agent).`);
     }
     if (!existsSync(prefix))
-        return { origin: "created" }; // absent → fresh install
+        return { origin: "created", checkpointFreshPrefix: true };
     const entries = readdirSync(prefix); // never returns '.' or '..'; includes dotfiles
     if (entries.length === 0)
-        return { origin: "created" }; // empty → fresh install
-    // Check for an affirmative ownership marker.
+        return { origin: "created", checkpointFreshPrefix: true };
     const marker = readRuntimeMarker(prefix);
     if (marker && isRuntimeMarkerPathMatched(marker, prefix)) {
-        // Valid marker whose recorded path matches the actual prefix → TLH owns this.
-        return { origin: marker.origin };
+        return { origin: marker.origin, checkpointFreshPrefix: false };
     }
     // No valid marker. Check install-state provenance as a one-time migration gate.
     const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
     if (piInstalledByTlhPreference === true) {
-        // Provenance-gated migration: TLH installed this runtime before the ownership
-        // marker was introduced.  Accept and emit origin='migrated' so the caller
-        // writes the marker, making future runs marker-gated.
+        // Provenance-gated migration writes a marker, making future runs marker-gated.
         verboseLog(config, `Migrating TLH runtime ownership: writing marker for pre-existing TLH-installed runtime at ${prefix}`);
-        return { origin: "migrated" };
+        return { origin: "migrated", checkpointFreshPrefix: false };
     }
-    // Non-empty, no valid marker, no provenance → refuse.  This is the P1
-    // shared-prefix data-loss scenario: a foreign npm --prefix directory that
-    // happens to sit next to a non-default --agent-dir.
+    // Non-empty, unmarked, and without provenance: refuse shared-prefix adoption.
     throw new Error(`TLH runtime prefix ${prefix} is not TLH-owned: ` +
         `no ownership marker (${RUNTIME_MARKER_FILENAME}) was found and no TLH install ` +
         `provenance is recorded. A non-default --agent-dir may point at a profile whose ` +
@@ -750,9 +698,20 @@ function assertRuntimePrefixOwnedOrEmpty(config) {
         `Choose a dedicated or default profile directory (e.g. ~/.the-last-harness/agent), ` +
         `or remove ${prefix} if it is safe to do so.`);
 }
+/** Checkpoint only a verified fresh prefix; never adopt unmarked leftovers. */
+function checkpointFreshRuntimeOwnership(config, prefix) {
+    if (config.dryRun)
+        return;
+    mkdirSync(prefix, { recursive: true });
+    if (isSymlink(prefix) || readdirSync(prefix).length !== 0)
+        throw new Error(`TLH runtime prefix ${prefix} was not a fresh, non-symlink empty directory; refusing unmarked contents.`);
+    writeRuntimeMarker(config, prefix, "created");
+}
 function installPiIfNeeded(config) {
-    const { origin } = assertRuntimePrefixOwnedOrEmpty(config);
+    const { origin, checkpointFreshPrefix } = assertRuntimePrefixOwnedOrEmpty(config);
     const prefix = piInstallPrefix(config);
+    if (checkpointFreshPrefix)
+        checkpointFreshRuntimeOwnership(config, prefix);
     const piBinDir = join(prefix, "bin");
     const piBin = join(piBinDir, "pi");
     // Shipped lock files: resolved from supportFilePaths (set by preflightRuntimeSupportFiles).
@@ -1044,12 +1003,6 @@ async function writeInstallState(config) {
         args.push("--quiet");
     runNodeScript(config, config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT, args);
 }
-function outputLines(output) {
-    return output
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-}
 function splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput) {
     const criticalSourceSet = new Set(outputLines(criticalSourcesOutput));
     const sources = outputLines(sourcesOutput);
@@ -1091,18 +1044,20 @@ function preflightCriticalDefaultExtensionTargets(config, sources) {
         gitInstall.assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo(config));
     }
 }
-function installCriticalDefaultExtension(config, source) {
+function installCriticalDefaultExtension(config, source, batched) {
     verboseLog(config, `Installing critical bundled default extension package: ${source}`);
     const installSource = packageSourcePiSource(source, { agentDir: config.agentDir });
     gitInstall.assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo(config));
+    if (batched && pinnedNpmInstallPresent(config, source, npmPreinstallIo(config)))
+        return;
     try {
         runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
     }
     catch {
-        throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this isolation-critical default cannot be disabled.`);
+        throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this required default cannot be disabled.`);
     }
     if (!ensureCriticalGitSourceCheckout(config, source)) {
-        throw new Error(`critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer; this isolation-critical default cannot be disabled.`);
+        throw new Error(`critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer; this required default cannot be disabled.`);
     }
 }
 function updateDefaultExtensionSourceBestEffort(config, source) {
@@ -1124,10 +1079,14 @@ function updateDefaultExtensionSourcesBestEffort(config, sources) {
     }
     return failures;
 }
-function updateNonCriticalDefaultExtensions(config, sources) {
+function updateNonCriticalDefaultExtensions(config, sources, { mcpAdapterHeld = false } = {}) {
     if (sources.length === 0)
         return 0;
     const fallbackDescription = `${sources.length} non-critical bundled default source(s)`;
+    if (mcpAdapterHeld) {
+        verboseLog(config, "MCP adapter cutover is held; skipping the settings-wide extension refresh and updating only non-MCP defaults.");
+        return updateDefaultExtensionSourcesBestEffort(config, sources);
+    }
     if (config.dryRun) {
         log(config, "Dry run: settings-wide extension refresh will run from merged settings.");
     }
@@ -1146,7 +1105,7 @@ function updateNonCriticalDefaultExtensions(config, sources) {
     }
     return 0;
 }
-function installDefaultExtensions(config) {
+function installDefaultExtensions(config, batched = false) {
     if (config.noSettings) {
         log(config, "Skipping bundled default extensions (--no-settings).");
         return;
@@ -1195,19 +1154,40 @@ function installDefaultExtensions(config) {
         warn("installed default-extension helper does not support critical source queries; treating this ref as having no critical defaults.");
         criticalSourcesOutput = "";
     }
-    const { sources, criticalSources, nonCriticalSources } = splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput);
-    if (sources.length === 0) {
+    const { criticalSources, nonCriticalSources } = splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput);
+    const mcpAdapterHeld = mcpAdapterCutoverHeldForInstall(config);
+    const mcpExtension = (() => {
+        try {
+            return readDefaultExtensions(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE).find((entry) => entry.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID);
+        }
+        catch {
+            return undefined;
+        }
+    })();
+    const heldMcpIdentities = mcpAdapterHeld
+        ? mcpAdapterPackageIdentities(mcpExtension)
+        : new Set();
+    const safeSource = (source) => {
+        const identity = packageIdentity(source);
+        return identity === undefined || !heldMcpIdentities.has(identity);
+    };
+    const safeCriticalSources = criticalSources.filter(safeSource);
+    const safeNonCriticalSources = nonCriticalSources.filter(safeSource);
+    const safeSources = [...safeCriticalSources, ...safeNonCriticalSources];
+    if (safeSources.length === 0) {
         log(config, "No bundled default extensions are enabled.");
         return;
     }
     log(config, "Installing bundled default extensions...");
-    verboseLog(config, `Installing bundled default extensions (${sources.length})...`);
-    preflightCriticalDefaultExtensionTargets(config, criticalSources);
-    const failures = updateNonCriticalDefaultExtensions(config, nonCriticalSources);
+    verboseLog(config, `Installing bundled default extensions (${safeSources.length})...`);
+    preflightCriticalDefaultExtensionTargets(config, safeCriticalSources);
+    const failures = updateNonCriticalDefaultExtensions(config, safeNonCriticalSources, {
+        mcpAdapterHeld,
+    });
     if (failures !== 0)
         warn(`${failures} bundled default extension package(s) failed to update`);
-    for (const source of criticalSources)
-        installCriticalDefaultExtension(config, source);
+    for (const source of safeCriticalSources)
+        installCriticalDefaultExtension(config, source, batched);
     if (failures === 0)
         verboseLog(config, "Bundled default extensions installed.");
 }
@@ -1220,12 +1200,9 @@ function npmPreinstallIo(config) {
         inheritedCommandEnv: () => inheritedCommandEnv(config),
     };
 }
-function preInstallNpmDefaultExtensions(config) {
-    preInstallNpmDefaultExtensionsImpl(config, npmPreinstallIo(config));
-}
+const preInstallNpmDefaultExtensions = (config) => preInstallNpmDefaultExtensionsImpl(config, npmPreinstallIo(config));
 function gnosisInstallSkippedByEnv(config) {
-    const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
-    return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+    return ["1", "true", "yes"].includes(config.env?.TLH_SKIP_GNOSIS_INSTALL?.toLowerCase() ?? "");
 }
 function configureGnosis(config) {
     if (gnosisInstallSkippedByEnv(config)) {
@@ -1239,6 +1216,8 @@ function configureGnosis(config) {
     const args = [
         "--agent-dir",
         config.agentDir,
+        "--settings",
+        config.settingsPath,
         "--target",
         join(config.agentDir, "bin", "gn"),
         "--gnosis-repo",
@@ -1293,9 +1272,9 @@ function configureTickets(config) {
     }).trimEnd();
 }
 function wrapperIsManaged(config) {
-    if (!existsSync(config.wrapperPath))
-        return false;
     try {
+        if (!statSync(config.wrapperPath).isFile())
+            return false;
         const line = readFileSync(config.wrapperPath, "utf8").split(/\r?\n/)[2] || "";
         return line === "# Managed by The Last Harness installer";
     }
@@ -1303,13 +1282,23 @@ function wrapperIsManaged(config) {
         return false;
     }
 }
+/** lstat-based: true for any entry at the path, including dangling symlinks. */
+function wrapperEntryExists(config) {
+    try {
+        lstatSync(config.wrapperPath);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 function writeWrapperDryRunWithoutHelper(config) {
-    if (existsSync(config.wrapperPath) && !wrapperIsManaged(config) && !config.force) {
+    if (wrapperEntryExists(config) && !wrapperIsManaged(config) && !config.force) {
         warn(`would not overwrite unmanaged existing wrapper: ${config.wrapperPath}`);
         return;
     }
     printCommand(["mkdir", "-p", config.binDir]);
-    if (existsSync(config.wrapperPath))
+    if (wrapperEntryExists(config))
         log(config, `Would overwrite wrapper: ${config.wrapperPath}`);
     else
         log(config, `Would create wrapper: ${config.wrapperPath}`);
@@ -1434,8 +1423,8 @@ async function runInstallFlow(config) {
     if (!config.noSettings)
         cleanupOldSettingsBackups(config);
     await writeInstallState(config);
-    installDefaultExtensions(config);
-    preInstallNpmDefaultExtensions(config);
+    // Batch first: `pi install` creates the npm root, which makes the batched pre-install skip.
+    installDefaultExtensions(config, preInstallNpmDefaultExtensions(config));
     configureGnosis(config);
     configureTickets(config);
     await writeWrapper(config);
@@ -1485,4 +1474,4 @@ if (isMainModule()) {
         process.exitCode = 1;
     });
 }
-export { LEGACY_MANAGED_PROFILE_ARTIFACTS, MIN_NODE_VERSION, RUNTIME_MARKER_FILENAME, RUNTIME_OWNED_TOPLEVEL, assertSupportedNodeRuntime, buildInstallConfig, expandPath, installDefaultExtensions, nodeVersionMeetsMinimum, preInstallNpmDefaultExtensions, parseArgs, run, usage, validateInputs, };
+export { LEGACY_MANAGED_PROFILE_ARTIFACTS, MIN_NODE_VERSIONS, NODE_REQUIREMENT_TEXT, RUNTIME_MARKER_FILENAME, RUNTIME_OWNED_TOPLEVEL, assertSupportedNodeRuntime, buildInstallConfig, expandPath, installDefaultExtensions, nodeVersionMeetsMinimum, preInstallNpmDefaultExtensions, parseArgs, run, usage, validateInputs, };

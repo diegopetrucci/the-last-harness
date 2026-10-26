@@ -8,8 +8,8 @@ import {
 } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
 import {
-  parsePersistedChildLocationSnapshot,
   type ChildLocationSnapshot,
+  parsePersistedChildLocationSnapshot,
 } from "../../shared/child-location.ts";
 import {
   type ActivityState,
@@ -19,43 +19,26 @@ import {
   type ContextPressureProjection,
   type ContextPressureThreshold,
   type ContextUsageDiagnostics,
-  type DurableAttentionReason,
-  type CompactionReason,
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
   normalizeSubagentRunMode,
   type SubagentTerminationReason,
-  type TkTicketMetadata,
   type TokenUsage,
 } from "../../shared/types.ts";
 import { readInterruptRequest } from "./control-channel.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import {
-  createAsyncStatusValidationError,
-  fingerprintAsyncStatusFile,
-  isAsyncStatusCorruptionError,
-  isAsyncStatusUnsafeError,
-  type AsyncStatusCorruptionFingerprint,
-  type AsyncStatusCorruptionKind,
-  type AsyncStatusUnsafeReason,
-} from "./async-status-corruption.ts";
+  formatUnreadableStatus,
+  isAsyncStatusReadError,
+  MAX_UNREADABLE_STATUS_REPORTS,
+  type AsyncStatusReadError,
+} from "./async-status-boundary.ts";
+import type { AsyncStatusReadOptions } from "../../shared/utils.ts";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.ts";
+import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.ts";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
-import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
-import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
-import {
-  normalizeActiveRuntimeCheckpointAt,
-  normalizeActiveRuntimeMs,
-} from "../shared/lifecycle-state.ts";
-import { normalizeIdleEpisodeId } from "../shared/health-transition.ts";
-import {
-  parseContextPressureCrossedThresholds,
-  parseContextPressureProjection,
-  parseContextUsageDiagnostics,
-  parseSubagentTerminationReason,
-} from "../../shared/context-diagnostics.ts";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 
 interface AsyncRunStepSummary {
@@ -64,8 +47,7 @@ interface AsyncRunStepSummary {
   status: AsyncJobStep["status"];
   activityState?: ActivityState;
   idleEpisodeId?: string;
-  durableAttentionReasons?: DurableAttentionReason[];
-  compaction?: { reason: CompactionReason };
+  compaction?: { reason: import("../../shared/types.ts").CompactionReason };
   lastActivityAt?: number;
   currentTool?: string;
   currentToolArgs?: string;
@@ -79,13 +61,12 @@ interface AsyncRunStepSummary {
   steerCount?: number;
   lastSteerAt?: number;
   durationMs?: number;
-  activeRuntimeMs?: number;
-  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   tokens?: TokenUsage;
   totalCost?: CostSummary;
   skills?: string[];
+  skillsWarning?: string;
   model?: string;
   thinking?: string;
   modelIdentity?: SubagentModelIdentity;
@@ -98,21 +79,24 @@ interface AsyncRunStepSummary {
   attemptedModels?: string[];
   error?: string;
   timedOut?: boolean;
-  projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
+  projectAgent?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity;
   /**
    * Dispatch-time snapshot of child location facts. Carried verbatim from the
    * persisted step so the tracker's restore path exposes it on AsyncJobState
    * steps before the first poll.
    */
   childLocation?: ChildLocationSnapshot;
+  ticketId?: string;
 }
 
 export interface AsyncRunSummary {
   id: string;
   asyncDir: string;
+  awaited?: boolean;
   sessionId?: string;
   pid?: number;
   state: AsyncStatus["state"];
+  lifecycle?: AsyncStatus["lifecycle"];
   error?: string;
   activityState?: ActivityState;
   lastActivityAt?: number;
@@ -129,8 +113,6 @@ export interface AsyncRunSummary {
   startedAt: number;
   lastUpdate?: number;
   endedAt?: number;
-  activeRuntimeMs?: number;
-  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
@@ -143,28 +125,24 @@ export interface AsyncRunSummary {
   totalCost?: CostSummary;
   sessionFile?: string;
   pause?: AsyncStatus["pause"];
-  tkTicket?: TkTicketMetadata;
-  projectAgents?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
+  projectAgents?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity[];
   telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
 }
 
-export interface AsyncRunCorruptEntryIssue {
+export interface AsyncRunUnreadableStatusIssue {
   entry: string;
   asyncDir: string;
   statusPath: string;
-  kind: AsyncStatusCorruptionKind;
-  message: string;
-  fingerprint?: AsyncStatusCorruptionFingerprint;
 }
 
+/** A status artifact that is unsafe to read (FIFO, symlink, directory, etc.). */
 export interface AsyncRunUnsafeEntryIssue {
   entry: string;
-  reason: AsyncStatusUnsafeReason;
 }
 
 interface AsyncRunRestoreScanResult {
   runs: AsyncRunSummary[];
-  issues: AsyncRunCorruptEntryIssue[];
+  issues: AsyncRunUnreadableStatusIssue[];
   unsafeIssues: AsyncRunUnsafeEntryIssue[];
 }
 
@@ -176,6 +154,9 @@ interface AsyncRunListOptions {
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
   reconcile?: boolean;
+  statusRead?: AsyncStatusReadOptions;
+  onUnreadable?: (issue: AsyncRunUnreadableStatusIssue) => void;
+  onUnsafe?: (issue: AsyncRunUnsafeEntryIssue) => void;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -218,56 +199,11 @@ function outputFileMtime(outputFile: string | undefined): number | undefined {
   }
 }
 
-const DURABLE_ATTENTION_REASONS: ReadonlySet<DurableAttentionReason> = new Set([
-  "context_pressure",
-  "tool_failures",
-  "completion_guard",
-]);
-const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
-  "manual",
-  "threshold",
-  "overflow",
-]);
-
-function normalizePersistedActivityState(value: unknown): ActivityState | undefined {
-  return value === "needs_attention" ? value : undefined;
-}
-
-function normalizePersistedDurableAttentionReasons(
-  value: unknown,
-): DurableAttentionReason[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const reasons = value.filter(
-    (reason): reason is DurableAttentionReason =>
-      typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason as DurableAttentionReason),
+function latestTimestamp(...values: Array<number | undefined>): number | undefined {
+  const finite = values.filter(
+    (value): value is number => value !== undefined && Number.isFinite(value),
   );
-  return reasons.length > 0 ? [...new Set(reasons)] : undefined;
-}
-
-function normalizePersistedCompaction(value: unknown): { reason: CompactionReason } | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const reason = (value as { reason?: unknown }).reason;
-  return typeof reason === "string" && COMPACTION_REASONS.has(reason as CompactionReason)
-    ? { reason: reason as CompactionReason }
-    : undefined;
-}
-
-function normalizePersistedHealth(value: {
-  activityState?: unknown;
-  idleEpisodeId?: unknown;
-  durableAttentionReasons?: unknown;
-  compaction?: unknown;
-}): void {
-  const activityState = normalizePersistedActivityState(value.activityState);
-  const idleEpisodeId = normalizeIdleEpisodeId(value.idleEpisodeId);
-  const durableAttentionReasons = normalizePersistedDurableAttentionReasons(
-    value.durableAttentionReasons,
-  );
-  const compaction = normalizePersistedCompaction(value.compaction);
-  value.activityState = activityState;
-  value.idleEpisodeId = idleEpisodeId;
-  value.durableAttentionReasons = durableAttentionReasons;
-  value.compaction = compaction;
+  return finite.length ? Math.max(...finite) : undefined;
 }
 
 function deriveAsyncActivityState(
@@ -285,12 +221,13 @@ function deriveAsyncActivityState(
     typeof status.currentStep === "number" ? status.steps?.[status.currentStep] : undefined;
   return {
     activityState: status.activityState,
-    lastActivityAt:
-      status.lastActivityAt ??
-      outputFileMtime(outputPath) ??
-      currentStep?.lastActivityAt ??
-      currentStep?.startedAt ??
+    lastActivityAt: latestTimestamp(
       status.startedAt,
+      status.lastActivityAt,
+      outputFileMtime(outputPath),
+      currentStep?.startedAt,
+      currentStep?.lastActivityAt,
+    ),
   };
 }
 
@@ -298,88 +235,20 @@ export function validatePersistedAsyncStatus(
   asyncDir: string,
   status: AsyncStatus & { cwd?: string },
 ): void {
-  normalizePersistedHealth(status);
   // Telemetry is optional and independently schema-versioned. Invalid or
   // unknown telemetry must not make an otherwise readable legacy lifecycle
   // record unrecoverable; drop it at this persisted-data boundary.
   status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
-  if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
-    throw createAsyncStatusValidationError({
-      asyncDir,
-      message: "sessionId must be a string.",
-      fingerprint: fingerprintAsyncStatusFile(asyncDir),
-    });
-  }
-  if (status.tkTicket !== undefined) {
-    const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
-    if (!normalizedTkTicket) {
-      throw createAsyncStatusValidationError({
-        asyncDir,
-        message: "tkTicket must include a valid id and terminal-safe title.",
-        fingerprint: fingerprintAsyncStatusFile(asyncDir),
-      });
-    }
-    status.tkTicket = normalizedTkTicket;
-  }
-  if (status.projectAgents !== undefined) {
-    if (!Array.isArray(status.projectAgents)) {
-      throw createAsyncStatusValidationError({
-        asyncDir,
-        message: "projectAgents must be an array.",
-        fingerprint: fingerprintAsyncStatusFile(asyncDir),
-      });
-    }
-    for (const [index, capture] of status.projectAgents.entries()) {
-      if (!normalizeProjectAgentRunCapture(capture)) {
-        throw createAsyncStatusValidationError({
-          asyncDir,
-          message: `projectAgents[${index}] is invalid.`,
-          fingerprint: fingerprintAsyncStatusFile(asyncDir),
-        });
-      }
-    }
-  }
-  const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
-  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-    status.activeRuntimeCheckpointAt,
-  );
-  if (activeRuntimeMs === undefined) status.activeRuntimeMs = undefined;
-  else status.activeRuntimeMs = activeRuntimeMs;
-  if (activeRuntimeCheckpointAt === undefined) status.activeRuntimeCheckpointAt = undefined;
-  else status.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
   for (const step of status.steps ?? []) {
-    normalizePersistedHealth(step);
-    // Invalid external accounting evidence is unknown, not a reason to
-    // fabricate elapsed time or to trust a caller-supplied value.
-    const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-      step.activeRuntimeCheckpointAt,
-    );
-    if (activeRuntimeMs === undefined) step.activeRuntimeMs = undefined;
-    else step.activeRuntimeMs = activeRuntimeMs;
-    if (activeRuntimeCheckpointAt === undefined) step.activeRuntimeCheckpointAt = undefined;
-    else step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
-    if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent)) {
-      throw createAsyncStatusValidationError({
-        asyncDir,
-        message: "step projectAgent capture is invalid.",
-        fingerprint: fingerprintAsyncStatusFile(asyncDir),
-      });
-    }
-    step.contextUsage = parseContextUsageDiagnostics(step.contextUsage);
-    step.contextPressure = parseContextPressureProjection(step.contextPressure);
-    step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
-      step.contextPressureCrossedThresholds,
-    );
-    step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
-    // Validate the persisted childLocation object before it crosses the I/O
-    // boundary.  A malformed value (missing displayPath, wrong-typed field) is
-    // dropped here so it can never reach the renderer, which dereferences
-    // loc.displayPath and passes it to safeTerminalText.
     step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
+    // Validate the per-step child cwd: only a non-empty string is forwarded;
+    // any other value (number, null, missing) is silently dropped so revival
+    // falls back to the next tier (childLocation.childCwd or run cwd).
+    if (step.cwd !== undefined && (typeof step.cwd !== "string" || step.cwd.length === 0)) {
+      step.cwd = undefined;
+    }
   }
 }
-
 function statusToSummary(
   asyncDir: string,
   status: AsyncStatus & { cwd?: string },
@@ -390,23 +259,17 @@ function statusToSummary(
   const steps = status.steps ?? [];
   const summarizedSteps = steps.map((step, index) => {
     const stepActivityState = step.activityState;
-    const stepLastActivityAt = step.lastActivityAt;
-    const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-      step.activeRuntimeCheckpointAt,
-    );
+    const stepLastActivityAt = latestTimestamp(step.startedAt, step.lastActivityAt);
     return {
       index,
       agent: step.agent,
+      ...(step.ticketId ? { ticketId: step.ticketId } : {}),
       status: step.status,
       ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
       ...(stepActivityState ? { activityState: stepActivityState } : {}),
       ...(step.idleEpisodeId ? { idleEpisodeId: step.idleEpisodeId } : {}),
-      ...(step.durableAttentionReasons?.length
-        ? { durableAttentionReasons: [...step.durableAttentionReasons] }
-        : {}),
       ...(step.compaction ? { compaction: { ...step.compaction } } : {}),
-      ...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
+      ...(stepLastActivityAt !== undefined ? { lastActivityAt: stepLastActivityAt } : {}),
       ...(step.currentTool ? { currentTool: step.currentTool } : {}),
       ...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
       ...(step.currentToolStartedAt ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
@@ -421,13 +284,12 @@ function statusToSummary(
       ...(step.steerCount !== undefined ? { steerCount: step.steerCount } : {}),
       ...(step.lastSteerAt !== undefined ? { lastSteerAt: step.lastSteerAt } : {}),
       ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
-      ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-      ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
       ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
       ...(step.deadlineAt !== undefined ? { deadlineAt: step.deadlineAt } : {}),
       ...(step.tokens ? { tokens: step.tokens } : {}),
       ...(step.totalCost ? { totalCost: step.totalCost } : {}),
       ...(step.skills ? { skills: step.skills } : {}),
+      ...(step.skillsWarning ? { skillsWarning: step.skillsWarning } : {}),
       ...(step.model ? { model: step.model } : {}),
       ...(step.thinking ? { thinking: step.thinking } : {}),
       ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
@@ -445,14 +307,15 @@ function statusToSummary(
       ...(step.childLocation ? { childLocation: step.childLocation } : {}),
     };
   });
-  const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
   const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   return {
     id: status.runId || path.basename(asyncDir),
     asyncDir,
+    ...(status.awaited ? { awaited: true } : {}),
     ...(status.sessionId ? { sessionId: status.sessionId } : {}),
     ...(typeof status.pid === "number" ? { pid: status.pid } : {}),
     state: status.state,
+    ...(status.lifecycle ? { lifecycle: status.lifecycle } : {}),
     ...(status.error ? { error: status.error } : {}),
     activityState,
     lastActivityAt,
@@ -469,16 +332,6 @@ function statusToSummary(
     startedAt: status.startedAt,
     lastUpdate: status.lastUpdate,
     endedAt: status.endedAt,
-    ...(normalizeActiveRuntimeMs(status.activeRuntimeMs) !== undefined
-      ? { activeRuntimeMs: normalizeActiveRuntimeMs(status.activeRuntimeMs) }
-      : {}),
-    ...(normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) !== undefined
-      ? {
-          activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
-            status.activeRuntimeCheckpointAt,
-          ),
-        }
-      : {}),
     ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
     ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
     ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
@@ -491,7 +344,6 @@ function statusToSummary(
     ...(status.totalCost ? { totalCost: status.totalCost } : {}),
     ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
     ...(status.pause ? { pause: status.pause } : {}),
-    ...(normalizedTkTicket ? { tkTicket: normalizedTkTicket } : {}),
     ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
     ...(telemetry ? { telemetry } : {}),
   };
@@ -512,9 +364,8 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
         return 2;
       case "cancelled":
         return 2;
-      case "continued":
-        return 2;
       case "complete":
+      default:
         return 3;
     }
   };
@@ -545,25 +396,42 @@ function buildRunCollector(
 ) {
   const allowedStates = options.states ? new Set(options.states) : undefined;
   const runs: AsyncRunSummary[] = [];
+  const reportUnreadable = (entry: string, error: AsyncStatusReadError): void => {
+    const issue = Object.freeze({
+      entry,
+      asyncDir: error.asyncDir,
+      statusPath: error.statusPath,
+    });
+    options.onUnreadable?.(issue);
+  };
   const collectEntry = (entry: string): void => {
     const asyncDir = path.join(asyncDirRoot, entry);
-    const reconciliation =
-      options.reconcile === false
-        ? undefined
-        : reconcileAsyncRun(asyncDir, {
-            resultsDir: options.resultsDir,
-            kill: options.kill,
-            now: options.now,
-          });
-    const status = (reconciliation?.status ?? readStatus(asyncDir)) as
-      | (AsyncStatus & { cwd?: string })
-      | null;
-    if (!status) return;
-    if (validationOrder === "restore_scan") validatePersistedAsyncStatus(asyncDir, status);
-    if (allowedStates && !allowedStates.has(status.state)) return;
-    if (options.sessionId && status.sessionId !== options.sessionId) return;
-    if (validationOrder === "strict") validatePersistedAsyncStatus(asyncDir, status);
-    runs.push(statusToSummary(asyncDir, status));
+    try {
+      const reconciliation =
+        options.reconcile === false
+          ? undefined
+          : reconcileAsyncRun(asyncDir, {
+              resultsDir: options.resultsDir,
+              kill: options.kill,
+              now: options.now,
+              statusRead: options.statusRead,
+            });
+      const status = (reconciliation?.status ?? readStatus(asyncDir, options.statusRead)) as
+        | (AsyncStatus & { cwd?: string })
+        | null;
+      if (!status) return;
+      if (validationOrder === "restore_scan") validatePersistedAsyncStatus(asyncDir, status);
+      if (allowedStates && !allowedStates.has(status.state)) return;
+      if (options.sessionId && status.sessionId !== options.sessionId) return;
+      if (validationOrder === "strict") validatePersistedAsyncStatus(asyncDir, status);
+      runs.push(statusToSummary(asyncDir, status));
+    } catch (error) {
+      if (!isAsyncStatusReadError(error)) throw error;
+      if (error.failure === "non_regular") {
+        options.onUnsafe?.(Object.freeze({ entry }));
+      }
+      reportUnreadable(entry, error);
+    }
   };
   return { runs, collectEntry };
 }
@@ -588,35 +456,21 @@ export function scanAsyncRunsForRestore(
   options: AsyncRunListOptions = {},
 ): AsyncRunRestoreScanResult {
   const entries = listAsyncRunEntries(asyncDirRoot);
-  const collector = buildRunCollector(asyncDirRoot, options, "restore_scan");
-  const issues: AsyncRunCorruptEntryIssue[] = [];
+  const issues: AsyncRunUnreadableStatusIssue[] = [];
   const unsafeIssues: AsyncRunUnsafeEntryIssue[] = [];
-  for (const entry of entries) {
-    try {
-      collector.collectEntry(entry);
-    } catch (error) {
-      if (isAsyncStatusUnsafeError(error)) {
-        unsafeIssues.push(Object.freeze({ entry, reason: error.reason }));
-        continue;
-      }
-      if (!isAsyncStatusCorruptionError(error)) throw error;
-      issues.push(
-        Object.freeze({
-          entry,
-          asyncDir: error.asyncDir,
-          statusPath: error.statusPath,
-          kind: error.kind,
-          message: error.message,
-          ...(error.fingerprint ? { fingerprint: error.fingerprint } : {}),
-        }),
-      );
-    }
-  }
-  return {
-    runs: finalizeRunList(collector.runs, options.limit),
-    issues,
-    unsafeIssues,
-  };
+  const collector = buildRunCollector(asyncDirRoot, {
+    ...options,
+    onUnreadable: (issue) => {
+      issues.push(issue);
+      options.onUnreadable?.(issue);
+    },
+    onUnsafe: (issue) => {
+      unsafeIssues.push(issue);
+      options.onUnsafe?.(issue);
+    },
+  });
+  for (const entry of entries) collector.collectEntry(entry);
+  return { runs: finalizeRunList(collector.runs, options.limit), issues, unsafeIssues };
 }
 
 function formatActivityFacts(input: {
@@ -684,9 +538,7 @@ export function formatAsyncRunProgressLabel(
   if (run.mode === "parallel") {
     if (run.interruptRequestedAt !== undefined) {
       const pausing = run.steps.filter((step) => step.status === "running").length;
-      const done = run.steps.filter(
-        (step) => step.status === "complete" || step.status === "completed",
-      ).length;
+      const done = run.steps.filter((step) => isCompletedLifecycleStepState(step.status)).length;
       return `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${stepCount} done`;
     }
     return formatParallelOutcome(run.steps, stepCount, { showRunning: run.state === "running" });
@@ -710,13 +562,19 @@ function formatRunHeader(run: AsyncRunSummary): string {
     run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
       ? "pausing"
       : safeTerminalText(run.state);
+  const ownership = run.awaited ? " | awaited" : "";
   return privacySafe
-    ? `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
-    : `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
+    ? `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
+    : `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
 }
 
-export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active async runs"): string {
-  if (runs.length === 0) return `No ${safeTerminalText(heading.toLowerCase())}.`;
+export function formatAsyncRunList(
+  runs: AsyncRunSummary[],
+  heading = "Active async runs",
+  unreadableStatuses: ReadonlyArray<Pick<AsyncRunUnreadableStatusIssue, "statusPath">> = [],
+): string {
+  if (runs.length === 0 && unreadableStatuses.length === 0)
+    return `No ${safeTerminalText(heading.toLowerCase())}.`;
 
   const lines = [`${safeTerminalText(heading)}: ${runs.length}`, ""];
   for (const run of runs) {
@@ -736,5 +594,10 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
       lines.push(`  session: ${safeTerminalText(shortenPath(run.sessionFile))}`);
     lines.push("");
   }
+  for (const issue of unreadableStatuses.slice(0, MAX_UNREADABLE_STATUS_REPORTS)) {
+    lines.push(`- ${formatUnreadableStatus(issue.statusPath)}`, "");
+  }
+  const remaining = unreadableStatuses.length - MAX_UNREADABLE_STATUS_REPORTS;
+  if (remaining > 0) lines.push(`- and ${remaining} more unreadable statuses`, "");
   return safeTerminalDocument(lines.join("\n").trimEnd());
 }

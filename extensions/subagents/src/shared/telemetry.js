@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/telemetry.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { splitKnownThinkingSuffix } from "./model-info.js";
 export const SUBAGENT_RUN_TELEMETRY_SCHEMA_VERSION = 1;
 const TERMINATION_REASONS = new Set([
@@ -487,7 +488,7 @@ export function mergeSubagentRunTelemetry(currentValue, persistedValue, options 
 function controlsFromResolved(value) {
     return {
         needsAttentionAfterMs: value.needsAttentionAfterMs,
-        failedToolAttemptsBeforeAttention: value.failedToolAttemptsBeforeAttention,
+        failedToolAttemptsBeforeAttention: value.failedToolAttemptsBeforeAttention ?? 0,
         notifyOn: [...value.notifyOn].filter((entry) => entry === "needs_attention"),
         notifyChannels: [...value.notifyChannels].filter((entry) => entry === "event" || entry === "async"),
     };
@@ -904,7 +905,7 @@ export function telemetryFromRunnerResults(input) {
             })));
     return buildSubagentRunTelemetry({
         runId: input.runId,
-        execution: "async",
+        execution: input.execution ?? "async",
         mode: input.mode,
         steps,
         provenance: input.provenance,

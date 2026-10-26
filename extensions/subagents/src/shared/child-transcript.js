@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/child-transcript.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";

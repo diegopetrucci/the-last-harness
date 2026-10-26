@@ -155,6 +155,21 @@ test("withLockedTlhSettingsWrite preserves non-test writes outside the temporary
 // Startup-state write — existing behaviour preserved after adding containment check
 // ---------------------------------------------------------------------------
 
+test("updateTlhStartupState drops array entries from existing state", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-profile-state-test-", { test: t });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, () => {
+    mkdirSync(join(fixture.agent, "tlh"), { recursive: true });
+    const statePath = tlhStartupStatePath();
+    writeFileSync(statePath, '["unexpected"]');
+
+    updateTlhStartupState({ reconciledAt: "2026-01-01T00:00:00.000Z" });
+
+    assert.deepEqual(JSON.parse(readFileSync(statePath, "utf8")), {
+      reconciledAt: "2026-01-01T00:00:00.000Z",
+    });
+  });
+});
+
 test("updateTlhStartupState still writes inside the managed dir", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-profile-state-test-", { test: t });
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {

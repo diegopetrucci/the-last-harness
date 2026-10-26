@@ -6,23 +6,24 @@ import {
   formatAsyncRunProgressLabel,
   listAsyncRuns,
 } from "./async-status.ts";
-import { formatModelThinking, shortenPath } from "../../shared/formatters.ts";
+import { formatDuration, formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import {
   ASYNC_DIR,
   RESULTS_DIR,
   type AsyncStatus,
   type Details,
-  type ForegroundResumeRun,
   type SubagentState,
   type SubagentToolResult,
   normalizeSubagentRunMode,
 } from "../../shared/types.ts";
-import { resolveAsyncRunLocation } from "./async-resume.ts";
+import { continuationResumeBlock, resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { formatOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.ts";
-import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.ts";
+import { formatUnreadableStatus, isAsyncStatusReadError } from "./async-status-boundary.ts";
+import type { AsyncStatusReadOptions } from "../../shared/utils.ts";
+import { formatSupervisorPauseMessage } from "../../shared/pause-messages.ts";
 import { lifecycleContinuationForIndex } from "../shared/lifecycle-state.ts";
 import {
   formatProtectedLifecycleCleanup,
@@ -31,15 +32,14 @@ import {
 } from "../shared/lifecycle-privacy.ts";
 import {
   safeTerminalDocument,
-  safeTerminalDocumentLeaf,
+  safeTerminalDocumentLeaf as _safeTerminalDocumentLeaf,
   safeTerminalText,
 } from "../../shared/display-text.ts";
-import { acceptanceRejectionReason } from "../shared/acceptance.ts";
-import { formatRejectionReason } from "../../shared/string-utils.ts";
 
-interface RunStatusParams {
+export interface RunStatusParams {
   action?: "status";
   id?: string;
+  /** Internal directory override used by trusted control callers; not model-facing. */
   dir?: string;
   /** Select a direct async child for pause/continuation guidance. */
   index?: number;
@@ -50,6 +50,7 @@ interface RunStatusDeps {
   resultsDir?: string;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
+  statusRead?: AsyncStatusReadOptions;
   state?: SubagentState;
 }
 
@@ -65,6 +66,10 @@ type AsyncResultStatusData = {
   exitCode?: number;
   state?: string;
   pause?: { kind?: string };
+  sessionId?: unknown;
+  timedOut?: boolean;
+  timeoutOwner?: "role" | "run";
+  terminationReason?: string;
   sessionFile?: string;
   results?: Array<{
     agent?: string;
@@ -74,8 +79,30 @@ type AsyncResultStatusData = {
     state?: string;
     success?: boolean;
     exitCode?: number | null;
+    timedOut?: boolean;
+    timeoutOwner?: "role" | "run";
+    terminationReason?: string;
   }>;
 };
+
+function statusErrorMessage(error: unknown): string {
+  if (isAsyncStatusReadError(error)) return formatUnreadableStatus(error.statusPath);
+  return error instanceof Error ? error.message : String(error);
+}
+
+const BUDGET_EXHAUSTION_GUIDANCE =
+  "Budget exhausted: this child instance is permanently expired. Inspect partial output, artifacts, and files before deciding on a fresh dispatch; do not resume or mechanically redispatch the unchanged task.";
+
+function isRoleBudgetExhausted(value: {
+  timedOut?: unknown;
+  timeoutOwner?: unknown;
+  terminationReason?: unknown;
+}): boolean {
+  return (
+    value.timeoutOwner === "role" &&
+    (value.timedOut === true || value.terminationReason === "timed_out")
+  );
+}
 
 function hasExistingSessionFile(value: unknown): value is string {
   return typeof value === "string" && fs.existsSync(value);
@@ -83,14 +110,25 @@ function hasExistingSessionFile(value: unknown): value is string {
 
 function formatResumeGuidance(
   runId: string | undefined,
-  children: Array<{ agent?: unknown; sessionFile?: unknown }>,
+  children: Array<{
+    agent?: unknown;
+    sessionFile?: unknown;
+    timedOut?: unknown;
+    timeoutOwner?: unknown;
+    terminationReason?: unknown;
+  }>,
   fallbackSessionFile?: unknown,
+  runExhausted = false,
 ): string {
+  const exhaustedChildren = children.filter(isRoleBudgetExhausted);
   const knownChildren = children
     .map((child, index) => ({ child, index }))
-    .filter(({ child }) => typeof child.agent === "string");
+    .filter(({ child }) => typeof child.agent === "string" && !isRoleBudgetExhausted(child));
+  const exhausted = runExhausted || exhaustedChildren.length > 0;
   if (!runId || knownChildren.length === 0)
-    return "Resume: unavailable; no child session file was persisted.";
+    return exhausted
+      ? `Resume: unavailable; ${BUDGET_EXHAUSTION_GUIDANCE}`
+      : "Resume: unavailable; no child session file was persisted.";
   const safeRunId = safeTerminalText(runId);
   const singleSessionFile = knownChildren[0]?.child.sessionFile ?? fallbackSessionFile;
   if (
@@ -98,6 +136,7 @@ function formatResumeGuidance(
     knownChildren.length === 1 &&
     hasExistingSessionFile(singleSessionFile)
   ) {
+    if (runExhausted) return `Resume: unavailable; ${BUDGET_EXHAUSTION_GUIDANCE}`;
     return `Revive: subagent({ action: "resume", id: "${safeRunId}", message: "..." })`;
   }
   const childWithSession = knownChildren.find(({ child }) =>
@@ -106,7 +145,9 @@ function formatResumeGuidance(
   if (childWithSession) {
     return `Revive child: subagent({ action: "resume", id: "${safeRunId}", index: ${childWithSession.index}, message: "..." })`;
   }
-  return "Resume: unavailable; no child session file was persisted.";
+  return exhausted
+    ? `Resume: unavailable; ${BUDGET_EXHAUSTION_GUIDANCE}`
+    : "Resume: unavailable; no child session file was persisted.";
 }
 
 function isPausedAwaitingSupervisorStatus(status: AsyncStatus): boolean {
@@ -166,6 +207,7 @@ function formatAsyncStepStatusLines(
   asyncDir: string,
   outputPath: string | undefined,
   privacySafeAwaitingSupervisorLifecycle: boolean,
+  now: number,
 ): string[] {
   const lines: string[] = [];
   const stepActivityText =
@@ -179,21 +221,15 @@ function formatAsyncStepStatusLines(
   const errorText = step.error
     ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : safeTerminalText(step.error)}`
     : "";
-  const acceptanceText = step.acceptance?.status
-    ? `, acceptance: ${safeTerminalText(step.acceptance.status)}`
-    : "";
   lines.push(
-    `${stepLineLabel(status, index)}: ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${modelText}${stepActivityText ? `, ${safeTerminalText(stepActivityText)}` : ""}${steeringSuffix}${acceptanceText}${errorText}`,
+    `${stepLineLabel(status, index)}: ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${modelText}${stepActivityText ? `, ${safeTerminalText(stepActivityText)}` : ""}${steeringSuffix}${errorText}`,
   );
-  if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
-    const reason = acceptanceRejectionReason(step.acceptance);
-    if (reason)
-      lines.push(`  Acceptance reason: ${safeTerminalText(formatRejectionReason(reason))}`);
-  }
   const stepContinuation = lifecycleContinuationForIndex(status, index);
   const stepClaimed =
     typeof stepContinuation?.claimToken === "string" && stepContinuation.claimToken.length > 0;
-  if (isPausedAwaitingSupervisorStep(status, step)) {
+  if (isRoleBudgetExhausted(step)) {
+    lines.push(`  ${BUDGET_EXHAUSTION_GUIDANCE}`);
+  } else if (isPausedAwaitingSupervisorStep(status, step)) {
     lines.push(
       `  Pause: awaiting supervisor${step.pause?.summary ? ` (${safeTerminalText(step.pause.summary)})` : ""}`,
     );
@@ -233,6 +269,13 @@ function formatAsyncStepStatusLines(
     else lines.push("  Pause: cohort pause while another child awaited supervisor.");
     lines.push("  Stopping/reaping child; not resumable yet; check status again.");
   }
+  if (!privacySafeAwaitingSupervisorLifecycle && step.startedAt !== undefined) {
+    const elapsedUntil = step.endedAt ?? now;
+    const elapsedMs = Math.max(0, elapsedUntil - step.startedAt);
+    lines.push(
+      `  Elapsed: ${formatDuration(elapsedMs)}${step.endedAt === undefined ? " (since spawn)" : ""}`,
+    );
+  }
   if (step.exitCode !== undefined) lines.push(`  Exit code: ${step.exitCode}`);
   if (step.exitSignal) lines.push(`  Exit signal: ${step.exitSignal}`);
   if (step.processCleanup) {
@@ -258,91 +301,6 @@ function formatAsyncStepStatusLines(
   return lines;
 }
 
-function rememberedForegroundChildOutput(child: ForegroundResumeRun["children"][number]): string {
-  const outputPath = child.artifactPaths?.outputPath;
-  if (outputPath && fs.existsSync(outputPath)) {
-    try {
-      const artifactOutput = fs.readFileSync(outputPath, "utf-8").trim();
-      if (artifactOutput) return artifactOutput;
-    } catch {
-      // Fall back to the remembered snapshot below.
-    }
-  }
-  return child.finalOutput ?? "";
-}
-
-function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
-  const runId = safeTerminalText(run.runId);
-  const lines = [
-    `Run: ${runId}`,
-    "State: remembered foreground",
-    `Mode: ${safeTerminalText(run.mode)}`,
-    `Updated: ${new Date(run.updatedAt).toISOString()}`,
-  ];
-  for (const child of run.children) {
-    const output = safeTerminalDocumentLeaf(rememberedForegroundChildOutput(child))
-      .trim()
-      .split(/\r?\n/)
-      .find((line) => line.trim());
-    const statusLabel = child.cancel?.cancelledAt ? "cancelled" : safeTerminalText(child.status);
-    const parts = [
-      `${child.index + 1}. ${safeTerminalText(child.agent)} ${statusLabel}`,
-      child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
-      child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt
-        ? "awaiting supervisor"
-        : undefined,
-      output ? `output: ${output.slice(0, 160)}` : undefined,
-    ].filter(Boolean);
-    lines.push(parts.join(", "));
-    if (child.pause?.kind !== "awaiting_supervisor") {
-      if (child.transcriptPath)
-        lines.push(
-          `  Diagnostic transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`,
-        );
-      if (child.artifactPaths?.outputPath)
-        lines.push(`  Output: ${safeTerminalText(shortenPath(child.artifactPaths.outputPath))}`);
-    }
-    if (child.transcriptError)
-      lines.push(`  Diagnostic transcript warning: ${safeTerminalText(child.transcriptError)}`);
-    if (child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt) {
-      lines.push(
-        ...formatForegroundSupervisorPauseMessage({
-          headline: `Child ${child.index + 1} is paused awaiting supervisor.`,
-          runId,
-          agent: safeTerminalText(child.agent),
-          requestSummary: child.pause.summary
-            ? safeTerminalText(child.pause.summary)
-            : child.pause.summary,
-          index: child.index,
-        })
-          .split("\n")
-          .map((line) => `  ${line}`),
-      );
-    }
-  }
-  lines.push("", `Status: subagent({ action: "status", id: "${runId}" })`);
-  const resumable = run.children.find(
-    (child) => !child.cancel?.cancelledAt && hasExistingSessionFile(child.sessionFile),
-  );
-  const awaitingSupervisor = run.children.some(
-    (child) => child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt,
-  );
-  if (resumable && !awaitingSupervisor) {
-    lines.push(
-      run.children.length === 1
-        ? `Resume with guidance: subagent({ action: "resume", id: "${runId}", message: "..." })`
-        : `Resume child with guidance: subagent({ action: "resume", id: "${runId}", index: ${resumable.index}, message: "..." })`,
-    );
-  } else if (run.children.some((child) => child.cancel?.cancelledAt)) {
-    lines.push(
-      "Resume: unavailable; this paused foreground run was cancelled and kept its retained output/session artifacts; compact mode may omit the diagnostic child transcript.",
-    );
-  } else {
-    lines.push("Resume: unavailable; no child session file was persisted.");
-  }
-  return safeTerminalDocument(lines.join("\n"));
-}
-
 function formatDetailedAsyncStatus(
   status: AsyncStatus,
   asyncDir: string,
@@ -351,6 +309,7 @@ function formatDetailedAsyncStatus(
   requestedIndex: number | undefined,
   logPath: string,
   eventsPath: string,
+  now: number,
 ): string {
   const progressLabel = formatAsyncRunProgressLabel({
     mode: normalizeSubagentRunMode(status.mode),
@@ -371,7 +330,13 @@ function formatDetailedAsyncStatus(
   const steeringText = formatSteeringSummary(status);
 
   const pausedAwaitingSupervisor = isPausedAwaitingSupervisorStatus(status);
-  const privacySafeAwaitingSupervisorLifecycle = isProtectedPausedLifecycle(status);
+  const continuation = lifecycleContinuationForIndex(status, requestedIndex ?? 0);
+  const continuationBlock = continuationResumeBlock(continuation);
+  const continuationAlreadyLaunched =
+    continuationBlock === "completed" || continuationBlock === "launched";
+  const resumeBlocked = status.lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure";
+  const privacySafeAwaitingSupervisorLifecycle =
+    isProtectedPausedLifecycle(status) || reconciliation.protectedLifecycle === true;
   const lines = [
     `Run: ${safeTerminalText(status.runId)}`,
     `State: ${safeTerminalText(status.state)}`,
@@ -380,6 +345,7 @@ function formatDetailedAsyncStatus(
       : undefined,
     statusActivityText ? `Activity: ${statusActivityText}` : undefined,
     steeringText ? `Steering: ${steeringText}` : undefined,
+    status.awaited ? "Awaited: true" : undefined,
     `Mode: ${safeTerminalText(normalizeSubagentRunMode(status.mode))}`,
     !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
       ? `PID: ${status.pid}`
@@ -413,6 +379,7 @@ function formatDetailedAsyncStatus(
         asyncDir,
         outputPath,
         privacySafeAwaitingSupervisorLifecycle,
+        now,
       ),
     );
   if (!privacySafeAwaitingSupervisorLifecycle && status.sessionFile)
@@ -423,7 +390,7 @@ function formatDetailedAsyncStatus(
     );
   if (pausedAwaitingSupervisor && (status.steps?.length ?? 0) <= 1) {
     lines.push(
-      ...formatForegroundSupervisorPauseMessage({
+      ...formatSupervisorPauseMessage({
         headline: "Paused lifecycle actions:",
         runId: safeTerminalText(status.runId),
         agent: status.steps?.[0]?.agent ? safeTerminalText(status.steps[0].agent) : "subagent",
@@ -439,15 +406,22 @@ function formatDetailedAsyncStatus(
     );
   } else if (pausedAwaitingSupervisor) {
     lines.push("Paused lifecycle actions are listed per child above.");
-  } else if (status.state === "continued") {
-    lines.push(
-      `Continuation: ${safeTerminalText(lifecycleContinuationForIndex(status, requestedIndex ?? 0)?.continuationRunId ?? status.lifecycle?.continuation?.continuationRunId ?? "unknown")}`,
-    );
+  } else if (resumeBlocked) {
+    lines.push("Resume: unavailable; supervisor lifecycle failure permanently blocked revival.");
+  } else if (continuationAlreadyLaunched) {
+    lines.push(`Continuation: ${safeTerminalText(continuation?.continuationRunId ?? "unknown")}`);
     lines.push(
       "Resume: unavailable; this paused supervisor run already launched its continuation.",
     );
   } else if (status.state !== "running" && status.state !== "pausing") {
-    lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile));
+    lines.push(
+      formatResumeGuidance(
+        status.runId,
+        status.steps ?? [],
+        status.sessionFile,
+        isRoleBudgetExhausted(status),
+      ),
+    );
   }
   if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(logPath))
     lines.push(`Log: ${safeTerminalText(logPath)}`);
@@ -459,18 +433,22 @@ function formatDetailedAsyncStatus(
 
 function inspectAsyncResultFile(
   resultPath: string,
+  params: RunStatusParams,
   resolvedId: string | undefined,
 ): SubagentToolResult<Details> {
   try {
     const raw = fs.readFileSync(resultPath, "utf-8");
-    const data = JSON.parse(raw) as AsyncResultStatusData;
+    const parsed: unknown = JSON.parse(raw);
+    const data = parsed as AsyncResultStatusData;
     const status = data.success
       ? "complete"
-      : data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
+      : data.state === "cancelled" || data.state === "pausing"
         ? data.state
-        : data.state === "paused" || data.exitCode === 0
-          ? "paused"
-          : "failed";
+        : data.state === "complete" || data.state === "completed" || data.state === "continued"
+          ? "complete"
+          : data.state === "paused" || data.exitCode === 0
+            ? "paused"
+            : "failed";
     const runId = data.runId ?? data.id ?? resolvedId;
     const privacySafeResult = isProtectedPausedLifecycle({
       state: data.state,
@@ -484,13 +462,23 @@ function inspectAsyncResultFile(
     const children = Array.isArray(data.results)
       ? data.results
       : data.agent
-        ? [{ agent: data.agent, sessionFile: data.sessionFile }]
+        ? [
+            {
+              agent: data.agent,
+              sessionFile: data.sessionFile,
+              timedOut: data.timedOut,
+              timeoutOwner: data.timeoutOwner,
+              terminationReason: data.terminationReason,
+            },
+          ]
         : [];
-    lines.push(formatResumeGuidance(runId, children, data.sessionFile));
+    lines.push(
+      formatResumeGuidance(runId, children, data.sessionFile, isRoleBudgetExhausted(data)),
+    );
     if (data.summary)
       lines.push(
         "",
-        privacySafeResult ? "Paused awaiting supervisor." : safeTerminalDocumentLeaf(data.summary),
+        privacySafeResult ? "Paused awaiting supervisor." : _safeTerminalDocumentLeaf(data.summary),
       );
     return {
       content: [{ type: "text", text: safeTerminalDocument(lines.join("\n")) }],
@@ -515,15 +503,24 @@ export function inspectSubagentStatus(
   const currentSessionId = deps.state?.currentSessionId ?? undefined;
   if (!params.id && !params.dir) {
     try {
+      const unreadableStatuses: Array<{
+        entry: string;
+        asyncDir: string;
+        statusPath: string;
+      }> = [];
       const runs = listAsyncRuns(asyncDirRoot, {
         states: ["queued", "running"],
         sessionId: currentSessionId,
         resultsDir,
         kill: deps.kill,
         now: deps.now,
+        statusRead: deps.statusRead,
+        onUnreadable: (issue) => unreadableStatuses.push(issue),
       });
       return {
-        content: [{ type: "text", text: formatAsyncRunList(runs) }],
+        content: [
+          { type: "text", text: formatAsyncRunList(runs, "Active async runs", unreadableStatuses) },
+        ],
         details: { mode: "single", results: [] },
       };
     } catch (error) {
@@ -549,22 +546,13 @@ export function inspectSubagentStatus(
         resultsDir,
         state: deps.state,
       });
-      if (resolved?.kind === "foreground") {
-        const run = deps.state?.foregroundRuns?.get(resolved.id);
-        if (run) {
-          return {
-            content: [{ type: "text", text: formatRememberedForegroundStatus(run) }],
-            details: { mode: "single", results: [] },
-          };
-        }
-      }
       if (resolved?.kind === "async") location = resolved.location;
       else location = { asyncDir: null, resultPath: null, resolvedId: requestedId };
     } else {
       location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = statusErrorMessage(error);
     return {
       content: [{ type: "text", text: message }],
       isError: true,
@@ -584,9 +572,14 @@ export function inspectSubagentStatus(
   if (asyncDir) {
     let reconciliation;
     try {
-      reconciliation = reconcileAsyncRun(asyncDir, { resultsDir, kill: deps.kill, now: deps.now });
+      reconciliation = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: deps.kill,
+        now: deps.now,
+        statusRead: deps.statusRead,
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = statusErrorMessage(error);
       return {
         content: [{ type: "text", text: message }],
         isError: true,
@@ -599,6 +592,7 @@ export function inspectSubagentStatus(
     const eventsPath = path.join(asyncDir, "events.jsonl");
     if (status) {
       const outputPath = formatAsyncRunOutputPath({ asyncDir, outputFile: status.outputFile });
+      const now = deps.now?.() ?? Date.now();
       return {
         content: [
           {
@@ -611,6 +605,7 @@ export function inspectSubagentStatus(
               params.index,
               logPath,
               eventsPath,
+              now,
             ),
           },
         ],
@@ -619,7 +614,7 @@ export function inspectSubagentStatus(
     }
   }
 
-  if (resultPath) return inspectAsyncResultFile(resultPath, resolvedId);
+  if (resultPath) return inspectAsyncResultFile(resultPath, params, resolvedId);
 
   return {
     content: [{ type: "text", text: "Status file not found." }],

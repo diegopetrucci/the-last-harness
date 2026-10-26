@@ -1,3 +1,4 @@
+// Generated from extensions/notify/index.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,11 +31,95 @@ const DEFAULT_CONFIG = {
         command: "",
     },
 };
+const TERMINAL_BACKENDS = ["auto", "osc777", "osc99", "none"];
+const DESKTOP_BACKENDS = ["auto", "macos", "linux", "windows-toast", "none"];
+const SOUND_BACKENDS = ["auto", "macos", "linux", "windows-beep", "command", "none"];
+function isPlainObject(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readStringEnum(value, allowed) {
+    if (typeof value !== "string")
+        return undefined;
+    for (const candidate of allowed) {
+        if (value === candidate)
+            return candidate;
+    }
+    return undefined;
+}
+function readFiniteNumber(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+function narrowChannels(value) {
+    const channels = {};
+    if (typeof value.terminal === "boolean")
+        channels.terminal = value.terminal;
+    if (typeof value.desktop === "boolean")
+        channels.desktop = value.desktop;
+    if (typeof value.bell === "boolean")
+        channels.bell = value.bell;
+    if (typeof value.sound === "boolean")
+        channels.sound = value.sound;
+    return channels;
+}
+function narrowTerminal(value) {
+    const backend = readStringEnum(value.backend, TERMINAL_BACKENDS);
+    return backend === undefined ? {} : { backend };
+}
+function narrowDesktop(value) {
+    const backend = readStringEnum(value.backend, DESKTOP_BACKENDS);
+    return backend === undefined ? {} : { backend };
+}
+function narrowSound(value) {
+    const sound = {};
+    const backend = readStringEnum(value.backend, SOUND_BACKENDS);
+    if (backend !== undefined)
+        sound.backend = backend;
+    if (typeof value.name === "string")
+        sound.name = value.name;
+    if (typeof value.linuxSoundId === "string")
+        sound.linuxSoundId = value.linuxSoundId;
+    const frequencyHz = readFiniteNumber(value.frequencyHz);
+    if (frequencyHz !== undefined)
+        sound.frequencyHz = frequencyHz;
+    const durationMs = readFiniteNumber(value.durationMs);
+    if (durationMs !== undefined)
+        sound.durationMs = durationMs;
+    if (typeof value.command === "string")
+        sound.command = value.command;
+    return sound;
+}
+function narrowNotifyConfig(value) {
+    if (!isPlainObject(value))
+        return {};
+    const patch = {};
+    if (typeof value.enabled === "boolean")
+        patch.enabled = value.enabled;
+    if (typeof value.onlyWhenInteractive === "boolean") {
+        patch.onlyWhenInteractive = value.onlyWhenInteractive;
+    }
+    if (typeof value.suppressWhileActive === "boolean") {
+        patch.suppressWhileActive = value.suppressWhileActive;
+    }
+    if (typeof value.title === "string")
+        patch.title = value.title;
+    if (typeof value.body === "string")
+        patch.body = value.body;
+    if (isPlainObject(value.channels))
+        patch.channels = narrowChannels(value.channels);
+    if (isPlainObject(value.terminal))
+        patch.terminal = narrowTerminal(value.terminal);
+    if (isPlainObject(value.desktop))
+        patch.desktop = narrowDesktop(value.desktop);
+    if (isPlainObject(value.sound))
+        patch.sound = narrowSound(value.sound);
+    return patch;
+}
 function readConfigFile(path) {
     if (!existsSync(path))
         return {};
     try {
-        return JSON.parse(readFileSync(path, "utf-8"));
+        const parsed = JSON.parse(readFileSync(path, "utf-8"));
+        return narrowNotifyConfig(parsed);
     }
     catch (error) {
         console.error(`Warning: Could not parse ${path}: ${error}`);

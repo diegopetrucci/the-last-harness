@@ -9,8 +9,12 @@ import { DEFAULT_PRIMARY_AGENT } from "../extensions/the-last-harness-primary-ag
 import { createProviderAuthHealthStore } from "../extensions/the-last-harness/provider-auth-health.ts";
 
 const jiti = createJiti(import.meta.url);
-const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment, formatReauthWarningLine } =
-  await jiti.import("../extensions/the-last-harness/footer.ts");
+const { createTlhFooter, formatReauthWarningLine } = await jiti.import(
+  "../extensions/the-last-harness/footer.ts",
+);
+const { formatTlhSubscriptionUsageFooterSegment } = await jiti.import(
+  "../extensions/the-last-harness/footer-subscription-usage.ts",
+);
 
 const NOW_MS = Date.parse("2026-05-19T19:00:00Z");
 const WIDTH = 100;
@@ -107,7 +111,7 @@ function createCtx(options = {}) {
       id:
         options.modelId ??
         (provider === "openai-codex" ? "gpt-5-codex" : "claude-sonnet-4-20250514"),
-      contextWindow: 200000,
+      contextWindow: 350000,
     },
     modelRegistry: {
       isUsingOAuth() {
@@ -127,7 +131,7 @@ function createCtx(options = {}) {
       getSessionName: () => options.sessionName,
     },
     getContextUsage: () =>
-      options.contextUsage ?? { tokens: 1000, contextWindow: 200000, percent: 12.3 },
+      options.contextUsage ?? { tokens: 1000, contextWindow: 350000, percent: 12.3 },
     ui: {
       getEditorText: () => options.editorText ?? "",
     },
@@ -195,7 +199,7 @@ test("footer renders OpenAI/Codex session usage and hides weekly by default", ()
   assert.match(sessionLine, /session 42% used/);
   assert.doesNotMatch(sessionLine, /weekly/);
   assert.doesNotMatch(sessionLine, /\$/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/350k/);
 });
 
 test("footer formats an exact seven-day OpenAI primary window as weekly without showing secondary usage", () => {
@@ -342,6 +346,26 @@ test("footer render reads cached usage snapshots without refreshing", () => {
   assert.equal(refreshCalls, 0);
 });
 
+test("footer cost matches upstream: includes usage, toolResult, compaction and branch_summary spend", () => {
+  const ctx = createCtx({
+    provider: "anthropic",
+    usingOAuth: false,
+    entries: [
+      assistantCostEntry(1),
+      { type: "usage", usage: { cost: { total: 0.5 } } },
+      { type: "message", message: { role: "toolResult", usage: { cost: { total: 0.25 } } } },
+      { type: "message", message: { role: "user", usage: { cost: { total: 100 } } } },
+      { type: "compaction", usage: { cost: { total: 0.125 } } },
+      { type: "branch_summary", usage: { cost: { total: 0.0625 } } },
+    ],
+  });
+  const line = renderSessionStatsLine(ctx, {
+    subscriptionUsage: usageProvider(anthropicSnapshot(), undefined, false),
+    shouldShowWeekly: () => true,
+  });
+  assert.match(line, /\$1\.938/);
+});
+
 test("footer falls back to dollar cost when subscription usage is not strictly eligible", () => {
   // Non-OAuth Anthropic session (e.g. API-key user): no subscription tracking and no OAuth gate,
   // so the dollar fallback must remain visible.
@@ -355,7 +379,7 @@ test("footer falls back to dollar cost when subscription usage is not strictly e
 
   assert.match(sessionLine, /\$1\.250/);
   assert.doesNotMatch(sessionLine, /5h session 42% used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/350k/);
 });
 
 test("footer suppresses dollar cost for eligible OAuth sessions before usage is cached", () => {
@@ -391,7 +415,7 @@ test("footer suppresses dollar cost for eligible OAuth sessions before usage is 
 
   assert.doesNotMatch(agentLine, /\$/);
   assert.doesNotMatch(agentLine, /used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/350k/);
   // Line 3 is omitted: cost suppressed (OAuth), no subscription segment yet
   assert.equal(sessionLine, "");
   assert.equal(fetchCalls, 0);
@@ -423,7 +447,7 @@ test("footer leaves usage unchanged for unsupported providers and snapshot error
   assert.doesNotMatch(unsupportedSessionLine, /used/);
   assert.doesNotMatch(unsupportedSessionLine, /weekly/);
   assert.match(unsupportedSessionLine, /\$1\.250/);
-  assert.match(unsupportedAgentLine, /12\.3%\/200k/);
+  assert.match(unsupportedAgentLine, /12\.3%\/350k/);
 
   const errorCtx = createCtx({ provider: "anthropic" });
   const errorUsage = {
@@ -446,7 +470,7 @@ test("footer leaves usage unchanged for unsupported providers and snapshot error
   assert.doesNotMatch(errorSessionLine, /used/);
   assert.doesNotMatch(errorSessionLine, /weekly/);
   assert.doesNotMatch(errorSessionLine, /\$/);
-  assert.match(errorAgentLine, /12\.3%\/200k/);
+  assert.match(errorAgentLine, /12\.3%\/350k/);
 });
 
 test("footer suppresses dollar cost for OAuth users on unsupported providers", () => {
@@ -460,7 +484,7 @@ test("footer suppresses dollar cost for OAuth users on unsupported providers", (
 
   assert.doesNotMatch(sessionLine, /\$/);
   assert.doesNotMatch(sessionLine, /used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/350k/);
 });
 
 test("footer shows dollar cost when neither OAuth nor subscription-eligible", () => {
@@ -474,7 +498,7 @@ test("footer shows dollar cost when neither OAuth nor subscription-eligible", ()
 
   assert.match(sessionLine, /\$1\.250/);
   assert.doesNotMatch(sessionLine, /used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/350k/);
 });
 
 test("usage footer stays within narrow terminal widths", () => {
@@ -504,7 +528,7 @@ test("usage footer stays within narrow terminal widths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: no-provider warning tests
+// no-provider warning tests
 // ---------------------------------------------------------------------------
 
 test("footer warns when the upstream provider count is zero", () => {
@@ -578,7 +602,7 @@ test("no-provider warning respects narrow footer widths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: focused line-2 composition tests
+// focused line-2 composition tests
 // ---------------------------------------------------------------------------
 
 test("line 2 shows model without provider prefix when single provider", () => {
@@ -603,7 +627,7 @@ test("line 2 shows thinking level for reasoning models", () => {
     model: {
       provider: "anthropic",
       id: "claude-opus-4-reasoning",
-      contextWindow: 200000,
+      contextWindow: 350000,
       reasoning: true,
     },
   });
@@ -617,7 +641,7 @@ test("line 2 shows thinking off label when thinking is disabled on a reasoning m
     model: {
       provider: "anthropic",
       id: "claude-opus-4-reasoning",
-      contextWindow: 200000,
+      contextWindow: 350000,
       reasoning: true,
     },
   });
@@ -636,12 +660,21 @@ test("line 2 shows no-model placeholder when context has no model", () => {
 test("line 2 includes context percent and omits provider prefix for no-model", () => {
   const ctx = { ...createCtx(), model: undefined };
   const line = renderAgentLine(ctx, {});
-  assert.match(line, /12\.3%\/200k/);
+  assert.match(line, /12\.3%\/350k/);
   assert.doesNotMatch(line, /\(/);
 });
 
+test("line 2 omits the removed DUMB ZONE warning at high context usage", () => {
+  const ctx = createCtx({
+    contextUsage: { tokens: 290000, contextWindow: 350000, percent: 82.9 },
+  });
+  const line = renderAgentLine(ctx, {});
+  assert.match(line, /82\.9%\/350k/);
+  assert.doesNotMatch(line, /DUMB ZONE/);
+});
+
 // ---------------------------------------------------------------------------
-// NEW: focused line-3 rendered omission and presence tests
+// focused line-3 rendered omission and presence tests
 // ---------------------------------------------------------------------------
 
 test("line 3 is omitted when cost is zero and there is no subscription segment", () => {
@@ -675,7 +708,7 @@ test("line 3 renders subscription only when cost is suppressed and segment is pr
 });
 
 // ---------------------------------------------------------------------------
-// NEW: reset countdown in subscription usage footer segment
+// reset countdown in subscription usage footer segment
 // ---------------------------------------------------------------------------
 
 // Helper: build a minimal Anthropic snapshot with explicit window fields.
@@ -821,7 +854,7 @@ test("reset countdown: session+weekly segment joiner is intact when both have co
 });
 
 // ---------------------------------------------------------------------------
-// NEW: per-segment color tests for line 2 (color-aware theme stub)
+// per-segment color tests for line 2 (color-aware theme stub)
 // ---------------------------------------------------------------------------
 
 // Color-aware theme: wraps each segment in XML-style tags so assertions can
@@ -913,7 +946,7 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 });
 
 // ---------------------------------------------------------------------------
-// NEW: extension status line rendering
+// extension status line rendering
 // ---------------------------------------------------------------------------
 
 test("fast extension status renders as a dim line-2 segment without generic duplication", () => {
@@ -986,7 +1019,7 @@ test("non-context-cap extension statuses are still rendered in the footer", () =
 });
 
 // ---------------------------------------------------------------------------
-// NEW: install notice warning line (last line of footer)
+// install notice warning line (last line of footer)
 // ---------------------------------------------------------------------------
 
 function makeInstallNotice(kind, detail, commitSubject) {
@@ -1640,7 +1673,7 @@ test("footer keeps the MCP status estimate within narrow widths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: provider auth-health reauth warning line
+// provider auth-health reauth warning line
 // ---------------------------------------------------------------------------
 
 // Helper: record a status directly into a fresh store by exploiting clearProvider
@@ -1884,11 +1917,7 @@ test('formatReauthWarningLine: "×2" count variant tells user both providers nee
 });
 
 test("formatReauthWarningLine: count-only variant never exceeds requested width — width contract at extreme narrowness", () => {
-  // The count-only variant (e.g. '⚠ reauth ×2') is itself ~11-12 columns wide.
-  // At a width below that, the prior code returned it unconditionally and violated
-  // the invariant that every footer line fits within `width`. This test asserts
-  // visibleWidth(result) <= width at a width of 5 — well below the count text.
-  // It must FAIL against the un-patched code and PASS after the truncateToWidth fix.
+  // Even the count-only variant must fit within the requested width.
   const narrowWidth = 5;
   const result = formatReauthWarningLine(["anthropic", "openai-codex"], narrowWidth, theme);
   assert.ok(

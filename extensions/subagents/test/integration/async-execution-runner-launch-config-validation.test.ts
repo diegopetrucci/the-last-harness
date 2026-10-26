@@ -1,15 +1,10 @@
-/**
- * Integration tests for async execution – runner launch and configuration validation.
- *
- * Requires pi packages to be importable. Skips gracefully if unavailable.
- */
+/** Integration tests for async execution – runner launch and configuration validation. */
 
 import { spawn, spawnSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   createEventBus,
   createMockPi,
@@ -21,13 +16,11 @@ import {
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
-  RETIRED_NESTED_ROUTE_ENV_VARS,
   SUBAGENT_CHILD_AGENT_ENV,
-  SUBAGENT_CHILD_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-  SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { sanitizeModelFallbackNotice } from "../../src/runs/shared/model-fallback.ts";
+import { TICKET_LOOKUP_MAX_OUTPUT_BYTES } from "../../src/runs/shared/ticket-context.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import {
@@ -39,7 +32,6 @@ import {
   executeAsyncParallel,
   executeAsyncSingle,
   isAsyncAvailable,
-  readAsyncPayload,
   readMockPiArgs,
   readStatus,
   waitForAsyncResultFile,
@@ -65,13 +57,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sanitizedRunnerEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env[SUBAGENT_CHILD_ENV];
-  for (const name of RETIRED_NESTED_ROUTE_ENV_VARS) delete env[name];
-  return env;
-}
-
 function readEventTypes(asyncDir: string): string[] {
   const eventPath = path.join(asyncDir, "events.jsonl");
   assert.ok(fs.existsSync(eventPath), "runner should persist an event log");
@@ -83,24 +68,6 @@ function readEventTypes(asyncDir: string): string[] {
     if (typeof parsed.type !== "string") throw new Error(`event ${index} should have a type`);
     return parsed.type;
   });
-}
-
-function inferredAcceptanceRejectionOutput(output: string): string {
-  return [
-    output,
-    "```acceptance-report",
-    JSON.stringify({
-      criteriaSatisfied: [],
-      changedFiles: [],
-      testsAddedOrUpdated: ["test/report.test.ts"],
-      commandsRun: [
-        { command: "true", result: "passed", summary: "Intentional rejection fixture." },
-      ],
-      residualRisks: [],
-      noStagedFiles: true,
-    }),
-    "```",
-  ].join("\n");
 }
 
 describe("async execution runner launch and configuration validation", () => {
@@ -128,24 +95,6 @@ describe("async execution runner launch and configuration validation", () => {
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     removeTempDir(tempDir);
   });
-
-  function makeAsyncExecutor(agents = [makeAgent("worker")]) {
-    return createSubagentExecutor!({
-      pi: { events: createEventBus(), getSessionName: () => undefined },
-      state: {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      config: {},
-      tempArtifactsDir: tempDir,
-      getSubagentSessionRoot: () => tempDir,
-      expandTilde: (p: string) => p,
-      discoverAgents: () => ({ agents }),
-    });
-  }
 
   const routeModels = [
     {
@@ -242,6 +191,7 @@ describe("async execution runner launch and configuration validation", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
+      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     effects.push("return");
@@ -278,6 +228,7 @@ describe("async execution runner launch and configuration validation", () => {
           },
           availableModels: routeModels,
           artifactConfig: makeRouteArtifactConfig(),
+          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -321,6 +272,7 @@ describe("async execution runner launch and configuration validation", () => {
         },
         availableModels: routeModels,
         artifactConfig: makeRouteArtifactConfig(),
+        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -363,6 +315,7 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
+        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -405,6 +358,7 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
+        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -470,6 +424,7 @@ describe("async execution runner launch and configuration validation", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
+      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(run.isError, undefined);
@@ -504,6 +459,7 @@ describe("async execution runner launch and configuration validation", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
+      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(run.isError, undefined);
@@ -517,125 +473,18 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(args.includes("--no-tools"), false);
   });
 
-  it("assigns fresh tickets through async single and two-child parallel launches", async () => {
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
-    const agentDir = path.join(tempDir, "profile");
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
-    const canonicalAgent = makeAgent("developer", {
-      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
-    });
-    try {
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const singleId = `async-packaged-identity-${Date.now().toString(36)}`;
-      const commonParams = {
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        maxSubagentDepth: 2,
-      };
-      const single = executeAsyncSingle(singleId, {
-        agent: "developer",
-        task: "Before editing, run `tk show async-single-ticket`.",
-        agentConfig: canonicalAgent,
-        ...commonParams,
-      });
-      assert.equal(single.isError, undefined);
-      const singlePayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(singleId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(singlePayload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: "async-single-ticket",
-      });
-
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const parallelId = `async-packaged-identities-${Date.now().toString(36)}`;
-      const parallel = executeAsyncParallel(parallelId, {
-        tasks: [
-          { agent: "developer", task: "Before editing, run `tk show async-first-ticket`." },
-          { agent: "developer", task: "Before editing, run `tk show async-second-ticket`." },
-        ],
-        agents: [canonicalAgent],
-        ...commonParams,
-      });
-      assert.equal(parallel.isError, undefined);
-      const parallelPayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(parallelId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(
-        parallelPayload.results.map((child) => JSON.parse(child.output)),
-        [
-          {
-            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-            [SUBAGENT_TK_TICKET_ID_ENV]: "async-first-ticket",
-          },
-          {
-            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-            [SUBAGENT_TK_TICKET_ID_ENV]: "async-second-ticket",
-          },
-        ],
-      );
-    } finally {
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      if (previousGuidanceMarker === undefined)
-        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
-      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
-    }
-  });
-
   it("preserves canonical code-reviewer guidance without a ticket in async launch", async () => {
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
     const agentDir = path.join(tempDir, "profile");
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
     const canonicalCodeReviewer = makeAgent("code-reviewer", {
       filePath: path.join(agentDir, "tlh", "agents", "subagents", "code-reviewer.md"),
     });
     try {
       mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
       });
       const id = `async-canonical-reviewer-${Date.now().toString(36)}`;
       const run = executeAsyncParallel(id, {
@@ -652,6 +501,7 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
+        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(run.isError, undefined);
@@ -661,7 +511,6 @@ describe("async execution runner launch and configuration validation", () => {
       assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
         [SUBAGENT_CHILD_AGENT_ENV]: "code-reviewer",
         [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: null,
       });
     } finally {
       if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -669,62 +518,6 @@ describe("async execution runner launch and configuration validation", () => {
       if (previousGuidanceMarker === undefined)
         delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
       else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
-      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
-    }
-  });
-
-  it("isolates same-name custom async agents from ticket assignment", async () => {
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
-    const agentDir = path.join(tempDir, "profile");
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
-    try {
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const id = `async-custom-collision-${Date.now().toString(36)}`;
-      const run = executeAsyncSingle(id, {
-        agent: "developer",
-        task: "Before editing, run `tk show custom-ticket`.",
-        agentConfig: makeAgent("developer", {
-          filePath: path.join(tempDir, "custom", "developer.md"),
-        }),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        maxSubagentDepth: 2,
-      });
-      assert.equal(run.isError, undefined);
-      const payload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
-        [SUBAGENT_TK_TICKET_ID_ENV]: null,
-      });
-    } finally {
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      if (previousGuidanceMarker === undefined)
-        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
-      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
     }
   });
 
@@ -740,6 +533,7 @@ describe("async execution runner launch and configuration validation", () => {
     const commonParams = {
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig,
+      shareEnabled: false,
       maxSubagentDepth: 2,
     };
     mockPi.onCall({ output: "single done" });
@@ -784,42 +578,6 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(parallelPayload.agent, "parallel:worker+reviewer");
   });
 
-  it("applies agent acceptance roles to inferred async acceptance", async () => {
-    mockPi.onCall({ output: "writer-role complete" });
-    const executor = makeAsyncExecutor([makeAgent("reviewer", { acceptanceRole: "writer" })]);
-
-    const result = await executor.execute(
-      "async-agent-acceptance-role",
-      { agent: "reviewer", task: "Handle the authentication flow", async: true },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-
-    const asyncId = result.details?.asyncId;
-    assert.ok(asyncId, "expected asyncId");
-    const payload = await readAsyncPayload(asyncId);
-    assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.level, "checked");
-  });
-
-  it("applies agent acceptance roles to inferred async parallel acceptance", async () => {
-    mockPi.onCall({ output: "parallel exploration complete" });
-    const executor = makeAsyncExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);
-
-    const result = await executor.execute(
-      "async-parallel-agent-acceptance-role",
-      { tasks: [{ agent: "worker", task: "Explore the authentication flow" }], async: true },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-
-    const asyncId = result.details?.asyncId;
-    assert.ok(asyncId, "expected asyncId");
-    const payload = await readAsyncPayload(asyncId);
-    assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
-  });
-
   it("top-level async parallel conversion preserves output, reads, and progress", async () => {
     mockPi.onCall({ output: "Async top-level report" });
     const executor = createSubagentExecutor!({
@@ -828,8 +586,6 @@ describe("async execution runner launch and configuration validation", () => {
         baseCwd: tempDir,
         currentSessionId: null,
         asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
       config: {},
       tempArtifactsDir: tempDir,
@@ -874,20 +630,13 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(persistedConfig.plan.tasks.length, 1);
     const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
     const statusPath = path.join(ASYNC_DIR, asyncId, "status.json");
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(asyncId, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
     assert.equal(payload.mode, "parallel");
     assert.equal(payload.sessionId, parentSessionFile);
-    assert.equal(payload.results[0]?.acceptance?.status, "checked");
     assert.equal(status.sessionId, parentSessionFile);
-    assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
     const outputPath = path.join(
       tempDir,
       "parent-session",
@@ -925,69 +674,6 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
   });
 
-  it("async inferred acceptance rejection preserves a saved-output reference", async () => {
-    const outputPath = path.join(tempDir, "async-inferred-acceptance-rejected.md");
-    const savedContent = "saved async deliverable without a report";
-    mockPi.onCall({ output: inferredAcceptanceRejectionOutput(savedContent) });
-    const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
-
-    const result = await executor.execute(
-      "async-inferred-acceptance-rejected",
-      {
-        agent: "worker",
-        task: "Implement the approved async change",
-        output: outputPath,
-        async: true,
-      },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    const asyncId = result.details?.asyncId;
-    assert.ok(asyncId, "expected asyncId");
-    const resultPath = await waitForAsyncResultFile(asyncId);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const child = payload.results[0];
-
-    assert.equal(payload.success, true);
-    assert.equal(child?.exitCode, 0);
-    assert.equal(child?.acceptance?.explicit, false);
-    assert.equal(child?.acceptance?.status, "rejected");
-    assert.match(child?.output ?? "", /Output saved to:/);
-    assert.equal(fs.readFileSync(outputPath, "utf-8"), savedContent);
-  });
-
-  it("async single rejects explicit reviewed acceptance before spawning a child", async () => {
-    mockPi.onCall({ output: "should not run" });
-    const artifactConfig = {
-      enabled: false,
-      includeInput: false,
-      includeOutput: false,
-      includeJsonl: false,
-      includeMetadata: false,
-      cleanupDays: 7,
-    };
-    const id = `async-acceptance-${Date.now().toString(36)}`;
-    const result = executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Implement acceptance-covered fix",
-      agentConfig: makeAgent("worker", { completionGuard: false }),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-acceptance" },
-      artifactConfig,
-      maxSubagentDepth: 2,
-      acceptance: { level: "reviewed", criteria: ["Patch bug"], review: false },
-    });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0]?.text ?? "", /reviewed/);
-    assert.match(result.content[0]?.text ?? "", /verified/);
-    assert.match(result.content[0]?.text ?? "", /verify commands/);
-    assert.match(result.content[0]?.text ?? "", /checked/);
-    assert.equal(mockPi.callCount(), 0);
-    assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
-    assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
-  });
-
   it("top-level async single suppresses progress for review-only tasks", async () => {
     mockPi.onCall({ output: "Async review" });
     const executor = createSubagentExecutor!({
@@ -996,8 +682,6 @@ describe("async execution runner launch and configuration validation", () => {
         baseCwd: tempDir,
         currentSessionId: null,
         asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
       config: {},
       tempArtifactsDir: tempDir,
@@ -1020,13 +704,7 @@ describe("async execution runner launch and configuration validation", () => {
 
     const asyncId = result.details?.asyncId;
     assert.ok(asyncId, "expected asyncId");
-    const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(asyncId, scaleTestTimeout(10_000));
     const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
     assert.ok(callFile, "expected a recorded mock pi call");
     const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8"))
@@ -1053,23 +731,23 @@ describe("async execution runner launch and configuration validation", () => {
       assert.ok(cached);
       assert.strictEqual(readStatus(dir), cached);
 
-      writeAtomicJson(statusPath, { ...statusData, state: "stopped" });
+      writeAtomicJson(statusPath, { ...statusData, state: "unknown-state" });
       fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
       assert.equal(fs.statSync(statusPath).mtimeMs, fixedTimestamp.getTime());
       const replaced = readStatus(dir);
       assert.ok(replaced);
-      assert.equal(replaced.state, "stopped");
+      assert.equal(replaced.state, "failed");
       assert.notStrictEqual(replaced, cached);
     } finally {
       removeTempDir(dir);
     }
   });
 
-  it("readStatus throws for malformed status files", () => {
+  it("readStatus retries then throws for malformed status files", () => {
     const dir = createTempDir();
     try {
       fs.writeFileSync(path.join(dir, "status.json"), "{bad-json", "utf-8");
-      assert.throws(() => readStatus(dir), /Failed to parse async status file/);
+      assert.throws(() => readStatus(dir), /status JSON could not be parsed/);
     } finally {
       removeTempDir(dir);
     }
@@ -1155,68 +833,6 @@ describe("async execution runner launch and configuration validation", () => {
       fs.existsSync(unparseableConfigPath),
       "unparseable JSON should retain the config file",
     );
-  });
-
-  it("rejects legacy nested-self runner envelopes before spawn or artifact mutation", () => {
-    const runnerPath = path.resolve(
-      process.cwd(),
-      "extensions/subagents/src/runs/background/subagent-runner.js",
-    );
-    const cases = [
-      { label: "file", useStdin: false },
-      { label: "stdin", useStdin: true },
-    ] as const;
-
-    for (const testCase of cases) {
-      const id = `async-retired-nested-self-${testCase.label}-${Date.now().toString(36)}`;
-      const asyncDir = path.join(tempDir, id);
-      const resultPath = path.join(tempDir, `${id}-result.json`);
-      const configPath = path.join(tempDir, `${id}-config.json`);
-      const config = {
-        id,
-        plan: {
-          kind: "single",
-          task: { agent: "worker", task: "This child must not launch." },
-        },
-        resultPath,
-        cwd: tempDir,
-        asyncDir,
-        sessionId: `session-${id}`,
-        nestedSelf: { rootRunId: "legacy-root", parentRunId: "legacy-parent" },
-      };
-      const configJson = JSON.stringify(config);
-      if (!testCase.useStdin) fs.writeFileSync(configPath, configJson, "utf-8");
-
-      const runner = spawnSync(
-        process.execPath,
-        testCase.useStdin ? [runnerPath] : [runnerPath, configPath],
-        {
-          cwd: process.cwd(),
-          encoding: "utf-8",
-          input: testCase.useStdin ? configJson : undefined,
-          env: sanitizedRunnerEnv(),
-        },
-      );
-
-      assert.equal(runner.status, 1, `${testCase.label}: ${runner.stderr}`);
-      assert.match(runner.stderr, /Nested subagent orchestration is retired/);
-      assert.equal(mockPi.callCount(), 0, `${testCase.label}: child runner must not launch Pi`);
-      assert.equal(
-        fs.existsSync(configPath),
-        !testCase.useStdin,
-        `${testCase.label}: nested envelope must be rejected before file consumption`,
-      );
-      assert.equal(
-        fs.existsSync(asyncDir),
-        false,
-        `${testCase.label}: rejection must not create async artifacts`,
-      );
-      assert.equal(
-        fs.existsSync(resultPath),
-        false,
-        `${testCase.label}: rejection must not create a result artifact`,
-      );
-    }
   });
 
   it("rejects retired structured-output plans before launching a child", () => {
@@ -1309,6 +925,76 @@ describe("async execution runner launch and configuration validation", () => {
     }
   });
 
+  it("rejects malformed persisted ticket bodies before launching a child", () => {
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const validTask = {
+      agent: "worker",
+      task: "This child must not launch.",
+      ticketId: "tlhm-valid",
+      ticketBody: "# Valid ticket body\n",
+      inheritProjectContext: false,
+      inheritSkills: false,
+    } satisfies RunnerSubagentStep;
+    const cases: Array<{ label: string; task: unknown }> = [
+      { label: "missing-id", task: { ...validTask, ticketId: undefined } },
+      { label: "empty-body", task: { ...validTask, ticketBody: " \n" } },
+      { label: "non-string-body", task: { ...validTask, ticketBody: 42 } },
+      {
+        label: "oversized-body",
+        task: { ...validTask, ticketBody: "x".repeat(TICKET_LOOKUP_MAX_OUTPUT_BYTES + 1) },
+      },
+      { label: "unsafe-id", task: { ...validTask, ticketId: "bad/id" } },
+      { label: "non-string-id", task: { ...validTask, ticketId: 42 } },
+    ];
+
+    for (const testCase of cases) {
+      const id = `async-invalid-ticket-${testCase.label}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          id,
+          plan: { kind: "single", task: testCase.task },
+          resultPath,
+          cwd: tempDir,
+          asyncDir,
+          sessionId: `session-${id}`,
+        }),
+        "utf-8",
+      );
+
+      const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        env: { ...process.env },
+      });
+
+      assert.equal(runner.status, 1, `${testCase.label}: ${runner.stderr}`);
+      assert.match(runner.stderr, /valid direct plan/);
+      assert.equal(mockPi.callCount(), 0, `${testCase.label}: child runner must not launch Pi`);
+      assert.equal(
+        fs.existsSync(configPath),
+        false,
+        `${testCase.label}: config should be consumed`,
+      );
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      assert.equal(payload.state, "failed", testCase.label);
+      assert.equal(payload.success, false, testCase.label);
+      assert.equal(payload.error, "Async runner config must include a valid direct plan.");
+      assert.equal(payload.results.length, 0, testCase.label);
+      assert.equal(status.state, "failed", testCase.label);
+      assert.equal(status.steps?.length, 0, testCase.label);
+    }
+  });
+
   it("enforces the compact profile at the persisted runner boundary", () => {
     const id = `async-persisted-compact-${Date.now().toString(36)}`;
     const asyncDir = path.join(tempDir, id);
@@ -1398,192 +1084,6 @@ describe("async execution runner launch and configuration validation", () => {
     assert.match(fs.readFileSync(artifactPaths.outputPath, "utf-8"), /persisted compact result/);
     assert.equal(fs.existsSync(artifactPaths.metadataPath), true);
     assert.equal(payload.results[0]?.transcriptPath, undefined);
-  });
-
-  it("ignores legacy share:true runner configs for file and stdin entries", () => {
-    const runnerPath = path.resolve(
-      process.cwd(),
-      "extensions/subagents/src/runs/background/subagent-runner.js",
-    );
-    const piArgv1 = path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs");
-    const exporterSentinel = path.join(tempDir, "exporter-invoked");
-    const fakePiPackageRoot = path.join(tempDir, "fake-pi-package");
-    const exporterDir = path.join(fakePiPackageRoot, "dist", "core", "export-html");
-    fs.mkdirSync(exporterDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakePiPackageRoot, "package.json"),
-      JSON.stringify({ type: "module", bin: { pi: "dist/cli.mjs" } }),
-      "utf-8",
-    );
-    fs.writeFileSync(
-      path.join(fakePiPackageRoot, "dist", "cli.mjs"),
-      `import ${JSON.stringify(
-        pathToFileURL(
-          path.resolve(process.cwd(), "extensions/subagents/test/support/mock-pi-script.mjs"),
-        ),
-      )};\n`,
-      "utf-8",
-    );
-    fs.writeFileSync(
-      path.join(exporterDir, "index.js"),
-      [
-        'import fs from "node:fs";',
-        `const sentinel = ${JSON.stringify(exporterSentinel)};`,
-        "export function exportFromFile(_sessionFile, options = {}) {",
-        '  fs.writeFileSync(sentinel, "exporter invoked", "utf-8");',
-        '  if (options.outputPath) fs.writeFileSync(options.outputPath, "<html>", "utf-8");',
-        "  return options.outputPath;",
-        "}",
-      ].join("\n"),
-      "utf-8",
-    );
-
-    const fakeGhDir = path.join(tempDir, "fake-gh-bin");
-    const ghSentinel = path.join(tempDir, "gh-invoked");
-    fs.mkdirSync(fakeGhDir, { recursive: true });
-    const ghPath = path.join(fakeGhDir, "gh");
-    fs.writeFileSync(
-      ghPath,
-      "#!/bin/sh\nprintf 'gh invoked' > \"$TLH_TEST_FAKE_GH_SENTINEL\"\nexit 77\n",
-      "utf-8",
-    );
-    fs.chmodSync(ghPath, 0o755);
-
-    const originalPath = process.env.PATH;
-    const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
-    const originalGhSentinel = process.env.TLH_TEST_FAKE_GH_SENTINEL;
-    process.env.PATH = `${fakeGhDir}${path.delimiter}${originalPath ?? ""}`;
-    process.env.MOCK_PI_SESSION_DIR_FILE = "1";
-    process.env.TLH_TEST_FAKE_GH_SENTINEL = ghSentinel;
-
-    const htmlFilesUnder = (root: string): string[] => {
-      const files: string[] = [];
-      const visit = (dir: string): void => {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const entryPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) visit(entryPath);
-          else if (entry.name.endsWith(".html")) files.push(entryPath);
-        }
-      };
-      visit(root);
-      return files;
-    };
-
-    const runLegacyConfig = (entry: "file" | "stdin"): void => {
-      const id = `async-legacy-share-${entry}-${Date.now().toString(36)}`;
-      const asyncDir = path.join(tempDir, id);
-      const resultPath = path.join(tempDir, `${id}-result.json`);
-      const configPath = path.join(tempDir, `${id}-config.json`);
-      const sessionDir = path.join(tempDir, `${id}-session`);
-      const outputFile = path.join(asyncDir, "output-0.log");
-      const sessionFile = path.join(sessionDir, "2026-01-01T00-00-00-000Z_session.jsonl");
-      fs.mkdirSync(sessionDir, { recursive: true });
-      fs.writeFileSync(
-        sessionFile,
-        `${JSON.stringify({
-          type: "message",
-          message: { role: "assistant", usage: { input: 1, output: 1 } },
-        })}\n`,
-        "utf-8",
-      );
-      mockPi.onCall({ output: "legacy share result" });
-
-      const baseConfig = {
-        id,
-        plan: {
-          kind: "single",
-          task: {
-            agent: "worker",
-            task: "Complete the legacy-share compatibility fixture.",
-            inheritProjectContext: false,
-            inheritSkills: false,
-          },
-        },
-        resultPath,
-        cwd: tempDir,
-        sessionDir,
-        asyncDir,
-        artifactConfig: resolveArtifactConfig({ mode: "compact" }),
-        piPackageRoot: fakePiPackageRoot,
-        piArgv1,
-        sessionId: `session-${id}`,
-      } satisfies SubagentRunConfig;
-      // Deliberately preserve the historical runner-only input outside the
-      // production config type; the runner must ignore it without publishing.
-      const legacyConfig: SubagentRunConfig & { share: true } = {
-        ...baseConfig,
-        share: true,
-      };
-
-      const runner =
-        entry === "file"
-          ? (() => {
-              fs.writeFileSync(configPath, JSON.stringify(legacyConfig), "utf-8");
-              return spawnSync(process.execPath, [runnerPath, configPath], {
-                cwd: process.cwd(),
-                encoding: "utf-8",
-                env: { ...process.env },
-              });
-            })()
-          : spawnSync(process.execPath, [runnerPath], {
-              cwd: process.cwd(),
-              encoding: "utf-8",
-              input: JSON.stringify(legacyConfig),
-              env: { ...process.env },
-            });
-
-      assert.equal(runner.status, 0, `${entry}: ${runner.stderr}`);
-      const payload: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-      const status: unknown = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      );
-      assert.ok(isRecord(payload), `${entry}: result payload should be an object`);
-      assert.ok(isRecord(status), `${entry}: status payload should be an object`);
-      assert.equal(
-        payload.success,
-        true,
-        `${entry}: child should succeed: ${JSON.stringify(payload)}`,
-      );
-      assert.equal(status.state, "complete", `${entry}: status should complete`);
-      const payloadSessionFile = payload.sessionFile;
-      const statusSessionFile = status.sessionFile;
-      assert.equal(
-        typeof payloadSessionFile,
-        "string",
-        `${entry}: result session pointer should be a string`,
-      );
-      assert.equal(
-        typeof statusSessionFile,
-        "string",
-        `${entry}: status session pointer should be a string`,
-      );
-      if (typeof payloadSessionFile !== "string" || typeof statusSessionFile !== "string") {
-        throw new Error(`${entry}: session pointer should be a string`);
-      }
-      assert.equal(payloadSessionFile, statusSessionFile, `${entry}: session pointer should agree`);
-      assert.ok(fs.existsSync(statusSessionFile), `${entry}: session file should exist`);
-      assert.equal(status.outputFile, outputFile, `${entry}: output pointer should be canonical`);
-      assert.ok(fs.existsSync(outputFile), `${entry}: output file should exist`);
-      assert.match(fs.readFileSync(outputFile, "utf-8"), /legacy share result/);
-      assert.equal("shareUrl" in payload, false, `${entry}: share URL must not be published`);
-      assert.equal("gistUrl" in payload, false, `${entry}: gist URL must not be published`);
-      assert.equal("shareError" in payload, false, `${entry}: share error must not be published`);
-      assert.equal(fs.existsSync(exporterSentinel), false, `${entry}: exporter must not run`);
-      assert.equal(fs.existsSync(ghSentinel), false, `${entry}: gh must not run`);
-      assert.deepEqual(htmlFilesUnder(tempDir), [], `${entry}: no HTML artifact should be created`);
-    };
-
-    try {
-      runLegacyConfig("file");
-      runLegacyConfig("stdin");
-    } finally {
-      if (originalPath === undefined) delete process.env.PATH;
-      else process.env.PATH = originalPath;
-      if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
-      else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
-      if (originalGhSentinel === undefined) delete process.env.TLH_TEST_FAKE_GH_SENTINEL;
-      else process.env.TLH_TEST_FAKE_GH_SENTINEL = originalGhSentinel;
-    }
   });
 
   it("omits compact task metadata but retains debug and mode-less legacy task text", () => {
@@ -1777,12 +1277,10 @@ describe("async execution runner launch and configuration validation", () => {
       task: "Inspect the task",
       model,
       modelCandidates: [model],
-      modelFallbackFilterNotice: persistedNotice,
+      modelFallbackNotice: persistedNotice,
       inheritProjectContext: false,
       inheritSkills: false,
-    } satisfies RunnerSubagentStep & {
-      modelFallbackFilterNotice: string;
-    };
+    } satisfies RunnerSubagentStep;
     const config: SubagentRunConfig = {
       id,
       plan: {

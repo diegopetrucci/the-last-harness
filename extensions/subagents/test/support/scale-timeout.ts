@@ -7,27 +7,27 @@
  * `CI` is truthy so that GitHub-hosted macOS runners have enough headroom for
  * process-spawn and filesystem-polling operations without slowing local runs.
  *
+ * ## When to scale
+ *
+ * Scale only budgets for waiting until a condition becomes true (wait helpers,
+ * polling deadlines, spawn-ordering margins): they end early on success, so extra
+ * headroom costs nothing. Do NOT scale time the test always spends in full:
+ * (a) negative windows that assert something does not happen (a slow runner can
+ * only weaken such a check, never fail it falsely), and (b) product
+ * deadlines (`maxExecutionTimeMs`, `timeoutMs`) the test waits to fire. Scaling
+ * those triples mandatory CI wall time. Keep a product deadline scaled when the
+ * test needs the child to reach some state before the deadline fires, and keep
+ * ratio invariants (delay vs. bound) scaled together.
+ *
  * ## Branded type
  *
  * `scaleTestTimeout` returns a `ScaledMs` branded value so that raw numeric
  * literals cannot accidentally be passed where a scaled budget is expected.
- * The 8 wait helpers in `async-execution-helpers.ts` require `ScaledMs` for
+ * The wait helpers in `async-execution-helpers.ts` require `ScaledMs` for
  * their `timeoutMs` parameter — passing a plain `number` is a compile error.
- *
- * Use `unscaledMs` when you intentionally want a fixed, unscaled budget (e.g.
- * a short deadline for a test that *measures* timeout behaviour).  The name
- * makes the deliberate opt-out visible at the call site and distinguishable
- * from an accidental raw literal.
- *
- * Usage:
- *   import { scaleTestTimeout, unscaledMs } from "../support/scale-timeout.ts";
- *   async function waitForFoo(timeoutMs = scaleTestTimeout(15_000)) { ... }
- *
- *   // explicit opt-out – fixed budget regardless of CI scale factor:
- *   await waitForFoo(unscaledMs(5_000));
  */
 
-/** Branded millisecond value produced by {@link scaleTestTimeout} or {@link unscaledMs}. */
+/** Branded millisecond value produced by {@link scaleTestTimeout}. */
 export type ScaledMs = number & { readonly __scaledMs: unique symbol };
 
 /** Apply the `TLH_TEST_TIMEOUT_SCALE` factor and return a branded `ScaledMs`. */
@@ -37,15 +37,4 @@ export function scaleTestTimeout(ms: number): ScaledMs {
   const factor = Number(raw);
   if (!Number.isFinite(factor) || factor <= 0) return ms as ScaledMs;
   return Math.round(ms * factor) as ScaledMs;
-}
-
-/**
- * Explicit opt-out: mark `ms` as a deliberately unscaled budget.
- *
- * Use this when the test intentionally measures timeout behaviour at a fixed
- * wall-clock duration and must not grow with the CI scale factor.  The
- * function name documents the intent at the call site.
- */
-export function unscaledMs(ms: number): ScaledMs {
-  return ms as ScaledMs;
 }

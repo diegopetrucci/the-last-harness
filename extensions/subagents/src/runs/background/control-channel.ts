@@ -9,9 +9,8 @@
  * This module adds a portable, file-based control inbox inside the run directory.
  * The parent drops an interrupt request file; the runner watches the inbox and
  * routes the request into its existing graceful `interruptRunner()` (pause +
- * resumable), identically on every platform. The OS signal is kept only as an
- * opportunistic fast-path; its failure is non-fatal because the file inbox is
- * authoritative.
+ * resumable), identically on every platform. The file inbox is authoritative and
+ * is the only interrupt delivery path.
  */
 
 import { randomUUID } from "node:crypto";
@@ -20,24 +19,14 @@ import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { POLL_INTERVAL_MS } from "../../shared/types.ts";
 
-/**
- * Opportunistic fast-path interrupt signal. On Unix `SIGUSR2` is trapped by the
- * runner; on Windows `process.kill(pid, "SIGBREAK")` is not deliverable
- * cross-process and throws `ENOSYS`, so the file inbox below is the real channel.
- */
-export const INTERRUPT_SIGNAL: NodeJS.Signals =
-  process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
-
 export type ControlChannelFs = Pick<
   typeof fs,
-  "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync"
+  "mkdirSync" | "existsSync" | "rmSync" | "renameSync" | "watch" | "readdirSync" | "readFileSync"
 >;
 export type ControlChannelTimers = {
   setInterval: typeof setInterval;
   clearInterval: typeof clearInterval;
 };
-type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => void;
-
 interface InterruptRequest {
   type: "interrupt";
   ts?: number;
@@ -473,35 +462,80 @@ export function consumeChildMessageRequests(
   return consumeChildMessageRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
 
-/**
- * Runner side: consume a pending interrupt request. Idempotent — removes the file
- * so each distinct request fires exactly once. Returns whether one was pending.
- */
+/** Parse a request without consuming it; used by read-only status inspection. */
+function parseInterruptRequest(value: unknown): InterruptRequest | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const request = value as Partial<InterruptRequest>;
+  return request.type === "interrupt" ? (request as InterruptRequest) : undefined;
+}
+
 export function readInterruptRequest(
   asyncDir: string,
   fsImpl: Pick<typeof fs, "readFileSync"> = fs,
 ): InterruptRequest | undefined {
-  const requestPath = interruptRequestPath(asyncDir);
   try {
-    return JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")) as InterruptRequest;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
+    return parseInterruptRequest(
+      JSON.parse(fsImpl.readFileSync(interruptRequestPath(asyncDir), "utf-8")),
+    );
+  } catch {
+    // A partially-written or corrupt interrupt is ignored by read-only status
+    // inspection. The consuming watcher still removes it below.
+    return undefined;
   }
+}
+
+type ConsumedInterruptRequest = {
+  /** A request path was present when the claim was attempted. */
+  present: boolean;
+  /** The path was atomically claimed and is therefore consumed exactly once. */
+  claimed: boolean;
+  request?: InterruptRequest;
+};
+
+/**
+ * Atomically claim one interrupt before reading it. A writer replacing the
+ * inbox path after the rename leaves a new request for the next poll rather
+ * than losing it between a read and remove.
+ */
+function consumeInterruptRequestPayload(
+  asyncDir: string,
+  fsImpl: Pick<typeof fs, "readFileSync" | "rmSync" | "renameSync"> = fs,
+): ConsumedInterruptRequest {
+  const requestPath = interruptRequestPath(asyncDir);
+  const claimedPath = `${requestPath}.claim-${randomUUID()}`;
+  try {
+    fsImpl.renameSync(requestPath, claimedPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return { present: false, claimed: false };
+    }
+    // A non-ENOENT failure leaves the inbox path untouched. Do not report a
+    // delivery: the next poll must be allowed to retry the claim.
+    return { present: true, claimed: false };
+  }
+
+  let request: InterruptRequest | undefined;
+  try {
+    request = parseInterruptRequest(JSON.parse(fsImpl.readFileSync(claimedPath, "utf-8")));
+  } catch {
+    // Corrupt or partially-written requests are still consumed. The caller
+    // receives an undefined payload but still records the one delivery.
+  }
+  try {
+    fsImpl.rmSync(claimedPath, { force: true, recursive: true });
+  } catch {
+    // The atomic claim is already private to this consumer, so cleanup failure
+    // cannot cause a duplicate delivery. Deliver the request rather than
+    // dropping a valid interrupt because its claim file could not be removed.
+  }
+  return { present: true, claimed: true, ...(request ? { request } : {}) };
 }
 
 export function consumeInterruptRequest(
   asyncDir: string,
-  fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
+  fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readFileSync" | "renameSync"> = fs,
 ): boolean {
-  const requestPath = interruptRequestPath(asyncDir);
-  if (!fsImpl.existsSync(requestPath)) return false;
-  try {
-    fsImpl.rmSync(requestPath, { force: true, recursive: true });
-  } catch {
-    // Already removed by a concurrent check — still counts as consumed.
-  }
-  return true;
+  return consumeInterruptRequestPayload(asyncDir, fsImpl).claimed;
 }
 
 function consumeTimeoutRequest(
@@ -519,54 +553,23 @@ function consumeTimeoutRequest(
 }
 
 /**
- * Parent side: portable interrupt = authoritative file request + best-effort OS
- * signal. The signal is only a latency optimization on Unix; ENOSYS on Windows
- * is swallowed because the file inbox is authoritative there. Other signal
- * failures are surfaced because they usually mean the runner is not alive to
- * consume the request.
+ * Parent side: write the authoritative portable interrupt request. Persisted
+ * runner PIDs are intentionally not signalled: status liveness cannot prove
+ * process ownership, and the runner's watched/polled inbox is the supported
+ * control channel on every platform.
+ *
+ * `pid`, `kill`, and `signal` remain accepted for compatibility with callers
+ * that still pass persisted status details; they are deliberately ignored.
  */
 export function deliverInterruptRequest(input: {
   asyncDir: string;
   pid?: number;
-  kill?: KillFn;
+  kill?: (pid: number, signal?: NodeJS.Signals | 0) => void;
   signal?: NodeJS.Signals;
   now?: () => number;
   source?: string;
 }): void {
-  const requestPath = requestAsyncInterrupt(
-    input.asyncDir,
-    input.source ? { source: input.source } : {},
-    {
-      now: input.now,
-    },
-  );
-  if (typeof input.pid === "number" && input.pid > 0) {
-    try {
-      (input.kill ?? process.kill)(input.pid, input.signal ?? INTERRUPT_SIGNAL);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOSYS") {
-        // File inbox is authoritative when custom cross-process signals are unavailable.
-        return;
-      }
-      try {
-        fs.rmSync(requestPath, { force: true });
-      } catch {
-        // Best effort cleanup; the caller still gets the signal failure.
-      }
-      throw error;
-    }
-  }
-}
-
-export function deliverTimeoutRequest(input: {
-  asyncDir: string;
-  pid?: number;
-  kill?: KillFn;
-  signal?: NodeJS.Signals;
-  now?: () => number;
-  source?: string;
-}): void {
-  requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+  requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
     now: input.now,
   });
 }
@@ -580,7 +583,7 @@ export function deliverTimeoutRequest(input: {
 export function watchAsyncControlInbox(
   asyncDir: string,
   opts: {
-    onInterrupt: () => void;
+    onInterrupt: (request?: { reason?: string; source?: string }) => void;
     onTimeout?: () => void;
     onSteer?: (request: SteerRequest) => void;
     onResume?: (request: ResumeRequest) => void;
@@ -603,7 +606,11 @@ export function watchAsyncControlInbox(
     if (disposed) return;
     try {
       if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
-      if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
+      const interruptRequest = consumeInterruptRequestPayload(asyncDir, fsImpl);
+      // A claimed malformed/empty payload is still one interrupt delivery. The
+      // undefined request tells the runner to use its normal interrupt path,
+      // while an unclaimed rename failure remains retryable and is not fired.
+      if (interruptRequest.claimed) opts.onInterrupt(interruptRequest.request);
       for (const request of consumeChildMessageRequests(asyncDir, fsImpl)) {
         if (request.type === "resume") opts.onResume?.(request);
         else opts.onSteer?.(request);
@@ -639,4 +646,15 @@ export function watchAsyncControlInbox(
     }
     timers.clearInterval(interval);
   };
+}
+
+/** Write the authoritative portable timeout request for an owned runner. */
+export function deliverTimeoutRequest(input: {
+  asyncDir: string;
+  now?: () => number;
+  source?: string;
+}): void {
+  requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+    now: input.now,
+  });
 }

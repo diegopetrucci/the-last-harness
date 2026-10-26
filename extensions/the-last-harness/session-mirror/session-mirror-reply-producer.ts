@@ -46,6 +46,8 @@ export interface SessionMirrorReplyProducerOptions {
   readonly createChannel?: (options: SessionMirrorReplyChannelOptions) => SessionMirrorReplyChannel;
   readonly now?: () => number;
   readonly scheduleConfirmation?: (task: () => void) => ReturnType<typeof setTimeout> | undefined;
+  /** Schedule a lifecycle release after the upstream event handler returns. */
+  readonly scheduleLifecycleCompletion?: (task: () => void) => void;
   readonly setTimeout?: (task: () => void, delay: number) => ReturnType<typeof setTimeout>;
   readonly clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void;
   /** Receives only a fixed outcome code; source text and identifiers are never passed. */
@@ -62,9 +64,10 @@ export interface SessionMirrorReplyProducer {
   readonly turnEnd: () => void;
   readonly agentSettled: () => void;
   readonly sessionBeforeTree: () => void;
-  readonly sessionTree: () => void;
+  readonly sessionTree: (event?: unknown, context?: unknown) => void;
   readonly sessionBeforeCompact: () => void;
-  readonly sessionCompact: () => void;
+  readonly sessionCompact: (event?: unknown, context?: unknown) => void;
+  readonly sessionCompactFailed: (event?: unknown, context?: unknown) => void;
   readonly publicationReady: (info: unknown) => void;
   readonly handleReply: (input: unknown) => Promise<SessionMirrorReplyProducerOutcome>;
   readonly getState: () => SessionMirrorReplyProducerState;
@@ -81,6 +84,7 @@ type PendingReply = {
   persistenceTimer: ReturnType<typeof setTimeout> | undefined;
   persistenceScheduled: boolean;
   messageEndObserved: boolean;
+  injectionAttempted: boolean;
   settled: boolean;
   resolve: (outcome: SessionMirrorReplyProducerOutcome) => void;
 };
@@ -88,6 +92,16 @@ type PendingReply = {
 type MessageRecord = {
   readonly role: unknown;
   readonly content: unknown;
+};
+
+type LifecycleOperation = {
+  readonly kind: "tree" | "compaction";
+  readonly serial: number;
+  completed: boolean;
+  completionEvidenceValid: boolean;
+  willRetry: boolean;
+  context: unknown;
+  release?: (idleEvidence?: boolean) => void;
 };
 
 const MAX_COUNTER = 2_000_000_000;
@@ -147,6 +161,32 @@ function field(value: unknown, name: string): ReturnType<typeof option> {
     return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function booleanField(value: unknown, name: string): boolean | undefined {
+  const candidate = field(value, name);
+  return typeof candidate === "boolean" ? candidate : undefined;
+}
+
+function weakSetKey(value: unknown): value is object {
+  return value !== null && (typeof value === "object" || typeof value === "function");
+}
+
+function lifecycleIsIdle(context: unknown, fallback: (() => boolean) | undefined): boolean {
+  if (context !== undefined) {
+    const contextIsIdle = method<boolean>(context, "isIdle");
+    if (contextIsIdle === undefined) return false;
+    try {
+      return contextIsIdle.call(context) === true;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    return fallback?.() === true;
+  } catch {
+    return false;
   }
 }
 
@@ -319,6 +359,8 @@ export function createSessionMirrorReplyProducer(
   const scheduleConfirmation =
     options.scheduleConfirmation ??
     ((task: () => void) => setTimeout(task, MAX_CONFIRMATION_DELAY_MS));
+  const scheduleLifecycleCompletion =
+    options.scheduleLifecycleCompletion ?? ((task: () => void) => void setTimeout(task, 0));
   const setTimer = options.setTimeout ?? ((task, delay) => setTimeout(task, delay));
   const clear =
     options.clearTimeout ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
@@ -326,7 +368,11 @@ export function createSessionMirrorReplyProducer(
   let sessionActive = false;
   let generation = 0;
   let busyLatch = false;
+  let agentActive = false;
   let compactionLatched = false;
+  let lifecycleSerial = 0;
+  let lifecycleOperation: LifecycleOperation | undefined;
+  let completedCompactionEvents = new WeakSet<object>();
   let channel: SessionMirrorReplyChannel | undefined;
   let channelGeneration: number | undefined;
   let channelSerial = 0;
@@ -342,6 +388,74 @@ export function createSessionMirrorReplyProducer(
     try {
       options.notify?.(outcome);
     } catch {}
+  };
+
+  const beginLifecycleOperation = (kind: LifecycleOperation["kind"]): void => {
+    lifecycleSerial = nextCounter(lifecycleSerial);
+    lifecycleOperation = {
+      kind,
+      serial: lifecycleSerial,
+      completed: false,
+      completionEvidenceValid: true,
+      willRetry: false,
+      context: undefined,
+    };
+  };
+
+  const completeLifecycleOperation = (
+    kind: LifecycleOperation["kind"],
+    event: unknown,
+    context: unknown,
+  ): void => {
+    const operation = lifecycleOperation;
+    if (operation === undefined || operation.kind !== kind || operation.completed) return;
+    if (kind === "compaction" && weakSetKey(event)) completedCompactionEvents.add(event);
+    const willRetry = booleanField(event, "willRetry");
+    operation.completed = true;
+    operation.completionEvidenceValid =
+      kind !== "compaction" || (event !== undefined && willRetry !== undefined);
+    operation.willRetry = willRetry === true;
+    operation.context = context;
+    const operationSerial = operation.serial;
+    const release = (idleEvidence = false): void => {
+      if (
+        !sessionActive ||
+        lifecycleOperation !== operation ||
+        lifecycleOperation.serial !== operationSerial ||
+        !operation.completed
+      )
+        return;
+      // An automatic compaction with a guaranteed retry is still active even
+      // when a malformed or synthetic context reports idle.
+      if (
+        !operation.completionEvidenceValid ||
+        operation.willRetry ||
+        (!idleEvidence && !lifecycleIsIdle(operation.context, options.isIdle))
+      )
+        return;
+      lifecycleOperation = undefined;
+      if (operation.kind === "compaction") compactionLatched = false;
+      if (!agentActive) busyLatch = false;
+    };
+    operation.release = release;
+    const idle =
+      operation.completionEvidenceValid &&
+      !operation.willRetry &&
+      lifecycleIsIdle(operation.context, options.isIdle);
+    if (idle) {
+      release(true);
+      return;
+    }
+    if (!operation.completionEvidenceValid || operation.willRetry) return;
+    try {
+      scheduleLifecycleCompletion(() => release());
+    } catch {}
+  };
+
+  const refreshCompletedLifecycleOperation = (): void => {
+    const operation = lifecycleOperation;
+    if (operation === undefined || !operation.completed || operation.release === undefined) return;
+    operation.release();
   };
 
   const remember = (requestId: string): void => {
@@ -366,7 +480,9 @@ export function createSessionMirrorReplyProducer(
     lastOutcome = normalized;
     if (normalized === "accepted") accepted = boundedCounter(accepted);
     if (normalized === "unconfirmed") unconfirmed = boundedCounter(unconfirmed);
-    if (normalized !== "accepted") busyLatch = false;
+    if (normalized !== "accepted" && !agentActive && lifecycleOperation === undefined) {
+      busyLatch = false;
+    }
     if (normalized === "accepted" || normalized === "unconfirmed") notify(normalized);
     candidate.resolve(normalized);
   };
@@ -380,10 +496,6 @@ export function createSessionMirrorReplyProducer(
     if (candidate.settled || pending !== candidate || !sessionActive) return;
     if (candidate.token !== generation || compactionLatched || !candidate.messageEndObserved) {
       settle(candidate, "unconfirmed");
-      return;
-    }
-    if (safeNow(now) - candidate.startedAt >= candidate.request.ttlSeconds * 1000) {
-      settle(candidate, "expired");
       return;
     }
     let manager: SessionMirrorReadonlySessionManager | undefined;
@@ -449,7 +561,11 @@ export function createSessionMirrorReplyProducer(
     if (request === undefined) return "invalid";
     if (!enabled || !sessionActive) return "unauthorized";
     if (rememberedRequests.includes(request.requestId)) return "duplicate";
-    if (pending !== undefined || busyLatch || compactionLatched) return "busy";
+    if (pending !== undefined) return "busy";
+    if (busyLatch || compactionLatched) {
+      refreshCompletedLifecycleOperation();
+      if (busyLatch || compactionLatched) return "busy";
+    }
 
     let observerState: SessionMirrorObserverState;
     try {
@@ -527,6 +643,7 @@ export function createSessionMirrorReplyProducer(
         persistenceTimer: undefined,
         persistenceScheduled: false,
         messageEndObserved: false,
+        injectionAttempted: false,
         settled: false,
         resolve,
       };
@@ -535,14 +652,20 @@ export function createSessionMirrorReplyProducer(
       busyLatch = true;
       const delay = Math.max(1, request.ttlSeconds * 1000);
       try {
-        const timer = setTimer(() => settle(candidate, "expired"), delay);
+        // TTL bounds admission only. After injection, the confirmation deadline
+        // remains open so a persisted completion can still win the race.
+        const timer = setTimer(() => {
+          if (!candidate.injectionAttempted) settle(candidate, "expired");
+        }, delay);
         if (timer === undefined) throw new Error("reply confirmation timer unavailable");
         candidate.timer = timer;
         if (candidate.settled) safeClear(clear, timer);
       } catch {
         if (!candidate.settled && pending === candidate) {
           try {
-            const timer = setTimeout(() => settle(candidate, "expired"), delay);
+            const timer = setTimeout(() => {
+              if (!candidate.injectionAttempted) settle(candidate, "expired");
+            }, delay);
             if (timer === undefined) throw new Error("reply confirmation fallback unavailable");
             candidate.timer = timer;
             if (candidate.settled) safeClear(clear, timer);
@@ -560,6 +683,14 @@ export function createSessionMirrorReplyProducer(
         settle(candidate, "busy");
         return;
       }
+      if (candidate.settled || pending !== candidate) return;
+      if (safeNow(now) - candidate.startedAt >= request.ttlSeconds * 1000) {
+        settle(candidate, "expired");
+        return;
+      }
+      // Mark the boundary before the call: throws and rejections are unknown
+      // send outcomes, never no-injection expiry.
+      candidate.injectionAttempted = true;
       try {
         const sent = options.sendUserMessage(request.text);
         if (sent !== undefined && typeof sent.then === "function") {
@@ -659,7 +790,10 @@ export function createSessionMirrorReplyProducer(
     sessionActive = true;
     generation = nextCounter(generation);
     busyLatch = false;
+    agentActive = false;
     compactionLatched = false;
+    lifecycleOperation = undefined;
+    completedCompactionEvents = new WeakSet<object>();
     rememberedRequests = [];
     invalidatePending("disconnected");
     publishedSnapshot = undefined;
@@ -673,7 +807,10 @@ export function createSessionMirrorReplyProducer(
     sessionActive = false;
     generation = nextCounter(generation);
     busyLatch = false;
+    agentActive = false;
     compactionLatched = false;
+    lifecycleOperation = undefined;
+    completedCompactionEvents = new WeakSet<object>();
     rememberedRequests = [];
     invalidatePending("disconnected");
     publishedSnapshot = undefined;
@@ -684,6 +821,7 @@ export function createSessionMirrorReplyProducer(
   };
 
   const agentStart = (): void => {
+    agentActive = true;
     busyLatch = true;
   };
 
@@ -699,12 +837,16 @@ export function createSessionMirrorReplyProducer(
       return;
     }
     invalidatePending("unconfirmed");
+    agentActive = true;
     busyLatch = true;
   };
 
   const messageStart = (event?: unknown): void => {
     const message = messageRecord(field(event, "message"));
-    if (message?.role === "user" || message?.role === "assistant") busyLatch = true;
+    if (message?.role === "user" || message?.role === "assistant") {
+      agentActive = true;
+      busyLatch = true;
+    }
   };
 
   const messageEnd = (event?: unknown): void => {
@@ -717,32 +859,53 @@ export function createSessionMirrorReplyProducer(
   };
 
   const turnEnd = (): void => {
+    agentActive = true;
     busyLatch = true;
   };
 
   const agentSettled = (): void => {
+    agentActive = false;
+    lifecycleOperation = undefined;
     busyLatch = false;
     compactionLatched = false;
   };
 
   const sessionBeforeTree = (): void => {
+    beginLifecycleOperation("tree");
     invalidatePending("unconfirmed");
     busyLatch = true;
   };
 
-  const sessionTree = (): void => {
+  const sessionTree = (event?: unknown, context?: unknown): void => {
     busyLatch = true;
+    completeLifecycleOperation("tree", event, context);
   };
 
   const sessionBeforeCompact = (): void => {
+    beginLifecycleOperation("compaction");
     compactionLatched = true;
     invalidatePending("unconfirmed");
     busyLatch = true;
   };
 
-  const sessionCompact = (): void => {
-    compactionLatched = false;
+  const sessionCompact = (event?: unknown, context?: unknown): void => {
     busyLatch = true;
+    completeLifecycleOperation("compaction", event, context);
+  };
+
+  const sessionCompactFailed = (event?: unknown, context?: unknown): void => {
+    if (
+      lifecycleOperation === undefined &&
+      weakSetKey(event) &&
+      completedCompactionEvents.has(event)
+    )
+      return;
+    busyLatch = true;
+    if (lifecycleOperation === undefined) {
+      beginLifecycleOperation("compaction");
+      compactionLatched = true;
+    }
+    completeLifecycleOperation("compaction", event, context);
   };
 
   const getState = (): SessionMirrorReplyProducerState =>
@@ -773,6 +936,7 @@ export function createSessionMirrorReplyProducer(
     sessionTree,
     sessionBeforeCompact,
     sessionCompact,
+    sessionCompactFailed,
     publicationReady,
     handleReply,
     getState,
@@ -787,5 +951,3 @@ function bestEffortClose(
     channel.close(reason);
   } catch {}
 }
-
-export default createSessionMirrorReplyProducer;

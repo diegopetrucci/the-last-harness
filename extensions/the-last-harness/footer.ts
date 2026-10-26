@@ -7,7 +7,6 @@ import {
   type Theme,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
@@ -20,7 +19,6 @@ import {
 import type { TlhInstallNotice } from "./types.js";
 import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
 import type { ProviderAuthHealthStore } from "./provider-auth-health.js";
-export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
@@ -46,16 +44,28 @@ function getCurrentThinkingLevel(pi: ExtensionAPI): string {
 }
 
 function collectUsageTotals(ctx: ExtensionContext) {
+  // Mirror upstream Pi footer getSessionStats: assistant + toolResult messages,
+  // standalone "usage" entries (e.g. cache_warm), and compaction/branch_summary usage.
   const totals = { cost: 0 };
   for (const entry of ctx.sessionManager.getEntries()) {
-    if (entry.type !== "message" || entry.message.role !== "assistant") {
+    const raw = entry as {
+      type: string;
+      message?: { role?: string; usage?: unknown };
+      usage?: unknown;
+    };
+    let usage: unknown;
+    if (raw.type === "usage" || raw.type === "branch_summary" || raw.type === "compaction") {
+      usage = raw.usage;
+    } else if (
+      raw.type === "message" &&
+      (raw.message?.role === "assistant" || raw.message?.role === "toolResult")
+    ) {
+      usage = raw.message.usage;
+    }
+    if (!usage || typeof usage !== "object") {
       continue;
     }
-    const usage = entry.message.usage;
-    if (!usage) {
-      continue;
-    }
-    totals.cost += Number(usage.cost?.total) || 0;
+    totals.cost += Number((usage as { cost?: { total?: unknown } }).cost?.total) || 0;
   }
   return totals;
 }
@@ -343,7 +353,7 @@ export function createTlhFooter(
       const hasFastStatus = extensionStatuses?.has(FAST_STATUS_KEY) ?? false;
 
       // Line 2 (single flowing left-justified line):
-      //   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE] [• fast]
+      //   agent: <primaryName> • <model|no-model> [• thinking] • context% [• fast]
       // Each segment is explicitly themed to avoid ANSI foreground-reset bleed from nested
       // theme.fg() calls. Non-default agent names are highlighted with the accent color.
       const modelOrNoModel = model?.id ?? "no-model";
@@ -379,9 +389,6 @@ export function createTlhFooter(
       }
       agentLine2Str += dimSep + contextPercentStr;
 
-      if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
-        agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
-      }
       const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
       const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
       const agentLine2 =

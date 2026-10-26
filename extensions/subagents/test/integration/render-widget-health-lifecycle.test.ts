@@ -54,7 +54,7 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(text, /\/private\//);
   });
 
-  it("projects continued lifecycles as healthy across single, parallel, and compact layouts", () => {
+  it("projects continued lifecycles as canonical complete across single, parallel, and compact layouts", () => {
     const staleStep = {
       index: 0,
       agent: "worker",
@@ -71,7 +71,8 @@ describe("subagent async widget rendering", () => {
         {
           asyncId: "continued-single",
           asyncDir: "/tmp/continued-single",
-          status: "continued",
+          status: "complete",
+          lifecycle: { continuation: { phase: "continued", continuationRunId: "revived-single" } },
           mode: "single",
           agents: ["worker"],
           interruptRequestedAt: 20_000,
@@ -83,7 +84,7 @@ describe("subagent async widget rendering", () => {
       theme,
       180,
     ).join("\n");
-    assert.match(singleText, /✓ worker · continued/);
+    assert.match(singleText, /✓ worker · complete/);
     assert.doesNotMatch(singleText, /✗|pausing|stale-(?:job-)?tool|stale\/path/);
 
     const parallelText = buildWidgetLines(
@@ -91,7 +92,13 @@ describe("subagent async widget rendering", () => {
         {
           asyncId: "continued-parallel",
           asyncDir: "/tmp/continued-parallel",
-          status: "continued",
+          status: "complete",
+          lifecycle: {
+            continuationsByIndex: {
+              "0": { phase: "continued", continuationRunId: "revived-worker" },
+              "1": { phase: "continued", continuationRunId: "revived-reviewer" },
+            },
+          },
           mode: "parallel",
           agents: ["worker", "reviewer"],
           stepsTotal: 2,
@@ -105,8 +112,8 @@ describe("subagent async widget rendering", () => {
       180,
     ).join("\n");
     assert.match(parallelText, /✓ 2\/2 done/);
-    assert.match(parallelText, /Agent 1\/2: worker · continued/);
-    assert.match(parallelText, /Agent 2\/2: reviewer · continued/);
+    assert.match(parallelText, /Agent 1\/2: worker · complete/);
+    assert.match(parallelText, /Agent 2\/2: reviewer · complete/);
     assert.doesNotMatch(parallelText, /✗|pausing|stale-tool|stale\/path/);
 
     const pendingParallelText = buildWidgetLines(
@@ -114,7 +121,13 @@ describe("subagent async widget rendering", () => {
         {
           asyncId: "continued-parallel-pending-tail",
           asyncDir: "/tmp/continued-parallel-pending-tail",
-          status: "continued",
+          status: "complete",
+          lifecycle: {
+            continuationsByIndex: {
+              "0": { phase: "continued", continuationRunId: "revived-worker" },
+              "1": { phase: "continued", continuationRunId: "revived-reviewer" },
+            },
+          },
           mode: "parallel",
           agents: ["worker", "reviewer", "tail"],
           stepsTotal: 3,
@@ -132,10 +145,22 @@ describe("subagent async widget rendering", () => {
     assert.match(pendingParallelText, /Agent 3\/3: tail · pending/);
     assert.doesNotMatch(pendingParallelText, /Agent 3\/3: tail · continued/);
 
-    const buildCompactParallelJob = (status: "continued" | "running"): AsyncJobState => ({
+    const buildCompactParallelJob = (status: "complete" | "running"): AsyncJobState => ({
       asyncId: `compact-${status}-parallel`,
       asyncDir: `/tmp/compact-${status}-parallel`,
       status,
+      ...(status === "complete"
+        ? {
+            lifecycle: {
+              continuationsByIndex: Object.fromEntries(
+                Array.from({ length: 8 }, (_, index) => [
+                  String(index),
+                  { phase: "continued", continuationRunId: `revived-${index}` },
+                ]),
+              ),
+            },
+          }
+        : {}),
       mode: "parallel",
       agents: Array.from({ length: 9 }, (_, index) => `worker-${index + 1}`),
       stepsTotal: 9,
@@ -156,11 +181,12 @@ describe("subagent async widget rendering", () => {
     resetWidgetLayout();
     withStdoutSize(40, 160, () => {
       const continuedUi = createUiContext();
-      renderWidget(continuedUi.ctx as never, [buildCompactParallelJob("continued")]);
+      renderWidget(continuedUi.ctx as never, [buildCompactParallelJob("complete")]);
       const continuedText = renderWidgetLines(continuedUi.widgets.at(-1), 160).join("\n");
       assert.match(continuedText, /✓/);
-      assert.match(continuedText, /continued/);
-      assert.doesNotMatch(continuedText, /✗|pausing|stale-(?:job-)?tool|stale\/path|live detail/);
+      assert.match(continuedText, /complete/);
+      assert.match(continuedText, /worker-9 · pausing/);
+      assert.doesNotMatch(continuedText, /✗|stale-(?:job-)?tool|stale\/path/);
 
       const runningUi = createUiContext();
       renderWidget(runningUi.ctx as never, [buildCompactParallelJob("running")]);
@@ -980,16 +1006,16 @@ describe("subagent async widget rendering", () => {
     // not flavour text like whimsicalThinkingPhrase. It must survive the compact
     // single-job render in BOTH branches of the single-job detail builders:
     //   - with steps    -> singleWidgetAgentDetails `if (step)` /
-    //                      foregroundStyleWidgetDetails steps loop (needs jobHealthWarningLines)
+    //                      awaitedStyleWidgetDetails steps loop (needs jobHealthWarningLines)
     //   - without steps -> those builders' no-steps branch (already calls
     //                      widgetActivityDetailLines(job, ...))
     const now = 200_000;
     const lastActivityAt = now - 180_000; // 3m gap: avoids the "now ago" strings owned by tlhmf-6y0z
     for (const [activityState, expected] of [["needs_attention", /no activity for 3m/] as const]) {
       for (const [label, mode, steps, expectedHeight, expectedPrefix] of [
-        ["single mode with steps", "single", 1, 5, "       "],
+        ["single mode with steps", "single", 1, 5, "      "],
         ["single mode without steps", "single", 0, 3, "     "],
-        ["parallel mode with steps", "parallel", 3, 7, "     "],
+        ["parallel mode with steps", "parallel", 3, 10, "     "],
         ["parallel mode without steps", "parallel", 0, 3, "     "],
       ] as const) {
         resetWidgetLayout();
@@ -1099,7 +1125,7 @@ describe("subagent async widget rendering", () => {
       const healthLine = lines.find((l) => /no activity for 3m/.test(l));
       assert.match(
         healthLine ?? "",
-        /^ {7}no activity for 3m$/,
+        /^ {6}no activity for 3m$/,
         "single-agent health line must use exactly 7 spaces",
       );
       assert.doesNotMatch(lines.join("\n"), /⎿/);
@@ -1156,7 +1182,7 @@ describe("subagent async widget rendering", () => {
       // text column left by removing the glyph.
       assert.match(
         healthLine ?? "",
-        /^ {7}no activity for 3m$/,
+        /^ {6}no activity for 3m$/,
         "single-agent health line must use exactly 7 spaces",
       );
       assert.doesNotMatch(lines.join("\n"), /⎿/);
@@ -1230,19 +1256,7 @@ describe("subagent async widget rendering", () => {
   });
 
   it("job-level health warning survives fitWidgetLineBudget truncation when step rows are cut", () => {
-    // tlhmf-ve09 (truncation safety): reviewer probe – a 15-step job rendered ten rows
-    // ending in the expand hint with NO health warning. The old unsound dedupe suppressed
-    // the job-level warning when a running step already carried a health activityState,
-    // but step rows are cut AFTER jobHealthWarningLines runs. The fix: always emit the
-    // job-level warning under the header (the only truncation-safe region).
-    //
-    // Shape: parallel job, 15 steps. The FIRST 13 steps carry currentTool (so their rows
-    // render without an inline health signal). Steps 13-14 carry needs_attention without
-    // currentTool (the steps that would trigger the old dedupe). At 30 rows,
-    // collapsedWidgetLineBudget(30)=10; with 2-line header + 15 step rows + hint = 18+
-    // lines the budget forces truncation, cutting steps 7-14 (the health-carrying ones).
-    // Without the job-level warning, no health signal survives. With the fix, the job-level
-    // warning at position 2 (header-region) is guaranteed to survive.
+    // Keep the job-level health warning under the header so it survives step truncation.
     const now = 200_000;
     const lastActivityAt = now - 180_000;
     resetWidgetLayout();

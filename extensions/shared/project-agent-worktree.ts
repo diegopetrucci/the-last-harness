@@ -4,7 +4,7 @@ import { dirname, join, relative, resolve } from "node:path";
 /**
  * Filesystem operations needed to identify a Git worktree. This deliberately
  * contains no host/peer dependencies so it can be shared by the eager guidance
- * path and the native subagent snapshot loader.
+ * path and the on-demand native subagent loader.
  */
 export interface ValidatedWorktreeFileSystem {
   lstatSync(filePath: string): fs.Stats;
@@ -304,9 +304,3 @@ export function resolveValidatedGitWorktreeRoot(
   if (!search.root) return undefined;
   return strictCanonicalPath(search.root, fileSystem);
 }
-
-/** @internal Exported for focused path-resolution tests only. */
-export const __testing = {
-  findValidatedGitWorktreeRootAt,
-  inspectGitWorktreeMarker,
-};

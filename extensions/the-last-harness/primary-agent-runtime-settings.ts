@@ -14,17 +14,6 @@ import type {
   TlhSubagentOverride,
 } from "./types.js";
 
-export function defaultProjectTrustForCwd(cwd: string): "ask" | "always" | "never" {
-  try {
-    const value = SettingsManager.create(cwd, getAgentDir(), {
-      projectTrusted: false,
-    }).getDefaultProjectTrust();
-    return value === "always" || value === "never" ? value : "ask";
-  } catch {
-    return "ask";
-  }
-}
-
 export function getTlhGlobalSettings(cwd: string): TlhSettings {
   try {
     const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
@@ -71,7 +60,7 @@ export function parseTlhSettingsContent(content: string | undefined): Record<str
   if (!content) {
     return {};
   }
-  const parsed = JSON.parse(content) as unknown;
+  const parsed = JSON.parse(content.replace(/^\uFEFF/, "")) as unknown;
   if (!isRecord(parsed)) {
     throw new Error("settings.json must contain a JSON object");
   }

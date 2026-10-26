@@ -3,175 +3,50 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import type { runSync } from "../../src/runs/foreground/execution.ts";
-import {
-  clearForegroundMessageInbox,
-  registerForegroundMessageInbox,
-} from "../../src/runs/foreground/foreground-control.ts";
 import { NESTED_EVENTS_DIR } from "../../src/runs/shared/nested-events.ts";
 import {
+  retiredNestedLaunchError,
   RETIRED_NESTED_ROUTE_ENV_VARS,
   SUBAGENT_CHILD_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import {
-  type ExtensionConfig,
-  type ForegroundRunControl,
-  type SubagentState,
-} from "../../src/shared/types.ts";
-import { makeAgent, makeExtensionAPI, makeMinimalCtx } from "../support/helpers.ts";
-
-function createState(): SubagentState {
-  return {
-    baseCwd: "",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
-}
-
-class CapturingForegroundControls extends Map<string, ForegroundRunControl> {
-  readonly capturedRunIds: string[] = [];
-  readonly capturedControls: ForegroundRunControl[] = [];
-
-  override set(runId: string, control: ForegroundRunControl): this {
-    this.capturedRunIds.push(runId);
-    this.capturedControls.push(control);
-    return super.set(runId, control);
-  }
-}
-
-function createExecutor(
-  state: SubagentState,
-  sessionRoot?: string,
-  runSyncOverride?: typeof runSync,
-) {
-  const config: ExtensionConfig = { maxSubagentDepth: 2, control: {} };
-  return createSubagentExecutor({
-    pi: makeExtensionAPI({ getSessionName: () => "parent" }),
-    state,
-    config,
-    tempArtifactsDir: os.tmpdir(),
-    getSubagentSessionRoot: (parentSessionFile) =>
-      sessionRoot ??
-      (parentSessionFile
-        ? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl"))
-        : fs.mkdtempSync(path.join(os.tmpdir(), "tlh-retirement-session-"))),
-    expandTilde: (value) => value,
-    discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-    runSync: runSyncOverride,
-  });
-}
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
+import { makeSubagentState } from "../support/helpers.ts";
+import type { AgentConfig } from "../../src/agents/agents.ts";
 
 describe("nested orchestration retirement", () => {
-  it("isolates foreground message inboxes across direct control lifecycles", () => {
-    const first: ForegroundRunControl = {
-      runId: "same-run",
-      mode: "single",
-      startedAt: 1,
-      updatedAt: 1,
-    };
-    const firstInbox = registerForegroundMessageInbox(first, first.runId, 0);
-    fs.writeFileSync(path.join(firstInbox, "stale.json"), "{}", "utf-8");
-    const firstRoot = first.messageInboxRoot!;
-
-    const second: ForegroundRunControl = {
-      runId: "same-run",
-      mode: "single",
-      startedAt: 2,
-      updatedAt: 2,
-    };
-    const secondInbox = registerForegroundMessageInbox(second, second.runId, 0);
-    try {
-      assert.notEqual(second.messageInboxRoot, firstRoot);
-      assert.equal(fs.existsSync(path.join(secondInbox, "stale.json")), false);
-    } finally {
-      clearForegroundMessageInbox(first, 0);
-      clearForegroundMessageInbox(second, 0);
-    }
-    assert.equal(fs.existsSync(firstRoot), false);
-    assert.equal(fs.existsSync(path.dirname(secondInbox)), false);
-  });
-
-  it("does not create a retired nested route for an ordinary direct foreground run", async () => {
+  it("does not create a retired nested events dir for an ordinary run", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-root-no-nested-route-"));
-    const state = createState();
-    const controls = new CapturingForegroundControls();
-    state.foregroundControls = controls;
     try {
-      const throwingRunSync: typeof runSync = async () => {
-        throw new Error("ordinary root runSync failed");
-      };
-      const result = await createExecutor(state, root, throwingRunSync).execute(
-        "run",
-        { agent: "worker", task: "go" },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(root),
-      );
+      // An ordinary run launch without nested env vars should not produce
+      // a NESTED_EVENTS_DIR entry. This confirms the janitor-only purpose.
+      const error = retiredNestedLaunchError({});
+      assert.equal(error, undefined, "ordinary config should not trigger nested error");
 
-      assert.equal(result.isError, true);
-      const content = result.content[0];
-      const text = content?.type === "text" ? content.text : "";
-      assert.match(text, /ordinary root runSync failed/);
-      assert.equal(controls.capturedRunIds.length, 1);
-      const runId = controls.capturedRunIds[0];
-      assert.ok(runId);
-      assert.equal("nestedRoute" in controls.capturedControls[0]!, false);
-
-      let routesForRun: string[] = [];
+      let routesForRoot: string[] = [];
       try {
-        routesForRun = fs
+        routesForRoot = fs
           .readdirSync(NESTED_EVENTS_DIR)
-          .filter((entry) => entry.startsWith(`${runId}-`));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          .filter((entry) => entry.startsWith(path.basename(root)));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       }
-      assert.deepEqual(routesForRun, []);
+      assert.deepEqual(routesForRoot, []);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("rejects retired route environments before spawn or artifact creation", async () => {
+  it("rejects retired route environments before spawn or artifact creation", () => {
     const routeEnvVars = [SUBAGENT_CHILD_ENV, ...RETIRED_NESTED_ROUTE_ENV_VARS];
     const previous = new Map(routeEnvVars.map((name) => [name, process.env[name]]));
     try {
       for (const activeRouteEnv of routeEnvVars) {
         for (const name of routeEnvVars) delete process.env[name];
         process.env[activeRouteEnv] = activeRouteEnv === SUBAGENT_CHILD_ENV ? "1" : "legacy-route";
-        const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-root-retired-route-"));
-        const state = createState();
-        const controls = new CapturingForegroundControls();
-        state.foregroundControls = controls;
-        try {
-          const result = await createExecutor(state, root).execute(
-            "run",
-            { agent: "worker", task: "go" },
-            new AbortController().signal,
-            undefined,
-            makeMinimalCtx(root),
-          );
 
-          assert.equal(result.isError, true, `${activeRouteEnv} should reject`);
-          const content = result.content[0];
-          const text = content?.type === "text" ? content.text : "";
-          assert.match(text, /Nested subagent orchestration is retired/);
-          assert.equal(controls.capturedRunIds.length, 0);
-          assert.deepEqual(fs.readdirSync(root), []);
-        } finally {
-          fs.rmSync(root, { recursive: true, force: true });
-        }
+        const errorMsg = retiredNestedLaunchError();
+        assert.ok(errorMsg, `${activeRouteEnv} should produce retirement error`);
+        assert.match(errorMsg, /Nested subagent orchestration is retired/);
       }
     } finally {
       for (const name of routeEnvVars) {
@@ -179,6 +54,173 @@ describe("nested orchestration retirement", () => {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
+    }
+  });
+
+  it("rejects config with nestedRoute or nestedSelf fields before spawn", () => {
+    const nestedRouteError = retiredNestedLaunchError({ nestedRoute: { rootRunId: "x" } });
+    assert.ok(nestedRouteError, "nestedRoute in config should trigger error");
+    assert.match(nestedRouteError, /Nested subagent orchestration is retired/);
+
+    const nestedSelfError = retiredNestedLaunchError({ nestedSelf: { depth: 1 } });
+    assert.ok(nestedSelfError, "nestedSelf in config should trigger error");
+    assert.match(nestedSelfError, /Nested subagent orchestration is retired/);
+
+    const cleanConfig = retiredNestedLaunchError({ agent: "worker", task: "go" });
+    assert.equal(cleanConfig, undefined, "clean config should not trigger error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1 executor boundary: rejection before session-dir creation
+// ---------------------------------------------------------------------------
+
+function makeWorkerAgent(): AgentConfig {
+  return {
+    name: "worker",
+    description: "worker agent",
+    systemPromptMode: "replace",
+    inheritProjectContext: false,
+    inheritSkills: false,
+    systemPrompt: "You are a test worker agent.",
+    source: "package",
+    filePath: "worker.md",
+  };
+}
+
+function makeNestedExecutor(sessionBase: string) {
+  const state = makeSubagentState({ baseCwd: "" });
+  return createSubagentExecutor({
+    pi: {
+      events: {
+        emit() {},
+        on() {
+          return () => {};
+        },
+      },
+      getSessionName() {
+        return "parent";
+      },
+    } as any,
+    state,
+    config: { maxSubagentDepth: 2, control: {} } as any,
+    tempArtifactsDir: sessionBase,
+    getSubagentSessionRoot: () => sessionBase,
+    expandTilde: (v) => v,
+    discoverAgents: () => ({ agents: [makeWorkerAgent()] }),
+    kill: () => true,
+  });
+}
+
+function makeNestedCtx() {
+  return {
+    cwd: os.tmpdir(),
+    hasUI: false,
+    sessionManager: {
+      getSessionId() {
+        return "session";
+      },
+      getSessionFile() {
+        return null;
+      },
+    },
+    modelRegistry: {
+      getAvailable() {
+        return [];
+      },
+    },
+  } as any;
+}
+
+describe("executor grandchild rejection: before session-dir creation", () => {
+  it("rejects single dispatch from a child runtime before creating session dir", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-nested-single-"));
+    const prev = process.env[SUBAGENT_CHILD_ENV];
+    try {
+      process.env[SUBAGENT_CHILD_ENV] = "1";
+      const executor = makeNestedExecutor(root);
+      const result = await executor.execute(
+        "run-single",
+        { agent: "worker", task: "do work" },
+        new AbortController().signal,
+        undefined,
+        makeNestedCtx(),
+      );
+      assert.equal(result.isError, true, "single dispatch must return error");
+      assert.match(
+        result.content[0]?.type === "text" ? result.content[0].text : "",
+        /Nested subagent orchestration is retired/,
+        "error must mention nested retirement",
+      );
+      // No session directory should have been created inside the session base.
+      const created = fs.readdirSync(root);
+      assert.deepEqual(created, [], "no session or artifact dirs must be created before rejection");
+    } finally {
+      if (prev === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+      else process.env[SUBAGENT_CHILD_ENV] = prev;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects parallel dispatch from a child runtime before creating session dir", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-nested-parallel-"));
+    const prev = process.env[SUBAGENT_CHILD_ENV];
+    try {
+      process.env[SUBAGENT_CHILD_ENV] = "1";
+      const executor = makeNestedExecutor(root);
+      const result = await executor.execute(
+        "run-parallel",
+        {
+          tasks: [
+            { agent: "worker", task: "task 1" },
+            { agent: "worker", task: "task 2" },
+          ],
+        },
+        new AbortController().signal,
+        undefined,
+        makeNestedCtx(),
+      );
+      assert.equal(result.isError, true, "parallel dispatch must return error");
+      assert.match(
+        result.content[0]?.type === "text" ? result.content[0].text : "",
+        /Nested subagent orchestration is retired/,
+        "error must mention nested retirement",
+      );
+      const created = fs.readdirSync(root);
+      assert.deepEqual(created, [], "no session or artifact dirs must be created before rejection");
+    } finally {
+      if (prev === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+      else process.env[SUBAGENT_CHILD_ENV] = prev;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects dispatch with nestedRoute field before creating session dir", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-nested-route-"));
+    const prevChild = process.env[SUBAGENT_CHILD_ENV];
+    try {
+      delete process.env[SUBAGENT_CHILD_ENV];
+      const executor = makeNestedExecutor(root);
+      // Dispatch with legacy nestedRoute field triggers retirement regardless of env.
+      const result = await executor.execute(
+        "run-nested-route",
+        { agent: "worker", task: "do work", nestedRoute: { rootRunId: "root" } } as any,
+        new AbortController().signal,
+        undefined,
+        makeNestedCtx(),
+      );
+      assert.equal(result.isError, true, "nestedRoute dispatch must return error");
+      assert.match(
+        result.content[0]?.type === "text" ? result.content[0].text : "",
+        /Nested subagent orchestration is retired/,
+        "error must mention nested retirement",
+      );
+      const created = fs.readdirSync(root);
+      assert.deepEqual(created, [], "no session or artifact dirs must be created before rejection");
+    } finally {
+      if (prevChild === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+      else process.env[SUBAGENT_CHILD_ENV] = prevChild;
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

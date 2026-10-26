@@ -1,9 +1,12 @@
+// Generated from extensions/the-last-harness/session-mirror-observer-facade.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { lstatSync, realpathSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { dirname, join } from "node:path";
 import { getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { createRetryableLazyImport } from "./common.js";
 import { getTlhExperimentalConfig, isTlhExperimentalFeatureEnabled, SESSION_MIRROR_OBSERVER_FEATURE, } from "./experimental.js";
-import { attestSessionMirrorSession } from "./session-mirror/profile-attestation.js";
+import { attestSessionMirrorSession, SESSION_MIRROR_ATTESTATION_REASONS, } from "./session-mirror/profile-attestation.js";
+import { SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES, SESSION_MIRROR_PROJECTION_REASONS, } from "./session-mirror/status-allowlists.js";
 export const SESSION_MIRROR_OBSERVER_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";
 export const SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION = "pi-session-schema-v3";
 export const SESSION_MIRROR_OBSERVER_COMMAND = "session-mirror-observer";
@@ -137,6 +140,7 @@ function initialState() {
         attestation: "not-run",
         attestationReason: undefined,
         probe: undefined,
+        replyIdleCapability: undefined,
         loadTiming: ZERO_TIMING,
         attestationTiming: ZERO_TIMING,
     };
@@ -176,18 +180,8 @@ function safeAttest(attest, sessionFile) {
             }
         }
         if (result && result.ok === false) {
-            const reason = result.reason;
-            if (typeof reason === "string" &&
-                [
-                    "missing-profile-selection",
-                    "missing-home",
-                    "default-or-normal-profile",
-                    "profile-mismatch",
-                    "unsafe-profile-metadata",
-                    "ephemeral-session",
-                    "session-escape",
-                    "unsafe-session-metadata",
-                ].includes(reason)) {
+            const reason = optionalEnumValue(result.reason, SESSION_MIRROR_ATTESTATION_REASONS);
+            if (reason) {
                 return { ok: false, reason };
             }
         }
@@ -204,33 +198,6 @@ const OBSERVER_ATTESTATION_STATES = [
     "shutdown",
 ];
 const OBSERVER_STATUS_VALUES = ["idle", "active", "waiting", "error", "unknown"];
-const OBSERVER_DIAGNOSTIC_CODES = [
-    "queue-overflow",
-    "stale-generation",
-    "scheduler-failure",
-    "session-unavailable",
-    "attestation-failure",
-    "attestation-not-ready",
-    "projection-failure",
-    "sink-throw",
-    "sink-reject",
-];
-const ATTESTATION_REASONS = [
-    "missing-profile-selection",
-    "missing-home",
-    "default-or-normal-profile",
-    "profile-mismatch",
-    "unsafe-profile-metadata",
-    "ephemeral-session",
-    "session-escape",
-    "unsafe-session-metadata",
-];
-const PROJECTION_REASONS = [
-    "invalid-metadata",
-    "session-unavailable",
-    "unsafe-session-data",
-    "bounds-exceeded",
-];
 const PROBE_ENVELOPE_CATEGORIES = [
     "none",
     "empty",
@@ -306,9 +273,9 @@ function normalizeProbeState(value) {
             coalescedMarkers: boundedCounter(source.coalescedMarkers),
             droppedMarkers: boundedCounter(source.droppedMarkers),
             diagnostics: boundedDiagnosticCounts(source.diagnostics),
-            lastDiagnostic: optionalEnumValue(source.lastDiagnostic, OBSERVER_DIAGNOSTIC_CODES),
-            lastAttestationFailure: optionalEnumValue(source.lastAttestationFailure, ATTESTATION_REASONS),
-            lastProjectionFailure: optionalEnumValue(source.lastProjectionFailure, PROJECTION_REASONS),
+            lastDiagnostic: optionalEnumValue(source.lastDiagnostic, SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES),
+            lastAttestationFailure: optionalEnumValue(source.lastAttestationFailure, SESSION_MIRROR_ATTESTATION_REASONS),
+            lastProjectionFailure: optionalEnumValue(source.lastProjectionFailure, SESSION_MIRROR_PROJECTION_REASONS),
             envelopeCategory: enumValue(source.envelopeCategory, PROBE_ENVELOPE_CATEGORIES, "none"),
             entryCount: boundedCounter(source.entryCount, 1024),
             rootCount: boundedCounter(source.rootCount, 1024),
@@ -477,34 +444,40 @@ function safeShutdownProbe(probe) {
     catch {
     }
 }
-function weakReplyIsIdle(ctx) {
-    let reference;
+function readReplyIdleQuery(ctx) {
     try {
-        reference = new WeakRef(ctx);
+        const candidate = ctx?.isIdle;
+        return typeof candidate === "function" ? candidate : undefined;
     }
     catch {
-        return () => false;
+        return undefined;
     }
-    return () => {
-        const current = reference.deref();
-        if (!current)
-            return false;
-        try {
-            return current.isIdle() === true;
-        }
-        catch {
-            return false;
-        }
-    };
 }
-function weakReplyNotifier(ctx) {
-    let reference;
-    try {
-        reference = new WeakRef(ctx);
-    }
-    catch {
-        return () => undefined;
-    }
+function createRevocableReplyIdleCapability(query) {
+    let revoked = false;
+    return Object.freeze({
+        isIdle: () => {
+            if (revoked || query === undefined)
+                return false;
+            try {
+                return query() === true;
+            }
+            catch {
+                return false;
+            }
+        },
+        revoke: () => {
+            revoked = true;
+            query = undefined;
+        },
+    });
+}
+function revokeReplyIdleCapability(state) {
+    const capability = state.replyIdleCapability;
+    state.replyIdleCapability = undefined;
+    capability?.revoke();
+}
+function createWeakReplyNotifier(reference) {
     return (outcome) => {
         const current = reference.deref();
         if (!current)
@@ -515,8 +488,18 @@ function weakReplyNotifier(ctx) {
         catch { }
     };
 }
+function weakReplyNotifier(ctx) {
+    if (ctx === undefined)
+        return () => undefined;
+    try {
+        return createWeakReplyNotifier(new WeakRef(ctx));
+    }
+    catch {
+        return () => undefined;
+    }
+}
 function continueSessionMirrorObserverActivation(input) {
-    const { state, isCurrent, sessionManager, loadProbe, attest, now, isIdle, bridgeDirectory, sink, sendUserMessage, replyChannelFactory, replyNotify, replyNow, replyScheduleConfirmation, replySetTimeout, replyClearTimeout, } = input;
+    const { state, isCurrent, sessionManager, loadProbe, attest, now, isIdle, bridgeDirectory, sink, sendUserMessage, replyChannelFactory, replyNotify, replyNow, replyScheduleConfirmation, replyScheduleLifecycleCompletion, replySetTimeout, replyClearTimeout, } = input;
     const current = () => isCurrent(state);
     if (!current())
         return Promise.resolve();
@@ -538,6 +521,7 @@ function continueSessionMirrorObserverActivation(input) {
         if (!current())
             return Promise.resolve();
         state.load = "failed";
+        revokeReplyIdleCapability(state);
         return Promise.resolve();
     }
     if (!current())
@@ -568,6 +552,9 @@ function continueSessionMirrorObserverActivation(input) {
                 ...(replyNotify === undefined ? {} : { replyNotify }),
                 ...(replyNow === undefined ? {} : { replyNow }),
                 ...(replyScheduleConfirmation === undefined ? {} : { replyScheduleConfirmation }),
+                ...(replyScheduleLifecycleCompletion === undefined
+                    ? {}
+                    : { replyScheduleLifecycleCompletion }),
                 ...(replySetTimeout === undefined ? {} : { replySetTimeout }),
                 ...(replyClearTimeout === undefined ? {} : { replyClearTimeout }),
             });
@@ -576,6 +563,7 @@ function continueSessionMirrorObserverActivation(input) {
             if (!current())
                 return;
             state.load = "failed";
+            revokeReplyIdleCapability(state);
             return;
         }
         if (!current()) {
@@ -603,6 +591,7 @@ function continueSessionMirrorObserverActivation(input) {
             if (state.probe === probe)
                 state.probe = undefined;
             state.load = "failed";
+            revokeReplyIdleCapability(state);
             safeShutdownProbe(probe);
             return;
         }
@@ -621,6 +610,7 @@ function continueSessionMirrorObserverActivation(input) {
         if (!current())
             return;
         state.load = "failed";
+        revokeReplyIdleCapability(state);
     });
 }
 function defaultBridgeDirectory() {
@@ -662,7 +652,9 @@ export function createSessionMirrorObserverFacade(options = {}) {
     const loadProbe = createRetryableLazyImport(options.loadProbe ?? (() => import("./session-mirror-observer-probe.js")));
     let state = initialState();
     const isCurrent = (candidate) => state === candidate;
-    const sessionStart = (ctx, reason = "startup") => {
+    const sessionStart = (initialContext, reason = "startup") => {
+        let ctx = initialContext;
+        initialContext = undefined;
         const previousState = state;
         const nextState = {
             ...initialState(),
@@ -671,6 +663,7 @@ export function createSessionMirrorObserverFacade(options = {}) {
         const previousProbe = previousState.probe;
         state = nextState;
         previousState.probe = undefined;
+        revokeReplyIdleCapability(previousState);
         safeShutdownProbe(previousProbe);
         if (!isCurrent(nextState))
             return Promise.resolve();
@@ -768,26 +761,36 @@ export function createSessionMirrorObserverFacade(options = {}) {
             !companionDirectoryExists(bridgeDirectory)
             ? undefined
             : bridgeDirectory;
-        const isIdle = weakReplyIsIdle(ctx);
+        const sendUserMessage = typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined;
+        const idleQuery = sendUserMessage === undefined ? undefined : readReplyIdleQuery(ctx);
+        const idleCapability = sendUserMessage === undefined ? undefined : createRevocableReplyIdleCapability(idleQuery);
+        if (!isCurrent(nextState)) {
+            idleCapability?.revoke();
+            return Promise.resolve();
+        }
+        nextState.replyIdleCapability = idleCapability;
         const replyNotify = options.replyNotify ?? weakReplyNotifier(ctx);
-        return continueSessionMirrorObserverActivation({
+        ctx = undefined;
+        const activation = continueSessionMirrorObserverActivation({
             state: nextState,
             isCurrent,
             sessionManager,
             loadProbe,
             attest,
             now,
-            isIdle,
+            isIdle: idleCapability?.isIdle,
             bridgeDirectory: usableBridgeDirectory,
             sink: injectedSink,
-            sendUserMessage: typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined,
+            sendUserMessage,
             replyChannelFactory: options.replyChannelFactory,
             replyNotify,
             replyNow: options.replyNow,
             replyScheduleConfirmation: options.replyScheduleConfirmation,
+            replyScheduleLifecycleCompletion: options.replyScheduleLifecycleCompletion,
             replySetTimeout: options.replySetTimeout,
             replyClearTimeout: options.replyClearTimeout,
         });
+        return activation;
     };
     const sessionShutdown = () => {
         const previousState = state;
@@ -800,6 +803,7 @@ export function createSessionMirrorObserverFacade(options = {}) {
             attestation: "shutdown",
         };
         previousState.probe = undefined;
+        revokeReplyIdleCapability(previousState);
         safeShutdownProbe(previousProbe);
     };
     const forward = (method, ...args) => {
@@ -900,9 +904,10 @@ export function createSessionMirrorObserverFacade(options = {}) {
         turnEnd: () => forward("turnEnd"),
         agentSettled: () => forward("agentSettled"),
         sessionBeforeTree: () => forward("sessionBeforeTree"),
-        sessionTree: () => forward("sessionTree"),
+        sessionTree: (event, context) => forward("sessionTree", event, context),
         sessionBeforeCompact: () => forward("sessionBeforeCompact"),
-        sessionCompact: () => forward("sessionCompact"),
+        sessionCompact: (event, context) => forward("sessionCompact", event, context),
+        sessionCompactFailed: (event, context) => forward("sessionCompactFailed", event, context),
         requestSnapshot,
         getStatus,
         handleStatus,
@@ -947,19 +952,8 @@ export function registerSessionMirrorObserverFacade(pi, options = {}) {
     pi.on("message_end", (event) => facade.messageEnd(event));
     pi.on("turn_end", () => facade.turnEnd());
     pi.on("agent_settled", () => facade.agentSettled());
-    pi.on("session_tree", () => facade.sessionTree());
-    pi.on("session_compact", () => facade.sessionCompact());
+    pi.on("session_tree", (event, ctx) => facade.sessionTree(event, ctx));
+    pi.on("session_compact", (event, ctx) => facade.sessionCompact(event, ctx));
+    pi.on("session_compact_failed", (event, ctx) => facade.sessionCompactFailed(event, ctx));
     return facade;
-}
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
 }

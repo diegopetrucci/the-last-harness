@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-subagents.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -388,6 +389,7 @@ const RETIRED_SUBAGENT_CONTROL_KEYS = [
     "activeNoticeAfterMs",
     "activeNoticeAfterTurns",
     "activeNoticeAfterTokens",
+    "failedToolAttemptsBeforeAttention",
 ];
 const RETIRED_SUBAGENT_NOTIFY_EVENT = "active_long_running";
 const SUBAGENT_EXTENSION_CONFIG_RELATIVE_PATH = "extensions/subagent/config.json";

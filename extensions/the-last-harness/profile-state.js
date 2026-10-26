@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/profile-state.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -61,7 +62,7 @@ export function readTlhStartupState() {
     }
     try {
         const parsed = JSON.parse(content);
-        return parsed && typeof parsed === "object" ? parsed : {};
+        return isRecord(parsed) ? parsed : {};
     }
     catch {
         return {};
@@ -78,7 +79,7 @@ export function readTlhInstallState() {
     }
     try {
         const parsed = JSON.parse(content);
-        return parsed && typeof parsed === "object" ? parsed : {};
+        return isRecord(parsed) ? parsed : {};
     }
     catch {
         return {};

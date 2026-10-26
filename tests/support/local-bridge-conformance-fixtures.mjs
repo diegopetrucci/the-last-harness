@@ -300,16 +300,21 @@ export function assertRepositoryOnlyPackageDryRun() {
     true,
     "npm pack must include its packaged runtime sentinel",
   );
-  assert.equal(
-    [...files].some((file) => file.startsWith("protocol/local-bridge/")),
-    false,
-  );
-  assert.equal(
-    [...files].some((file) => file.startsWith("protocol/session-mirror/")),
-    false,
-  );
-  assert.equal(
-    [...files].some((file) => file === "tests/local-bridge-conformance.test.mjs"),
-    false,
-  );
+  for (const directory of [
+    "protocol/device-mirror/",
+    "protocol/local-bridge/",
+    "protocol/session-mirror/",
+  ]) {
+    assert.equal(
+      [...files].some((file) => file.startsWith(directory)),
+      false,
+      `npm pack must exclude ${directory}`,
+    );
+  }
+  for (const path of [
+    "tests/device-mirror-conformance.test.mjs",
+    "tests/local-bridge-conformance.test.mjs",
+  ]) {
+    assert.equal(files.has(path), false, `npm pack must exclude ${path}`);
+  }
 }

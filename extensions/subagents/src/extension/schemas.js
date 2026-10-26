@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/schemas.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { Type } from "typebox";
 function keepTopLevelParameterDescriptions(schema) {
     return pruneNestedDescriptions(schema, []);
@@ -37,12 +38,12 @@ const OutputModeOverride = Type.String({
 const TaskItem = Type.Object({
     agent: Type.String(),
     task: Type.String(),
+    ticket: Type.Optional(Type.String({
+        maxLength: 128,
+        description: "Optional ticket ID; TLH loads `tk show <id>` in this task's cwd before launch.",
+    })),
     cwd: Type.Optional(Type.String({
         description: "Task working directory; relative paths resolve against the run cwd.",
-    })),
-    count: Type.Optional(Type.Integer({
-        minimum: 1,
-        description: "Repeat this parallel task N times with the same settings.",
     })),
     output: Type.Optional(OutputOverride),
     outputMode: Type.Optional(OutputModeOverride),
@@ -51,8 +52,12 @@ const TaskItem = Type.Object({
 const SubagentParamsSchema = Type.Object({
     agent: Type.Optional(Type.String({ description: "Agent name for SINGLE mode or action='get'." })),
     task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
+    ticket: Type.Optional(Type.String({
+        maxLength: 128,
+        description: "Optional ticket ID; TLH loads `tk show <id>` in the task cwd before launch.",
+    })),
     tasks: Type.Optional(Type.Array(TaskItem, {
-        description: "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, model?}, ...]",
+        description: "PARALLEL mode: [{agent, task, ticket?, cwd?, output?, outputMode?, model?}, ...]",
     })),
     async: Type.Optional(Type.Boolean({
         description: "Launch detached background work (default: false, or per config)",

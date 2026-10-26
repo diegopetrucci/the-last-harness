@@ -90,15 +90,7 @@ const MAX_STATE_NORMALIZATION_BYTES =
   DEVICE_FRAME_NORMALIZATION_OVERHEAD_BYTES;
 const LISTING_STATUSES = ["idle", "active", "waiting", "error", "unknown"] as const;
 const LISTING_FRESHNESS = ["fresh", "stale", "unknown"] as const;
-const DROP_REASONS = [
-  "producer-disconnect",
-  "takeover",
-  "accepted-event",
-  "eviction",
-  "listener-stop",
-  "device-disconnect",
-  "backgrounding",
-] as const;
+const DROP_REASONS = ["producer-disconnect", "takeover", "accepted-event", "eviction"] as const;
 const CLOSE_REASONS = [
   "listener-stop",
   "device-disconnect",
@@ -1126,8 +1118,6 @@ export function decodeDeviceMirrorLengthPrefixedFrame(
   }
 }
 
-export const decodeLengthPrefixedFrame = decodeDeviceMirrorLengthPrefixedFrame;
-
 export function encodeDeviceMirrorLengthPrefixedFrame(
   input: unknown,
 ): DeviceMirrorEncodedFrameResult {
@@ -1146,8 +1136,6 @@ export function encodeDeviceMirrorLengthPrefixedFrame(
     return failure("invalid-input");
   }
 }
-
-export const encodeLengthPrefixedFrame = encodeDeviceMirrorLengthPrefixedFrame;
 
 function serializedBytes(value: DeviceMirrorJsonValue): Uint8Array | undefined {
   try {
@@ -1179,10 +1167,7 @@ export function encodeDeviceMirrorFrame(
   }
 }
 
-export function parseDeviceMirrorJson(
-  input: unknown,
-  direction: unknown,
-): DeviceMirrorFrameValidation {
+function parseDeviceMirrorJson(input: unknown, direction: unknown): DeviceMirrorFrameValidation {
   if (typeof input !== "string") return failure("invalid-input");
   if (Buffer.byteLength(input, "utf8") > MAX_FRAME_BODY_BYTES) return failure("frame-too-large");
   let parsed: unknown;
@@ -1241,8 +1226,6 @@ export function validateDeviceMirrorAddress(input: unknown): DeviceMirrorAddress
     return failure("invalid-address");
   }
 }
-
-export const validateDeviceMirrorClientAddress = validateDeviceMirrorAddress;
 
 function preflightDeviceMirrorInterfaceRecord(input: unknown): boolean {
   if (!isObject(input) || Array.isArray(input)) return true;
@@ -1332,9 +1315,6 @@ export function validateDeviceMirrorListenerAddress(
     ? address
     : failure("interface-required");
 }
-
-export const validateDeviceMirrorListenerBind = validateDeviceMirrorListenerAddress;
-export const validateDeviceMirrorExactBind = validateDeviceMirrorListenerAddress;
 
 function validateSnapshotCandidate(input: unknown): SnapshotCandidate | DeviceMirrorFailure {
   const object = normalizeObject(input);
@@ -1842,8 +1822,6 @@ export function dropDeviceMirrorSnapshot(
 ): DeviceMirrorTransition {
   return dropWithReason(stateInput, dropInput);
 }
-
-export const dropDeviceMirrorHandle = dropDeviceMirrorSnapshot;
 
 function dropByFixedReason(
   stateInput: unknown,

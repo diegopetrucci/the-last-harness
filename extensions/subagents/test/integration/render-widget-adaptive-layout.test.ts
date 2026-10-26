@@ -1067,74 +1067,6 @@ describe("subagent async widget rendering", () => {
     resetWidgetLayout();
   });
 
-  it("shows tk ticket titles in progressive widget rows without changing non-ticket jobs", () => {
-    resetWidgetLayout();
-    withStdoutSize(22, 120, () => {
-      const ui = createUiContext();
-      renderWidget(ui.ctx as never, [
-        {
-          asyncId: "run-ticket",
-          asyncDir: "/tmp/run-ticket",
-          status: "running",
-          mode: "single",
-          agents: ["ticketed"],
-          tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-          currentTool: "read",
-        },
-        {
-          asyncId: "run-plain",
-          asyncDir: "/tmp/run-plain",
-          status: "running",
-          mode: "single",
-          agents: ["plain"],
-          currentTool: "grep",
-        },
-        {
-          asyncId: "run-hidden",
-          asyncDir: "/tmp/run-hidden",
-          status: "running",
-          mode: "single",
-          agents: ["hidden"],
-          currentTool: "edit",
-        },
-      ]);
-
-      const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-      assert.match(text, /ticketed · ticket: Show active tk title/);
-      assert.doesNotMatch(text, /plain · ticket:/);
-      assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
-    });
-    resetWidgetLayout();
-  });
-
-  it("sanitizes and wraps complete direct tk ticket widget state", () => {
-    const safeTitle = `Unsafe title now ${"x".repeat(120)}`;
-    const lines = buildWidgetLines(
-      [
-        {
-          asyncId: "run-unsafe-ticket",
-          asyncDir: "/tmp/run-unsafe-ticket",
-          status: "running",
-          agents: ["worker"],
-          tkTicket: {
-            id: "psr-raw4",
-            title: `Unsafe\u009b title\u001b[31m now\u001b[0m ${"x".repeat(120)}`,
-          },
-          currentTool: "read",
-        },
-      ],
-      theme,
-      90,
-    );
-
-    assertWrappedSource(lines, safeTitle);
-    assert.ok(lines.every((line) => visibleWidth(line) <= 88));
-    const rendered = lines.join("");
-    assert.ok(!rendered.includes("…"), "ellipsis should be sanitized");
-    assert.ok(!rendered.includes("\u009b"), "C1 CSI should be sanitized");
-    assert.ok(!rendered.includes("\u001b[31m"), "red ESC sequence should be sanitized");
-  });
-
   it("uses a single collapsed widget line when the terminal has almost no spare rows", () => {
     resetWidgetLayout();
     withStdoutSize(20, 120, () => {
@@ -1259,7 +1191,7 @@ describe("subagent async widget rendering", () => {
 
       const preview = lines.slice(commandStart, nextStepStart);
       assert.ok(preview.length <= 3);
-      assert.ok(preview.slice(1).every((line) => line.startsWith("       ")));
+      assert.ok(preview.slice(1).every((line) => line.startsWith("      ")));
       const previewText = preview
         .map((line, index) => (index === 0 ? line.slice(line.indexOf("bash: ")) : line.trimStart()))
         .join("");
@@ -1530,7 +1462,7 @@ describe("subagent async widget rendering", () => {
       assert.ok(nextStepStart > commandStart);
       const commandPreview = lines.slice(commandStart, nextStepStart);
       assert.equal(commandPreview.length, 3);
-      assert.match(commandPreview[0] ?? "", /^       bash:/);
+      assert.match(commandPreview[0] ?? "", /^      bash:/);
       assert.doesNotMatch(commandPreview.join("\n"), /⎿/);
       assert.match(commandPreview.at(-1) ?? "", /…/);
       assert.ok(commandPreview.every((line) => visibleWidth(line) <= width - 2));
@@ -1557,7 +1489,6 @@ describe("subagent async widget rendering", () => {
     const width = 42;
     const longArgs = `--path=${"src/deep/".repeat(14)}report.json --query=${"needle-".repeat(18)}`;
     const longOutput = `recent-output-${"value-".repeat(18)}`;
-    const longTicket = `Wrap ${"complete-ticket-title-".repeat(10)}`;
     const job: AsyncJobState = {
       asyncId: "narrow-wrap",
       asyncDir: "/tmp/narrow-wrap",
@@ -1566,7 +1497,6 @@ describe("subagent async widget rendering", () => {
       agents: ["worker"],
       stepsTotal: 1,
       updatedAt: 20_000,
-      tkTicket: { id: "tlh-narrow", title: longTicket },
       steps: [
         {
           index: 0,
@@ -1592,14 +1522,55 @@ describe("subagent async widget rendering", () => {
     assert.match(compactPreview.at(-1) ?? "", /…/);
     assert.match(compactPreview.join(""), /grep:\s+--path=/);
     assert.doesNotMatch(compactPreview.join(""), /needle/);
-    assertWrappedSource(compact, longTicket);
 
     const expanded = buildWidgetLines([job], theme, width, true);
     assert.ok(expanded.length > compact.length);
     assert.ok(expanded.every((line) => visibleWidth(line) <= width - 2));
     assertWrappedSource(expanded, longArgs);
     assertWrappedSource(expanded, longOutput);
-    assertWrappedSource(expanded, longTicket);
     assert.doesNotMatch(expanded.join(""), /…|\.\.\./);
+  });
+
+  it("keeps exact-fit multi-job lists in the full tier and omits the live-detail hint", () => {
+    const now = Date.now();
+    const jobs: AsyncJobState[] = [0, 1].map((index): AsyncJobState => ({
+      asyncId: `exact-fit-${index}`,
+      asyncDir: `/tmp/exact-fit-${index}`,
+      status: "running",
+      mode: "parallel",
+      agents: ["reviewer"],
+      runningSteps: 1,
+      completedSteps: 0,
+      stepsTotal: 1,
+      updatedAt: now,
+      steps: [0].map((step) => ({
+        index: step,
+        agent: "reviewer",
+        status: "running",
+        lastActivityAt: now,
+        turnCount: 2,
+        toolCount: 3,
+        tokens: { input: 1_000, output: 500, total: 1_500 },
+      })),
+    }));
+    const reservedRows = 19; // RESERVED_NON_WIDGET_ROWS
+    const full = buildWidgetLines(jobs, theme, 120, false, now);
+    const hint = full.at(-1) ?? "";
+    const withoutHint = full.slice(0, -1);
+    assert.match(stripTerminalSequences(hint), /expand|detail/i);
+    assert.ok(full.length <= 10, `fixture must fit the minimum collapsed budget: ${full.length}`);
+
+    for (const [spare, expected] of [
+      [0, withoutHint],
+      [1, full],
+    ] as const) {
+      resetWidgetLayout();
+      withStdoutSize(withoutHint.length + reservedRows + spare, 120, () => {
+        const ui = createUiContext();
+        renderWidget(ui.ctx as never, jobs, undefined, now);
+        assert.deepEqual(renderWidgetHarnessLines(ui.widgets.at(-1)), expected);
+      });
+    }
+    resetWidgetLayout();
   });
 });

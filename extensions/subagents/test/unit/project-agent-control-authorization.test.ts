@@ -4,643 +4,588 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import type { ProjectAgentIdentity } from "../../src/agents/project-agent-loader.ts";
+import { consumeChildMessageRequests } from "../../src/runs/background/control-channel.ts";
+import { resolveProjectAgentExecution } from "../../src/runs/shared/project-agent-control.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
+import type { ProjectAgentAccess } from "../../src/runs/shared/executor-types.ts";
 import {
-  getProjectAgentRunReferenceMetadata,
-  getProjectAgentSnapshotProvenance,
-  releaseProjectAgentRunReference,
-  retainProjectAgentRunReference,
-  type ProjectAgentRunCapture,
-  type ProjectAgentSnapshotCapability,
-} from "../../src/agents/project-agent-snapshot.ts";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+  isEmbeddedOnlyToolCall,
+  noteSubagentToolExecutionEnd,
+  noteSubagentToolExecutionStart,
+  subagentExecutionAccountingSize,
+  markEmbeddedOnlyToolCall,
+  runBoundToToolCall,
+} from "../../../the-last-harness/project-agent-access.mjs";
+import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
-import {
-  cleanupRun,
-  createProjectAgentControlEnvironment,
-  createProjectGeneration,
-  createState,
-  makeContext,
-  makeExecutor,
-  revokeIfRegistered,
-  runAsyncDir,
-  text,
-  writeStatus,
-  type ProjectAgentRebind,
-} from "../support/project-agent-control-fixtures.ts";
+import { makeAgent, makeMinimalCtx, makeSubagentState } from "../support/helpers.ts";
 
-const testEnvironment = createProjectAgentControlEnvironment();
+const OWNER = "OWNER-A";
+const NON_OWNER = "NONOWNER-B";
 
-describe("project-agent control authorization and rebind", () => {
-  beforeEach(testEnvironment.setup);
-  afterEach(testEnvironment.teardown);
+let root: string;
+const runIds: string[] = [];
 
-  it("resumes from the retained original generation after reload and source deletion", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-reload-")),
-    );
-    execFileSync("git", ["init", "--quiet", root]);
-    const first = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-one",
-      "embedded.worker",
-      "Original prompt",
-      "digest-one",
-    );
-    const second = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-two",
-      "embedded.worker",
-      "Reloaded prompt",
-      "digest-two",
-    );
-    const runId = `project-reload-${Date.now().toString(36)}`;
-    retainProjectAgentRunReference(first.capability, runId, [first.capture]);
-    const asyncDir = writeStatus(runId, root, first.capture);
-    const sourcePath = first.capture.config.filePath;
-    fs.rmSync(sourcePath, { force: true });
-    let active = second;
-    let rebindCalls = 0;
-    let dispatched: any;
-    const executor = makeExecutor(
-      root,
-      createState(),
+beforeEach(() => {
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-")));
+  execFileSync("git", ["init", "--quiet", root]);
+  const custom = path.join(root, ".tlh", "agents", "custom");
+  fs.mkdirSync(custom, { recursive: true });
+  fs.writeFileSync(
+    path.join(custom, "WORKER.md"),
+    "---\nname: worker\npackage: embedded\ndescription: Worker\ntools: read\n---\nPrompt\n",
+  );
+});
+
+afterEach(() => {
+  for (const runId of runIds.splice(0)) {
+    fs.rmSync(path.join(ASYNC_DIR, runId), { recursive: true, force: true });
+    fs.rmSync(path.join(RESULTS_DIR, `${runId}.json`), { force: true });
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+function writeRun(state: "complete" | "running"): string {
+  const runId = `project-control-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  runIds.push(runId);
+  const asyncDir = path.join(ASYNC_DIR, runId);
+  const sessionFile = path.join(asyncDir, "worker.jsonl");
+  fs.mkdirSync(asyncDir, { recursive: true });
+  fs.writeFileSync(sessionFile, "", "utf-8");
+  const projectAgent: ProjectAgentIdentity = { slug: "worker", root, cwd: root };
+  writeJson(path.join(asyncDir, "status.json"), {
+    runId,
+    mode: "single",
+    state,
+    ...(state === "running" ? { pid: 12345 } : {}),
+    sessionId: OWNER,
+    cwd: root,
+    startedAt: 100,
+    lastUpdate: Date.now(),
+    sessionFile,
+    projectAgents: [projectAgent],
+    steps: [
       {
-        get capability() {
-          return active.capability;
-        },
-        rebind: async () => {
-          rebindCalls++;
-          return second;
-        },
-      } as any,
-      {
-        executeAsyncSingle: (continuedId: string, params: any) => {
-          const details = { asyncId: continuedId, results: [] };
-          dispatched = { continuedId, params, details };
-          return {
-            content: [{ type: "text", text: "continued" }],
-            details,
-          };
-        },
-      },
-    );
-    try {
-      const result = await executor.execute(
-        "resume",
-        { action: "resume", id: runId, message: "Continue using the original context." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(result.isError, undefined);
-      assert.equal(result.details, dispatched.details);
-      assert.equal(
-        text(result),
-        [
-          `Revived async subagent from ${runId}.`,
-          `Revived run: ${dispatched.continuedId}`,
-          "Agent: embedded.worker",
-          `Session: ${path.join(asyncDir, "worker.jsonl")}`,
-          `Status if needed: subagent({ action: "status", id: "${dispatched.continuedId}" })`,
-        ].join("\n"),
-      );
-      assert.match(dispatched.params.agentConfig.systemPrompt, /^Original prompt/);
-      assert.equal(dispatched.params.projectAgent.provenance.generationId, "generation-one");
-      assert.equal(dispatched.params.projectAgent.provenance.digest, "digest-one");
-      assert.equal(dispatched.params.projectAgent.config.systemPrompt, "Original prompt");
-      assert.equal(rebindCalls, 0, "same-process continuation must not perform a fresh rebind");
-      assert.equal(fs.existsSync(sourcePath), false);
-      assert.equal(fs.existsSync(asyncDir), true);
-    } finally {
-      cleanupRun(runId);
-      if (dispatched?.continuedId) releaseProjectAgentRunReference(dispatched.continuedId);
-      revokeIfRegistered(first.capability);
-      revokeIfRegistered(second.capability);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-  it("rebinds a project definition in a new process and reports an old-to-new digest change", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-rebind-")),
-    );
-    execFileSync("git", ["init", "--quiet", root]);
-    const workspace = path.join(root, "workspace");
-    fs.mkdirSync(workspace, { recursive: true });
-    const workspaceLink = path.join(root, "workspace-link");
-    let persistedCwd = workspace;
-    try {
-      fs.symlinkSync(workspace, workspaceLink, "dir");
-      persistedCwd = workspaceLink;
-    } catch {
-      // The canonical-path assertion below remains useful on platforms that
-      // do not permit test symlinks.
-    }
-    const canonicalCwd = fs.realpathSync(workspace);
-    const original = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-rebind-old",
-      "embedded.worker",
-      "Original prompt",
-      "digest-old",
-    );
-    const rebound = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-rebind-new",
-      "embedded.worker",
-      "Current prompt",
-      "digest-new",
-    );
-    const persisted = {
-      ...original.capture,
-      provenance: {
-        ...original.capture.provenance,
-        processInstanceId: "prior-process",
-      },
-      // This path is intentionally forged and must never be used by the
-      // fresh operation; the current capability supplies the canonical path.
-      config: {
-        ...original.capture.config,
-        filePath: path.join(root, "outside", "forged.md"),
-      },
-    } as ProjectAgentRunCapture;
-    const runId = `project-rebind-${Date.now().toString(36)}`;
-    const asyncDir = writeStatus(runId, root, persisted, { cwd: persistedCwd });
-    let rebindRequest: unknown;
-    let dispatched: any;
-    const executor = makeExecutor(
-      root,
-      createState(),
-      {
-        capability: rebound.capability,
-        rebind: async (request) => {
-          rebindRequest = request;
-          return {
-            capability: rebound.capability,
-            expected: getProjectAgentSnapshotProvenance(rebound.capability),
-            capture: rebound.capture,
-          };
-        },
-      },
-      {
-        executeAsyncSingle: (continuedId: string, params: any) => {
-          const details = {
-            asyncId: continuedId,
-            asyncDir: path.join(root, "continued-async"),
-            results: [],
-          };
-          dispatched = { continuedId, params, details };
-          return {
-            content: [{ type: "text", text: "rebound" }],
-            details,
-          };
-        },
-      },
-    );
-    try {
-      const result = await executor.execute(
-        "resume-rebind",
-        { action: "resume", id: runId, message: "Continue with the current definition." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(result.isError, undefined);
-      assert.equal(result.details, dispatched.details);
-      assert.equal(
-        text(result),
-        [
-          `Revived async subagent from ${runId}.`,
-          `Revived run: ${dispatched.continuedId}`,
-          "Agent: embedded.worker",
-          "Notice: Project agent 'embedded.worker' changed since the original run (digest digest-old → digest-new). The resumed child uses the current validated definition; review the change if it was unexpected.",
-          `Session: ${path.join(asyncDir, "worker.jsonl")}`,
-          `Async dir: ${path.join(root, "continued-async")}`,
-          `Status if needed: subagent({ action: "status", id: "${dispatched.continuedId}" })`,
-        ].join("\n"),
-      );
-      assert.deepEqual(rebindRequest, {
-        projectRoot: root,
-        cwd: canonicalCwd,
-        sessionId: "session-project",
         agent: "embedded.worker",
-      });
-      assert.equal(dispatched.params.cwd, canonicalCwd);
-      assert.equal(dispatched.params.ctx.cwd, canonicalCwd);
-      assert.equal(dispatched.params.projectAgent.config.systemPrompt, "Current prompt");
-      assert.equal(dispatched.params.projectAgent.config.filePath, rebound.capture.config.filePath);
-      assert.deepEqual(getProjectAgentRunReferenceMetadata(dispatched.continuedId), [
-        rebound.capture.provenance,
-      ]);
-      assert.match(text(result), /digest-old.*→.*digest-new/);
-      assert.match(text(result), /current validated definition|review the change/i);
-    } finally {
-      cleanupRun(runId);
-      if (dispatched?.continuedId) releaseProjectAgentRunReference(dispatched.continuedId);
-      revokeIfRegistered(original.capability);
-      revokeIfRegistered(rebound.capability);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+        status: state,
+        startedAt: 100,
+        sessionFile,
+        cwd: root,
+        projectAgent,
+      },
+    ],
   });
-  it("fails closed when a fresh rebind is removed, untrusted, unsafe, or rooted elsewhere", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-fresh-fail-")),
-    );
-    const otherRoot = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-fresh-other-")),
-    );
-    execFileSync("git", ["init", "--quiet", root]);
-    execFileSync("git", ["init", "--quiet", otherRoot]);
-    const original = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-fresh-original",
-      "embedded.worker",
-      "Original fresh prompt",
-      "digest-fresh-original",
-    );
-    const current = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-fresh-current",
-      "embedded.worker",
-      "Current fresh prompt",
-      "digest-fresh-current",
-    );
-    const wrongRoot = createProjectGeneration(
-      otherRoot,
-      "session-project",
-      "generation-fresh-other",
-      "embedded.worker",
-      "Wrong-root prompt",
-      "digest-fresh-other",
-    );
-    const unsafeCapture = {
-      ...current.capture,
-      config: {
-        ...current.capture.config,
-        filePath: path.join(root, "outside", "forged.md"),
-      },
-    } as ProjectAgentRunCapture;
-    const reboundFor =
-      (value: { capability: ProjectAgentSnapshotCapability; capture: ProjectAgentRunCapture }) =>
-      async () => ({
-        capability: value.capability,
-        expected: getProjectAgentSnapshotProvenance(value.capability),
-        capture: value.capture,
-      });
-    const cases: Array<{
-      label: string;
-      rebind: ProjectAgentRebind;
-    }> = [
-      { label: "removed", rebind: async () => undefined },
-      { label: "renamed", rebind: async () => undefined },
-      { label: "untrusted", rebind: async () => undefined },
-      {
-        label: "unsafe",
-        rebind: reboundFor({ capability: current.capability, capture: unsafeCapture }),
-      },
-      { label: "wrong-root", rebind: reboundFor(wrongRoot) },
-    ];
-    const runIds: string[] = [];
-    try {
-      for (const item of cases) {
-        const runId = `project-fresh-${item.label}-${Date.now().toString(36)}`;
-        runIds.push(runId);
-        const persisted = {
-          ...original.capture,
-          provenance: {
-            ...original.capture.provenance,
-            processInstanceId: "prior-process",
-          },
-        } as ProjectAgentRunCapture;
-        writeStatus(runId, root, persisted);
-        let dispatchCalls = 0;
-        const executor = makeExecutor(
-          root,
-          createState(),
-          { capability: current.capability, rebind: item.rebind },
-          {
-            executeAsyncSingle: () => {
-              dispatchCalls++;
-              return {
-                content: [{ type: "text", text: "unsafe dispatch" }],
-                details: { results: [] },
-              };
-            },
-          },
-        );
-        const result = await executor.execute(
-          `fresh-${item.label}`,
-          { action: "resume", id: runId, message: `Reject ${item.label}.` },
-          new AbortController().signal,
-          undefined,
-          makeContext(root),
-        );
-        assert.equal(result.isError, true, item.label);
-        assert.match(text(result), /project-agent|rebind|unsafe|root|definition/i, item.label);
-        assert.equal(dispatchCalls, 0, `${item.label} must not dispatch`);
-      }
-    } finally {
-      for (const runId of runIds) cleanupRun(runId);
-      revokeIfRegistered(original.capability);
-      revokeIfRegistered(current.capability);
-      revokeIfRegistered(wrongRoot.capability);
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(otherRoot, { recursive: true, force: true });
-    }
-  });
-  it("fails closed for session, root, process, trust, generation, digest, config, and source corruption", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-fail-")),
-    );
-    const otherRoot = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-other-")),
-    );
-    execFileSync("git", ["init", "--quiet", root]);
-    execFileSync("git", ["init", "--quiet", otherRoot]);
-    const generation = createProjectGeneration(root, "session-project", "generation-fail");
-    const active = { capability: generation.capability, architect: true };
-    const state = createState();
-    const executor = makeExecutor(root, state, active);
-    const cases: Array<{
-      label: string;
-      mutate: (capture: ProjectAgentRunCapture) => ProjectAgentRunCapture | Record<string, unknown>;
-      context?: any;
-      access?: any;
-    }> = [
-      {
-        label: "new session",
-        mutate: (capture) => capture,
-        context: makeContext(root, "session-other"),
-      },
-      {
-        label: "canonical root mismatch",
-        mutate: (capture) => capture,
-        context: makeContext(otherRoot),
-      },
-      {
-        label: "stale process",
-        mutate: (capture) => capture,
-        access: {
-          capability: generation.capability,
-          expected: {
-            ...getProjectAgentSnapshotProvenance(generation.capability),
-            processInstanceId: "stale-process",
-          },
-          architect: true,
-        },
-      },
-      {
-        label: "trust revocation",
-        mutate: (capture) => capture,
-        access: {
-          capability: generation.capability,
-          architect: true,
-          reauthorize: async () => false,
-        },
-      },
-      {
-        label: "digest corruption",
-        mutate: (capture) => ({
-          ...capture,
-          provenance: { ...capture.provenance, digest: "wrong" },
-        }),
-      },
-      {
-        label: "config corruption",
-        mutate: (capture) => ({
-          ...capture,
-          config: { ...capture.config, systemPrompt: "forged" },
-        }),
-      },
-      {
-        label: "source corruption",
-        mutate: (capture) => ({
-          ...capture,
-          provenance: { ...capture.provenance, source: "user" },
-        }),
-      },
-    ];
-    const asyncDirs: string[] = [];
-    const runIds: string[] = [];
-    try {
-      for (const item of cases) {
-        const runId = `project-fail-${item.label.replaceAll(" ", "-")}-${Date.now().toString(36)}`;
-        runIds.push(runId);
-        retainProjectAgentRunReference(generation.capability, runId, [generation.capture]);
-        const persisted = item.mutate(generation.capture);
-        asyncDirs.push(
-          writeStatus(runId, root, generation.capture, {
-            steps: [
-              {
-                agent: generation.capture.provenance.agent,
-                status: "complete",
-                sessionFile: path.join(runAsyncDir(runId), "worker.jsonl"),
-                projectAgent: persisted,
-              },
-            ],
-          }),
-        );
-        const currentExecutor = item.access
-          ? createSubagentExecutor({
-              pi: {
-                events: { emit() {}, on: () => () => {} },
-                getSessionName: () => "parent",
-              } as any,
-              state,
-              config: { maxSubagentDepth: 2, control: {} } as any,
-              tempArtifactsDir: root,
-              getSubagentSessionRoot: () => root,
-              expandTilde: (value) => value,
-              discoverAgents: () => ({ agents: [] }),
-              getProjectAgentAccess: () => item.access,
-              kill: () => true,
-            })
-          : executor;
-        const result = await currentExecutor.execute(
-          "resume",
-          { action: "resume", id: runId, message: `Check ${item.label}.` },
-          new AbortController().signal,
-          undefined,
-          item.context ?? makeContext(root),
-        );
-        assert.equal(result.isError, true, item.label);
-        assert.match(
-          text(result),
-          /TLH project-agent control rejected|corrupt|different session|root|trust|invalid|generation/i,
-        );
-      }
+  return runId;
+}
 
-      const missingGenerationId = `project-fail-missing-generation-${Date.now().toString(36)}`;
-      runIds.push(missingGenerationId);
-      retainProjectAgentRunReference(generation.capability, missingGenerationId, [
-        generation.capture,
-      ]);
-      const missingDir = writeStatus(missingGenerationId, root, generation.capture);
-      asyncDirs.push(missingDir);
-      const staleAccess = {
-        capability: generation.capability,
-        expected: {
-          ...getProjectAgentSnapshotProvenance(generation.capability),
-          generationId: "missing-generation",
-        },
-        architect: true,
+function makeExecutor(access: ProjectAgentAccess | undefined, dispatched: string[]) {
+  const state: SubagentState = makeSubagentState({ baseCwd: root });
+  return createSubagentExecutor({
+    pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" } as any,
+    state,
+    config: { maxSubagentDepth: 2, control: {} } as any,
+    tempArtifactsDir: root,
+    getSubagentSessionRoot: () => path.join(root, "sessions"),
+    expandTilde: (value) => value,
+    discoverAgents: () => ({ agents: [makeAgent("code-reviewer")] }),
+    getProjectAgentAccess: () => access,
+    kill: () => true,
+    executeAsyncSingle: ((runId: string) => {
+      dispatched.push(runId);
+      return {
+        content: [{ type: "text", text: "dispatched" }],
+        details: { mode: "single", results: [], asyncId: runId },
       };
-      const missingExecutor = createSubagentExecutor({
-        pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" } as any,
-        state,
-        config: { maxSubagentDepth: 2, control: {} } as any,
-        tempArtifactsDir: root,
-        getSubagentSessionRoot: () => root,
-        expandTilde: (value) => value,
-        discoverAgents: () => ({ agents: [] }),
-        getProjectAgentAccess: () => staleAccess,
-        kill: () => true,
-      });
-      const missingResult = await missingExecutor.execute(
-        "resume",
-        { action: "resume", id: missingGenerationId, message: "Check missing generation." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(missingResult.isError, true);
-      assert.match(text(missingResult), /invalid|generation|capability|rejected/i);
+    }) as any,
+  });
+}
+
+function ctxFor(sessionId: string, cwd = root) {
+  const ctx = makeMinimalCtx(cwd);
+  (ctx.sessionManager as any).getSessionId = () => sessionId;
+  (ctx.sessionManager as any).getSessionFile = () => null;
+  return ctx;
+}
+
+function text(result: { content: Array<{ type: string; text?: string }> }): string {
+  return result.content[0]?.text ?? "";
+}
+
+const trustedAccess = (overrides: Partial<ProjectAgentAccess> = {}): ProjectAgentAccess => ({
+  architect: false,
+  canManage: true,
+  canInitiate: true,
+  trustStore: { getEntry: (cwd) => ({ path: cwd, decision: true }) },
+  ...overrides,
+});
+
+async function run(
+  executor: ReturnType<typeof makeExecutor>,
+  params: Record<string, unknown>,
+  sessionId: string,
+  toolCallId = "control",
+) {
+  return executor.execute(
+    toolCallId,
+    params as any,
+    new AbortController().signal,
+    undefined,
+    ctxFor(sessionId),
+  );
+}
+
+describe("persisted project-agent control authorization", () => {
+  it("rejects durable embedded revival from a foreign session and allows the owner", async () => {
+    const runId = writeRun("complete");
+    const dispatched: string[] = [];
+    const executor = makeExecutor(trustedAccess(), dispatched);
+
+    const foreign = await run(
+      executor,
+      { action: "resume", id: runId, message: "Continue." },
+      NON_OWNER,
+    );
+    assert.equal(foreign.isError, true);
+    assert.match(text(foreign), /owned by another session/);
+    assert.deepEqual(dispatched, []);
+
+    const owner = await run(executor, { action: "resume", id: runId, message: "Continue." }, OWNER);
+    assert.equal(owner.isError, undefined, text(owner));
+    assert.equal(dispatched.length, 1);
+  });
+
+  it("lets an enabled primary steer a live embedded run and queues the request", async () => {
+    const runId = writeRun("running");
+    const executor = makeExecutor(trustedAccess(), []);
+    const result = await run(executor, { action: "steer", id: runId, message: "Focus." }, OWNER);
+    assert.equal(result.isError, undefined, text(result));
+    const requests = consumeChildMessageRequests(path.join(ASYNC_DIR, runId));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.message, "Focus.");
+  });
+
+  it("rejects embedded resume and steer in disabled mode before dispatch or queueing", async () => {
+    const disabled = trustedAccess({ canManage: false, canInitiate: true });
+    const dispatched: string[] = [];
+    const completeId = writeRun("complete");
+    const runningId = writeRun("running");
+    const executor = makeExecutor(disabled, dispatched);
+
+    const resume = await run(
+      executor,
+      { action: "resume", id: completeId, message: "Continue." },
+      OWNER,
+    );
+    assert.equal(resume.isError, true);
+    assert.match(text(resume), /cannot manage project-agent runs/);
+    assert.deepEqual(dispatched, []);
+
+    const steer = await run(executor, { action: "steer", id: runningId, message: "Focus." }, OWNER);
+    assert.equal(steer.isError, true);
+    assert.match(text(steer), /cannot manage project-agent runs/);
+    assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runningId)), []);
+  });
+
+  it("lets disabled mode initiate an authorized target", async () => {
+    const access = trustedAccess({ canManage: false, canInitiate: true });
+    const resolution = await resolveProjectAgentExecution(
+      { agent: "embedded.worker", task: "go" },
+      root,
+      "both",
+      OWNER,
+      { discoverAgents: () => ({ agents: [] }), getProjectAgentAccess: () => access } as any,
+    );
+    assert.ok(!("error" in resolution), "error" in resolution ? resolution.error : "");
+    assert.equal(resolution.projectAgentIdentities?.[0]?.slug, "worker");
+  });
+
+  it("rejects initiation without canInitiate", async () => {
+    const dispatched: string[] = [];
+    const denied = await run(
+      makeExecutor(trustedAccess({ canManage: false, canInitiate: false }), dispatched),
+      { agent: "embedded.worker", task: "go", agentScope: "both" },
+      OWNER,
+    );
+    assert.equal(denied.isError, true);
+    assert.match(text(denied), /not authorized for the current primary-agent mode/);
+    assert.deepEqual(dispatched, []);
+  });
+
+  it("rejects outside-Git, nonexistent, and symlink-escape cwd before dispatch", async () => {
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tlh-outside-")));
+    const escape = path.join(root, "escape");
+    fs.symlinkSync(outside, escape);
+    try {
+      for (const cwd of [outside, path.join(root, "missing"), escape]) {
+        const dispatched: string[] = [];
+        const result = await run(
+          makeExecutor(trustedAccess(), dispatched),
+          { agent: "embedded.worker", task: "go", cwd },
+          OWNER,
+        );
+        assert.equal(result.isError, true, cwd);
+        assert.deepEqual(dispatched, [], cwd);
+      }
     } finally {
-      for (const runId of runIds) cleanupRun(runId);
-      revokeIfRegistered(generation.capability);
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(otherRoot, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
     }
   });
-  it("rejects removed, empty, out-of-range, cohort-paused, and mixed ordinary child markers before steering", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-steer-")),
+});
+
+const RUSH_RESUME = "RUSH-RESUME-RESTRICTED";
+const RUSH_STEER = "RUSH-STEER-RESTRICTED";
+const rushAccess = () =>
+  trustedAccess({
+    controlRestrictedToEmbedded: true,
+    resumeRestrictionReason: RUSH_RESUME,
+    steerRestrictionReason: RUSH_STEER,
+  });
+
+function writeRunWith(options: {
+  state: "complete" | "running";
+  steps: Array<{ agent: string; [key: string]: unknown }>;
+  results?: Array<{ agent: string; [key: string]: unknown }>;
+}): string {
+  const runId = `project-control-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  runIds.push(runId);
+  const asyncDir = path.join(ASYNC_DIR, runId);
+  const sessionFile = path.join(asyncDir, "child.jsonl");
+  fs.mkdirSync(asyncDir, { recursive: true });
+  fs.writeFileSync(sessionFile, "", "utf-8");
+  const stamp = (child: { agent: string; [key: string]: unknown }) => ({
+    status: options.state,
+    startedAt: 100,
+    sessionFile,
+    cwd: root,
+    ...child,
+  });
+  writeJson(path.join(asyncDir, "status.json"), {
+    runId,
+    mode: "parallel",
+    state: options.state,
+    ...(options.state === "running" ? { pid: 12345 } : {}),
+    sessionId: OWNER,
+    cwd: root,
+    startedAt: 100,
+    lastUpdate: Date.now(),
+    sessionFile,
+    steps: options.steps.map(stamp),
+  });
+  if (options.results) {
+    fs.mkdirSync(RESULTS_DIR, { recursive: true });
+    writeJson(path.join(RESULTS_DIR, `${runId}.json`), {
+      id: runId,
+      runId,
+      agent: options.results[0]?.agent ?? "developer",
+      success: true,
+      mode: "parallel",
+      state: options.state,
+      cwd: root,
+      sessionId: OWNER,
+      results: options.results.map((child) => ({
+        sessionFile,
+        cwd: root,
+        success: true,
+        ...child,
+      })),
+    });
+  }
+  return runId;
+}
+
+const embeddedChild = (extra: Record<string, unknown> = {}) => ({
+  agent: "embedded.worker",
+  projectAgent: { slug: "worker", root, cwd: root },
+  ...extra,
+});
+const ordinaryChild = { agent: "code-reviewer" };
+
+describe("restricted (Rush) resume/steer is enforced by the executor", () => {
+  const expectBlocked = async (
+    action: "resume" | "steer",
+    runId: string,
+    extra: Record<string, unknown> = {},
+    anyRejection = false,
+  ) => {
+    const dispatched: string[] = [];
+    const executor = makeExecutor(rushAccess(), dispatched);
+    const result = await run(executor, { action, id: runId, message: "Go.", ...extra }, OWNER);
+    assert.equal(result.isError, true, text(result));
+    if (!anyRejection) assert.equal(text(result), action === "resume" ? RUSH_RESUME : RUSH_STEER);
+    assert.deepEqual(dispatched, []);
+    assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)), []);
+  };
+  const expectAllowed = async (
+    action: "resume" | "steer",
+    runId: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    const dispatched: string[] = [];
+    const executor = makeExecutor(rushAccess(), dispatched);
+    const result = await run(executor, { action, id: runId, message: "Go.", ...extra }, OWNER);
+    assert.equal(result.isError, undefined, text(result));
+    if (action === "resume") assert.equal(dispatched.length, 1);
+    else assert.equal(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)).length, 1);
+  };
+  const stateFor = (action: "resume" | "steer") => (action === "resume" ? "complete" : "running");
+
+  for (const action of ["resume", "steer"] as const) {
+    const state = stateFor(action);
+
+    it(`${action}: blocks an ordinary run`, async () => {
+      await expectBlocked(action, writeRunWith({ state, steps: [ordinaryChild] }));
+    });
+
+    it(`${action}: mixed run blocks an ordinary index and allows the embedded index`, async () => {
+      const steps = [ordinaryChild, embeddedChild()];
+      await expectBlocked(action, writeRunWith({ state, steps }), { index: 0 });
+      await expectAllowed(action, writeRunWith({ state, steps }), { index: 1 });
+    });
+
+    it(`${action}: blocks null and ordinary-agent-with-marker identities`, async () => {
+      for (const child of [
+        { agent: "embedded.worker" },
+        { agent: "developer", projectAgent: { slug: "worker", root, cwd: root } },
+        { agent: "embedded.worker", projectAgent: { slug: "other", root, cwd: root } },
+      ]) {
+        await expectBlocked(action, writeRunWith({ state, steps: [child] }));
+      }
+    });
+
+    it(`${action}: rejects a null identity marker before dispatch or queueing`, async () => {
+      const steps = [{ agent: "embedded.worker", projectAgent: null }];
+      await expectBlocked(action, writeRunWith({ state, steps }), {}, true);
+    });
+
+    it(`${action}: allows a valid embedded child`, async () => {
+      await expectAllowed(action, writeRunWith({ state, steps: [embeddedChild()] }));
+    });
+  }
+
+  it("steer: unindexed steer on a mixed run is blocked unless every target is embedded", async () => {
+    await expectBlocked(
+      "steer",
+      writeRunWith({ state: "running", steps: [ordinaryChild, embeddedChild()] }),
     );
-    execFileSync("git", ["init", "--quiet", root]);
-    const generation = createProjectGeneration(root, "session-project", "generation-steer");
-    const state = createState();
-    const executor = makeExecutor(root, state, { capability: generation.capability });
-    const runIds: string[] = [];
-    try {
-      const missingMarkerId = `project-steer-marker-${Date.now().toString(36)}`;
-      runIds.push(missingMarkerId);
-      retainProjectAgentRunReference(generation.capability, missingMarkerId, [generation.capture]);
-      const missingMarkerDir = writeStatus(missingMarkerId, root, generation.capture);
-      const missingMarkerStatus = JSON.parse(
-        fs.readFileSync(path.join(missingMarkerDir, "status.json"), "utf8"),
-      );
-      delete missingMarkerStatus.steps[0].projectAgent;
-      writeJson(path.join(missingMarkerDir, "status.json"), missingMarkerStatus);
-      const missingMarker = await executor.execute(
-        "steer",
-        { action: "steer", id: missingMarkerId, message: "Do not bypass." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(missingMarker.isError, true);
-      assert.match(text(missingMarker), /missing|corrupt|project-agent/i);
+    await expectAllowed(
+      "steer",
+      writeRunWith({ state: "running", steps: [embeddedChild(), embeddedChild()] }),
+    );
+  });
 
-      const emptyId = `project-steer-empty-${Date.now().toString(36)}`;
-      runIds.push(emptyId);
-      retainProjectAgentRunReference(generation.capability, emptyId, [generation.capture]);
-      const emptyDir = writeStatus(emptyId, root, generation.capture, { steps: [] });
-      const empty = await executor.execute(
-        "steer",
-        { action: "steer", id: emptyId, message: "Do not bypass." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(empty.isError, true);
-      assert.match(text(empty), /no selectable|project-agent/i);
-      assert.equal(fs.existsSync(path.join(emptyDir, "control", "steer-requests")), false);
+  it("resume: blocks when status and result records disagree about the child", async () => {
+    // status says embedded, result says ordinary (and vice versa)
+    await expectBlocked(
+      "resume",
+      writeRunWith({ state: "complete", steps: [embeddedChild()], results: [ordinaryChild] }),
+    );
+    await expectBlocked(
+      "resume",
+      writeRunWith({
+        state: "complete",
+        steps: [ordinaryChild],
+        results: [embeddedChild()],
+      }),
+    );
+    await expectBlocked(
+      "resume",
+      writeRunWith({
+        state: "complete",
+        steps: [{ agent: "embedded.worker" }],
+        results: [embeddedChild()],
+      }),
+    );
+  });
 
-      const rangeId = `project-steer-range-${Date.now().toString(36)}`;
-      runIds.push(rangeId);
-      retainProjectAgentRunReference(generation.capability, rangeId, [generation.capture]);
-      writeStatus(rangeId, root, generation.capture, { state: "running" });
-      const range = await executor.execute(
-        "steer",
-        { action: "steer", id: rangeId, index: 3, message: "Do not bypass." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(range.isError, true);
-      assert.match(text(range), /out of range|project-agent/i);
+  it("resume: allows consistent status and result records for an embedded child", async () => {
+    await expectAllowed(
+      "resume",
+      writeRunWith({ state: "complete", steps: [embeddedChild()], results: [embeddedChild()] }),
+    );
+  });
 
-      const cohortId = `project-steer-cohort-${Date.now().toString(36)}`;
-      runIds.push(cohortId);
-      retainProjectAgentRunReference(generation.capability, cohortId, [generation.capture]);
-      const cohortDir = writeStatus(cohortId, root, generation.capture, {
-        state: "paused",
-        steps: [
-          {
-            agent: generation.capture.provenance.agent,
-            status: "paused",
-            projectAgent: generation.capture,
-            sessionFile: path.join(runAsyncDir(cohortId), "one.jsonl"),
-          },
-          {
-            agent: generation.capture.provenance.agent,
-            status: "paused",
-            projectAgent: generation.capture,
-            sessionFile: path.join(runAsyncDir(cohortId), "two.jsonl"),
-          },
-        ],
+  describe("fails closed when the access bridge is present but broken", () => {
+    for (const action of ["resume", "steer"] as const) {
+      const state = action === "resume" ? "complete" : "running";
+      const execWith = async (access: unknown, runId: string) => {
+        const dispatched: string[] = [];
+        const executor = makeExecutor(access as any, dispatched);
+        const result = await run(executor, { action, id: runId, message: "Go." }, OWNER);
+        return { result, dispatched, runId };
+      };
+
+      it(`${action}: malformed-but-restricted access rejects ordinary and embedded targets`, async () => {
+        const malformed = { controlRestrictedToEmbedded: true, canManage: "invalid" };
+        for (const steps of [[ordinaryChild], [embeddedChild()]]) {
+          const { result, dispatched, runId } = await execWith(
+            malformed,
+            writeRunWith({ state, steps }),
+          );
+          assert.equal(result.isError, true, text(result));
+          assert.deepEqual(dispatched, []);
+          assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)), []);
+        }
       });
-      fs.writeFileSync(path.join(runAsyncDir(cohortId), "two.jsonl"), "", "utf8");
-      const cohort = await executor.execute(
-        "steer",
-        { action: "steer", id: cohortId, message: "Do not bypass." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(cohort.isError, true);
-      assert.match(text(cohort), /no running or pending|project-agent/i);
-      assert.equal(fs.existsSync(path.join(cohortDir, "control", "steer-requests")), false);
 
-      const mixedId = `project-steer-mixed-${Date.now().toString(36)}`;
-      runIds.push(mixedId);
-      retainProjectAgentRunReference(generation.capability, mixedId, [generation.capture]);
-      const mixedDir = writeStatus(mixedId, root, generation.capture, {
-        state: "running",
-        steps: [
-          {
-            agent: generation.capture.provenance.agent,
-            status: "running",
-            projectAgent: generation.capture,
-            sessionFile: path.join(runAsyncDir(mixedId), "one.jsonl"),
+      it(`${action}: a throwing provider rejects an ordinary target`, async () => {
+        const dispatched: string[] = [];
+        const throwing = createSubagentExecutor({
+          pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" } as any,
+          state: makeSubagentState({ baseCwd: root }),
+          config: { maxSubagentDepth: 2, control: {} } as any,
+          tempArtifactsDir: root,
+          getSubagentSessionRoot: () => path.join(root, "sessions"),
+          expandTilde: (value) => value,
+          discoverAgents: () => ({ agents: [makeAgent("code-reviewer")] }),
+          getProjectAgentAccess: () => {
+            throw new Error("bridge broken");
           },
-          {
-            agent: "worker",
-            status: "running",
-            sessionFile: path.join(runAsyncDir(mixedId), "two.jsonl"),
-          },
-        ],
+          kill: () => true,
+          executeAsyncSingle: ((runId: string) => {
+            dispatched.push(runId);
+            return { content: [{ type: "text", text: "dispatched" }], details: {} };
+          }) as any,
+        });
+        const runId = writeRunWith({ state, steps: [ordinaryChild] });
+        const result = await run(throwing, { action, id: runId, message: "Go." }, OWNER);
+        assert.equal(result.isError, true, text(result));
+        assert.deepEqual(dispatched, []);
+        assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)), []);
       });
-      fs.writeFileSync(path.join(runAsyncDir(mixedId), "two.jsonl"), "", "utf8");
-      const mixed = await executor.execute(
-        "steer",
-        { action: "steer", id: mixedId, message: "Do not select an ordinary sibling." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(mixed.isError, true);
-      assert.match(text(mixed), /ordinary sibling|matching retained|project-agent/i);
-      assert.equal(fs.existsSync(path.join(mixedDir, "control", "steer-requests")), false);
-    } finally {
-      for (const runId of runIds) cleanupRun(runId);
-      revokeIfRegistered(generation.capability);
-      fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("invocation-bound embedded-only restriction", () => {
+  const unrestricted: Array<[string, ProjectAgentAccess | undefined]> = [
+    ["architect selection", trustedAccess({ architect: true })],
+    ["provider removed", undefined],
+    ["legacy {architect:true}", { architect: true } as any],
+  ];
+  // run() executes with toolCallId "control": mark it as the hook would have.
+  // tool_execution_end (the sole release) follows the call.
+  const marked = async (fn: () => Promise<any>) => {
+    assert.equal(markEmbeddedOnlyToolCall("control"), true);
+    try {
+      return await fn();
+    } finally {
+      noteSubagentToolExecutionEnd("control");
+    }
+  };
+
+  for (const action of ["resume", "steer"] as const) {
+    const state = action === "resume" ? "complete" : "running";
+    for (const [label, access] of unrestricted) {
+      it(`${action}: a marked call stays embedded-only when the executor sees ${label}`, async () => {
+        const dispatched: string[] = [];
+        const executor = makeExecutor(access, dispatched);
+        const ordinary = writeRunWith({ state, steps: [ordinaryChild] });
+        const blocked = await marked(() =>
+          run(executor, { action, id: ordinary, message: "Go." }, OWNER),
+        );
+        assert.equal(blocked.isError, true, text(blocked));
+        assert.deepEqual(dispatched, []);
+        assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, ordinary)), []);
+        if (!access?.trustStore) return; // embedded authorization needs a trust store
+        const embedded = writeRunWith({ state, steps: [embeddedChild()] });
+        const allowed = await marked(() =>
+          run(executor, { action, id: embedded, message: "Go." }, OWNER),
+        );
+        assert.equal(allowed.isError, undefined, text(allowed));
+      });
+    }
+
+    it(`${action}: an unmarked architect call is unaffected and marks are cleared after the call`, async () => {
+      const dispatched: string[] = [];
+      const executor = makeExecutor(trustedAccess({ architect: true }), dispatched);
+      const ordinary = writeRunWith({ state, steps: [ordinaryChild] });
+      const free = await run(executor, { action, id: ordinary, message: "Go." }, OWNER);
+      assert.equal(free.isError, undefined, text(free));
+
+      await marked(() => run(executor, { action, id: "missing-run-1", message: "x" }, OWNER));
+      assert.equal(isEmbeddedOnlyToolCall("control"), false);
+    });
+  }
+
+  it("does not release marks when the bound call settles, even on error", async () => {
+    markEmbeddedOnlyToolCall("err-id");
+    await assert.rejects(
+      runBoundToToolCall("err-id", async () => {
+        throw new Error("boom");
+      }),
+    );
+    assert.equal(isEmbeddedOnlyToolCall("err-id"), true);
+    noteSubagentToolExecutionEnd("err-id");
+    assert.equal(isEmbeddedOnlyToolCall("err-id"), false);
+  });
+
+  it("start/end accounting: duplicate ids clear only when every started execution ended", async () => {
+    const dispatched: string[] = [];
+    const executor = makeExecutor(trustedAccess({ architect: true }), dispatched);
+    const ordinary = writeRunWith({ state: "complete", steps: [ordinaryChild] });
+    noteSubagentToolExecutionStart("dup");
+    noteSubagentToolExecutionStart("dup");
+    assert.equal(markEmbeddedOnlyToolCall("dup"), true);
+    try {
+      for (let i = 0; i < 2; i++) {
+        const blocked = await run(
+          executor,
+          { action: "resume", id: ordinary, message: "Go." },
+          OWNER,
+          "dup",
+        );
+        assert.equal(blocked.isError, true, text(blocked));
+        noteSubagentToolExecutionEnd("dup"); // one tool_execution_end per call
+        assert.equal(isEmbeddedOnlyToolCall("dup"), i === 0, `after end ${i + 1}`);
+      }
+      assert.equal(subagentExecutionAccountingSize(), 0, "all state for the id is deleted");
+      noteSubagentToolExecutionEnd("dup"); // stray end is a no-op
+      assert.equal(subagentExecutionAccountingSize(), 0);
+      assert.deepEqual(dispatched, []);
+    } finally {
+      noteSubagentToolExecutionEnd("dup");
+      noteSubagentToolExecutionEnd("dup");
+    }
+    // Registry is empty again: a full 256 marks fit.
+    const ids = Array.from({ length: 256 }, (_, i) => `empty-${i}`);
+    try {
+      for (const id of ids) assert.equal(markEmbeddedOnlyToolCall(id), true);
+    } finally {
+      for (const id of ids) noteSubagentToolExecutionEnd(id);
+    }
+    assert.equal(subagentExecutionAccountingSize(), 0);
+  });
+
+  it("bounds the registry without evicting outstanding marks, and recovers", async () => {
+    // 256 outstanding marks = full registry; the executor runs under the OLDEST one.
+    const ids = Array.from({ length: 256 }, (_, i) => `cap-${i}`);
+    try {
+      for (const id of ids) assert.equal(markEmbeddedOnlyToolCall(id), true);
+      // Overflow fails closed for a new id; re-marking a marked id is a no-op.
+      assert.equal(markEmbeddedOnlyToolCall("cap-over"), false);
+      assert.equal(markEmbeddedOnlyToolCall("cap-0"), true);
+      assert.equal(isEmbeddedOnlyToolCall("cap-over"), false);
+      assert.equal(isEmbeddedOnlyToolCall("cap-0"), true);
+      // Even after the provider changes, the oldest outstanding mark still restricts.
+      const dispatched: string[] = [];
+      const executor = makeExecutor(trustedAccess({ architect: true }), dispatched);
+      const ordinary = writeRunWith({ state: "complete", steps: [ordinaryChild] });
+      const blocked = await run(
+        executor,
+        { action: "resume", id: ordinary, message: "Go." },
+        OWNER,
+        "cap-0",
+      );
+      assert.equal(blocked.isError, true, text(blocked));
+      assert.deepEqual(dispatched, []);
+      // Its end frees capacity.
+      noteSubagentToolExecutionEnd("cap-0");
+      assert.equal(isEmbeddedOnlyToolCall("cap-0"), false);
+      assert.equal(markEmbeddedOnlyToolCall("cap-over"), true);
+    } finally {
+      for (const id of [...ids, "cap-over"]) noteSubagentToolExecutionEnd(id);
+    }
+    assert.equal(markEmbeddedOnlyToolCall(undefined), false);
   });
 });

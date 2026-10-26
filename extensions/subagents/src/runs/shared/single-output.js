@@ -1,10 +1,10 @@
+// Generated from extensions/subagents/src/runs/shared/single-output.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
 const SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL = String.raw `(?:\*\*Output:\*\*\s*)?`;
 const SINGLE_OUTPUT_INSTRUCTION_PATTERN = "(?:The harness will save your final response to:|Write your findings to(?: exactly this path)?:)";
 const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(String.raw `${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`, "i");
-export const SINGLE_OUTPUT_INSTRUCTION_LINE_PATTERN = new RegExp(String.raw `^\s*${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}`, "i");
 export function extractSingleOutputInstructionTarget(text) {
     const match = text.match(SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN);
     return match?.[1]?.trim() || undefined;
@@ -147,7 +147,7 @@ export function resolveSingleOutput(outputPath, fallbackOutput, beforeRun) {
 export function finalizeSingleOutput(params) {
     let displayOutput = params.truncatedOutput || params.fullOutput;
     const savedPath = params.savedPath;
-    if (savedPath && (params.exitCode === 0 || params.acceptanceRejected)) {
+    if (savedPath && params.exitCode === 0) {
         const outputReference = params.outputReference ?? formatSavedOutputReference(savedPath, params.fullOutput);
         if (params.outputMode === "file-only") {
             return {

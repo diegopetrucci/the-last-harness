@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/model-effort-reconcile.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isRecord, readText } from "./common.js";
 import { formatProviderModelReference, listAgentModelDefaultReferences, parseProviderModelReference, selectProviderAwareAgentDefaults, splitKnownThinkingSuffix, } from "./model-defaults.js";
 import { tlhStatePath, writeGuardedTlhStateFile } from "./profile-state.js";
@@ -152,21 +153,24 @@ function resolvePackagedDefaults(agent, provider) {
         thinking: defaults.thinking,
     };
 }
+function packagedProviderAcknowledgment(agent, provider) {
+    const packaged = resolvePackagedDefaults(agent, provider);
+    const ack = {};
+    if (packaged.model !== undefined) {
+        ack.model = packaged.model;
+    }
+    if (packaged.thinking !== undefined) {
+        ack.thinking = packaged.thinking;
+    }
+    return ack;
+}
 export function recordOverrideBaseline(agentName, agent, provider) {
     try {
         if (!isKnownProvider(provider)) {
             return;
         }
-        const packaged = resolvePackagedDefaults(agent, provider);
-        const ack = {};
-        if (packaged.model !== undefined) {
-            ack.model = packaged.model;
-        }
-        if (packaged.thinking !== undefined) {
-            ack.thinking = packaged.thinking;
-        }
         updateReconcileAcknowledgedSnapshot({
-            [agentName]: { byProvider: { [provider]: ack } },
+            [agentName]: { byProvider: { [provider]: packagedProviderAcknowledgment(agent, provider) } },
         });
     }
     catch {
@@ -188,15 +192,11 @@ export function backfillMissingBaselines(primaryAgents, subagentMetadata, settin
                 if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
                     continue;
                 }
-                const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
-                const ack = {};
-                if (packaged.model !== undefined) {
-                    ack.model = packaged.model;
-                }
-                if (packaged.thinking !== undefined) {
-                    ack.thinking = packaged.thinking;
-                }
-                toBackfill[name] = { byProvider: { [currentProvider]: ack } };
+                toBackfill[name] = {
+                    byProvider: {
+                        [currentProvider]: packagedProviderAcknowledgment(primaryAgents.get(name), currentProvider),
+                    },
+                };
             }
         }
         const subagentOverrides = settings.subagents?.agentOverrides;
@@ -209,15 +209,11 @@ export function backfillMissingBaselines(primaryAgents, subagentMetadata, settin
                 if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
                     continue;
                 }
-                const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
-                const ack = {};
-                if (packaged.model !== undefined) {
-                    ack.model = packaged.model;
-                }
-                if (packaged.thinking !== undefined) {
-                    ack.thinking = packaged.thinking;
-                }
-                toBackfill[name] = { byProvider: { [currentProvider]: ack } };
+                toBackfill[name] = {
+                    byProvider: {
+                        [currentProvider]: packagedProviderAcknowledgment(subagentMap.get(name), currentProvider),
+                    },
+                };
             }
         }
         if (Object.keys(toBackfill).length === 0) {

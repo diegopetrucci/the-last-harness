@@ -54,22 +54,26 @@ describe("SubagentParams schema", () => {
     assert.equal(SubagentParams.additionalProperties, false);
   });
 
-  it("includes count and omits retired caller execution controls", () => {
+  it("omits retired caller execution controls", () => {
     const taskSchemaOwner = getPropertySchema(SubagentParams, ["tasks"]);
     const taskItemsSchema = isSchemaObject(taskSchemaOwner?.items)
       ? taskSchemaOwner.items
       : undefined;
     const taskProperties: unknown = taskItemsSchema?.properties;
     const taskSchema = isSchemaObject(taskProperties) ? taskProperties : undefined;
-    const taskCountSchema = isSchemaObject(taskSchema?.count) ? taskSchema.count : undefined;
-    assert.ok(taskCountSchema, "tasks[].count schema should exist");
-    assert.equal(taskCountSchema.minimum, 1);
+    assert.equal(taskSchema?.count, undefined, "tasks[].count is retired");
     assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
     assert.deepEqual(
       Object.keys(taskSchema ?? {}).sort(),
-      ["agent", "task", "cwd", "count", "output", "outputMode", "model"].sort(),
+      ["agent", "task", "ticket", "cwd", "output", "outputMode", "model"].sort(),
       "tasks[] allowlist mismatch",
     );
+    const taskTicketSchema = isSchemaObject(taskSchema?.ticket) ? taskSchema.ticket : undefined;
+    assert.equal(taskTicketSchema?.type, "string");
+    assert.equal(taskTicketSchema?.maxLength, 128);
+    const topLevelTicketSchema = getPropertySchema(SubagentParams, ["ticket"]);
+    assert.equal(topLevelTicketSchema?.type, "string");
+    assert.equal(topLevelTicketSchema?.maxLength, 128);
     const taskCwdSchema = isSchemaObject(taskSchema?.cwd) ? taskSchema.cwd : undefined;
     assert.equal(taskCwdSchema?.type, "string");
     const outputSchema = isSchemaObject(taskSchema?.output) ? taskSchema.output : undefined;
@@ -105,6 +109,12 @@ describe("SubagentParams schema", () => {
 
   it("does not expose a public execution timeout", () => {
     assert.equal(getPropertySchema(SubagentParams, ["timeoutMs"]), undefined);
+  });
+
+  it("does not expose the retired transcript status view options", () => {
+    assert.equal(getPropertySchema(SubagentParams, ["view"]), undefined);
+    assert.equal(getPropertySchema(SubagentParams, ["lines"]), undefined);
+    assert.equal(getPropertySchema(SubagentParams, ["dir"]), undefined);
   });
 
   it("includes id, index, and message control parameters", () => {
@@ -241,10 +251,10 @@ describe("SubagentParams schema", () => {
 
     const tasksSchema = getPropertySchema(schema, ["tasks"]);
     const taskItemsSchema = isSchemaObject(tasksSchema?.items) ? tasksSchema.items : undefined;
-    const taskCountSchema = getPropertySchema(taskItemsSchema, ["count"]);
-    assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~kind")?.enumerable, false);
-    assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~optional")?.value, true);
-    assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~optional")?.enumerable, false);
+    const taskOutputSchema = getPropertySchema(taskItemsSchema, ["model"]);
+    assert.equal(Object.getOwnPropertyDescriptor(taskOutputSchema, "~kind")?.enumerable, false);
+    assert.equal(Object.getOwnPropertyDescriptor(taskOutputSchema, "~optional")?.value, true);
+    assert.equal(Object.getOwnPropertyDescriptor(taskOutputSchema, "~optional")?.enumerable, false);
   });
 
   it("does not emit provider-rejected schema shapes", () => {
@@ -298,7 +308,9 @@ describe("SubagentParams schema", () => {
     const validator = CompileSchema(SubagentParams);
     const validValues = [
       { agent: "reviewer", task: "check this" },
+      { agent: "reviewer", task: "check this", ticket: "a".repeat(128) },
       { tasks: [{ agent: "reviewer", task: "check this", cwd: "packages/app" }] },
+      { tasks: [{ agent: "reviewer", task: "check this", ticket: "a".repeat(128) }] },
       {
         tasks: [
           {
@@ -326,6 +338,8 @@ describe("SubagentParams schema", () => {
     ];
     const invalidValues = [
       { output: 123 },
+      { agent: "reviewer", task: "check this", ticket: "a".repeat(129) },
+      { tasks: [{ agent: "reviewer", task: "check this", ticket: "a".repeat(129) }] },
       { timeoutMs: 1 },
       { tasks: [{ agent: "reviewer", task: "check this", timeoutMs: 1 }] },
       { tasks: [{ agent: "reviewer", task: "check this", reads: "input.md" }] },
@@ -340,9 +354,14 @@ describe("SubagentParams schema", () => {
           { agent: "reviewer", task: "check this", output: "ok.md", nested: { surprise: true } },
         ],
       },
-      // action enum violations
+      // action enum and status transcript option violations
       { action: "create" },
       { action: "not-a-real-action" },
+      { action: "status", view: "fleet" },
+      { action: "status", view: "" },
+      { action: "status", lines: 0 },
+      { action: "status", lines: 501 },
+      { action: "status", lines: 1.5 },
       // additionalProperties: false violations at root
       { skill: "review" },
       { chain: [{ agent: "reviewer" }] },
@@ -352,13 +371,11 @@ describe("SubagentParams schema", () => {
       { config: { name: "reviewer" } },
       { runId: "run-1" },
       { turnBudget: { maxTurns: 5 } },
-      { toolBudget: { hard: 3 } },
+      { toolBudget: { hard: 5 } },
       { share: true },
       { sessionDir: "/tmp/session" },
       { control: {} },
       { dir: "/tmp" },
-      { view: "fleet" },
-      { lines: 80 },
       { scheduleName: "nightly" },
       { chainDir: "/tmp/chain" },
       { chainName: "my-chain" },
@@ -410,6 +427,7 @@ describe("SubagentParams schema", () => {
       "model",
       "cwd",
       "artifacts",
+      "ticket",
     ].sort();
     assert.deepEqual(actualProps, expectedProps, "top-level property allowlist mismatch");
     const actionEnum = getPropertySchema(schema, ["action"])?.enum;
@@ -440,8 +458,8 @@ describe("SubagentParams schema", () => {
       "sessionDir",
       "runId",
       "maxRuntimeMs",
-      "toolBudget",
       "turnBudget",
+      "toolBudget",
       "acceptance",
       "skill",
       "chainDir",
@@ -455,8 +473,8 @@ describe("SubagentParams schema", () => {
       "chainName",
       "skill",
       "acceptance",
-      "toolBudget",
       "fallbackModels",
+      "toolBudget",
       "modelFallbackNotice",
       "reads",
       "progress",

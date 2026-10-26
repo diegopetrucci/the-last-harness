@@ -1,17 +1,24 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isEffectivelyEmpty } from "../runs/shared/acceptance.ts";
 import {
   DEFAULT_ARTIFACT_CONFIG,
   type ArtifactMode,
   type ArtifactPaths,
   type ResolvedArtifactConfig,
   TEMP_ARTIFACTS_DIR,
-  type SingleResult,
 } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
+
+function isEffectivelyEmptyArtifactContent(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return true;
+  return trimmed.split(/\r?\n/).every((line) => {
+    const normalized = line.trim();
+    return normalized.length === 0 || /^([-*_])(?:\s*\1){2,}$/.test(normalized);
+  });
+}
 
 const LEGACY_DETAILED_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
   mode: "debug",
@@ -27,7 +34,7 @@ const LEGACY_DETAILED_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
 
 let invalidArtifactModeWarningShown = false;
 
-export interface ArtifactConfigResolutionOptions {
+interface ArtifactConfigResolutionOptions {
   /** Caller-owned overall artifact switch; this cannot select a detail mode. */
   enabled?: boolean;
   /** Use the pre-profile detailed defaults for old persisted run configs. */
@@ -158,23 +165,15 @@ export function getArtifactPaths(
   };
 }
 
-export function ensureArtifactsDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
-export function writeArtifact(filePath: string, content: string): void {
-  fs.writeFileSync(filePath, content, "utf-8");
-}
-
 /**
  * Write a supervisor-facing artifact file, applying a non-destruction floor as
  * part of the write: if computedContent is effectively empty (whitespace or
  * Markdown horizontal rules only) but rawOutput is non-empty, rawOutput is
  * preserved on disk instead of the degenerate computed value.
  *
- * This is the single enforcement point for the non-destruction invariant; both
- * the async background writer and the foreground writer route through here so
- * the floor cannot be bypassed without also removing the write.
+ * This is the single enforcement point for the non-destruction invariant; all
+ * runner modes route through here so the floor cannot be bypassed without also
+ * removing the write.
  *
  * @param isArchive When true the file is a byte-exact archive of a user-requested
  *   deliverable; the floor is skipped and computedContent is written as-is.
@@ -187,63 +186,10 @@ export function writeArtifactWithFloor(
   isArchive: boolean,
 ): void {
   const content =
-    !isArchive && rawOutput.trim() && isEffectivelyEmpty(computedContent)
+    !isArchive && rawOutput.trim() && isEffectivelyEmptyArtifactContent(computedContent)
       ? rawOutput
       : computedContent;
   fs.writeFileSync(filePath, content, "utf-8");
-}
-
-/**
- * Metadata emitted by the foreground writer after a synchronous run.
- *
- * The background runner writes a separate process metadata shape directly in
- * runs/background/subagent-runner.ts; these writers intentionally remain distinct.
- */
-interface ForegroundSubagentArtifactMetadata extends Pick<
-  SingleResult,
-  | "agent"
-  | "projectAgent"
-  | "exitCode"
-  | "exitSignal"
-  | "timedOut"
-  | "terminationReason"
-  | "contextUsage"
-  | "contextPressure"
-  | "contextPressureCrossedThresholds"
-  | "sessionFile"
-  | "usage"
-  | "model"
-  | "thinking"
-  | "modelIdentity"
-  | "modelResolution"
-  | "attemptedModels"
-  | "modelAttempts"
-  | "modelFallbackNotice"
-  | "error"
-  | "stderr"
-  | "stderrTruncated"
-  | "protocolOutputLimit"
-  | "transcriptPath"
-  | "transcriptError"
-  | "skills"
-  | "skillsWarning"
-  | "activeRuntimeMs"
-> {
-  /** Compact metadata intentionally omits this full task text. */
-  task?: SingleResult["task"];
-  runId: string;
-  durationMs?: number;
-  timeoutMs?: number;
-  deadlineAt?: number;
-  toolCount?: number;
-  timestamp: number;
-}
-
-export function writeMetadata(
-  filePath: string,
-  metadata: ForegroundSubagentArtifactMetadata,
-): void {
-  fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
 }
 
 export function appendJsonl(filePath: string, line: string): void {

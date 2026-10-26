@@ -96,6 +96,7 @@ export interface SessionMirrorObserverProbeOptions {
   readonly replyNotify?: SessionMirrorReplyProducerOptions["notify"];
   readonly replyNow?: SessionMirrorReplyProducerOptions["now"];
   readonly replyScheduleConfirmation?: SessionMirrorReplyProducerOptions["scheduleConfirmation"];
+  readonly replyScheduleLifecycleCompletion?: SessionMirrorReplyProducerOptions["scheduleLifecycleCompletion"];
   readonly replySetTimeout?: SessionMirrorReplyProducerOptions["setTimeout"];
   readonly replyClearTimeout?: SessionMirrorReplyProducerOptions["clearTimeout"];
 }
@@ -109,9 +110,10 @@ export interface SessionMirrorObserverProbe {
   turnEnd(): void;
   agentSettled(): void;
   sessionBeforeTree(): void;
-  sessionTree(): void;
+  sessionTree(event?: unknown, context?: unknown): void;
   sessionBeforeCompact(): void;
-  sessionCompact(): void;
+  sessionCompact(event?: unknown, context?: unknown): void;
+  sessionCompactFailed(event?: unknown, context?: unknown): void;
   sessionShutdown(): void;
   requestSnapshot(): void;
   getState(): SessionMirrorObserverProbeState;
@@ -409,6 +411,7 @@ export function createSessionMirrorObserverProbe(
       createChannel: options.replyChannelFactory,
       now: options.replyNow,
       scheduleConfirmation: options.replyScheduleConfirmation,
+      scheduleLifecycleCompletion: options.replyScheduleLifecycleCompletion,
       setTimeout: options.replySetTimeout,
       clearTimeout: options.replyClearTimeout,
       notify: options.replyNotify,
@@ -504,15 +507,17 @@ export function createSessionMirrorObserverProbe(
     invokeLifecycle(() => runtime.agentSettled(), metrics);
   };
   const sessionBeforeTree = (): void => invokeReply(() => replyProducer?.sessionBeforeTree());
-  const sessionTree = (): void => {
-    invokeReply(() => replyProducer?.sessionTree());
+  const sessionTree = (event?: unknown, context?: unknown): void => {
+    invokeReply(() => replyProducer?.sessionTree(event, context));
     invokeLifecycle(() => runtime.sessionTree(), metrics);
   };
   const sessionBeforeCompact = (): void => invokeReply(() => replyProducer?.sessionBeforeCompact());
-  const sessionCompact = (): void => {
-    invokeReply(() => replyProducer?.sessionCompact());
+  const sessionCompact = (event?: unknown, context?: unknown): void => {
+    invokeReply(() => replyProducer?.sessionCompact(event, context));
     invokeLifecycle(() => runtime.sessionCompact(), metrics);
   };
+  const sessionCompactFailed = (event?: unknown, context?: unknown): void =>
+    invokeReply(() => replyProducer?.sessionCompactFailed(event, context));
   const sessionShutdown = (): void => {
     invokeReply(() => replyProducer?.sessionShutdown());
     shutdownSink(publicationSink);
@@ -537,10 +542,9 @@ export function createSessionMirrorObserverProbe(
     sessionTree,
     sessionBeforeCompact,
     sessionCompact,
+    sessionCompactFailed,
     sessionShutdown,
     requestSnapshot,
     getState,
   });
 }
-
-export default createSessionMirrorObserverProbe;

@@ -1,28 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  clearPendingForegroundControlNotices,
-  handleSubagentControlNotice,
-} from "../../src/extension/control-notices.ts";
-import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
-
-function makeState(): SubagentState {
-  return {
-    baseCwd: "/tmp/project",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
-}
+import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
+import type { ControlEvent } from "../../src/shared/types.ts";
 
 function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEvent {
   return {
@@ -40,63 +19,50 @@ function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEven
 
 function makeRecorder() {
   const sent: Array<{ message: unknown; options?: unknown }> = [];
-  const nudges: Array<{ text: string; options?: unknown }> = [];
+  const syntheticUserMessages: unknown[] = [];
   return {
     sent,
-    nudges,
+    syntheticUserMessages,
+    wakes: () =>
+      sent.filter((entry) => (entry.options as { triggerTurn?: boolean } | undefined)?.triggerTurn),
     pi: {
       sendMessage(message: unknown, options?: unknown) {
         sent.push({ message, options });
       },
-      sendUserMessage(text: string, options?: unknown) {
-        nudges.push({ text, options });
+      sendUserMessage(text: string) {
+        syntheticUserMessages.push(text);
       },
     },
   };
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const triggersTurnOf = (entry: { message: unknown } | undefined) =>
+  (entry?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details?.triggersTurn;
 
 describe("subagent control notice delivery", () => {
-  it("delivers async needs-attention notices with no options and one nudge when idle", () => {
-    const state = makeState();
+  it("delivers async needs-attention notices with triggerTurn and no synthetic user message when idle", () => {
     const recorder = makeRecorder();
 
     handleSubagentControlNotice({
       pi: recorder.pi,
-      state,
       visibleControlNotices: new Set(),
       details: { source: "async", event: needsAttentionEvent() },
-      foregroundDelayMs: 20,
       isIdle: () => true,
     });
 
     assert.equal(recorder.sent.length, 1);
-    assert.equal(
-      recorder.sent[0]?.options,
-      undefined,
-      "sendMessage must have no options (no triggerTurn)",
-    );
-    assert.equal(recorder.nudges.length, 1, "exactly one nudge");
-    assert.equal(
-      recorder.nudges[0]?.text,
-      "[tlh] Subagent run needs attention \u2014 see notice above.",
-    );
-    assert.deepEqual(recorder.nudges[0]?.options, { deliverAs: "followUp" });
+    assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
+    assert.equal(triggersTurnOf(recorder.sent[0]), true);
+    assert.equal(recorder.syntheticUserMessages.length, 0, "no synthetic user message");
   });
 
-  it("delivers async needs-attention notices with no options and no nudge when not idle", () => {
-    const state = makeState();
+  it("delivers async needs-attention notices with no options (steered, no wake) when not idle", () => {
     const recorder = makeRecorder();
 
     handleSubagentControlNotice({
       pi: recorder.pi,
-      state,
       visibleControlNotices: new Set(),
       details: { source: "async", event: needsAttentionEvent() },
-      foregroundDelayMs: 20,
       isIdle: () => false,
     });
 
@@ -104,222 +70,25 @@ describe("subagent control notice delivery", () => {
     assert.equal(
       recorder.sent[0]?.options,
       undefined,
-      "sendMessage must have no options (no triggerTurn)",
+      "sendMessage must have no options (never triggerTurn:false)",
     );
-    assert.equal(recorder.nudges.length, 0, "no nudge when not idle");
+    assert.equal(recorder.wakes().length, 0, "no triggerTurn when not idle");
+    assert.equal(triggersTurnOf(recorder.sent[0]), false);
+    assert.equal(recorder.syntheticUserMessages.length, 0);
   });
 
-  it("assumes idle when no isIdle is provided (nudge sent)", () => {
-    const state = makeState();
+  it("assumes idle when no isIdle is provided (triggerTurn sent)", () => {
     const recorder = makeRecorder();
 
     handleSubagentControlNotice({
       pi: recorder.pi,
-      state,
       visibleControlNotices: new Set(),
       details: { source: "async", event: needsAttentionEvent() },
-      foregroundDelayMs: 20,
     });
 
     assert.equal(recorder.sent.length, 1);
-    assert.equal(recorder.nudges.length, 1, "nudge sent when isIdle not provided (assumes idle)");
-  });
-
-  it("suppresses async completion-guard notices so terminal completion stays authoritative", () => {
-    const state = makeState();
-    const recorder = makeRecorder();
-
-    handleSubagentControlNotice({
-      pi: recorder.pi,
-      state,
-      visibleControlNotices: new Set(),
-      details: {
-        source: "async",
-        event: needsAttentionEvent({
-          message: "worker completed without making edits for an implementation task",
-          reason: "completion_guard",
-        }),
-      },
-      foregroundDelayMs: 20,
-      isIdle: () => true,
-    });
-
-    assert.equal(recorder.sent.length, 0);
-    assert.equal(recorder.nudges.length, 0);
-  });
-
-  it("queues foreground needs-attention notices until the same step is still actionable, with no nudge", async () => {
-    const state = makeState();
-    state.foregroundControls.set("run-1", {
-      runId: "run-1",
-      mode: "single",
-      startedAt: 0,
-      updatedAt: 0,
-      currentAgent: "worker",
-      currentIndex: 0,
-      currentActivityState: "needs_attention",
-    });
-    const recorder = makeRecorder();
-
-    handleSubagentControlNotice({
-      pi: recorder.pi,
-      state,
-      visibleControlNotices: new Set(),
-      details: { source: "foreground", event: needsAttentionEvent() },
-      foregroundDelayMs: 10,
-      isIdle: () => true,
-    });
-
-    assert.equal(recorder.sent.length, 0);
-    await wait(25);
-    assert.equal(recorder.sent.length, 1);
-    assert.equal(
-      recorder.sent[0]?.options,
-      undefined,
-      "sendMessage must have no options for foreground",
-    );
-    assert.equal(recorder.nudges.length, 0, "no nudge for foreground notices");
-  });
-
-  it("drops queued foreground notices when the run finishes before delivery", async () => {
-    const state = makeState();
-    state.foregroundControls.set("run-1", {
-      runId: "run-1",
-      mode: "single",
-      startedAt: 0,
-      updatedAt: 0,
-      currentAgent: "worker",
-      currentIndex: 0,
-      currentActivityState: "needs_attention",
-    });
-    const recorder = makeRecorder();
-
-    handleSubagentControlNotice({
-      pi: recorder.pi,
-      state,
-      visibleControlNotices: new Set(),
-      details: { source: "foreground", event: needsAttentionEvent() },
-      foregroundDelayMs: 20,
-    });
-    clearPendingForegroundControlNotices(state, "run-1");
-    state.foregroundControls.delete("run-1");
-
-    await wait(35);
-    assert.equal(recorder.sent.length, 0);
-    assert.equal(recorder.nudges.length, 0);
-  });
-
-  it("drops queued foreground notices after the run advances to another step", async () => {
-    const state = makeState();
-    state.foregroundControls.set("run-1", {
-      runId: "run-1",
-      mode: "single",
-      startedAt: 0,
-      updatedAt: 0,
-      currentAgent: "worker",
-      currentIndex: 0,
-      currentActivityState: "needs_attention",
-    });
-    const recorder = makeRecorder();
-
-    handleSubagentControlNotice({
-      pi: recorder.pi,
-      state,
-      visibleControlNotices: new Set(),
-      details: { source: "foreground", event: needsAttentionEvent() },
-      foregroundDelayMs: 10,
-    });
-    state.foregroundControls.set("run-1", {
-      runId: "run-1",
-      mode: "single",
-      startedAt: 0,
-      updatedAt: 0,
-      currentAgent: "writer",
-      currentIndex: 1,
-      currentActivityState: undefined,
-    });
-
-    await wait(25);
-    assert.equal(recorder.sent.length, 0);
-    assert.equal(recorder.nudges.length, 0);
-  });
-
-  it("does not deliver an idle timer after its episode recovers into a durable warning", async () => {
-    const state = makeState();
-    state.foregroundControls.set("run-1", {
-      runId: "run-1",
-      mode: "single",
-      startedAt: 0,
-      updatedAt: 0,
-      currentAgent: "worker",
-      currentIndex: 0,
-      currentActivityState: "needs_attention",
-      idleEpisodeId: "attempt-1~idle~1",
-    });
-    const recorder = makeRecorder();
-    const visible = new Set<string>();
-
-    handleSubagentControlNotice({
-      pi: recorder.pi,
-      state,
-      visibleControlNotices: visible,
-      details: {
-        source: "foreground",
-        event: needsAttentionEvent({ idleEpisodeId: "attempt-1~idle~1" }),
-      },
-      foregroundDelayMs: 10,
-    });
-    const control = state.foregroundControls.get("run-1")!;
-    control.idleEpisodeId = undefined;
-    control.durableAttentionReasons = ["context_pressure"];
-    control.currentActivityState = "needs_attention";
-
-    await wait(25);
-    assert.equal(recorder.sent.length, 0);
-    assert.equal(visible.size, 0);
-  });
-
-  it("delivers distinct foreground idle episodes independently", async () => {
-    const state = makeState();
-    const control = {
-      runId: "run-1",
-      mode: "single" as const,
-      startedAt: 0,
-      updatedAt: 0,
-      currentAgent: "worker",
-      currentIndex: 0,
-      currentActivityState: "needs_attention" as const,
-      idleEpisodeId: "attempt-1~idle~1",
-    };
-    state.foregroundControls.set("run-1", control);
-    const recorder = makeRecorder();
-    const visible = new Set<string>();
-
-    handleSubagentControlNotice({
-      pi: recorder.pi,
-      state,
-      visibleControlNotices: visible,
-      details: {
-        source: "foreground",
-        event: needsAttentionEvent({ idleEpisodeId: "attempt-1~idle~1" }),
-      },
-      foregroundDelayMs: 5,
-    });
-    await wait(15);
-    control.idleEpisodeId = "attempt-1~idle~2";
-    handleSubagentControlNotice({
-      pi: recorder.pi,
-      state,
-      visibleControlNotices: visible,
-      details: {
-        source: "foreground",
-        event: needsAttentionEvent({ idleEpisodeId: "attempt-1~idle~2" }),
-      },
-      foregroundDelayMs: 5,
-    });
-    await wait(15);
-
-    assert.equal(recorder.sent.length, 2);
-    assert.equal(visible.size, 2);
+    assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
+    assert.equal(triggersTurnOf(recorder.sent[0]), true);
+    assert.equal(recorder.syntheticUserMessages.length, 0);
   });
 });

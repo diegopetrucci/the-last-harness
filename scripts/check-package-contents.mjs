@@ -106,6 +106,10 @@ if (missingSkillFiles.length > 0 || unexpectedSkillFiles.length > 0) {
 const PACKAGED_SCRIPT_FILES = [
   "scripts/lib/default-extensions.mjs",
   "scripts/lib/default-extensions.mts",
+  "scripts/lib/mcp-adapter-cutover.mjs",
+  "scripts/lib/mcp-adapter-cutover.mts",
+  "scripts/lib/mcp-adapter-migration.mjs",
+  "scripts/lib/mcp-adapter-migration.mts",
   "scripts/lib/session-analysis.mjs",
   "scripts/lib/session-analysis.mts",
   "scripts/lib/session-analysis-coverage.mjs",
@@ -169,6 +173,8 @@ const PACKAGED_SCRIPT_FILES = [
   "scripts/tlh-tickets.mts",
   "scripts/tlh-update.mjs",
   "scripts/tlh-update.mts",
+  "scripts/tlh-version.mjs",
+  "scripts/tlh-version.mts",
   "scripts/tlh-wrapper.mjs",
   "scripts/tlh-wrapper.mts",
 ];

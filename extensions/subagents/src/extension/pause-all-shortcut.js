@@ -1,16 +1,12 @@
-import { requestInterruptAllRunningSubagentRuns } from "../runs/foreground/subagent-executor.js";
-function formatRunCount(total, foreground, async) {
-    const parts = [];
-    if (foreground > 0)
-        parts.push(`${foreground} foreground`);
-    if (async > 0)
-        parts.push(`${async} async`);
-    return `Pause requested for ${total} subagent run${total === 1 ? "" : "s"}${parts.length > 0 ? ` (${parts.join(", ")})` : ""}.`;
+// Generated from extensions/subagents/src/extension/pause-all-shortcut.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
+import { requestInterruptAllRunningSubagentRuns } from "./subagent-executor.js";
+function formatRunCount(total) {
+    return `Pause requested for ${total} subagent run${total === 1 ? "" : "s"}.`;
 }
 export function handlePauseAllShortcut(state, ctx) {
     const summary = requestInterruptAllRunningSubagentRuns(state);
-    const interruptedTotal = summary.foregroundRunIds.length + summary.asyncRunIds.length;
-    const skippedTotal = summary.skippedForegroundRunIds.length + summary.skippedAsyncRunIds.length;
+    const interruptedTotal = summary.asyncRunIds.length;
+    const skippedTotal = summary.skippedAsyncRunIds.length;
     const failedTotal = summary.errors.length;
     let result;
     if (interruptedTotal === 0) {
@@ -31,7 +27,7 @@ export function handlePauseAllShortcut(state, ctx) {
             notes.push(`failed ${failedTotal}`);
         result = {
             level: notes.length > 0 ? "warning" : "info",
-            message: `${formatRunCount(interruptedTotal, summary.foregroundRunIds.length, summary.asyncRunIds.length)}${notes.length > 0 ? ` ${notes.join(" · ")}.` : ""}`,
+            message: `${formatRunCount(interruptedTotal)}${notes.length > 0 ? ` ${notes.join(" · ")}.` : ""}`,
         };
     }
     if (ctx.hasUI)

@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-support-manifest.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const REQUIRED = "required";
 const OPTIONAL = "optional";
 const BASE_SUPPORT_FILES = Object.freeze([
@@ -118,6 +119,20 @@ const BASE_SUPPORT_FILES = Object.freeze([
         requirement: REQUIRED,
         relativePath: "scripts/lib/default-extensions.mjs",
         tempPath: "lib/default-extensions.mjs",
+        installName: "",
+    },
+    {
+        variable: "MCP_ADAPTER_CUTOVER_LIB",
+        requirement: REQUIRED,
+        relativePath: "scripts/lib/mcp-adapter-cutover.mjs",
+        tempPath: "lib/mcp-adapter-cutover.mjs",
+        installName: "",
+    },
+    {
+        variable: "MCP_ADAPTER_MIGRATION_LIB",
+        requirement: REQUIRED,
+        relativePath: "scripts/lib/mcp-adapter-migration.mjs",
+        tempPath: "lib/mcp-adapter-migration.mjs",
         installName: "",
     },
     {

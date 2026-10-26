@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { packageIdentity } from "../scripts/lib/default-extensions.mjs";
@@ -155,7 +156,7 @@ test("merge force-removes pi-intercom and post-merge sources/critical-sources co
   );
 });
 
-test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk are preserved)", () => {
+test("merge drops opted-out npm:helper listed in the extension manifest", () => {
   const fixture = tempFixture();
   writeFileSync(
     fixture.extensions,
@@ -174,15 +175,8 @@ test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk
     fixture.settings,
     JSON.stringify(
       {
-        packages: [
-          harnessPackage,
-          "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-          "npm:pi-rtk",
-          "npm:@sherif-fanous/pi-rtk",
-          "git:github.com/sherif-fanous/pi-rtk@v0.5.0",
-          "npm:helper",
-        ],
-        tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
+        packages: [harnessPackage, "npm:helper"],
+        tlh: { disabledDefaultExtensions: ["helper"] },
       },
       null,
       2,
@@ -200,22 +194,12 @@ test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk
 
   const settings = readJson(fixture.settings);
   assert.deepEqual(settings.packages, [harnessPackage]);
-  assert.deepEqual(
-    settings.tlh.disabledDefaultExtensions,
-    ["rtk", "pi-rtk", "helper"],
-    "stale rtk opt-outs are preserved (no longer pruned)",
-  );
-  assert.deepEqual(
-    settings.tlh.rtk,
-    { disabled: true },
-    "tlh.rtk is preserved (no longer scrubbed)",
-  );
 });
 
-test("merge force-removes pi-quiet-tools and pi-compact-bash (string and object entries, duplicates, idempotent)", () => {
-  const fixture = tempFixture();
+test("retired subagent toolBudget settings are scrubbed by merge and defaults", () => {
+  const mergeFixture = tempFixture();
   writeFileSync(
-    fixture.extensions,
+    mergeFixture.extensions,
     JSON.stringify(
       [
         {
@@ -227,71 +211,37 @@ test("merge force-removes pi-quiet-tools and pi-compact-bash (string and object 
       2,
     ),
   );
-  // Cover both package identities (quiet-tools and legacy compact-bash), object
-  // form, and a duplicate entry.
   writeFileSync(
-    fixture.settings,
+    mergeFixture.settings,
     JSON.stringify(
       {
-        packages: [
-          harnessPackage,
-          "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
-          { source: "npm:@diegopetrucci/pi-quiet-tools@0.1.10", owner: "user" },
-          "npm:@diegopetrucci/pi-compact-bash@0.1.5",
-          "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
-          "npm:helper",
-        ],
-        tlh: { disabledDefaultExtensions: ["quiet-tools", "compact-bash", "helper"] },
+        subagents: {
+          agentOverrides: {
+            developer: { model: "openai-codex/gpt-5.4", toolBudget: { hard: 30 }, note: "keep" },
+            external: { toolBudget: { hard: 10 } },
+          },
+        },
       },
       null,
       2,
     ),
   );
-
   runNode(mergeScript, [
-    fixture.defaults,
+    mergeFixture.defaults,
     "--settings",
-    fixture.settings,
+    mergeFixture.settings,
     "--default-extensions",
-    fixture.extensions,
+    mergeFixture.extensions,
     "--quiet",
   ]);
+  assert.deepEqual(readJson(mergeFixture.settings).subagents.agentOverrides, {
+    developer: { model: "openai-codex/gpt-5.4", note: "keep" },
+    external: {},
+  });
 
-  const settings = readJson(fixture.settings);
-  // All quiet-tools and compact-bash packages must be stripped unconditionally,
-  // even object entries marked owner:user.
-  assert.deepEqual(settings.packages, [harnessPackage]);
-
-  // quiet-tools and compact-bash are pruned from disabledDefaultExtensions;
-  // the unrelated 'helper' entry must survive.
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some(
-      (v) => v === "quiet-tools" || v === "compact-bash",
-    ),
-    false,
-    "quiet-tools and compact-bash opt-outs must be pruned from disabledDefaultExtensions",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("helper"),
-    true,
-    "unrelated helper opt-out must survive",
-  );
-
-  // Second merge is idempotent — no changes reported.
-  const secondOutput = runNode(mergeScript, [
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    fixture.extensions,
-  ]);
-  assert.match(secondOutput, /No settings changes needed\./);
-});
-
-test("merge force-removes pi-quiet-tools even when provenance marks it as manually re-added", () => {
-  const fixture = tempFixture();
+  const defaultsFixture = tempFixture();
   writeFileSync(
-    fixture.extensions,
+    defaultsFixture.extensions,
     JSON.stringify(
       [
         {
@@ -304,19 +254,52 @@ test("merge force-removes pi-quiet-tools even when provenance marks it as manual
     ),
   );
   writeFileSync(
+    defaultsFixture.settings,
+    JSON.stringify(
+      {
+        subagents: { agentOverrides: { librarian: { toolBudget: { hard: 60 }, note: "keep" } } },
+      },
+      null,
+      2,
+    ),
+  );
+  runNode(defaultsScript, [
+    "--settings",
+    defaultsFixture.settings,
+    "--defaults",
+    defaultsFixture.extensions,
+    "disable",
+    "helper",
+  ]);
+  assert.deepEqual(readJson(defaultsFixture.settings).subagents.agentOverrides, {
+    librarian: { note: "keep" },
+  });
+});
+
+test("merge restores mandatory quiet-tools from canonical and compact-bash variants, idempotently", () => {
+  const fixture = tempFixture();
+  const quietTools = bundledExtension("quiet-tools");
+  assert.ok(quietTools, "quiet-tools must be present in the bundled manifest");
+  writeFileSync(fixture.extensions, JSON.stringify([quietTools], null, 2));
+  writeFileSync(
     fixture.settings,
     JSON.stringify(
       {
         packages: [
           harnessPackage,
           "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
+          { source: "npm:@diegopetrucci/pi-quiet-tools@0.1.13", owner: "duplicate" },
           "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+          { source: "npm:@diegopetrucci/pi-compact-bash@0.1.6", legacy: true },
           "npm:helper",
         ],
         tlh: {
+          disabledDefaultExtensions: ["quiet-tools", "compact-bash", "helper"],
           defaultExtensionProvenance: {
-            // Simulate a user who manually re-added both packages.
-            managedPackageIdentities: [],
+            managedPackageIdentities: [
+              "npm:@diegopetrucci/pi-quiet-tools",
+              "npm:@diegopetrucci/pi-compact-bash",
+            ],
           },
         },
       },
@@ -335,18 +318,105 @@ test("merge force-removes pi-quiet-tools even when provenance marks it as manual
   ]);
 
   const settings = readJson(fixture.settings);
-  assert.ok(
-    !settings.packages.some(
-      (p) =>
-        (typeof p === "string" ? p : (p?.source ?? "")).includes("pi-quiet-tools") ||
-        (typeof p === "string" ? p : (p?.source ?? "")).includes("pi-compact-bash"),
+  assert.deepEqual(settings.packages, [harnessPackage, quietTools.source, "npm:helper"]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@diegopetrucci/pi-quiet-tools",
+  ]);
+
+  const secondOutput = runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+  ]);
+  assert.match(secondOutput, /No settings changes needed\./);
+});
+
+test("merge preserves quiet-tools object metadata while enforcing the verified source and loading", () => {
+  const fixture = tempFixture();
+  const quietTools = bundledExtension("quiet-tools");
+  assert.ok(quietTools, "quiet-tools must be present in the bundled manifest");
+  writeFileSync(fixture.extensions, JSON.stringify([quietTools], null, 2));
+  const canonicalEntry = {
+    source: "npm:@diegopetrucci/pi-quiet-tools@0.1.13",
+    extensions: ["-*"],
+    resources: ["README.md"],
+    owner: "preserve",
+    metadata: { keep: true },
+  };
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          harnessPackage,
+          canonicalEntry,
+          {
+            source: "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+            extensions: ["-*"],
+            replacementMetadata: { keep: true },
+          },
+        ],
+        tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+      },
+      null,
+      2,
     ),
-    "force-removal must apply even when provenance does not mark packages as managed",
   );
-  assert.ok(
-    settings.packages.includes("npm:helper"),
-    "unrelated packages must survive force-removal",
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
+    harnessPackage,
+    {
+      source: quietTools.source,
+      resources: ["README.md"],
+      owner: "preserve",
+      metadata: { keep: true },
+    },
+  ]);
+});
+
+test("merge enforces quiet-tools for manually pinned sources without provenance", () => {
+  const fixture = tempFixture();
+  const quietTools = bundledExtension("quiet-tools");
+  assert.ok(quietTools, "quiet-tools must be present in the bundled manifest");
+  writeFileSync(fixture.extensions, JSON.stringify([quietTools], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          harnessPackage,
+          "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
+          "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+        ],
+        tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+      },
+      null,
+      2,
+    ),
   );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage, quietTools.source]);
 });
 
 test("merge no longer reorders a bundled extension upgrade around retired rtk packages", () => {
@@ -623,7 +693,7 @@ test("tlh-defaults preserves pending retired default provenance across multiple 
   ]);
 });
 
-test("mcporter migration handles prior TLH-managed and manual installs", () => {
+test("mcporter migration holds prior TLH-managed and manual installs until v5 is proven", () => {
   const bundledPath = bundledExtensionsPath;
   const mcporter = bundledExtension("mcporter");
 
@@ -644,10 +714,10 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   ]);
 
   const replacementMergedSettings = readJson(replacementMergeFixture.settings);
-  assert.deepEqual(replacementMergedSettings.packages, [harnessPackage, bundledSource("mcporter")]);
+  assert.deepEqual(replacementMergedSettings.packages, [previousMcporterSource, harnessPackage]);
   assert.deepEqual(
     replacementMergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities,
-    ["npm:@diegopetrucci/pi-mcp-adapter"],
+    [],
   );
 
   const managedPinnedFixture = tempFixture();
@@ -678,9 +748,7 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   ]);
 
   const managedPinnedSettings = readJson(managedPinnedFixture.settings);
-  assert.equal(managedPinnedSettings.packages.includes(bundledSource("mcporter")), true);
-  assert.equal(managedPinnedSettings.packages.includes(previousBundledMcporterSource), false);
-  assert.equal(managedPinnedSettings.packages.includes(harnessPackage), true);
+  assert.deepEqual(managedPinnedSettings.packages, [previousBundledMcporterSource, harnessPackage]);
   assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
     "npm:@diegopetrucci/pi-mcp-adapter",
   ]);
@@ -730,7 +798,64 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   assert.deepEqual(disabledSettings.packages, []);
 });
 
-test("merge migrates a filtered active replacement object in place", () => {
+test("mcporter migration holds the managed 2.36.0 pin idempotently", () => {
+  const mcporter = bundledExtension("mcporter");
+  assert.ok(mcporter, "bundled mcporter default should exist");
+  assert.equal(mcporter.source, "npm:@diegopetrucci/pi-mcp-adapter@5.0.1");
+  assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
+  assert.deepEqual(mcporter.replaces, [
+    "npm:pi-mcp-adapter",
+    "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1",
+  ]);
+  assert.equal(mcporter.migrateReplacements, true);
+
+  const stalePin = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([mcporter], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [harnessPackage, stalePin],
+        tlh: {
+          defaultExtensionProvenance: {
+            managedPackageIdentities: ["npm:@diegopetrucci/pi-mcp-adapter"],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  const firstSettings = readJson(fixture.settings);
+  assert.deepEqual(firstSettings.packages, [harnessPackage, stalePin]);
+  assert.deepEqual(firstSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@diegopetrucci/pi-mcp-adapter",
+  ]);
+
+  const firstRaw = readFileSync(fixture.settings, "utf8");
+  const secondOutput = runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+  ]);
+  assert.match(secondOutput, /No settings changes needed\./);
+  assert.equal(readFileSync(fixture.settings, "utf8"), firstRaw);
+});
+
+test("merge holds a filtered active replacement object in place", () => {
   const mcporter = bundledExtension("mcporter");
   assert.ok(mcporter, "bundled mcporter default should exist");
   const replacementEntry = {
@@ -761,10 +886,7 @@ test("merge migrates a filtered active replacement object in place", () => {
   ]);
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [
-    harnessPackage,
-    { ...replacementEntry, source: mcporter.source },
-  ]);
+  assert.deepEqual(settings.packages, [harnessPackage, replacementEntry]);
   assert.equal(settings.tlh.userFlag, true);
 });
 
@@ -843,10 +965,10 @@ test("merge lets an unfiltered canonical object win over a filtered replacement"
   ]);
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [harnessPackage, canonicalEntry]);
+  assert.deepEqual(settings.packages, [harnessPackage, replacementEntry, canonicalEntry]);
 });
 
-test("tlh-defaults enable migrates an active replacement object without dropping metadata", () => {
+test("tlh-defaults enable holds a package-filter-disabled mcporter entry in place and prints a warning", () => {
   const mcporter = bundledExtension("mcporter");
   assert.ok(mcporter, "bundled mcporter default should exist");
   const replacementEntry = {
@@ -869,20 +991,87 @@ test("tlh-defaults enable migrates an active replacement object without dropping
     ),
   );
 
-  runNode(defaultsScript, [
-    "--settings",
-    fixture.settings,
-    "--defaults",
-    fixture.extensions,
-    "enable",
-    "mcporter",
-  ]);
+  const result = spawnSync(
+    process.execPath,
+    [
+      defaultsScript,
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "enable",
+      "mcporter",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, `enable exited non-zero: ${result.stderr}`);
 
+  // Package-filter opt-out is preserved: packages stay unchanged (fail-closed gate).
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [
-    { source: mcporter.source, autoload: true, userMetadata: { preserve: true } },
-  ]);
+  assert.deepEqual(
+    settings.packages,
+    [replacementEntry],
+    "package-filter entry must be held in place unchanged",
+  );
+  // disabledDefaultExtensions is cleared (the disabled marker is removed).
   assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+
+  // A warning must be printed to stderr describing the package-filter hold.
+  assert.match(
+    result.stderr,
+    /mcporter remains disabled by a package filter/,
+    "stderr must warn that mcporter remains disabled by a package filter",
+  );
+  assert.match(
+    result.stderr,
+    /user-owned entry was left unchanged/,
+    "stderr must state the user-owned entry was left unchanged",
+  );
+  assert.match(
+    result.stderr,
+    /edit or remove the package filter/,
+    "stderr must instruct the user to edit or remove the filter",
+  );
+});
+
+test("tlh-defaults enable mcporter without a package filter prints no package-filter warning", () => {
+  const mcporter = bundledExtension("mcporter");
+  assert.ok(mcporter, "bundled mcporter default should exist");
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([mcporter], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [],
+        tlh: { disabledDefaultExtensions: ["mcporter"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      defaultsScript,
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "enable",
+      "mcporter",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, `enable exited non-zero: ${result.stderr}`);
+
+  // Without a package filter, no package-filter warning should appear on stderr.
+  assert.doesNotMatch(
+    result.stderr,
+    /package filter/,
+    "stderr must not warn about a package filter when no package filter is present",
+  );
 });
 
 test("tlh-defaults disable migrates the fast alias and removes the replaced package", () => {

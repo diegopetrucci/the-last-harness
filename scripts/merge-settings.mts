@@ -22,6 +22,16 @@ import {
 } from "./lib/default-extensions.mjs";
 import type { DefaultExtensionEntry } from "./lib/default-extensions.mjs";
 import {
+  cloneMcpAdapterEntries,
+  evaluateMcpAdapterCutover,
+  mcpAdapterCutoverNotice,
+  mcpAdapterManagedIdentityPreservation,
+  mcpAdapterMigrationFrozen,
+  mcpAdapterPackageIdentities,
+  sameMcpAdapterEntries,
+  type McpAdapterCutoverDecision,
+} from "./lib/mcp-adapter-cutover.mjs";
+import {
   isLocalPackageSource,
   packageSourceInstallDir,
   packageSourcePiSource,
@@ -271,7 +281,7 @@ function prepareDefaults(
   defaultExtensions: readonly DefaultExtensionEntry[],
   disabledIds: Set<string>,
   existingSettings: unknown,
-  { force }: { force: boolean },
+  { force, mcpCutover }: { force: boolean; mcpCutover?: McpAdapterCutoverDecision },
 ): JsonObject {
   const next = clone(defaults);
   next.lastChangelogVersion = TLH_CHANGELOG_SENTINEL;
@@ -322,6 +332,7 @@ function prepareDefaults(
     ensuredSource,
     ...defaultExtensions
       .filter((extension) => !disabledIds.has(extension.id))
+      .filter((extension) => !mcpAdapterMigrationFrozen(extension, mcpCutover))
       .filter((extension) => !isUnpersistedPackageFilter(existingSettings, extension, disabledIds))
       .filter(
         (extension) =>
@@ -448,6 +459,25 @@ function isConfirmedLocalTlhPackage(source: string, profileDir: string, homeDir:
   return Boolean(packageDir) && isTlhPackageManifest(join(packageDir, "package.json"));
 }
 
+function existingTlhPackageSource(
+  settings: unknown,
+  profileDir: string,
+  homeDir: string,
+): string | undefined {
+  if (!isPlainObject(settings) || !Array.isArray(settings.packages)) return undefined;
+
+  let canonicalSource: string | undefined;
+  for (const entry of settings.packages) {
+    const source = packageSourceOf(entry);
+    if (!source) continue;
+    if (isConfirmedLocalTlhPackage(source, profileDir, homeDir)) return source;
+    if (canonicalSource === undefined && packageIdentity(entry) === HARNESS_PACKAGE_IDENTITY) {
+      canonicalSource = source;
+    }
+  }
+  return canonicalSource;
+}
+
 function applyCanonicalHarnessCleanup(
   settings: JsonObject,
   ensuredSource: string,
@@ -493,13 +523,14 @@ function applyReplacedDefaultExtensions(
   defaultExtensions: readonly DefaultExtensionEntry[],
   disabledIds: Set<string>,
   changes: string[],
-  { force }: { force: boolean },
+  { force, mcpCutover }: { force: boolean; mcpCutover?: McpAdapterCutoverDecision },
 ): void {
   const initialPackages = settings.packages;
   if (!Array.isArray(initialPackages)) return;
   let packages: unknown[] = initialPackages;
 
   for (const extension of defaultExtensions) {
+    if (mcpAdapterMigrationFrozen(extension, mcpCutover)) continue;
     if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
     if (disabledIds.has(extension.id)) continue;
 
@@ -597,11 +628,17 @@ function applyDefaultExtensionPackageDedupes(
   {
     force,
     sourceUpdatedIdentities = new Set<string>(),
-  }: { force: boolean; sourceUpdatedIdentities?: Set<string> },
+    mcpCutover,
+  }: {
+    force: boolean;
+    sourceUpdatedIdentities?: Set<string>;
+    mcpCutover?: McpAdapterCutoverDecision;
+  },
 ): void {
   if (!Array.isArray(settings.packages)) return;
 
   for (const extension of defaultExtensions) {
+    if (mcpAdapterMigrationFrozen(extension, mcpCutover)) continue;
     const identity = packageIdentity(extension.source);
     if (
       !shouldMigrateDefaultExtensionReplacements(extension, { force }) &&
@@ -627,15 +664,22 @@ function applyDefaultExtensionSourceUpdates(
   {
     force,
     managedPackageIdentities = new Set<string>(),
-  }: { force: boolean; managedPackageIdentities?: Set<string> },
+    mcpCutover,
+  }: {
+    force: boolean;
+    managedPackageIdentities?: Set<string>;
+    mcpCutover?: McpAdapterCutoverDecision;
+  },
 ): Set<string> {
   const updatedIdentities = new Set<string>();
   if (!Array.isArray(settings.packages)) return updatedIdentities;
 
   for (const extension of defaultExtensions) {
+    if (mcpAdapterMigrationFrozen(extension, mcpCutover)) continue;
     if (disabledIds.has(extension.id)) continue;
     if (isUnpersistedPackageFilter(settings, extension, disabledIds)) continue;
-    if (hasCanonicalEntryWithReplacementObject(settings, extension)) continue;
+    if (extension.critical !== true && hasCanonicalEntryWithReplacementObject(settings, extension))
+      continue;
     const identity = packageIdentity(extension.source);
     if (!identity) continue;
     const index = settings.packages.findIndex(
@@ -736,19 +780,6 @@ function purgeForceRemovedRetiredDefaultExtensionPackages(
   }
 }
 
-function pruneQuietToolsDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (!Array.isArray(values)) return;
-  const nextValues = values.filter(
-    (value: unknown) =>
-      !(typeof value === "string" && ["quiet-tools", "compact-bash"].includes(value.trim())),
-  );
-  if (nextValues.length === values.length) return;
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale quiet-tools opt-out from tlh.disabledDefaultExtensions");
-}
-
 function pruneVoiceTranscribeDisabledDefaultExtension(
   settings: JsonObject,
   changes: string[],
@@ -763,6 +794,17 @@ function pruneVoiceTranscribeDisabledDefaultExtension(
   if (nextValues.length === values.length) return;
   settings.tlh.disabledDefaultExtensions = nextValues;
   changes.push("remove stale voice/transcribe opt-out from tlh.disabledDefaultExtensions");
+}
+
+function scrubRetiredSubagentToolBudgets(settings: JsonObject, changes: string[]): void {
+  if (!isPlainObject(settings) || !isPlainObject(settings.subagents)) return;
+  const overrides = settings.subagents.agentOverrides;
+  if (!isPlainObject(overrides)) return;
+  for (const [name, value] of Object.entries(overrides)) {
+    if (!isPlainObject(value) || !Object.hasOwn(value, "toolBudget")) continue;
+    delete value.toolBudget;
+    changes.push(`remove subagents.agentOverrides.${name}.toolBudget (one-time cleanup)`);
+  }
 }
 
 function removeCriticalDisabledDefaultExtensionOptOuts(
@@ -799,6 +841,7 @@ function syncDefaultExtensionProvenance(
   defaultExtensions: readonly DefaultExtensionEntry[],
   disabledIds: Set<string>,
   changes: string[],
+  mcpCutover?: McpAdapterCutoverDecision,
 ): void {
   const previous = readDefaultExtensionProvenance(settings);
   const tlh = isPlainObject(settings) && isPlainObject(settings.tlh) ? settings.tlh : undefined;
@@ -817,6 +860,18 @@ function syncDefaultExtensionProvenance(
     defaultExtensions,
     effectiveDisabledIds,
   );
+  const mcporterEntry = defaultExtensions.find((entry) => entry.id === MCPORTER_EXTENSION_ID);
+  const preservedManagedIdentities = mcpAdapterManagedIdentityPreservation(
+    mcporterEntry,
+    mcpCutover,
+    previous.managedPackageIdentities,
+  );
+  if (mcpAdapterMigrationFrozen(mcporterEntry, mcpCutover)) {
+    for (const identity of mcpAdapterPackageIdentities(mcporterEntry)) {
+      nextManagedIdentities.delete(identity);
+      if (preservedManagedIdentities.has(identity)) nextManagedIdentities.add(identity);
+    }
+  }
   if (!setDefaultExtensionProvenance(settings, nextManagedIdentities)) return;
   const nextTlh = isPlainObject(settings.tlh) ? settings.tlh : undefined;
   const nextRaw = JSON.stringify(nextTlh?.defaultExtensionProvenance);
@@ -921,6 +976,41 @@ function applyBuiltinMcpExclusionSync(
   if (clearBuiltinMcpExclusionManaged(settings)) {
     changes.push("clear builtin:mcp exclusion ownership");
   }
+}
+
+function compactionReserveTokensOf(settings: unknown): number | undefined {
+  if (!isPlainObject(settings) || !isPlainObject(settings.compaction)) return undefined;
+  const value = settings.compaction.reserveTokens;
+  return typeof value === "number" ? value : undefined;
+}
+
+/**
+ * Record that TLH wrote the packaged compaction.reserveTokens value (#785). The
+ * marker is only set when this merge inserted or force-overwrote the value; a
+ * preserved user value never gets it, and it is never cleared here.
+ */
+function applyCompactionReserveTokensProvenance(
+  settings: JsonObject,
+  existingSettings: unknown,
+  defaults: unknown,
+  changes: string[],
+): void {
+  const packaged = compactionReserveTokensOf(defaults);
+  if (packaged === undefined) return;
+  if (compactionReserveTokensOf(existingSettings) === packaged) return;
+  if (compactionReserveTokensOf(settings) !== packaged) return;
+
+  const tlh = settings.tlh;
+  if (tlh === undefined) {
+    settings.tlh = { compactionReserveTokensManaged: true };
+  } else if (!isPlainObject(tlh)) {
+    return;
+  } else if (tlh.compactionReserveTokensManaged === true) {
+    return;
+  } else {
+    tlh.compactionReserveTokensManaged = true;
+  }
+  changes.push("mark compaction.reserveTokens as TLH-managed");
 }
 
 function mergeSettings(
@@ -1039,7 +1129,12 @@ function mergePackages(target: JsonObject, packageDefaults: unknown, changes: st
       const existingIndex = seen.get(identity) as number;
       const existingSource = packageSourceOf(target.packages[existingIndex]);
       if (identity === HARNESS_PACKAGE_IDENTITY && existingSource !== source) {
-        target.packages[existingIndex] = clone(entry);
+        const existingEntry = target.packages[existingIndex];
+        if (isPlainObject(existingEntry)) {
+          existingEntry.source = source;
+        } else {
+          target.packages[existingIndex] = clone(entry);
+        }
         changes.push(`replace packages: ${existingSource} -> ${source}`);
       }
       continue;
@@ -1125,34 +1220,50 @@ function main(): void {
   const rawDefaults = readJsonFile<JsonObject>(defaultsPath);
   const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
   const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
-  const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
+  const mcporterEntry = defaultExtensions.find((entry) => entry.id === MCPORTER_EXTENSION_ID);
+  const mcpExplicitlyDisabled = disabledIds.has(MCPORTER_EXTENSION_ID);
+  const mcpPackageFilterDisabled =
+    mcporterEntry !== undefined && defaultExtensionPackageFilterDisables(existing, mcporterEntry);
+  const mcpCutover = evaluateMcpAdapterCutover(existing, mcporterEntry, {
+    agentDir: dirname(settingsPath),
+    homeDir: process.env.HOME || homedir(),
+    optedOut: mcpExplicitlyDisabled || mcpPackageFilterDisabled,
+    preserveOptOut: mcpPackageFilterDisabled,
+  });
+  const mcpNotice = mcpAdapterCutoverNotice(mcpCutover);
+  if (mcpNotice) console.error(mcpNotice);
+  const heldMcpState =
+    mcpCutover.freeze && mcporterEntry
+      ? { packageEntries: cloneMcpAdapterEntries(existing, mcporterEntry) }
+      : undefined;
+  const profileDir = dirname(settingsPath);
+  const homeDir = process.env.HOME || homedir();
+  const explicitPackageSource = args.packageSource?.trim() || undefined;
+  const packageSource =
+    explicitPackageSource || existingTlhPackageSource(existing, profileDir, homeDir);
+  const ensuredHarnessSource = packageSource || DEFAULT_PACKAGE_SOURCE;
   const defaults = prepareDefaults(
     rawDefaults,
-    args.packageSource,
+    packageSource,
     defaultExtensions,
     disabledIds,
     existing,
     {
       force: args.force,
+      mcpCutover,
     },
   );
   const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
   applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
-  // An omitted source uses the default for ordinary merge behavior, but does
-  // not authorize destructive local-registration cleanup (for example, doctor).
-  if (
-    args.packageSource?.trim() &&
-    packageIdentity(ensuredHarnessSource) === HARNESS_PACKAGE_IDENTITY
-  ) {
-    applyCanonicalHarnessCleanup(
-      next,
-      ensuredHarnessSource,
-      dirname(settingsPath),
-      process.env.HOME || homedir(),
-      changes,
-    );
+  // Omitted sources are inferred from the existing TLH registration above, but
+  // only an explicit override authorizes switching between canonical and local
+  // registrations in either direction.
+  if (explicitPackageSource) {
+    if (packageIdentity(ensuredHarnessSource) === HARNESS_PACKAGE_IDENTITY) {
+      applyCanonicalHarnessCleanup(next, ensuredHarnessSource, profileDir, homeDir, changes);
+    }
+    applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
   }
-  applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
   const managedDefaultExtensionProvenance =
     readDefaultExtensionProvenance(next).managedPackageIdentities;
   const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(
@@ -1163,14 +1274,17 @@ function main(): void {
     {
       force: args.force,
       managedPackageIdentities: managedDefaultExtensionProvenance,
+      mcpCutover,
     },
   );
   applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, {
     force: args.force,
+    mcpCutover,
   });
   applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, {
     force: args.force,
     sourceUpdatedIdentities,
+    mcpCutover,
   });
   applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
   applyRetiredTlhDefaultPackageCleanup(
@@ -1182,11 +1296,18 @@ function main(): void {
     ),
   );
   removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
+  scrubRetiredSubagentToolBudgets(next, changes);
   purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
-  pruneQuietToolsDisabledDefaultExtension(next, changes);
   pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
   applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
-  syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
+  applyCompactionReserveTokensProvenance(next, existing, rawDefaults, changes);
+  syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes, mcpCutover);
+
+  if (heldMcpState && mcporterEntry) {
+    if (!sameMcpAdapterEntries(next, mcporterEntry, heldMcpState.packageEntries)) {
+      throw new Error("MCP adapter cutover invariant violated: selected package changed");
+    }
+  }
 
   log(args, `Pi settings: ${settingsPath}`);
   if (changes.length === 0) {

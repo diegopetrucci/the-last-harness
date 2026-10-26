@@ -14,16 +14,14 @@ const { registerContextCap } = await jiti.import("../extensions/the-last-harness
 // Production uses the eager TLH extension through Jiti and the subagent runtime
 // through a separate native ESM loader graph. Keep these imports native so this
 // regression exercises the real cross-loader metadata handoff.
-const { toModelInfo, contextWindowsForChildModels } =
+const { toModelInfo, contextWindowsForChildModels, resolveRuntimeModelContext } =
   await import("../extensions/subagents/src/shared/model-info.js");
 const { resolveEffectiveContextWindow } =
   await import("../extensions/subagents/src/shared/context-diagnostics.js");
-const { resolveRuntimeModelContext } =
-  await import("../extensions/subagents/src/runs/shared/model-fallback.js");
 const { contextWindowForModel } =
   await import("../extensions/subagents/src/runs/background/pi-streaming.js");
 
-const CAP = 200_000;
+const CAP = 350_000;
 const NON_CHILD_ENV = {
   PI_SUBAGENT_CHILD: undefined,
   PI_SUBAGENT_CHILD_AGENT: undefined,
@@ -183,7 +181,7 @@ test("/toggle-context-cap rejects non-empty args with error notify and does not 
 
 // ─── session_start caps large model ──────────────────────────────────────────
 
-test("session_start caps a 1M-contextWindow model to 200_000 by default", async (t) => {
+test("session_start caps a 1M-contextWindow model to 350_000 by default", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
@@ -201,12 +199,12 @@ test("session_start caps a 1M-contextWindow model to 200_000 by default", async 
 
       await pi.handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx);
 
-      assert.equal(model.contextWindow, CAP, "contextWindow must be capped to 200_000");
+      assert.equal(model.contextWindow, CAP, "contextWindow must be capped to 350_000");
     },
   );
 });
 
-test("session_start does not cap a model whose contextWindow is already <= 200_000", async (t) => {
+test("session_start does not cap a model whose contextWindow is already <= 350_000", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
@@ -219,21 +217,21 @@ test("session_start does not cap a model whose contextWindow is already <= 200_0
       const pi = createPiHarness();
       registerContextCap(pi);
 
-      const model = createModel(128_000);
+      const model = createModel(256_000);
       const ctx = createCtx({ model, cwd: fixture.dir });
 
       await pi.handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx);
 
       assert.equal(
         model.contextWindow,
-        128_000,
+        256_000,
         "contextWindow must remain unchanged when already within cap",
       );
     },
   );
 });
 
-test("session_start keeps non-child Codex GPT-5.6 at the 200_000 cap", async (t) => {
+test("session_start keeps non-child Codex GPT-5.6 at the 350_000 cap", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(join(fixture.agent, "settings.json"), "{}\n");
 
@@ -413,7 +411,7 @@ test("child context policy honors tlh.contextCap.disabled and toggle restoration
   );
 });
 
-test("native subagent loader keeps foreground/background role policies aligned", async (t) => {
+test("native subagent loader keeps async-runner role policies aligned", async (t) => {
   const enabledFixture = createIsolatedProfileFixture("tlh-cap-loader-test-", { test: t });
   writeFileSync(join(enabledFixture.agent, "settings.json"), "{}\n");
 
@@ -433,11 +431,11 @@ test("native subagent loader keeps foreground/background role policies aligned",
 
       await pi.handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx);
 
-      assert.equal(codex.contextWindow, CAP, "the non-child parent must cap Codex to 200k");
+      assert.equal(codex.contextWindow, CAP, "the non-child parent must cap Codex to 350k");
       assert.equal(
         native.contextWindow,
         CAP,
-        "the non-child parent must cap native models to 200k",
+        "the non-child parent must cap native models to 350k",
       );
 
       const availableModels = ctx.modelRegistry.getAll().map(toModelInfo);
@@ -448,12 +446,12 @@ test("native subagent loader keeps foreground/background role policies aligned",
       assert.equal(
         resolveEffectiveContextWindow("openai-codex/gpt-5.6-luna:high", availableModels),
         372_000,
-        "non-developer foreground diagnostics must recover native context across loaders",
+        "non-developer async-runner diagnostics must recover native context across loaders",
       );
       assert.equal(
         resolveEffectiveContextWindow("anthropic/claude-sonnet-4.6", availableModels),
         450_000,
-        "non-developer foreground diagnostics must recover native context across loaders",
+        "non-developer async-runner diagnostics must recover native context across loaders",
       );
       assert.equal(
         resolveEffectiveContextWindow(
@@ -463,7 +461,7 @@ test("native subagent loader keeps foreground/background role policies aligned",
           { canonicalDeveloper: true },
         ),
         272_000,
-        "canonical developer foreground diagnostics must apply the uniform ceiling",
+        "canonical developer async-runner diagnostics must apply the uniform ceiling",
       );
       assert.equal(
         resolveEffectiveContextWindow("anthropic/claude-sonnet-4.6", availableModels, undefined, {
@@ -785,8 +783,6 @@ test("provider/id native policy keys remain collision-safe for embedded NULs", a
         provider: `collision${embeddedNull}provider`,
         id: "model",
         fullId: `collision${embeddedNull}provider/model`,
-        reasoning: undefined,
-        thinkingLevelMap: undefined,
         contextWindow: 272_000,
         nativeContextWindow: 450_000,
         developerChildContextWindow: 272_000,
@@ -795,8 +791,6 @@ test("provider/id native policy keys remain collision-safe for embedded NULs", a
         provider: "collision",
         id: `provider${embeddedNull}model`,
         fullId: `collision/provider${embeddedNull}model`,
-        reasoning: undefined,
-        thinkingLevelMap: undefined,
         contextWindow: 272_000,
         nativeContextWindow: 600_000,
         developerChildContextWindow: 272_000,
@@ -807,10 +801,10 @@ test("provider/id native policy keys remain collision-safe for embedded NULs", a
   );
 });
 
-test("refresh settlement overrides stale pending-read metadata for 272k and 200k replacements", async (t) => {
+test("refresh settlement overrides stale pending-read metadata for 272k and 350k replacements", async (t) => {
   const cases = [
     { name: "canonical developer", nativeContextWindow: 272_000, env: CANONICAL_DEVELOPER_ENV },
-    { name: "primary", nativeContextWindow: 200_000, env: NON_CHILD_ENV },
+    { name: "primary", nativeContextWindow: 350_000, env: NON_CHILD_ENV },
   ];
 
   for (const testCase of cases) {
@@ -852,7 +846,7 @@ test("refresh settlement overrides stale pending-read metadata for 272k and 200k
         await pi.handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx);
         assert.equal(
           oldModel.contextWindow,
-          testCase.nativeContextWindow === 272_000 ? 272_000 : 200_000,
+          testCase.nativeContextWindow === 272_000 ? 272_000 : 350_000,
           `${testCase.name}: old model must receive its role cap`,
         );
 
@@ -1414,7 +1408,7 @@ test("session_start leaves contextWindow untouched when tlh.contextCap.disabled=
 
 // ─── model_select caps newly selected model ───────────────────────────────────
 
-test("model_select caps a large model to 200_000", async (t) => {
+test("model_select caps a large model to 350_000", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
@@ -1669,6 +1663,57 @@ test("/toggle-context-cap enables cap (flips disabled=true to false) and applies
   );
 });
 
+test("/toggle-context-cap reads BOM-prefixed settings like plain JSON and preserves unrelated values", async (t) => {
+  const writtenSettings = [];
+
+  for (const prefix of ["", "\uFEFF"]) {
+    const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
+    const settingsPath = join(fixture.agent, "settings.json");
+    const initialSettings = {
+      unrelated: { keep: true },
+      tlh: {
+        contextCap: { disabled: true },
+        modelVisibility: { hidden: ["keep-me"] },
+      },
+    };
+    const initialContent = `${prefix}${JSON.stringify(initialSettings, null, 2)}\n`;
+    writeFileSync(settingsPath, initialContent);
+
+    await withEnv(
+      { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+      async () => {
+        const pi = createPiHarness();
+        registerContextCap(pi);
+        const command = pi.commands.get("toggle-context-cap");
+        assert.ok(command, "command must be registered");
+
+        const ctx = createCtx({ cwd: fixture.dir });
+        await command.handler("", ctx);
+
+        assert.equal(ctx.notifications.length, 1);
+        assert.equal(ctx.notifications[0].type, "info");
+        const content = readFileSync(settingsPath, "utf8");
+        assert.notEqual(content.charCodeAt(0), 0xfeff, "successful writes should normalize BOMs");
+        writtenSettings.push(JSON.parse(content));
+        const backups = readdirSync(fixture.agent).filter((entry) =>
+          entry.startsWith("settings.json.bak-"),
+        );
+        assert.equal(backups.length, 1);
+        assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialContent);
+      },
+    );
+  }
+
+  assert.deepEqual(writtenSettings[0], writtenSettings[1]);
+  assert.deepEqual(writtenSettings[0], {
+    unrelated: { keep: true },
+    tlh: {
+      contextCap: { disabled: false },
+      modelVisibility: { hidden: ["keep-me"] },
+    },
+  });
+});
+
 test("/toggle-context-cap disables cap (flips enabled to disabled=true) and restores live", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   const settingsPath = join(fixture.agent, "settings.json");
@@ -1774,4 +1819,104 @@ test("/toggle-context-cap fails gracefully when outside isolated profile", async
       else process.env[key] = value;
     }
   }
+});
+
+test("/toggle-context-cap refuses a non-object tlh without rewriting settings", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = `${JSON.stringify({ tlh: "x" })}\n`;
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+    async () => {
+      const pi = createPiHarness();
+      registerContextCap(pi);
+      const command = pi.commands.get("toggle-context-cap");
+      assert.ok(command, "command must be registered");
+
+      const ctx = createCtx({ cwd: fixture.dir });
+      await command.handler("", ctx);
+
+      assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+      assert.equal(
+        readdirSync(fixture.agent).filter((name) => name.startsWith("settings.json.bak-")).length,
+        0,
+      );
+      assert.equal(ctx.notifications.length, 1);
+      assert.equal(ctx.notifications[0].type, "error");
+      assert.match(
+        ctx.notifications[0].message,
+        /Could not update context cap setting: settings field 'tlh' must be an object if present/,
+      );
+    },
+  );
+});
+
+test("/toggle-context-cap preserves malformed JSON and reports the guarded write failure", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = '\uFEFF{"tlh":{"contextCap":';
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+    async () => {
+      const pi = createPiHarness();
+      registerContextCap(pi);
+      const command = pi.commands.get("toggle-context-cap");
+      assert.ok(command, "command must be registered");
+
+      const ctx = createCtx({ cwd: fixture.dir });
+      await command.handler("", ctx);
+
+      assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+      assert.deepEqual(
+        readdirSync(fixture.agent).filter((name) => name.startsWith("settings.json.bak-")),
+        [],
+      );
+      assert.equal(ctx.notifications.length, 1);
+      assert.equal(ctx.notifications[0].type, "error");
+      assert.match(ctx.notifications[0].message, /Could not update context cap setting/);
+    },
+  );
+});
+
+test("applying policy to a large registry prunes owned refs linearly", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-cap-linear-prune-test-", { test: t });
+  writeFileSync(join(fixture.agent, "settings.json"), "{}\n");
+
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+    async () => {
+      const count = 400;
+      const models = Array.from({ length: count }, (_, i) =>
+        createModel(1_000_000, "bulk-provider", `bulk-${i}`),
+      );
+      const ctx = createCtx({
+        model: createModel(128_000),
+        cwd: fixture.dir,
+        modelRegistry: { getAll: () => models, getAvailable: () => models },
+      });
+      const pi = createPiHarness();
+      registerContextCap(pi);
+
+      const originalDeref = WeakRef.prototype.deref;
+      let derefCalls = 0;
+      WeakRef.prototype.deref = function countingDeref() {
+        derefCalls++;
+        return originalDeref.call(this);
+      };
+      try {
+        await pi.handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx);
+      } finally {
+        WeakRef.prototype.deref = originalDeref;
+      }
+
+      assert.equal(models[0].contextWindow, CAP);
+      assert.equal(models[count - 1].contextWindow, CAP);
+      // Per-model pruning would need ~count^2/2 (80k) derefs; batch pruning is O(count).
+      assert.ok(derefCalls < count * 10, `expected linear deref work, saw ${derefCalls}`);
+    },
+  );
 });

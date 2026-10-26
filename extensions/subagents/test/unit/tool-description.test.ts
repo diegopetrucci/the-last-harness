@@ -61,6 +61,14 @@ describe("registered subagent tool description", () => {
     fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
   }
 
+  it("does not document the retired transcript status view and documents status without transcript options", () => {
+    assert.match(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /action: "status", id\?: "\.\.\." }/);
+    assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /view\?: "transcript"/);
+    assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /lines\?: 1-500/);
+    assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /Status-only options/);
+    assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /\bdir\s*:/);
+  });
+
   it("registers compact description regardless of legacy extension config", () => {
     const defaultAgentDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"),

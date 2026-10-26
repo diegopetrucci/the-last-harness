@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/child-protocol.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { Buffer } from "node:buffer";
 export const MAX_CHILD_PENDING_LINE_BYTES = 16 * 1024 * 1024;
 export const MAX_CHILD_STDERR_BYTES = 128 * 1024;
@@ -5,7 +6,7 @@ export const MAX_CHILD_STDERR_LINE_BYTES = 64 * 1024;
 export const MAX_CHILD_RAW_STDOUT_BYTES = 64 * 1024;
 export const CHILD_PROTOCOL_HARD_KILL_GRACE_MS = 3000;
 export const MAX_CHILD_ERROR_BYTES = 8 * 1024;
-export const MAX_CHILD_RETAINED_MESSAGE_BYTES = 32 * 1024 * 1024;
+const MAX_CHILD_RETAINED_MESSAGE_BYTES = 32 * 1024 * 1024;
 const MAX_PROTOCOL_DIAGNOSTIC_BYTES = 4096;
 const CHILD_ERROR_TRUNCATION_MARKER = " … [child error truncated; full diagnostic is unavailable]";
 const STDERR_TRUNCATION_MARKER = "[stderr truncated: showing the bounded tail; earlier diagnostic bytes were dropped]";

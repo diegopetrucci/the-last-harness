@@ -107,22 +107,31 @@ function parseArgs(argv) {
 // Current entries:
 //
 //   the-last-harness/common.js
-//     15 pure exported functions (formatHomePath, isRecord, readText, …).
-//     Imports only node:fs and node:path. No module-level mutable state.
+//     Pure exported helpers (formatHomePath, isRecord, readText,
+//     createRetryableLazyImport, …). createRetryableLazyImport closes over
+//     per-call promise state only. Imports only node:fs and node:path.
+//     No module-level mutable state.
 //     Verified 2026-08-15: shared between the eager graph of the-last-harness.js
 //     and the lazy static graphs of tokens.js and session-limit-report.js.
+//     Rechecked 2026-10-08 when the eager facades started importing
+//     createRetryableLazyImport from here.
+//
+//   the-last-harness/session-mirror/status-allowlists.js
+//     Two frozen readonly string lists and no imports. No module-level mutable
+//     state. Shared so the eager session-mirror observer facade and the lazy
+//     probe graph (observer.js, session-adapter.js) use one list each.
+//     Verified 2026-10-08.
 //
 //   extensions/shared/project-agent-worktree.js
 //     Pure filesystem/path validation helpers with no peer imports or mutable
-//     module state. Shared by eager built-in guidance and the lazy custom-agent
-//     snapshot loader; allowing this overlap avoids a second root authority.
+//     module state. Shared by eager built-in guidance and the lazy on-demand
+//     custom-agent loader; allowing this overlap avoids a second root authority.
 //     Verified 2026-08-30.
 //
 //   the-last-harness/mcp-tools.js
-//     3 pure exported functions (getMcpToolKind, hasKnownPiMcpAdapterSource,
-//     hasPersistedDirectMcpResultDetails) + 1 readonly const array
-//     (KNOWN_PI_MCP_ADAPTER_SOURCES). Imports only a type from pi-coding-agent
-//     (erased at runtime). No module-level mutable state.
+//     2 pure exported functions (getMcpToolKind,
+//     hasPersistedDirectMcpResultDetails). Imports only a type from
+//     pi-coding-agent (erased at runtime). No module-level mutable state.
 //     Verified 2026-08-16: eagerly reachable via launch-context.js / footer.js
 //     in the-last-harness.js, and also transitively reachable via the lazy
 //     import of tokens.js → tokens-analyzer.js → mcp-tools.js.
@@ -132,6 +141,7 @@ function parseArgs(argv) {
 const SHARED_MODULE_ALLOWLIST = new Set([
   "the-last-harness/common.js",
   "the-last-harness/mcp-tools.js",
+  "the-last-harness/session-mirror/status-allowlists.js",
   "shared/project-agent-worktree.js",
 ]);
 

@@ -1,0 +1,161 @@
+name: macOS CI benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane_layout:
+        description: Shard runner layout to compare with the unchanged CI baseline
+        required: true
+        default: baseline
+        type: choice
+        options:
+          - baseline
+          - experimental
+      concurrency:
+        description: Node test concurrency override, or default for the runner policy
+        required: true
+        default: default
+        type: string
+
+permissions:
+  contents: read
+
+# Queue manual runs instead of overlapping benchmark dispatches.
+concurrency:
+  group: macos-ci-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: macOS benchmark (shard ${{ matrix.shard }}/2)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.22.1'
+          cache: 'npm'
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-24.22.1-${{ hashFiles('package-lock.json', 'package.json') }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Run one benchmark shard
+        env:
+          HOME: ${{ runner.temp }}/tlh-benchmark-home-${{ matrix.shard }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BENCHMARK_ARTIFACT_DIR: ${{ runner.temp }}/tlh-ci-benchmark-${{ matrix.shard }}
+          BENCHMARK_CONCURRENCY_INPUT: ${{ inputs.concurrency }}
+          BENCHMARK_SHARD: ${{ matrix.shard }}
+          TLH_CI_LANE_LAYOUT: ${{ inputs.lane_layout }}
+          TLH_CI_TIMINGS_DIR: ${{ runner.temp }}/tlh-ci-benchmark-${{ matrix.shard }}/timings
+        run: |
+          set -euo pipefail
+
+          mkdir -p "${HOME}" "${BENCHMARK_ARTIFACT_DIR}"
+          unset TLH_TEST_CONCURRENCY
+          if [[ "${BENCHMARK_CONCURRENCY_INPUT}" != "default" ]]; then
+            export TLH_TEST_CONCURRENCY="${BENCHMARK_CONCURRENCY_INPUT}"
+          fi
+
+          node scripts/run-ci-test-shard.mjs "${BENCHMARK_SHARD}/2" --lane-layout "${TLH_CI_LANE_LAYOUT}"
+
+      - name: Write benchmark metadata
+        if: always()
+        env:
+          BENCHMARK_ARTIFACT_DIR: ${{ runner.temp }}/tlh-ci-benchmark-${{ matrix.shard }}
+          BENCHMARK_CACHE_HIT: ${{ steps.cache-node-modules.outputs.cache-hit }}
+          BENCHMARK_CONCURRENCY: ${{ inputs.concurrency }}
+          BENCHMARK_LAYOUT: ${{ inputs.lane_layout }}
+          BENCHMARK_REF: ${{ github.ref }}
+          BENCHMARK_SHA: ${{ github.sha }}
+          BENCHMARK_SHARD: ${{ matrix.shard }}
+          GITHUB_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import {
+            existsSync,
+            mkdirSync,
+            readdirSync,
+            readFileSync,
+            writeFileSync,
+          } from "node:fs";
+          import { join } from "node:path";
+
+          const artifactDir = process.env.BENCHMARK_ARTIFACT_DIR;
+          const timingDir = join(artifactDir, "timings");
+          mkdirSync(artifactDir, { recursive: true });
+          const timingReports = existsSync(timingDir)
+            ? readdirSync(timingDir, { withFileTypes: true })
+                .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+                .map((entry) => {
+                  try {
+                    const report = JSON.parse(readFileSync(join(timingDir, entry.name), "utf8"));
+                    return { file: entry.name, status: report.status ?? "unknown" };
+                  } catch {
+                    return { file: entry.name, status: "unreadable" };
+                  }
+                })
+            : [];
+          const jobStatus = process.env.GITHUB_JOB_STATUS || "unknown";
+          const complete =
+            jobStatus === "success" &&
+            timingReports.length === 1 &&
+            timingReports.every(({ status }) => status === "passed");
+          const metadata = {
+            schemaVersion: 1,
+            reportType: "tlh-macos-ci-benchmark-metadata",
+            shard: process.env.BENCHMARK_SHARD,
+            sha: process.env.BENCHMARK_SHA,
+            ref: process.env.BENCHMARK_REF,
+            layout: process.env.BENCHMARK_LAYOUT,
+            requestedConcurrency: process.env.BENCHMARK_CONCURRENCY,
+            cacheHit: process.env.BENCHMARK_CACHE_HIT || "unknown",
+            jobStatus,
+            timingReports,
+            complete,
+            comparisonEligible: complete,
+            failureLabel: complete ? null : `incomplete-${jobStatus}`,
+            executionTimingExcludesRunnerSetup: true,
+          };
+          writeFileSync(
+            join(artifactDir, "benchmark-metadata.json"),
+            `${JSON.stringify(metadata, null, 2)}\n`,
+            { encoding: "utf8", mode: 0o600 },
+          );
+          if (!complete) {
+            writeFileSync(
+              join(artifactDir, "INCOMPLETE-BENCHMARK.txt"),
+              "This shard is incomplete or failed and is not a speedup sample.\n",
+              { encoding: "utf8", mode: 0o600 },
+            );
+          }
+          NODE
+
+      - name: Upload timing and metadata artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-ci-benchmark-shard-${{ matrix.shard }}-${{ job.status }}
+          path: ${{ runner.temp }}/tlh-ci-benchmark-${{ matrix.shard }}
+          if-no-files-found: warn
+          retention-days: 14

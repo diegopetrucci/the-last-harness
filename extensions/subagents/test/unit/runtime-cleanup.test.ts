@@ -95,7 +95,7 @@ describe("runtime cleanup", () => {
         lastUpdate: now - 1000,
       });
 
-      const result = cleanupRuntimeDirs(paths, { now: () => now, kill: () => true });
+      const result = cleanupRuntimeDirs(paths, { now: () => now });
       assert.equal(result.removedAsyncDirs, 2);
       assert.equal(fs.existsSync(staleEmptyDir), false);
       assert.equal(fs.existsSync(staleCompleteDir), false);

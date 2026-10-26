@@ -15,7 +15,7 @@ run_stage0_node_preflight_smoke() {
   mkdir -p "${case_dir}" "${home_dir}"
   make_support_copy_curl "${fakebin}"
   make_fake_stage1_support_root "${case_dir}/support-root"
-  make_fake_node_version "${fakebin}" "v22.18.9"
+  make_fake_node_version "${fakebin}" "v24.22.0"
 
   set +e
   (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${case_dir}/support-root" FAKE_RAW_BASE="${raw_base}" TLH_RAW_BASE="${raw_base}" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
@@ -28,7 +28,7 @@ run_stage0_node_preflight_smoke() {
     fail "stage-0 old Node remote preflight unexpectedly succeeded"
   fi
   assert_contains "${combined_file}" "Refreshing installer..."
-  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "Node.js >=24.22.1 <25 or >=26.12.1 is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -50,7 +50,7 @@ run_stage0_node_preflight_smoke() {
     cat "${combined_file}" >&2
     fail "stage-0 old Node local preflight unexpectedly succeeded"
   fi
-  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "Node.js >=24.22.1 <25 or >=26.12.1 is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -118,6 +118,54 @@ run_stage0_alias_guard_smoke() {
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${home_physical}/.pi"
   assert_absent "${home_alias}/.pi"
+}
+
+run_stage0_case_alias_guard_smoke() {
+  log "Running stage-0 case-aliased normal Pi guard smoke check..."
+  local case_dir="${TMP_ROOT}/stage0-case-alias-guard"
+  local fakebin="${case_dir}/fakebin"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  local normal_pi_root="${home_dir}/.pi"
+  local aliased_agent="${home_dir}/.PI/agent"
+
+  mkdir -p "${normal_pi_root}/agent"
+  write_tlh_install_state "${normal_pi_root}/agent" true
+  make_failing_curl "${fakebin}"
+  make_fake_stage1_support_root "${case_dir}"
+
+  if case_alias_smoke_supported "${normal_pi_root}" "${home_dir}/.PI"; then
+    set +e
+    (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${aliased_agent}" --bin-dir "${case_dir}/bin" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+    status=$?
+    set -e
+    combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+    if [[ "${status}" -eq 0 ]]; then
+      cat "${combined_file}" >&2
+      fail "stage-0 accepted a case-aliased normal Pi path"
+    fi
+    assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
+    assert_not_contains "${combined_file}" "Dry run only; no support files were downloaded."
+    assert_not_contains "${combined_file}" "fake curl was invoked"
+    assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  else
+    # A case-sensitive filesystem must keep a distinct .PI tree outside the
+    # protected .pi root; stdin stage-0 should therefore complete its
+    # bootstrap-only dry run without handing off to local stage-1.
+    mkdir -p "${home_dir}/.PI/agent"
+    : >"${stdout_file}"
+    : >"${stderr_file}"
+    (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${aliased_agent}" --bin-dir "${case_dir}/bin" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+    combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+    assert_contains "${combined_file}" "Bootstrap-level/no-stage1 dry-run approximation (stage-1 was not downloaded or run)."
+    assert_not_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
+    assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+    assert_not_contains "${combined_file}" "fake curl was invoked"
+    assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  fi
 }
 
 run_stage0_validation_precedes_local_support_smoke() {

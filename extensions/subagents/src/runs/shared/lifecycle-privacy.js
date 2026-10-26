@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/lifecycle-privacy.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function isProtectedPausedLifecycle(input) {
     if (!input)
         return false;

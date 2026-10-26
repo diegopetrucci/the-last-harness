@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/constants.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const TLH_NAME = "tlh";
 export const TLH_PACKAGE_NAME = "The Last Harness";
 export const TLH_REPO = "diegopetrucci/the-last-harness";
@@ -12,8 +13,6 @@ export const TLH_TELEMETRY_INGEST_BASE_URL = "https://nom.telemetrydeck.com/v2/n
 export const TLH_LAUNCH_TELEMETRY_EVENT_TYPE = "Tlh.launched";
 export const TLH_TELEMETRY_TIMEOUT_MS = 1500;
 export const TLH_TELEMETRY_STATE_SCHEMA_VERSION = 1;
-export const DUMB_ZONE_THRESHOLD_TOKENS = 200_000;
-export const DUMB_ZONE_LABEL = "DUMB ZONE";
 export const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 export const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 export const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";

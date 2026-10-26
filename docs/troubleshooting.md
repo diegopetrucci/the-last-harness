@@ -29,7 +29,7 @@ command -v tlh
 type -a tlh pi
 ```
 
-For ordinary interactive TLH launches, current managed wrappers export `PI_CODING_AGENT_DIR` for the isolated TLH profile, validate the private runtime, and then exec the pinned absolute runtime path. A `pi` earlier on `PATH` cannot shadow that ordinary managed launch. Installer-owned helper subcommands such as `tlh update`, `tlh defaults`, `tlh tickets`, and `tlh doctor` dispatch through their helper scripts first, so their pre-runtime behavior is different. A direct `pi` launch still does not use the managed TLH wrapper path automatically.
+For ordinary interactive TLH launches, current managed wrappers export `PI_CODING_AGENT_DIR` for the isolated TLH profile, validate the private runtime, and then exec the pinned absolute runtime path. A `pi` earlier on `PATH` cannot shadow that ordinary managed launch. Installer-owned helper subcommands such as `tlh update`, `tlh defaults`, `tlh tickets`, `tlh doctor`, and `tlh version` dispatch through their helper scripts first, so their pre-runtime behavior is different. A direct `pi` launch still does not use the managed TLH wrapper path automatically.
 
 Common causes:
 
@@ -96,36 +96,9 @@ If the normal update helper is missing or the package checkout is too damaged to
 
 ## Unmanaged wrapper overwrite refusal
 
-### Symptom
+**Symptom:** install or update fails with `... already exists and is not managed by this installer; use --force or --bin-dir` (dry runs warn `would not overwrite unmanaged existing wrapper`).
 
-Install or update fails with a wrapper error like:
-
-```text
-... already exists and is not managed by this installer; use --force or --bin-dir
-```
-
-Dry runs warn with:
-
-```text
-would not overwrite unmanaged existing wrapper: ...
-```
-
-### Diagnosis
-
-TLH only overwrites wrapper files it manages itself unless you pass `--force`. This protects unrelated files at the target path. Installer-wide `--force` also permits scalar isolated-default overwrites; it is not limited to the wrapper, and TLH does not automatically back up an unmanaged wrapper before replacing it.
-
-### Fix
-
-Prefer a conservative path:
-
-- preserve the existing file and install/update with a different `--bin-dir` or `--wrapper-name`, or
-- back up the existing file yourself, then rerun with `--force` only if you accept both the unmanaged-wrapper replacement and scalar isolated-default overwrite behavior.
-
-### Undo / avoid
-
-- Restore your backup if you overwrote the wrong wrapper.
-- Keep custom scripts and TLH wrappers at different paths/names.
-- Use `--dry-run` first when changing wrapper destinations.
+**Fix:** keep your file and use a different `--bin-dir` or `--wrapper-name`. `--force` replaces the wrapper but also overwrites scalar isolated defaults, so back the file up first. Details: [Installer options](install.md#installer-options).
 
 ## Subagent SIGTERM or exit 143
 
@@ -186,26 +159,9 @@ Use `--no-wrapper` only when you really want manual launches, and keep the profi
 
 ### Node.js is missing or too old
 
-#### Symptom
+**Symptom:** install stops because Node.js is unavailable or too old.
 
-Install stops because Node.js is unavailable or does not meet the required version.
-
-#### Diagnosis
-
-TLH requires Node.js >=22.19.0 on `PATH`. Check the command and version the installer will resolve:
-
-```sh
-command -v node
-node --version
-```
-
-#### Fix
-
-Install or select a supported Node.js version using your normal Node/version-manager workflow, ensure it resolves on `PATH`, then rerun the installer. Do not work around the check by pointing the installer at normal `~/.pi/agent`.
-
-#### Undo / avoid
-
-If you temporarily changed Node versions, return your version manager to its previous default after installation only if TLH will still resolve Node.js >=22.19.0 when it runs.
+**Fix:** check `command -v node` and `node --version`, install a version that satisfies `engines.node` in `package.json`, make sure it resolves on `PATH`, and rerun the installer.
 
 ### Non-empty unmarked private runtime prefix
 
@@ -227,21 +183,9 @@ Restore the moved directory if you selected the wrong prefix. Keep unrelated run
 
 ### Main-track installs use different defaults
 
-#### Symptom
+**Symptom:** you installed from `main`, but `tlh` does not start it.
 
-You installed from `main`, but `tlh` does not start the expected install.
-
-#### Diagnosis
-
-A `main` ref install defaults to `tlh-main` and `~/.the-last-harness-main/agent` so it does not collide with the release install.
-
-#### Fix
-
-Run `tlh-main`, or reinstall/update with explicit `--wrapper-name` and `--agent-dir` values if you want release-style names instead.
-
-#### Undo / avoid
-
-Keep release-track and main-track installs separate unless you intentionally override both paths.
+**Fix:** run `tlh-main`. Main installs use separate wrapper and profile defaults; see [More ways to install](install.md#more-ways-to-install).
 
 ## Update edge cases
 
@@ -310,116 +254,16 @@ Treat `--package-source`, `--repo`, `--ref`, and `--track` as one set for custom
 
 ### Offline update refusal
 
-#### Symptom
+**Symptom:** `tlh update` fails with `PI_OFFLINE is set; refusing to run a network update.`
 
-`tlh update` fails with:
-
-```text
-PI_OFFLINE is set; refusing to run a network update.
-```
-
-#### Diagnosis
-
-The environment explicitly told TLH not to perform networked update work.
-
-#### Fix
-
-Unset `PI_OFFLINE` for that update attempt, then rerun `tlh update`.
-
-#### Undo / avoid
-
-Keep `PI_OFFLINE=1` for sessions where you want that protection, but remember it also blocks TLH update/recovery downloads.
+**Fix:** unset `PI_OFFLINE` for that update and rerun `tlh update`. See [Update checks](install.md#update-checks-and-opt-outs).
 
 ## Uninstall edge cases
 
-### Main-track uninstall needs matching paths
-
-#### Symptom
-
-The default uninstaller leaves a `tlh-main` install in place or targets the release-profile defaults instead.
-
-#### Diagnosis
-
-The uninstaller does not infer a prior `main` ref. A main-track install defaults to wrapper `tlh-main` and agent dir `~/.the-last-harness-main/agent`, while uninstall defaults to the release paths.
-
-#### Fix
-
-Preview and then run the uninstaller with matching flags:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s -- \
-  --dry-run --wrapper-name tlh-main --agent-dir "$HOME/.the-last-harness-main/agent"
-```
-
-Remove `--dry-run` only after the plan shows the intended main-track wrapper, profile, and runtime. If the install used custom values, pass the same custom `--wrapper-name`, `--agent-dir`, and `--bin-dir` values.
-
-#### Undo / avoid
-
-Always preview uninstall when multiple TLH tracks are installed. The script proceeds without a confirmation prompt once `--dry-run` is removed.
-
-### Unmanaged wrapper is left in place
-
-#### Symptom
-
-The uninstaller says:
-
-```text
-Skip wrapper removal: ...
-(existing file is not managed by The Last Harness installer)
-```
-
-#### Diagnosis
-
-The wrapper path exists, but the file is not marked as installer-managed TLH content.
-
-#### Fix
-
-Delete that wrapper manually only if you know it is safe to remove.
-
-#### Undo / avoid
-
-Keep non-TLH scripts at different paths or names than the TLH wrapper.
-
-### Private runtime is skipped during uninstall
-
-#### Symptom
-
-The uninstaller reports that pi/runtime removal was skipped because the runtime marker is missing, invalid, symlinked, or the runtime contains unexpected top-level entries.
-
-#### Diagnosis
-
-TLH removes the private runtime only when it can prove ownership conservatively from `.tlh-runtime-owned` and the expected runtime layout.
-
-#### Fix
-
-- If you want a normal managed uninstall path, repair/update TLH first and then rerun uninstall.
-- If you are certain the directory is only TLH's abandoned private runtime, follow the printed manual `rm -rf` hint exactly.
-
-#### Undo / avoid
-
-Do not copy unrelated files into TLH's runtime directory, and do not remove the ownership marker unless you are intentionally taking over that directory yourself.
-
-### `--force-include-pi` and `--keep-pi` conflict
-
-#### Symptom
-
-Uninstall exits with:
-
-```text
---force-include-pi and --keep-pi are mutually exclusive; pass only one
-```
-
-#### Diagnosis
-
-Those flags request opposite behaviors.
-
-#### Fix
-
-Rerun uninstall with only one of them.
-
-#### Undo / avoid
-
-Use `--dry-run` first if you are unsure which uninstall plan you want.
+- **Main-track install not removed:** the uninstaller does not detect `main` installs. Pass `--wrapper-name tlh-main --agent-dir ~/.the-last-harness-main/agent`, preview with `--dry-run` first. See [Uninstall](install.md#uninstall).
+- **`Skip wrapper removal: ... not managed by The Last Harness installer`:** the file at the wrapper path isn't TLH's. Delete it yourself only if you know it's safe.
+- **Private runtime skipped:** the ownership marker is missing or invalid. If install-state records `piInstalledByTlh: true`, run `tlh update` once so the runtime gets a marker, then uninstall again; otherwise follow the printed manual-removal hint. See [Pi removal decision](install.md#pi-removal-decision).
+- **`--force-include-pi and --keep-pi are mutually exclusive`:** pass only one. See [Uninstaller flags](install.md#uninstaller-flags).
 
 ## Related docs
 

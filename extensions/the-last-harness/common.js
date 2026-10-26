@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/common.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 export function readText(path) {
@@ -129,4 +130,16 @@ export function formatCompactTokenCount(count) {
         return `${(count / 1000000).toFixed(1)}M`;
     }
     return `${Math.round(count / 1000000)}M`;
+}
+export function createRetryableLazyImport(loader) {
+    let modulePromise;
+    return () => {
+        if (!modulePromise) {
+            modulePromise = loader().catch((error) => {
+                modulePromise = undefined;
+                throw error;
+            });
+        }
+        return modulePromise;
+    };
 }

@@ -146,6 +146,9 @@ realpath_for_compare() {
   fi
 }
 
+# Preserve the small set of existing platform root aliases. These are exact
+# mappings, not a general symlink exemption (for example, /var -> /private/var
+# on macOS).
 symlinked_parent_component_is_allowed_root_alias() {
   local path="$1"
   local expected_target=""
@@ -160,8 +163,25 @@ symlinked_parent_component_is_allowed_root_alias() {
   [[ "$(realpath_for_compare "${path}")" == "$(normalize_path "${expected_target}")" ]]
 }
 
+# A symlinked parent is safe to traverse when it is an alias on HOME's lexical
+# path and its physical target is an ancestor of the canonical HOME. This does
+# not allow arbitrary explicit --agent-dir aliases or symlinks introduced below
+# HOME (for example, a symlinked profile directory).
+symlinked_parent_component_is_allowed_home_ancestor_alias() {
+  local path="$1"
+  local home_path="$2"
+  local home_compare="$3"
+  local path_compare=""
+
+  path_within_or_equal "${path}" "${home_path}" || return 1
+  path_compare="$(realpath_for_compare "${path}")"
+  path_within_or_equal "${path_compare}" "${home_compare}"
+}
+
 find_symlinked_existing_parent_component() {
   local path="$1"
+  local home_path="$2"
+  local home_compare="$3"
   local current remainder part parent_path
 
   path="$(normalize_path "${path}")"
@@ -187,7 +207,8 @@ find_symlinked_existing_parent_component() {
     fi
 
     if [[ -L "${current}" ]]; then
-      if ! symlinked_parent_component_is_allowed_root_alias "${current}"; then
+      if ! symlinked_parent_component_is_allowed_root_alias "${current}" \
+        && ! symlinked_parent_component_is_allowed_home_ancestor_alias "${current}" "${home_path}" "${home_compare}"; then
         printf '%s\n' "${current}"
         return 0
       fi
@@ -205,6 +226,65 @@ path_within_or_equal() {
   [[ "${path}" == "${root}" || "${path}" == "${root}/"* ]]
 }
 
+# Compare existing filesystem identity instead of folding path case. This keeps
+# .pi and .PI distinct on case-sensitive filesystems while recognizing aliases
+# on case-insensitive filesystems, including a missing suffix after an existing root.
+filesystem_identity() {
+  local path="$1"
+  local identity=""
+
+  identity="$(stat -c '%d:%i' "${path}" 2>/dev/null || true)"
+  if [[ -n "${identity}" ]]; then
+    printf '%s\n' "${identity}"
+    return 0
+  fi
+  identity="$(stat -f '%d:%i' "${path}" 2>/dev/null || true)"
+  if [[ -n "${identity}" ]]; then
+    printf '%s\n' "${identity}"
+    return 0
+  fi
+  return 1
+}
+
+path_within_existing_identity() {
+  local root="$1"
+  local path="$2"
+  local root_identity=""
+  local current="/"
+  local remainder part identity
+
+  root_identity="$(filesystem_identity "${root}" || true)"
+  [[ -n "${root_identity}" ]] || return 1
+
+  path="$(normalize_path "${path}")"
+  remainder="${path#/}"
+  while [[ -n "${remainder}" ]]; do
+    if [[ "${remainder}" == */* ]]; then
+      part="${remainder%%/*}"
+      remainder="${remainder#*/}"
+    else
+      part="${remainder}"
+      remainder=""
+    fi
+
+    if [[ "${current}" == "/" ]]; then
+      current="/${part}"
+    else
+      current="${current}/${part}"
+    fi
+
+    if [[ ! -e "${current}" && ! -L "${current}" ]]; then
+      return 1
+    fi
+    identity="$(filesystem_identity "${current}" || true)"
+    if [[ -n "${identity}" && "${identity}" == "${root_identity}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 # Returns 0 (true) if path is inside or equal to the normal Pi config root (~/.pi).
 # Mirrors pathIsProtectedPiConfig from scripts/lib/tlh-install-paths.mjs.
 path_is_protected_pi_config() {
@@ -212,7 +292,10 @@ path_is_protected_pi_config() {
   local pi_root pi_agent_root
   pi_root="$(realpath_for_compare "${HOME}/.pi")"
   pi_agent_root="$(realpath_for_compare "${HOME}/.pi/agent")"
-  path_within_or_equal "${pi_root}" "${path}" || path_within_or_equal "${pi_agent_root}" "${path}"
+  path_within_or_equal "${pi_root}" "${path}" \
+    || path_within_or_equal "${pi_agent_root}" "${path}" \
+    || path_within_existing_identity "${pi_root}" "${path}" \
+    || path_within_existing_identity "${pi_agent_root}" "${path}"
 }
 
 path_is_dangerous_recursive_target() {
@@ -504,9 +587,11 @@ fi
 
 # ── resolve paths ──────────────────────────────────────────────────────────────
 
+HOME_NORMALIZED="$(normalize_path "${HOME}")"
+HOME_COMPARE="$(realpath_for_compare "${HOME_NORMALIZED}")"
 AGENT_DIR="$(normalize_path "${AGENT_DIR_INPUT}")"
 PROFILE_ROOT="$(normalize_path "$(dirname "${AGENT_DIR}")")"
-SYMLINKED_AGENT_PARENT="$(find_symlinked_existing_parent_component "${AGENT_DIR}" || true)"
+SYMLINKED_AGENT_PARENT="$(find_symlinked_existing_parent_component "${AGENT_DIR}" "${HOME_NORMALIZED}" "${HOME_COMPARE}" || true)"
 AGENT_DIR_COMPARE="$(realpath_for_compare "${AGENT_DIR_INPUT}")"
 PROFILE_ROOT_COMPARE="$(realpath_for_compare "${PROFILE_ROOT}")"
 BIN_DIR="$(realpath_for_compare "${BIN_DIR_INPUT}")"
@@ -559,6 +644,7 @@ WRAPPER_SKIP_REASON=""
 WRAPPER_TARGET_LITERAL=""
 AGENT_DIR_EXISTS=false
 AGENT_DIR_PRESENT=false
+AGENT_DIR_SKIP_REASON=""
 [[ -e "${WRAPPER_PATH}" || -L "${WRAPPER_PATH}" ]] && WRAPPER_EXISTS=true
 [[ -e "${AGENT_DIR}" || -L "${AGENT_DIR}" ]] && AGENT_DIR_PRESENT=true
 
@@ -592,9 +678,10 @@ if [[ "${AGENT_DIR_PRESENT}" == "true" ]]; then
     die "refusing to remove non-directory --agent-dir: ${AGENT_DIR}"
   fi
   if ! has_tlh_ownership_marker "${AGENT_DIR}"; then
-    die "refusing to remove existing --agent-dir without TLH ownership marker: ${INSTALL_STATE}"
+    AGENT_DIR_SKIP_REASON="existing --agent-dir has no TLH install-state marker at ${INSTALL_STATE}; preserving it. Inspect and remove it manually only after confirming it is a leftover from a failed TLH install and is not user-owned"
+  else
+    AGENT_DIR_EXISTS=true
   fi
-  AGENT_DIR_EXISTS=true
 fi
 
 # ── parse install-state; compute pi-removal decision ──────────────────────────
@@ -655,24 +742,20 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
   elif [[ ! -f "${_runtime_marker_file}" ]]; then
     _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but has no valid TLH runtime ownership marker at ${_runtime_marker_file}. Not removing to protect co-located files"
   else
-    # Parse marker JSON (fail-closed; no jq, no node — uninstaller is self-contained).
-    # JSON.stringify() produces compact single-line output; each field is extracted by
-    # a BRE sed pattern. An empty result for any field means absent/malformed → SKIP.
-    _marker_raw="$(cat "${_runtime_marker_file}" 2>/dev/null || true)"
-    _mver="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"schemaVersion"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
-    _mpkg="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"packageName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-    _mpath="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"runtimeAbsPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-    _morigin="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"origin"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    # Trust only the installer's exact JSON.stringify marker shape (one trailing LF allowed).
+    _marker_pattern='^\{"schemaVersion":1,"packageName":"([^"\\[:cntrl:]]*)","runtimeAbsPath":"([^"\\[:cntrl:]]+)","origin":"(created|migrated)"\}$'
+    _marker_raw=""
+    if IFS= read -r -d '' _marker_raw < "${_runtime_marker_file}"; then
+      _marker_raw=""
+    fi
 
-    if [[ "${_mver}" != "1" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected schemaVersion 1, got '${_mver}')"
-    elif [[ "${_mpkg}" != "${PI_PACKAGE_NAME}" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected packageName '${PI_PACKAGE_NAME}', got '${_mpkg}')"
-    elif [[ "${_morigin}" != "created" && "${_morigin}" != "migrated" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (unrecognised origin '${_morigin}')"
-    elif [[ -z "${_mpath}" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (empty runtimeAbsPath)"
+    if [[ ! "${_marker_raw%$'\n'}" =~ ${_marker_pattern} ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is not valid TLH marker JSON: ${_runtime_marker_file}"
+    elif [[ "${BASH_REMATCH[1]}" != "${PI_PACKAGE_NAME}" ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected packageName '${PI_PACKAGE_NAME}', got '${BASH_REMATCH[1]}')"
     else
+      _mpath="${BASH_REMATCH[2]}"
+      _morigin="${BASH_REMATCH[3]}"
       _runtime_real="$(realpath_for_compare "${RUNTIME_DIR}")"
       if [[ "${_mpath}" != "${_runtime_real}" ]]; then
         _runtime_gate_skip_reason="ownership marker runtimeAbsPath '${_mpath}' does not match realpath '${_runtime_real}' of ${RUNTIME_DIR}"
@@ -793,7 +876,7 @@ fi
 
 # ── idempotency: nothing to remove ────────────────────────────────────────────
 
-if [[ "${WRAPPER_EXISTS}" == "false" && "${AGENT_DIR_EXISTS}" == "false" && "${REMOVE_PI}" == "false" ]]; then
+if [[ "${WRAPPER_EXISTS}" == "false" && "${AGENT_DIR_EXISTS}" == "false" && -z "${AGENT_DIR_SKIP_REASON}" && "${REMOVE_PI}" == "false" ]]; then
   say "Nothing to remove."
   print_advisory
   exit 0
@@ -837,6 +920,9 @@ if [[ "${AGENT_DIR_EXISTS}" == "true" ]]; then
     say "  ${STEP}. Remove agent dir:    ${AGENT_DIR}"
     say "             (parent ${PROFILE_ROOT} removed only if empty)"
   fi
+elif [[ -n "${AGENT_DIR_SKIP_REASON}" ]]; then
+  say "     Skip agent dir removal: ${AGENT_DIR}"
+  say "        (${AGENT_DIR_SKIP_REASON})"
 fi
 
 if [[ "${REMOVE_PI}" == "true" ]]; then
@@ -900,6 +986,9 @@ say "  - Repo-local .gnosis/ and .tickets/ data (per-repo, untouched)"
 
 if [[ "${DRY_RUN}" == "true" ]]; then
   print_advisory
+  if [[ -n "${AGENT_DIR_SKIP_REASON}" ]]; then
+    exit 1
+  fi
   exit 0
 fi
 
@@ -914,6 +1003,10 @@ if [[ "${WRAPPER_EXISTS}" == "true" ]]; then
   else
     warn "skipping wrapper removal for ${WRAPPER_PATH}; ${WRAPPER_SKIP_REASON}"
   fi
+fi
+
+if [[ -n "${AGENT_DIR_SKIP_REASON}" ]]; then
+  warn "skipping agent dir removal for ${AGENT_DIR}; ${AGENT_DIR_SKIP_REASON}"
 fi
 
 if [[ "${AGENT_DIR_EXISTS}" == "true" ]]; then
@@ -973,6 +1066,14 @@ fi
 # ── done ───────────────────────────────────────────────────────────────────────
 
 say ""
-say "Done. The Last Harness has been uninstalled."
+if [[ -n "${AGENT_DIR_SKIP_REASON}" ]]; then
+  say "Done. Managed The Last Harness artifacts were removed where ownership was verified; the agent dir was preserved."
+else
+  say "Done. The Last Harness has been uninstalled."
+fi
 
 print_advisory
+
+if [[ -n "${AGENT_DIR_SKIP_REASON}" ]]; then
+  exit 1
+fi

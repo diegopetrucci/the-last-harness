@@ -8,9 +8,11 @@ import {
   type SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
 import {
+  buildPausedRunnerTelemetry,
   persistRunnerTerminalRun,
   type RunnerStepResult,
 } from "../../src/runs/background/terminal-persistence.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import {
   createBackgroundRunStatusOwner,
   type RunnerStatusPayload,
@@ -21,7 +23,6 @@ import type { ResolvedControlConfig, CostSummary, TokenUsage } from "../../src/s
 const controls: ResolvedControlConfig = {
   enabled: true,
   needsAttentionAfterMs: 2_000,
-  failedToolAttemptsBeforeAttention: 3,
   notifyOn: ["needs_attention"],
   notifyChannels: ["event", "async"],
 };
@@ -257,6 +258,133 @@ describe("terminal persistence", () => {
     assert.deepEqual(artifact.telemetry, canonicalTelemetry);
   });
 
+  it("releases interrupted ownership after cleanup so a reused pid cannot block resume", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-terminal-interrupt-release-"));
+    tempDirs.push(root);
+    const id = "terminal-interrupt-release";
+    const asyncRoot = path.join(root, "runs");
+    const asyncDir = path.join(asyncRoot, id);
+    const resultsDir = path.join(root, "results");
+    const resultPath = path.join(resultsDir, `${id}.json`);
+    const sessionFile = path.join(root, "worker-session.jsonl");
+    const oldPid = 4242;
+    const pause = {
+      kind: "cohort_pause" as const,
+      summary: "Paused after interrupt.",
+      ownerPid: oldPid,
+    };
+    fs.writeFileSync(sessionFile, "", "utf-8");
+
+    const owner = createBackgroundRunStatusOwner({
+      id,
+      asyncDir,
+      cwd: root,
+      plan: terminalPlan,
+      overallStartTime: 100,
+      artifactConfig: terminalArtifactConfig,
+      appendEvent: () => undefined,
+    });
+    owner.statusPayload.state = "paused";
+    owner.statusPayload.pid = oldPid;
+    owner.statusPayload.sessionFile = sessionFile;
+    owner.statusPayload.pause = pause;
+    owner.statusPayload.steps = owner.statusPayload.steps.map((step) => ({
+      ...step,
+      status: "paused",
+      startedAt: 100,
+      endedAt: 200,
+      sessionFile,
+      pause,
+      processCleanup: { supported: true, attempted: true, terminated: true },
+    }));
+    owner.interrupted = true;
+    writeNormalizedLifecycleStatus(asyncDir, owner.statusPayload);
+
+    const result: RunnerStepResult = {
+      agent: "worker",
+      output: "Paused after interrupt.",
+      success: false,
+      exitCode: 0,
+      interrupted: true,
+      sessionFile,
+      pause,
+    };
+    persistRunnerTerminalRun({
+      config: {
+        id,
+        plan: terminalPlan,
+        resultPath,
+        cwd: root,
+        artifactConfig: terminalArtifactConfig,
+        asyncDir,
+      },
+      plan: terminalPlan,
+      statusOwner: owner,
+      statusPayload: owner.statusPayload,
+      results: [result],
+      controlConfig: controls,
+      overallStartTime: 100,
+      runEndedAt: 200,
+      effectiveSessionFile: sessionFile,
+      summary: "Paused after interrupt.",
+      truncated: false,
+      agentName: "worker",
+      resultPath,
+      cwd: root,
+      asyncDir,
+      pausedOwnershipConfirmedStopped: true,
+      skipFinalStatusWrite: false,
+      pausedOutputForIndex: () => "Paused after interrupt.",
+      appendEvent: () => undefined,
+      writeRunLog: () => undefined,
+    });
+
+    const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as {
+      state: string;
+      pid?: number;
+      pause?: { ownerPid?: number };
+      steps: Array<{ pause?: { ownerPid?: number } }>;
+    };
+    assert.equal(persisted.state, "paused");
+    assert.equal(persisted.pid, undefined);
+    assert.equal(persisted.pause?.ownerPid, undefined);
+    assert.equal(persisted.steps[0]?.pause?.ownerPid, undefined);
+
+    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+      pause?: { ownerPid?: number };
+      results: Array<{ pause?: { ownerPid?: number } }>;
+    };
+    assert.equal(artifact.pause?.ownerPid, undefined);
+    assert.equal(artifact.results[0]?.pause?.ownerPid, undefined);
+
+    // A late status write from the drained runner must not resurrect ownership.
+    owner.writeStatusPayload();
+    const afterLateWrite = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as typeof persisted;
+    assert.equal(afterLateWrite.pid, undefined);
+    assert.equal(afterLateWrite.pause?.ownerPid, undefined);
+    assert.equal(afterLateWrite.steps[0]?.pause?.ownerPid, undefined);
+
+    let livenessProbes = 0;
+    const target = resolveAsyncResumeTarget(
+      { id },
+      {
+        asyncDirRoot: asyncRoot,
+        resultsDir,
+        // This simulates the old pid being alive after reuse. A durable clear
+        // means resume should not probe or block on that unrelated process.
+        kill: () => {
+          livenessProbes++;
+          return true;
+        },
+      },
+    );
+    assert.equal(target.kind, "revive");
+    assert.equal(target.sessionFile, sessionFile);
+    assert.equal(livenessProbes, 0);
+  });
+
   it("preserves direct status timestamps across locked and unlocked writes", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-direct-status-clock-"));
     tempDirs.push(root);
@@ -317,7 +445,10 @@ describe("terminal persistence", () => {
         state: string;
         lastUpdate?: number;
       };
-      assert.equal(persisted.state, adoptedState);
+      // The branch normalizes "continued" → "complete" on disk; "cancelled" is
+      // preserved as-is. Both cases must preserve the paused timestamp floor.
+      const expectedState = adoptedState === "continued" ? "complete" : adoptedState;
+      assert.equal(persisted.state, expectedState);
       assert.equal(persisted.lastUpdate, 120);
       assert.equal(owner.statusPayload.lastUpdate, 120);
     }
@@ -469,5 +600,283 @@ describe("terminal persistence", () => {
       state: "failed",
       terminationReason: "timed_out",
     });
+  });
+
+  it("writes exitCode 1 and preserves cancel metadata for cancelled result artifacts", () => {
+    // Regression test: resultItems() was missing the step-level cancel field
+    // and the top-level exitCode was 0 instead of 1 for cancelled runs.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-terminal-persistence-cancel-"));
+    tempDirs.push(root);
+    const id = "terminal-cancel-exitcode";
+    const resultPath = path.join(root, "result.json");
+    const asyncDir = path.join(root, "async");
+    const cancel: import("../../src/shared/types.ts").AsyncCancellationMetadata = {
+      summary: "Cancelled by parent abort.",
+      cancelledAt: 150,
+    };
+    const statusPayload: RunnerStatusPayload = {
+      runId: id,
+      mode: "single",
+      state: "cancelled",
+      startedAt: 100,
+      endedAt: 150,
+      lastUpdate: 150,
+      cancel,
+      error: cancel.summary,
+      cwd: root,
+      currentStep: 0,
+      steps: [
+        {
+          agent: "worker",
+          status: "cancelled",
+          startedAt: 100,
+          endedAt: 150,
+          cancel,
+          terminationReason: "cancelled",
+          exitCode: 1,
+        },
+      ],
+    };
+    const statusOwner = Object.assign(
+      {} as Parameters<typeof persistRunnerTerminalRun>[0]["statusOwner"],
+      {
+        terminalReason: {},
+        interrupted: false,
+        timedOut: false,
+        supervisorPauseTransitionFailed: false,
+        concurrentTerminalStatusAdopted: false,
+        supervisorPauseRequest: undefined,
+        writeStatusPayload: () => {},
+      },
+    );
+    const result: RunnerStepResult = {
+      agent: "worker",
+      output: "cancelled output",
+      success: false,
+      exitCode: 1,
+      cancel,
+      terminationReason: "cancelled",
+    };
+    const events: Array<Record<string, unknown>> = [];
+    persistRunnerTerminalRun({
+      config: {
+        id,
+        plan: terminalPlan,
+        resultPath,
+        cwd: root,
+        artifactConfig: terminalArtifactConfig,
+        asyncDir,
+      },
+      plan: terminalPlan,
+      statusOwner,
+      statusPayload,
+      results: [result],
+      controlConfig: controls,
+      overallStartTime: 100,
+      runEndedAt: 150,
+      summary: "Cancelled by parent abort.",
+      truncated: false,
+      agentName: "worker",
+      resultPath,
+      cwd: root,
+      asyncDir,
+      skipFinalStatusWrite: true,
+      pausedOutputForIndex: () => "",
+      appendEvent: (line) => events.push(JSON.parse(line) as Record<string, unknown>),
+      writeRunLog: () => {},
+    });
+
+    assert.ok(fs.existsSync(resultPath), "result artifact must be written");
+    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf8")) as {
+      state: string;
+      exitCode: number;
+      results: Array<{
+        agent: string;
+        exitCode?: number;
+        cancel?: { summary: string; cancelledAt: number };
+      }>;
+    };
+    assert.equal(artifact.state, "cancelled");
+    assert.equal(artifact.exitCode, 1, "cancelled artifact top-level exitCode must be 1");
+    assert.equal(
+      artifact.results[0]?.cancel?.summary,
+      cancel.summary,
+      "step cancel.summary must be propagated into the result artifact",
+    );
+    assert.equal(
+      artifact.results[0]?.cancel?.cancelledAt,
+      cancel.cancelledAt,
+      "step cancel.cancelledAt must be propagated into the result artifact",
+    );
+    assert.equal(artifact.results[0]?.exitCode, 1, "step exitCode must be 1 for cancelled step");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG-02: per-child cwd in runner result items
+// RunnerStepResult.cwd must be written into the result.json step so that
+// result-only revival (status.json absent) can use the correct child cwd.
+// ---------------------------------------------------------------------------
+
+describe("runner result item carries per-child cwd (BUG-02)", () => {
+  it("resultItems writes cwd from RunnerStepResult into the result artifact step", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tp-stepcwd-"));
+    tempDirs.push(root);
+    const asyncDir = path.join(root, "async");
+    const resultPath = path.join(root, "result.json");
+    const sessionFile = path.join(root, "session.jsonl");
+    fs.writeFileSync(sessionFile, "");
+
+    const runCwd = path.join(root, "run-dir");
+    const childCwd = path.join(root, "child-dir");
+
+    const plan = terminalPlan;
+    const owner = createBackgroundRunStatusOwner({
+      id: "tp-stepcwd-1",
+      asyncDir,
+      cwd: runCwd,
+      plan,
+      overallStartTime: Date.now(),
+      artifactConfig: terminalArtifactConfig,
+      appendEvent() {},
+    });
+
+    const results: RunnerStepResult[] = [
+      {
+        agent: "worker",
+        output: "done",
+        success: true,
+        exitCode: 0,
+        sessionFile,
+        cwd: childCwd,
+      },
+    ];
+
+    persistRunnerTerminalRun({
+      config: {
+        id: "tp-stepcwd-1",
+        plan,
+        resultPath,
+        cwd: runCwd,
+        artifactConfig: terminalArtifactConfig,
+        asyncDir,
+      },
+      plan,
+      statusOwner: owner,
+      statusPayload: owner.statusPayload,
+      results,
+      controlConfig: controls,
+      overallStartTime: 100,
+      runEndedAt: 200,
+      summary: "done",
+      truncated: false,
+      agentName: "worker",
+      resultPath,
+      cwd: runCwd,
+      asyncDir,
+      skipFinalStatusWrite: false,
+      pausedOutputForIndex: () => "paused",
+      appendEvent() {},
+      writeRunLog() {},
+    });
+
+    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf8")) as {
+      cwd: string;
+      results: Array<{ cwd?: string }>;
+    };
+
+    assert.equal(
+      artifact.results[0]?.cwd,
+      childCwd,
+      "result artifact step must carry the per-child cwd, not the run cwd",
+    );
+    assert.equal(artifact.cwd, runCwd, "result artifact top-level cwd must still be the run cwd");
+  });
+});
+
+describe("buildPausedRunnerTelemetry execution label", () => {
+  it("sets execution to 'foreground' for the first committed paused status of an awaited run", () => {
+    // Regression for P2: buildPausedRunnerTelemetry omitted the execution field, so
+    // awaited runs produced an atomic paused snapshot with execution='async'.
+    const config = {
+      id: "paused-awaited",
+      awaited: true,
+      plan: terminalPlan,
+      resultPath: "/tmp/paused-awaited.json",
+      cwd: "/tmp",
+      asyncDir: "/tmp",
+      artifactConfig: terminalArtifactConfig,
+      controlConfig: controls,
+      telemetry: {
+        schemaVersion: 1 as const,
+        run: { id: "paused-awaited", execution: "foreground" as const, mode: "single" as const },
+        steps: [],
+        provenance,
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention" as const],
+          notifyChannels: ["event" as const, "async" as const],
+        },
+      },
+    };
+    const result = buildPausedRunnerTelemetry({
+      config,
+      plan: terminalPlan,
+      results: [],
+      controlConfig: controls,
+      overallStartTime: 100,
+      endedAt: 200,
+      statusSteps: [],
+    });
+    assert.ok(result, "paused telemetry must be produced when provenance is present");
+    assert.equal(
+      result.run.execution,
+      "foreground",
+      "first committed paused status of an awaited run must carry execution='foreground'",
+    );
+    assert.equal(result.outcome?.state, "paused");
+  });
+
+  it("sets execution to 'async' for the first committed paused status of a non-awaited run", () => {
+    // Complement: a detached (non-awaited) run must still produce execution='async'.
+    const config = {
+      id: "paused-async",
+      awaited: false,
+      plan: terminalPlan,
+      resultPath: "/tmp/paused-async.json",
+      cwd: "/tmp",
+      asyncDir: "/tmp",
+      artifactConfig: terminalArtifactConfig,
+      controlConfig: controls,
+      telemetry: {
+        schemaVersion: 1 as const,
+        run: { id: "paused-async", execution: "async" as const, mode: "single" as const },
+        steps: [],
+        provenance,
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention" as const],
+          notifyChannels: ["event" as const, "async" as const],
+        },
+      },
+    };
+    const result = buildPausedRunnerTelemetry({
+      config,
+      plan: terminalPlan,
+      results: [],
+      controlConfig: controls,
+      overallStartTime: 100,
+      endedAt: 200,
+      statusSteps: [],
+    });
+    assert.ok(result, "paused telemetry must be produced when provenance is present");
+    assert.equal(
+      result.run.execution,
+      "async",
+      "first committed paused status of an async run must carry execution='async'",
+    );
+    assert.equal(result.outcome?.state, "paused");
   });
 });

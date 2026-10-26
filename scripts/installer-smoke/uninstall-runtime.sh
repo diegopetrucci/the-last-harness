@@ -239,6 +239,90 @@ run_uninstall_normal_pi_guard_smoke() {
   assert_absent "${home_dir}/.pi"
 }
 
+run_uninstall_case_alias_guard_smoke() {
+  log "Running uninstall.sh case-aliased normal Pi guard smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-case-alias-guard"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  local normal_pi_root="${home_dir}/.pi"
+  local normal_pi_agent="${normal_pi_root}/agent"
+  local aliased_agent="${home_dir}/.PI/agent"
+  local aliased_missing="${home_dir}/.PI/agent/nonexistent/suffix"
+  local bin_dir="${case_dir}/bin"
+  local marker="${normal_pi_agent}/tlh/install-state.json"
+
+  mkdir -p "${normal_pi_agent}"
+  write_tlh_install_state "${normal_pi_agent}" true
+  assert_safe_uninstall_smoke_paths "${aliased_agent}" "${bin_dir}"
+
+  if case_alias_smoke_supported "${normal_pi_root}" "${home_dir}/.PI"; then
+    # An existing marker must not turn an aliased normal Pi path into an
+    # uninstall target; the guard runs before ownership planning.
+    set +e
+    HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${aliased_agent}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+    status=$?
+    set -e
+    combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+    if [[ "${status}" -eq 0 ]]; then
+      cat "${combined_file}" >&2
+      fail "uninstall.sh accepted a case-aliased normal Pi path with a TLH marker"
+    fi
+    assert_contains "${combined_file}" "refusing to operate: --agent-dir is inside normal Pi config root"
+    assert_not_contains "${combined_file}" "would run: rm -rf"
+    assert_present "${marker}"
+
+    # The same physical alias remains protected without an ownership marker;
+    # ownership is never a substitute for the normal Pi path guard.
+    rm -f "${marker}"
+    : >"${stdout_file}"
+    : >"${stderr_file}"
+    set +e
+    HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${aliased_agent}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+    status=$?
+    set -e
+    combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+    if [[ "${status}" -eq 0 ]]; then
+      cat "${combined_file}" >&2
+      fail "uninstall.sh accepted a case-aliased normal Pi path without a TLH marker"
+    fi
+    assert_contains "${combined_file}" "refusing to operate: --agent-dir is inside normal Pi config root"
+    assert_not_contains "${combined_file}" "would run: rm -rf"
+    assert_present "${normal_pi_agent}"
+
+    # Missing suffixes are also protected once an existing aliased root gives
+    # us filesystem identity evidence; no lowercasing is needed or attempted.
+    : >"${stdout_file}"
+    : >"${stderr_file}"
+    set +e
+    HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${aliased_missing}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+    status=$?
+    set -e
+    combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+    if [[ "${status}" -eq 0 ]]; then
+      cat "${combined_file}" >&2
+      fail "uninstall.sh accepted a case-aliased normal Pi path with a missing suffix"
+    fi
+    assert_contains "${combined_file}" "refusing to operate: --agent-dir is inside normal Pi config root"
+    assert_not_contains "${combined_file}" "would run: rm -rf"
+    assert_absent "${home_dir}/.PI/agent/nonexistent"
+  else
+    # On a case-sensitive filesystem, create a genuinely distinct .PI tree and
+    # prove that the guard does not blanket-lowercase its path.
+    mkdir -p "${home_dir}/.PI/agent"
+    write_tlh_install_state "${home_dir}/.PI/agent" true
+    : >"${stdout_file}"
+    : >"${stderr_file}"
+    HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${aliased_agent}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+    combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+    assert_not_contains "${combined_file}" "refusing to operate: --agent-dir is inside normal Pi config root"
+    assert_contains "${combined_file}" "would run: rm -rf ${aliased_agent}"
+    assert_present "${home_dir}/.PI/agent/tlh/install-state.json"
+  fi
+}
+
 run_uninstall_dangerous_agent_dir_smoke() {
   log "Running uninstall.sh dangerous-agent-dir smoke check..."
   local case_dir="${TMP_ROOT}/uninstall-dangerous-agent-dir"
@@ -279,61 +363,250 @@ run_uninstall_dangerous_agent_dir_smoke() {
 }
 
 run_uninstall_home_alias_guard_smoke() {
-  log "Running uninstall.sh HOME alias dangerous-agent-dir smoke check..."
-  local tmp_real=""
-  local private_tmp_real=""
-  tmp_real="$(cd /tmp >/dev/null 2>&1 && pwd -P || true)"
-  private_tmp_real="$(cd /private/tmp >/dev/null 2>&1 && pwd -P || true)"
-
-  if [[ -z "${tmp_real}" || "${tmp_real}" != "${private_tmp_real}" ]]; then
-    log "Skipping uninstall HOME alias dangerous-agent-dir smoke check; /tmp alias is unavailable."
-    return 0
-  fi
-
-  local case_dir_path=""
-  local case_dir_physical=""
-  local case_dir_alias=""
-  local home_physical=""
-  local home_alias=""
-  local bin_dir=""
-  local stdout_file=""
-  local stderr_file=""
-  local combined_file=""
+  log "Running uninstall.sh HOME/ancestor alias and path-parity smoke checks..."
+  local case_dir="${TMP_ROOT}/uninstall-home-alias"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
   local status=0
+  mkdir -p "${case_dir}"
 
-  case_dir_path="$(mktemp -d /tmp/tlh-uninstall-home-alias.XXXXXX)"
-  case_dir_physical="$(cd "${case_dir_path}" >/dev/null 2>&1 && pwd -P)"
-  case_dir_alias="/tmp/${case_dir_physical#/private/tmp/}"
-  EXTRA_CLEANUP_PATHS+=("${case_dir_physical}")
-
-  if [[ ! -d "${case_dir_alias}" ]]; then
-    log "Skipping uninstall HOME alias dangerous-agent-dir smoke check; /tmp alias path was not created."
-    return 0
-  fi
-
-  home_physical="${case_dir_physical}/home"
-  home_alias="${case_dir_alias}/home"
-  bin_dir="${case_dir_physical}/bin"
-  stdout_file="${case_dir_physical}/stdout.log"
-  stderr_file="${case_dir_physical}/stderr.log"
-  combined_file="${case_dir_physical}/combined.log"
-
-  mkdir -p "${home_physical}" "${bin_dir}"
-  write_tlh_install_state "${home_physical}" false
+  # ── Default path through a symlinked HOME: dry-run, installer parity, real run ──
+  local default_real_home="${case_dir}/default-real-home"
+  local default_home_alias="${case_dir}/default-home-link"
+  local default_agent="${default_real_home}/.the-last-harness/agent"
+  local default_runtime="${default_real_home}/.the-last-harness/runtime"
+  local default_wrapper="${default_real_home}/.local/bin/tlh"
+  local default_wrapper_compare=""
+  mkdir -p "${default_real_home}"
+  ln -s "${default_real_home}" "${default_home_alias}"
+  write_tlh_install_state "${default_agent}" true
+  write_tlh_pi_runtime "${default_runtime}"
+  write_tlh_runtime_marker "${default_runtime}" created
+  write_managed_wrapper "${default_wrapper}"
+  default_wrapper_compare="$(cd "$(dirname "${default_wrapper}")" >/dev/null 2>&1 && pwd -P)/tlh"
 
   set +e
-  HOME="${home_physical}" bash uninstall.sh --dry-run --agent-dir "${home_alias}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  HOME="${default_home_alias}" run_scrubbed_installer_env bash -s -- --dry-run --ref v0.45.0 --track pinned-tag --no-settings --no-wrapper <install.sh >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "installer dry-run rejected a symlinked HOME"
+  fi
+  assert_contains "${combined_file}" "Isolated profile: ${default_home_alias}/.the-last-harness/agent"
 
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  HOME="${default_home_alias}" bash uninstall.sh --dry-run >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -f ${default_wrapper_compare}"
+  assert_contains "${combined_file}" "would run: rm -rf ${default_home_alias}/.the-last-harness/agent"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${default_home_alias}/.the-last-harness/runtime"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${default_home_alias}" bash uninstall.sh >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh rejected a symlinked HOME during real removal"
+  fi
+  assert_absent "${default_agent}"
+  assert_absent "${default_runtime}"
+  assert_absent "${default_wrapper}"
+
+  # ── HOME with a symlinked ancestor: the alias is on HOME's lexical path ───────
+  local ancestor_real_parent="${case_dir}/ancestor-real-parent"
+  local ancestor_parent_alias="${case_dir}/ancestor-parent-link"
+  local ancestor_real_home="${ancestor_real_parent}/home"
+  local ancestor_home_alias="${ancestor_parent_alias}/home"
+  local ancestor_agent="${ancestor_real_home}/.the-last-harness/agent"
+  local ancestor_runtime="${ancestor_real_home}/.the-last-harness/runtime"
+  local ancestor_wrapper="${ancestor_real_home}/.local/bin/tlh"
+  local ancestor_wrapper_compare=""
+  mkdir -p "${ancestor_real_home}"
+  ln -s "${ancestor_real_parent}" "${ancestor_parent_alias}"
+  write_tlh_install_state "${ancestor_agent}" true
+  write_tlh_pi_runtime "${ancestor_runtime}"
+  write_tlh_runtime_marker "${ancestor_runtime}" created
+  write_managed_wrapper "${ancestor_wrapper}"
+  ancestor_wrapper_compare="$(cd "$(dirname "${ancestor_wrapper}")" >/dev/null 2>&1 && pwd -P)/tlh"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${ancestor_home_alias}" run_scrubbed_installer_env bash -s -- --dry-run --ref v0.45.0 --track pinned-tag --no-settings --no-wrapper <install.sh >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "installer dry-run rejected a symlinked HOME ancestor"
+  fi
+  assert_contains "${combined_file}" "Isolated profile: ${ancestor_home_alias}/.the-last-harness/agent"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  HOME="${ancestor_home_alias}" bash uninstall.sh --dry-run >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -f ${ancestor_wrapper_compare}"
+  assert_contains "${combined_file}" "would run: rm -rf ${ancestor_home_alias}/.the-last-harness/agent"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${ancestor_home_alias}/.the-last-harness/runtime"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${ancestor_home_alias}" bash uninstall.sh >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh rejected a symlinked HOME ancestor during real removal"
+  fi
+  assert_absent "${ancestor_agent}"
+  assert_absent "${ancestor_runtime}"
+  assert_absent "${ancestor_wrapper}"
+
+  # ── Canonical explicit path remains the documented workaround/parity path ────
+  local canonical_home="${case_dir}/canonical-home"
+  local canonical_agent="${case_dir}/canonical/profile/agent"
+  local canonical_bin="${case_dir}/canonical/bin"
+  local canonical_wrapper_compare=""
+  mkdir -p "${canonical_home}" "${canonical_bin}"
+  write_tlh_install_state "${canonical_agent}" false
+  write_managed_wrapper "${canonical_bin}/tlh"
+  canonical_wrapper_compare="$(cd "${canonical_bin}" >/dev/null 2>&1 && pwd -P)/tlh"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${canonical_home}" run_scrubbed_installer_env bash -s -- --dry-run --no-settings --no-wrapper --agent-dir "${canonical_agent}" --bin-dir "${canonical_bin}" <install.sh >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "installer dry-run rejected a canonical explicit agent path"
+  fi
+  assert_contains "${combined_file}" "Isolated profile: ${canonical_agent}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  HOME="${canonical_home}" bash uninstall.sh --dry-run --agent-dir "${canonical_agent}" --bin-dir "${canonical_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -f ${canonical_wrapper_compare}"
+  assert_contains "${combined_file}" "would run: rm -rf ${canonical_agent}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  HOME="${canonical_home}" bash uninstall.sh --agent-dir "${canonical_agent}" --bin-dir "${canonical_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  assert_absent "${canonical_agent}"
+  assert_absent "${canonical_bin}/tlh"
+
+  # ── Unrelated explicit aliases remain rejected; installer acceptance is not
+  #    deletion authority. The alias target is a physical ancestor of HOME but
+  #    is outside HOME's lexical path. The canonical explicit path above is the
+  #    workaround.
+  local unrelated_home_root="${case_dir}/unrelated-home-root"
+  local unrelated_home="${unrelated_home_root}/home"
+  local unrelated_target="${unrelated_home_root}"
+  local unrelated_alias="${case_dir}/unrelated-link"
+  local unrelated_agent="${unrelated_alias}/profile/agent"
+  local unrelated_bin="${case_dir}/unrelated-bin"
+  mkdir -p "${unrelated_home}" "${unrelated_bin}"
+  ln -s "${unrelated_target}" "${unrelated_alias}"
+  write_tlh_install_state "${unrelated_target}/profile/agent" false
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${unrelated_home}" run_scrubbed_installer_env bash -s -- --dry-run --no-settings --no-wrapper --agent-dir "${unrelated_agent}" --bin-dir "${unrelated_bin}" <install.sh >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "installer dry-run unexpectedly rejected an unrelated explicit alias"
+  fi
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${unrelated_home}" bash uninstall.sh --dry-run --agent-dir "${unrelated_agent}" --bin-dir "${unrelated_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
   if [[ "${status}" -eq 0 ]]; then
     cat "${combined_file}" >&2
-    fail "uninstall.sh HOME alias dangerous-agent-dir smoke unexpectedly succeeded"
+    fail "uninstall.sh accepted an unrelated explicit alias"
   fi
-  assert_contains "${combined_file}" "refusing dangerous recursive --agent-dir target: ${home_alias}"
-  assert_not_contains "${combined_file}" "would run: rm -rf ${home_alias}"
-  assert_present "${home_physical}/tlh/install-state.json"
+  assert_contains "${combined_file}" "refusing to operate: --agent-dir traverses symlinked parent component (${unrelated_alias})"
+  assert_present "${unrelated_target}/profile/agent/tlh/install-state.json"
+
+  # ── Symlinked profile descendants, normal Pi aliases, and dangerous targets ──
+  local descendant_home="${case_dir}/descendant-home"
+  local descendant_target="${case_dir}/descendant-target"
+  local descendant_link="${descendant_home}/.the-last-harness-profile-link"
+  local descendant_agent="${descendant_link}/agent"
+  mkdir -p "${descendant_home}" "${descendant_target}"
+  ln -s "${descendant_target}" "${descendant_link}"
+  write_tlh_install_state "${descendant_target}/agent" false
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${descendant_home}" bash uninstall.sh --dry-run --agent-dir "${descendant_agent}" --bin-dir "${case_dir}/descendant-bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh accepted a symlinked profile descendant"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: --agent-dir traverses symlinked parent component (${descendant_link})"
+  assert_present "${descendant_target}/agent/tlh/install-state.json"
+
+  local pi_alias_real="${case_dir}/pi-real-home"
+  local pi_alias="${case_dir}/pi-home-link"
+  mkdir -p "${pi_alias_real}"
+  ln -s "${pi_alias_real}" "${pi_alias}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${pi_alias}" bash uninstall.sh --dry-run --agent-dir "${pi_alias}/.pi/agent" --bin-dir "${case_dir}/pi-bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh accepted normal Pi config through an aliased HOME"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: --agent-dir is inside normal Pi config root"
+  assert_absent "${pi_alias_real}/.pi"
+
+  local dangerous_real_home="${case_dir}/dangerous-real-home"
+  local dangerous_home_alias="${case_dir}/dangerous-home-link"
+  mkdir -p "${dangerous_real_home}"
+  ln -s "${dangerous_real_home}" "${dangerous_home_alias}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${dangerous_home_alias}" bash uninstall.sh --dry-run --agent-dir "${dangerous_home_alias}" --bin-dir "${case_dir}/dangerous-bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh accepted an aliased HOME recursive target"
+  fi
+  assert_contains "${combined_file}" "refusing dangerous recursive --agent-dir target: ${dangerous_home_alias}"
+  assert_not_contains "${combined_file}" "would run: rm -rf ${dangerous_home_alias}"
 }
 
 run_uninstall_symlinked_agent_dir_smoke() {
@@ -405,9 +678,128 @@ run_uninstall_missing_marker_smoke() {
     cat "${combined_file}" >&2
     fail "uninstall.sh missing ownership marker smoke unexpectedly succeeded"
   fi
-  assert_contains "${combined_file}" "refusing to remove existing --agent-dir without TLH ownership marker: ${agent_dir}/tlh/install-state.json"
+  assert_contains "${combined_file}" "Skip agent dir removal: ${agent_dir}"
+  assert_contains "${combined_file}" "no TLH install-state marker at ${agent_dir}/tlh/install-state.json"
   assert_not_contains "${combined_file}" "would run: rm -rf ${agent_dir}"
   assert_present "${agent_dir}"
+}
+
+run_uninstall_late_failure_cleanup_smoke() {
+  log "Running uninstall.sh late-install-failure cleanup smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-late-failure-cleanup"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}/home"
+
+  # A late first-install failure can leave an agent directory without install-state,
+  # after the independently owned runtime and wrapper have already been created.
+  # The agent and its sentinel must survive while the marked artifacts are removed.
+  local partial_profile="${case_dir}/partial/profile"
+  local partial_agent="${partial_profile}/agent"
+  local partial_runtime="${partial_profile}/runtime"
+  local partial_bin="${case_dir}/partial/bin"
+  local partial_wrapper="${partial_bin}/tlh"
+  local partial_wrapper_compare=""
+  local partial_sentinel="${partial_agent}/late-failure-sentinel"
+  assert_safe_uninstall_smoke_paths "${partial_agent}" "${partial_bin}"
+  mkdir -p "${partial_agent}" "${partial_bin}"
+  partial_wrapper_compare="$(cd "${partial_bin}" >/dev/null 2>&1 && pwd -P)/tlh"
+  printf 'preserve late-failure agent data\n' >"${partial_sentinel}"
+  write_tlh_pi_runtime "${partial_runtime}"
+  write_tlh_runtime_marker "${partial_runtime}" created
+  write_managed_wrapper "${partial_wrapper}"
+
+  set +e
+  HOME="${case_dir}/home" bash uninstall.sh --dry-run --agent-dir "${partial_agent}" --bin-dir "${partial_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "late-failure dry-run unexpectedly reported success"
+  fi
+  assert_contains "${combined_file}" "Skip agent dir removal: ${partial_agent}"
+  assert_contains "${combined_file}" "would run: rm -f ${partial_wrapper_compare}"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${partial_runtime}"
+  assert_not_contains "${combined_file}" "would run: rm -rf ${partial_agent}"
+  assert_present "${partial_sentinel}"
+  assert_present "${partial_runtime}"
+  assert_present "${partial_wrapper}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${case_dir}/home" bash uninstall.sh --agent-dir "${partial_agent}" --bin-dir "${partial_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "late-failure real cleanup unexpectedly reported success"
+  fi
+  assert_contains "${combined_file}" "warning: skipping agent dir removal for ${partial_agent}"
+  assert_absent "${partial_runtime}"
+  assert_absent "${partial_wrapper}"
+  assert_present "${partial_agent}"
+  assert_present "${partial_sentinel}"
+  assert_present "${partial_profile}"
+
+  # A foreign runtime with the TLH-shaped layout and an unmanaged wrapper must
+  # remain untouched, including when --force-include-pi is supplied.
+  local foreign_profile="${case_dir}/foreign/profile"
+  local foreign_agent="${foreign_profile}/agent"
+  local foreign_runtime="${foreign_profile}/runtime"
+  local foreign_bin="${case_dir}/foreign/bin"
+  local foreign_wrapper="${foreign_bin}/tlh"
+  local foreign_wrapper_compare=""
+  local foreign_runtime_sentinel="${foreign_runtime}/foreign-sentinel"
+  local foreign_agent_sentinel="${foreign_agent}/foreign-agent-sentinel"
+  assert_safe_uninstall_smoke_paths "${foreign_agent}" "${foreign_bin}"
+  mkdir -p "${foreign_agent}" "${foreign_bin}"
+  foreign_wrapper_compare="$(cd "${foreign_bin}" >/dev/null 2>&1 && pwd -P)/tlh"
+  printf 'preserve foreign agent data\n' >"${foreign_agent_sentinel}"
+  write_tlh_pi_runtime "${foreign_runtime}"
+  printf 'preserve foreign runtime data\n' >"${foreign_runtime_sentinel}"
+  cat >"${foreign_wrapper}" <<'EOF_FOREIGN_WRAPPER'
+#!/usr/bin/env bash
+printf 'foreign wrapper\n'
+EOF_FOREIGN_WRAPPER
+  chmod +x "${foreign_wrapper}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${case_dir}/home" bash uninstall.sh --dry-run --force-include-pi --agent-dir "${foreign_agent}" --bin-dir "${foreign_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "foreign cleanup dry-run unexpectedly reported success"
+  fi
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "has no valid TLH runtime ownership marker"
+  assert_contains "${combined_file}" "Skip wrapper removal: ${foreign_wrapper_compare}"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${foreign_runtime}"
+  assert_present "${foreign_runtime_sentinel}"
+  assert_present "${foreign_wrapper}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${case_dir}/home" bash uninstall.sh --force-include-pi --agent-dir "${foreign_agent}" --bin-dir "${foreign_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "foreign cleanup unexpectedly reported success"
+  fi
+  assert_present "${foreign_agent_sentinel}"
+  assert_present "${foreign_runtime_sentinel}"
+  assert_present "${foreign_wrapper}"
 }
 
 run_uninstall_valid_marked_removal_smoke() {
@@ -783,7 +1175,7 @@ EOF_MIGRATED_NPM
   write_tlh_install_state "${migrated_foreign_agent}" true
   write_tlh_pi_runtime "${migrated_foreign_runtime}"
   write_tlh_runtime_marker "${migrated_foreign_runtime}" migrated
-  # Foreign lib/package.json with a different name 
+  # Foreign lib/package.json with a different name
   printf '{"name":"some-other-shared-runtime"}\n' >"${foreign_lib_pkg_json}"
   mkdir -p "${migrated_foreign_fakebin}"
   cat >"${migrated_foreign_fakebin}/npm" <<EOF_MIGRATED_FOREIGN_NPM
@@ -1015,11 +1407,7 @@ run_uninstall_malformed_marker_json_smoke() {
 
   # Each sub-case seeds a valid agent-dir (install-state piInstalledByTlh=true) and a
   # TLH pi runtime layout, then writes an adversarial or symlinked marker file.
-  # The invariant is: unextractable OR field-VALUE invalid/mismatched marker → SKIP
-  # (Cases 1-9 below).  Grammar-only defects that leave all ownership field VALUES
-  # intact are a separate class: the sed-based parser extracts values leniently and
-  # PLANS REMOVAL when all fields are valid and the path+pi-layout checks pass
-  # (Case 10 below).  Do NOT read this function as "all malformed markers → skip".
+  # Invariant: any marker that is not the installer's exact JSON shape → SKIP.
 
   # ── Case 1: truncated JSON (packageName and other fields absent) ─────────────
   local truncated_agent="${case_dir}/truncated/agent"
@@ -1183,15 +1571,7 @@ EOF_ESCQUOTE
   assert_contains "${combined_file}" "ownership marker ${symlinkm_marker} is a symlink; cannot verify TLH ownership"
   assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${symlinkm_runtime}"
 
-  # ── Case 10: grammar-only-malformed marker (trailing comma after last field) → PLANS REMOVAL ──
-  # The marker JSON is syntactically invalid (a trailing comma after the closing
-  # "origin":"created" makes it unparseable by JSON.parse).  However, all ownership
-  # field VALUES are valid and extractable by the bash sed-based parser: schemaVersion=1,
-  # packageName=@earendil-works/pi-coding-agent, runtimeAbsPath matches, origin=created.
-  # The pi layout is present and the runtime dir is real (not a symlink).
-  # Per the intentional lenient value-extraction design (Option A), uninstall.sh PLANS
-  # rm -rf removal: a grammar defect that does not corrupt any ownership field value does
-  # not block removal when the runtime is provably TLH-owned.  This is correct behavior.
+  # ── Case 10: grammar-only-malformed marker (trailing comma after last field) → SKIP ──
   local grammaronly_agent="${case_dir}/grammar-only/agent"
   local grammaronly_runtime="${case_dir}/grammar-only/runtime"
   local grammaronly_bin="${case_dir}/bin-grammar-only"
@@ -1199,15 +1579,15 @@ EOF_ESCQUOTE
   write_tlh_install_state "${grammaronly_agent}" true
   write_tlh_pi_runtime "${grammaronly_runtime}"
   grammaronly_real="$(cd "${grammaronly_runtime}" >/dev/null 2>&1 && pwd -P)"
-  # Trailing comma after "origin":"created" — invalid JSON grammar, valid extracted values.
   printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created",}' \
     "${grammaronly_real}" >"${grammaronly_runtime}/.tlh-runtime-owned"
 
   : >"${stdout_file}"; : >"${stderr_file}"
   bash uninstall.sh --dry-run --agent-dir "${grammaronly_agent}" --bin-dir "${grammaronly_bin}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${grammaronly_runtime}"
-  assert_not_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "ownership marker is not valid TLH marker JSON"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${grammaronly_runtime}"
 }
 
 run_uninstall_install_state_parser_smoke() {

@@ -1,6 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSettledEvent,
+  ExtensionAPI,
+  ExtensionContext,
+  UIPromptKind,
+} from "@earendil-works/pi-coding-agent";
 import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 import {
@@ -9,8 +14,6 @@ import {
   SUBAGENT_ASYNC_RESTORED_EVENT,
   type SubagentAsyncRestoredEvent,
 } from "../shared/subagent-restore-contract.js";
-// Re-export so existing importers of activity-tracker.ts continue to work.
-export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
@@ -40,8 +43,60 @@ export type TlhEffectiveActivitySnapshot = {
   inProgress: boolean;
   /** True while at least one blocking extension UI prompt is open. */
   waitingForUser: boolean;
+  /**
+   * Kind of the most recently opened blocking UI prompt that is still open.
+   * Populated only when waitingForUser is true; undefined when no prompt is open.
+   * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
+   */
+  waitingForUserKind?: UIPromptKind;
   primaryReasons: string[];
   activeAsyncJobIds: string[];
+  /**
+   * True while a run is active — set at before_agent_start / agent_start and
+   * cleared only at agent_settled. Keeps the OSC 7501 reporter in "working"
+   * state across the gap between agent_end and agent_settled (e.g. Pi retry
+   * delay), preventing a false "error" emission before a retry completes.
+   * This is an internal detail of the snapshot and is NOT propagated on the
+   * shared bus payload in extensions/shared/tlh-effective-activity.ts.
+   */
+  runActive?: true;
+  /**
+   * Outcome of the most recent agent run in this session.
+   * Committed at agent_settled (not at agent_end) so it is never emitted
+   * while Pi is between a retryable error and its retry.
+   * - 'aborted': user cancellation, from native agent_settled.aborted (or a
+   *   legacy agent_end stopReason fixture when no settlement metadata is supplied).
+   * - 'error': run failed (last assistant stopReason === 'error' or errorMessage present).
+   * - 'completed': run ended normally.
+   * - undefined: no run has settled yet this session.
+   * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
+   */
+  lastRunOutcome?: "completed" | "aborted" | "error";
+  /**
+   * Title (ui_prompt_start.title) of the most recently opened prompt that is still open.
+   * Only set while waitingForUser and the prompt supplied a non-empty title. Prompt bodies
+   * are never stored. Internal to the snapshot; NOT on the shared bus payload.
+   */
+  waitingForUserTitle?: string;
+  /** True while any primary:compaction reason is active. Internal; NOT on the bus payload. */
+  compacting?: true;
+  /**
+   * First non-empty trimmed line of the settled run's error message. Set only when
+   * lastRunOutcome is "error". Internal; NOT on the bus payload.
+   */
+  lastRunErrorLine?: string;
+  /**
+   * Agent names of active async jobs, keyed by run id (only jobs whose
+   * subagent:async-started payload named agents). Task text is never stored.
+   * Internal; NOT on the bus payload.
+   */
+  activeAsyncJobAgents?: Record<string, string[]>;
+  /**
+   * Run ids in activeAsyncJobIds that the parent is awaiting (run.execution
+   * "foreground"); only detached runs get OSC child records. Internal; NOT on
+   * the bus payload.
+   */
+  awaitedAsyncJobIds?: string[];
 };
 
 type TlhEffectiveActivityListener = (snapshot: TlhEffectiveActivitySnapshot) => void;
@@ -56,6 +111,7 @@ export type TlhEffectiveActivityTracker = {
   handleBeforeAgentStart(): void;
   handleAgentStart(): void;
   handleAgentEnd(event: { messages?: unknown[] }): void;
+  handleAgentSettled(event?: Pick<AgentSettledEvent, "aborted">): void;
   handleTurnStart(): void;
   handleToolExecutionStart(event: { toolCallId?: string }): void;
   handleToolExecutionEnd(event: { toolCallId?: string }): void;
@@ -119,6 +175,10 @@ type AsyncJobRecord = {
   /** Pid recorded from the subagent:async-started payload; used as liveness anchor before status.json is written. */
   pid?: number;
   sessionId?: string;
+  /** Agent name(s) from the subagent:async-started payload; used for child titles. */
+  agents?: string[];
+  /** True when the parent awaits this run (telemetry run.execution "foreground"). */
+  awaited?: true;
   source: "started" | "control" | "rehydrated" | "restored";
 };
 
@@ -165,6 +225,41 @@ function isAsyncControlContext(
   return source === "async" || source === "background";
 }
 
+/** True when a payload or status record marks the run as awaited by the parent. */
+function isAwaitedRecord(raw: Record<string, unknown>): boolean {
+  if (raw.awaited === true) return true;
+  const run = isRecord(raw.telemetry) ? raw.telemetry.run : undefined;
+  return isRecord(run) && run.execution === "foreground";
+}
+
+/** Reads agent name(s) from an async-started payload's `agent` / `agents` fields only. */
+function readAsyncAgentNames(data: Record<string, unknown>): string[] {
+  const valid = (value: unknown): string[] =>
+    typeof value === "string" && value.trim().length > 0 ? [value.trim()] : [];
+  if (Array.isArray(data.agents) && data.agents.length > 0) {
+    // Multiplicity matters: parallel agents with the same name are counted separately.
+    const names = data.agents.flatMap(valid);
+    if (names.length > 0) return names;
+  }
+  return valid(data.agent);
+}
+
+/** First non-empty trimmed line of the last assistant message's errorMessage, if any. */
+function deriveAgentEndErrorLine(messages: readonly unknown[] | undefined): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message) || message.role !== "assistant") continue;
+    if (typeof message.errorMessage !== "string") return undefined;
+    for (const line of message.errorMessage.split(/\r\n|[\r\n\u2028\u2029]/)) {
+      const trimmed = line.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
 function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): boolean {
   if (!Array.isArray(messages) || messages.length === 0) {
     return false;
@@ -179,9 +274,64 @@ function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): b
   return false;
 }
 
+/**
+ * Derives the run outcome from the last assistant message in agent_end event.messages
+ * for a non-aborted settlement. The native agent_settled.aborted flag is authoritative
+ * for cancellation; this preserves error/completion classification for other settlements.
+ */
+function deriveAgentEndOutcome(
+  messages: readonly unknown[] | undefined,
+): "completed" | "aborted" | "error" {
+  if (Array.isArray(messages)) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (!isRecord(message) || message.role !== "assistant") {
+        continue;
+      }
+      if (message.stopReason === "aborted") return "aborted";
+      if (message.stopReason === "error" || typeof message.errorMessage === "string")
+        return "error";
+      return "completed";
+    }
+  }
+  return "completed";
+}
+
+/** Agent names from status.json steps[].agent only (ordered, no dedup). Task text is never read. */
+function readStatusStepAgents(raw: Record<string, unknown>): string[] {
+  if (!Array.isArray(raw.steps)) return [];
+  return raw.steps.flatMap((step): string[] => {
+    if (!isRecord(step)) return [];
+    const agent = step.agent;
+    return typeof agent === "string" && agent.trim().length > 0 ? [agent.trim()] : [];
+  });
+}
+
+/** Best-effort awaited-marker read for restored jobs; any failure means detached. */
+function readAsyncDirAwaited(asyncDir: string): boolean {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as unknown;
+    return isRecord(raw) && isAwaitedRecord(raw);
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort agent-name read for restored jobs; any failure yields no names. */
+function readAsyncDirAgentNames(asyncDir: string): string[] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as unknown;
+    return isRecord(raw) ? readStatusStepAgents(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 function readRestorableAsyncJob(
   asyncDir: string,
-): { runId: string; sessionId: string; pid?: number } | undefined {
+):
+  | { runId: string; sessionId: string; pid?: number; agents?: string[]; awaited?: true }
+  | undefined {
   const statusPath = path.join(asyncDir, "status.json");
   const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as unknown;
   if (
@@ -195,10 +345,13 @@ function readRestorableAsyncJob(
     return undefined;
   }
   const pid = toValidPid(raw.pid);
+  const agents = readStatusStepAgents(raw);
   return {
     runId: raw.runId,
     sessionId: raw.sessionId,
+    ...(agents.length > 0 ? { agents } : {}),
     ...(pid !== undefined ? { pid } : {}),
+    ...(isAwaitedRecord(raw) ? { awaited: true as const } : {}),
   };
 }
 
@@ -221,9 +374,28 @@ export function createTlhEffectiveActivityTracker(
   const listeners = new Set<TlhEffectiveActivityListener>();
   let disposed = false;
   let activeSessionId: string | undefined;
+  /** True from before_agent_start/agent_start until agent_settled; prevents false error during retry gap. */
+  let runActive = false;
+  /** Pending outcome set at agent_end; committed to lastRunOutcome at agent_settled. */
+  let pendingOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
+  /** Outcome committed at agent_settled; undefined until the first run settles. */
+  let lastRunOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
+  /** Error line captured at agent_end; committed with the outcome at agent_settled. */
+  let pendingErrorLine: string | undefined;
+  let lastRunErrorLine: string | undefined;
   /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
   let uiPromptDepth = 0;
-  let lastSnapshotKey = "0::0::::";
+  /**
+   * Depth-matched stack for currently open blocking prompts.
+   * Each element is the UIPromptKind of the corresponding open prompt, or undefined when
+   * the event had no recognisable kind. Length always equals uiPromptDepth.
+   * The last element is the most recently opened prompt still open.
+   * Cleared to empty when uiPromptDepth returns to 0.
+   */
+  const uiPromptKindStack: (UIPromptKind | undefined)[] = [];
+  /** Parallel to uiPromptKindStack: prompt titles (undefined when absent/blank). */
+  const uiPromptTitleStack: (string | undefined)[] = [];
+  let lastSnapshotKey = "0::0::0::::::";
   /** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
   let livenessTimer: TimeoutHandle | undefined;
 
@@ -334,8 +506,13 @@ export function createTlhEffectiveActivityTracker(
     const asyncDir = incomingAsyncDir ?? existingAsyncDir;
     const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
     const sessionId = incoming.sessionId ?? existing?.sessionId;
+    const agents =
+      incoming.agents && incoming.agents.length > 0 ? incoming.agents : existing?.agents;
+    const awaited = incoming.awaited ?? existing?.awaited;
     return {
       source: incoming.source,
+      ...(awaited ? { awaited } : {}),
+      ...(agents && agents.length > 0 ? { agents } : {}),
       ...(asyncDir ? { asyncDir } : {}),
       ...(pid !== undefined ? { pid } : {}),
       ...(sessionId ? { sessionId } : {}),
@@ -362,6 +539,8 @@ export function createTlhEffectiveActivityTracker(
       asyncDir: string;
       sessionId?: string;
       pid?: number;
+      agents?: string[];
+      awaited?: true;
       source: "rehydrated" | "restored";
     }[],
   ): void => {
@@ -384,6 +563,8 @@ export function createTlhEffectiveActivityTracker(
       activeAsyncJobs.set(job.runId, {
         source: job.source,
         asyncDir: job.asyncDir,
+        ...(job.agents && job.agents.length > 0 ? { agents: [...job.agents] } : {}),
+        ...(job.awaited ? { awaited: true as const } : {}),
         ...(job.sessionId ? { sessionId: job.sessionId } : {}),
         ...(pid !== undefined ? { pid } : {}),
       });
@@ -520,19 +701,56 @@ export function createTlhEffectiveActivityTracker(
     return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
   };
 
-  const buildSnapshot = (): TlhEffectiveActivitySnapshot => ({
-    inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
-    waitingForUser: uiPromptDepth > 0,
-    primaryReasons: [...primaryReasons.keys()].sort(),
-    activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
-  });
+  const buildSnapshot = (): TlhEffectiveActivitySnapshot => {
+    const waitingForUser = uiPromptDepth > 0;
+    const topKind = waitingForUser ? uiPromptKindStack[uiPromptKindStack.length - 1] : undefined;
+    // Only propagate kind when it is a recognised UIPromptKind (not undefined).
+    const waitingForUserKind: UIPromptKind | undefined =
+      topKind !== undefined ? topKind : undefined;
+    const waitingForUserTitle = waitingForUser
+      ? uiPromptTitleStack[uiPromptTitleStack.length - 1]
+      : undefined;
+    const compacting = [...primaryReasons.keys()].some((reason) =>
+      reason.startsWith("primary:compaction:"),
+    );
+    const activeAsyncJobAgents: Record<string, string[]> = {};
+    const awaitedAsyncJobIds: string[] = [];
+    for (const [runId, record] of [...activeAsyncJobs].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (record.awaited) awaitedAsyncJobIds.push(runId);
+      if (record.agents && record.agents.length > 0)
+        activeAsyncJobAgents[runId] = [...record.agents];
+    }
+    return {
+      inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+      waitingForUser,
+      ...(runActive ? { runActive: true as const } : {}),
+      ...(waitingForUserKind !== undefined ? { waitingForUserKind } : {}),
+      primaryReasons: [...primaryReasons.keys()].sort(),
+      activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
+      ...(lastRunOutcome !== undefined ? { lastRunOutcome } : {}),
+      ...(waitingForUserTitle !== undefined ? { waitingForUserTitle } : {}),
+      ...(compacting ? { compacting: true as const } : {}),
+      ...(lastRunOutcome === "error" && lastRunErrorLine !== undefined ? { lastRunErrorLine } : {}),
+      ...(Object.keys(activeAsyncJobAgents).length > 0 ? { activeAsyncJobAgents } : {}),
+      ...(awaitedAsyncJobIds.length > 0 ? { awaitedAsyncJobIds } : {}),
+    };
+  };
 
   const snapshotKey = (snapshot: TlhEffectiveActivitySnapshot): string =>
     [
       snapshot.inProgress ? "1" : "0",
       snapshot.waitingForUser ? "1" : "0",
+      snapshot.runActive ? "1" : "0",
+      snapshot.waitingForUserKind ?? "",
       snapshot.primaryReasons.join(","),
       snapshot.activeAsyncJobIds.join(","),
+      Object.entries(snapshot.activeAsyncJobAgents ?? {})
+        .map(([runId, names]) => `${runId}=${names.join("+")}`)
+        .join(","),
+      (snapshot.awaitedAsyncJobIds ?? []).join(","),
+      snapshot.lastRunOutcome ?? "",
+      snapshot.waitingForUserTitle ?? "",
+      snapshot.lastRunErrorLine ?? "",
     ].join("::");
 
   const notifyIfChanged = (): void => {
@@ -569,6 +787,11 @@ export function createTlhEffectiveActivityTracker(
     },
     beginSession(ctx) {
       activeSessionId = currentSessionId(ctx.sessionManager);
+      runActive = false;
+      pendingOutcome = undefined;
+      lastRunOutcome = undefined;
+      pendingErrorLine = undefined;
+      lastRunErrorLine = undefined;
     },
     rehydrateFromArtifacts(ctx) {
       if (disposed) return;
@@ -578,6 +801,8 @@ export function createTlhEffectiveActivityTracker(
         asyncDir: string;
         sessionId: string;
         pid?: number;
+        agents?: string[];
+        awaited?: true;
         source: "rehydrated";
       }> = [];
       const entries = (() => {
@@ -605,6 +830,8 @@ export function createTlhEffectiveActivityTracker(
               asyncDir: candidateAsyncDir,
               sessionId: status.sessionId,
               ...(status.pid !== undefined ? { pid: status.pid } : {}),
+              ...(status.agents ? { agents: status.agents } : {}),
+              ...(status.awaited ? { awaited: true as const } : {}),
               source: "rehydrated",
             });
           } catch {
@@ -625,17 +852,26 @@ export function createTlhEffectiveActivityTracker(
       activeAsyncJobs.clear();
       recentlyCompletedAsyncJobs.clear();
       activeSessionId = undefined;
+      runActive = false;
+      pendingOutcome = undefined;
+      lastRunOutcome = undefined;
+      pendingErrorLine = undefined;
+      lastRunErrorLine = undefined;
       uiPromptDepth = 0;
+      uiPromptKindStack.length = 0;
+      uiPromptTitleStack.length = 0;
       notifyIfChanged();
       listeners.clear();
     },
     handleBeforeAgentStart() {
       clearRetryGrace();
+      runActive = true;
       addPrimaryReason("primary:pending-start");
       notifyIfChanged();
     },
     handleAgentStart() {
       clearRetryGrace();
+      runActive = true;
       removePrimaryReason("primary:pending-start");
       addPrimaryReason("primary:agent-loop");
       notifyIfChanged();
@@ -643,9 +879,37 @@ export function createTlhEffectiveActivityTracker(
     handleAgentEnd(event) {
       removePrimaryReason("primary:agent-loop");
       removePrimaryReason("primary:pending-start");
+      // Capture the pending outcome; it is committed to lastRunOutcome only at
+      // agent_settled so that a retryable error never surfaces as "error" in
+      // the OSC 7501 reporter while Pi is waiting to retry.
+      pendingOutcome = deriveAgentEndOutcome(
+        Array.isArray(event.messages) ? event.messages : undefined,
+      );
+      pendingErrorLine = deriveAgentEndErrorLine(
+        Array.isArray(event.messages) ? event.messages : undefined,
+      );
       if (looksLikeRetryableAgentEnd(event.messages)) {
         scheduleRetryGrace("agent-end");
       }
+      notifyIfChanged();
+    },
+    handleAgentSettled(event: Pick<AgentSettledEvent, "aborted"> = { aborted: false }) {
+      // Pi emits agent_settled after retries, compaction recovery, and queued
+      // continuations finish. Its native abort flag is authoritative, including
+      // cancellation during retry backoff when no new agent_end was emitted.
+      // The default keeps older direct tracker fixtures compatible; registered Pi
+      // events always provide the required native boolean.
+      if (event.aborted) {
+        lastRunOutcome = "aborted";
+        lastRunErrorLine = undefined;
+      } else if (pendingOutcome !== undefined) {
+        lastRunOutcome = pendingOutcome;
+        lastRunErrorLine = pendingOutcome === "error" ? pendingErrorLine : undefined;
+      }
+      pendingOutcome = undefined;
+      pendingErrorLine = undefined;
+      runActive = false;
+      clearRetryGrace();
       notifyIfChanged();
     },
     handleTurnStart() {
@@ -681,14 +945,34 @@ export function createTlhEffectiveActivityTracker(
       removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
       notifyIfChanged();
     },
-    handleUIPromptStart() {
+    handleUIPromptStart(event) {
       if (disposed) return;
       uiPromptDepth += 1;
+      const kind = event?.kind;
+      // Only recognised UIPromptKind values are recorded; unknown/missing kind is stored as undefined.
+      const recordedKind: UIPromptKind | undefined =
+        kind === "select" ||
+        kind === "confirm" ||
+        kind === "input" ||
+        kind === "editor" ||
+        kind === "custom"
+          ? kind
+          : undefined;
+      uiPromptKindStack.push(recordedKind);
+      const title = typeof event?.title === "string" ? event.title.trim() : "";
+      uiPromptTitleStack.push(title.length > 0 ? title : undefined);
       notifyIfChanged();
     },
-    handleUIPromptEnd() {
+    handleUIPromptEnd(_event) {
       if (uiPromptDepth === 0) return;
       uiPromptDepth -= 1;
+      uiPromptKindStack.pop();
+      uiPromptTitleStack.pop();
+      if (uiPromptDepth === 0) {
+        uiPromptTitleStack.length = 0;
+        // Defensive: ensure stack is cleared when depth reaches 0.
+        uiPromptKindStack.length = 0;
+      }
       notifyIfChanged();
     },
     handleAsyncRestored(data) {
@@ -700,6 +984,8 @@ export function createTlhEffectiveActivityTracker(
         asyncDir: string;
         sessionId: string;
         pid?: number;
+        agents?: string[];
+        awaited?: true;
         source: "restored";
       }> = [];
       for (const candidate of snapshot.jobs) {
@@ -709,11 +995,15 @@ export function createTlhEffectiveActivityTracker(
         const sessionId = readNonEmptyStringField(candidate, "sessionId");
         if (!runId || !asyncDir || sessionId !== activeSessionId) continue;
         const pid = toValidPid(candidate.pid);
+        const agents = readAsyncDirAgentNames(asyncDir);
+        const awaited = readAsyncDirAwaited(asyncDir);
         restoredJobs.push({
           runId,
           asyncDir,
           sessionId,
           ...(pid !== undefined ? { pid } : {}),
+          ...(agents.length > 0 ? { agents } : {}),
+          ...(awaited ? { awaited: true as const } : {}),
           source: "restored",
         });
       }
@@ -733,6 +1023,9 @@ export function createTlhEffectiveActivityTracker(
       if (sessionId) record.sessionId = sessionId;
       const pid = toValidPid(data.pid);
       if (pid !== undefined) record.pid = pid;
+      const agents = readAsyncAgentNames(data);
+      if (agents.length > 0) record.agents = agents;
+      if (isAwaitedRecord(data)) record.awaited = true;
       setAsyncJobActive(data.id, record);
       notifyIfChanged();
     },
@@ -795,8 +1088,16 @@ export function registerTlhEffectiveActivityTracker(
 
   // Publish snapshot changes on pi.events so other extensions (e.g. notify-gating)
   // can react without coupling directly to this tracker instance.
+  // runActive and lastRunOutcome are internal fields that are NOT part of the bus
+  // payload; deduplicate bus emits so that settle-only transitions (e.g. runActive
+  // clearing at agent_settled when inProgress/waitingForUser are already false) do
+  // not produce repeated identical payloads for downstream consumers.
   if (pi.events) {
+    let lastBusKey = "";
     tracker.subscribe((snapshot) => {
+      const busKey = `${snapshot.inProgress ? "1" : "0"}:${snapshot.waitingForUser ? "1" : "0"}:${snapshot.activeAsyncJobIds.join(",")}`;
+      if (busKey === lastBusKey) return;
+      lastBusKey = busKey;
       try {
         pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
           inProgress: snapshot.inProgress,
@@ -827,6 +1128,9 @@ export function registerTlhEffectiveActivityTracker(
   });
   pi.on("agent_end", (event) => {
     tracker.handleAgentEnd(event);
+  });
+  pi.on("agent_settled", (event) => {
+    tracker.handleAgentSettled(event as AgentSettledEvent);
   });
   pi.on("turn_start", () => {
     tracker.handleTurnStart();

@@ -1,10 +1,9 @@
 /**
- * Focused tests for ps-519q: fail-close executor to 8 actions.
+ * Focused tests for ps-519q: fail-close executor to 7 actions.
  *
  * Verifies:
  *   (a) Removed actions (append-step, schedule, create) return Unknown-action error.
- *   (b) action='steer' async path is covered here and in async-interrupt-action.test.ts;
- *       nested steer routing is covered in nested-control.test.ts.
+ *   (b) action='steer' async path is covered here and in async-interrupt-action.test.ts.
  *   (c) Removed schedule action fails closed through the full extension stack.
  */
 import assert from "node:assert/strict";
@@ -14,9 +13,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import { consumeChildMessageRequests } from "../../src/runs/background/control-channel.ts";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
@@ -24,22 +24,9 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const EXPECTED_VALID = "list, get, status, interrupt, resume, steer, doctor";
 
 function createState(): SubagentState {
-  return {
+  return makeSubagentState({
     baseCwd: "",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  });
 }
 
 function makeExecutor(state: SubagentState) {

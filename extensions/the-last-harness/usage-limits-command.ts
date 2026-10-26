@@ -2,6 +2,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
 import {
   getCachedTlhUsageWeeklyVisibility,
   getPersistedTlhUsageWeeklyVisibility,
@@ -40,15 +41,6 @@ function ensureMutableUsageLimitsSettings(
   validateTlhUsageLimitsSettings(settings);
   settings.tlh ??= {};
   settings.tlh.usageLimits ??= {};
-}
-
-function parseTlhSettingsContent(content: string | undefined): TlhSettings {
-  if (!content) {
-    return {};
-  }
-  const parsed = JSON.parse(content) as unknown;
-  validateTlhUsageLimitsSettings(parsed);
-  return parsed;
 }
 
 function writeTlhUsageWeeklyPreference(
@@ -111,6 +103,7 @@ function formatUsageWeeklyStatus(showWeekly: boolean | undefined): string {
 export async function handleUsageCommand(
   args: string,
   ctx: ExtensionCommandContext,
+  onWeeklyPreferenceChanged?: () => void,
 ): Promise<void> {
   const command = parseUsageSlashAction(args);
   if (!command) {
@@ -132,6 +125,7 @@ export async function handleUsageCommand(
   try {
     const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
     setCachedTlhUsageWeeklyVisibility(nextShowWeekly);
+    onWeeklyPreferenceChanged?.();
     const changedLabel = result.changed ? "Updated" : "No change to";
     const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
     ctx.ui.notify(

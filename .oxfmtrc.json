@@ -10,6 +10,8 @@
     "extensions/notify/*.js",
     "extensions/subagents/src/**/*.js",
     "scripts/lib/default-extensions.mjs",
+    "scripts/lib/mcp-adapter-cutover.mjs",
+    "scripts/lib/mcp-adapter-migration.mjs",
     "scripts/lib/session-analysis.mjs",
     "scripts/lib/session-analysis-coverage.mjs",
     "scripts/lib/subagent-analysis.mjs",
@@ -45,8 +47,10 @@
     "scripts/tlh-sessions.mjs",
     "scripts/tlh-tickets.mjs",
     "scripts/tlh-update.mjs",
+    "scripts/tlh-version.mjs",
     "scripts/tlh-wrapper.mjs",
     "extensions/annotate-git-diff/web/index.html",
-    "extensions/the-last-harness/annotate-last-message/web/index.html"
+    "extensions/the-last-harness/annotate-last-message/web/index.html",
+    "protocol/session-mirror/v1/PROFILE.md"
   ]
 }

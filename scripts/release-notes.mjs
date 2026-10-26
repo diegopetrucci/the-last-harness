@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
 
 function usage() {
   return `Usage: node scripts/release-notes.mjs [options]
 
-Extract the current release notes from CHANGELOG.md.
+Build the GitHub Release body from release-notes/v<version>.md.
 
 Options:
   --tag <tag>          Release tag or version (default: GITHUB_REF_NAME)
-  --changelog <path>   Changelog file to read (default: CHANGELOG.md)
+  --notes-dir <path>   Directory containing v<version>.md files (default: release-notes)
+  --check              Validate the structure of existing release notes files and exit
   --output <path>      File to write; omit to print to stdout
   --repository <repo>  GitHub repository for the full changelog link (default: GITHUB_REPOSITORY)
   --ref <ref>          Git ref for the full changelog link (default: tag)
@@ -20,7 +22,8 @@ Options:
 function parseArgs(argv) {
   const args = {
     tag: process.env.GITHUB_REF_NAME,
-    changelogPath: "CHANGELOG.md",
+    notesDir: "release-notes",
+    check: false,
     outputPath: undefined,
     repository: process.env.GITHUB_REPOSITORY,
     ref: undefined,
@@ -37,8 +40,12 @@ function parseArgs(argv) {
       args.tag = requiredValue(argv, ++i, arg);
       continue;
     }
-    if (arg === "--changelog") {
-      args.changelogPath = requiredValue(argv, ++i, arg);
+    if (arg === "--check") {
+      args.check = true;
+      continue;
+    }
+    if (arg === "--notes-dir") {
+      args.notesDir = requiredValue(argv, ++i, arg);
       continue;
     }
     if (arg === "--output") {
@@ -57,8 +64,8 @@ function parseArgs(argv) {
       args.tag = requireOptionValue(arg.slice("--tag=".length), "--tag");
       continue;
     }
-    if (arg.startsWith("--changelog=")) {
-      args.changelogPath = requireOptionValue(arg.slice("--changelog=".length), "--changelog");
+    if (arg.startsWith("--notes-dir=")) {
+      args.notesDir = requireOptionValue(arg.slice("--notes-dir=".length), "--notes-dir");
       continue;
     }
     if (arg.startsWith("--output=")) {
@@ -87,10 +94,6 @@ function requiredValue(argv, index, flag) {
   return value;
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function requireOptionValue(value, flag) {
   if (value === "") {
     throw new Error(`${flag} requires a value.`);
@@ -110,49 +113,93 @@ function versionFromTag(tag) {
   return version;
 }
 
-function extractChangelogSection(changelog, version) {
-  const normalized = changelog.replace(/\r\n/g, "\n");
-  const escapedVersion = escapeRegExp(version);
-  const headingPattern = new RegExp(
-    `^##[ \\t]+(?:\\[${escapedVersion}\\]|${escapedVersion})(?:[ \\t]+-[ \\t]+[^\\n]+)?[ \\t]*$`,
-    "m",
-  );
-  const match = headingPattern.exec(normalized);
-  if (!match) {
-    throw new Error(
-      `CHANGELOG.md is missing a section for ${version}. Expected a heading like "## [${version}] - YYYY-MM-DD".`,
-    );
+function readNotesFile(path, label) {
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      throw new Error(`Missing release notes file ${label}. Create it before releasing.`, {
+        cause: error,
+      });
+    }
+    throw error;
   }
-
-  const sectionStart = match.index + match[0].length;
-  const remaining = normalized.slice(sectionStart);
-  const nextSectionOffset = remaining.search(/^##(?:[ \t]+|$)/m);
-  const section = (
-    nextSectionOffset === -1 ? remaining : remaining.slice(0, nextSectionOffset)
-  ).trim();
-  if (!section) {
-    throw new Error(`CHANGELOG.md section for ${version} is empty.`);
+  const notes = raw.replace(/\r\n/g, "\n").trim();
+  if (!notes) {
+    throw new Error(`Release notes file ${label} is empty.`);
   }
-  return section;
+  return notes;
 }
 
 function buildNotes(args) {
   const tag = args.tag;
   const version = versionFromTag(tag);
-  const changelog = readFileSync(args.changelogPath, "utf8");
-  const section = extractChangelogSection(changelog, version);
+  const label = `${args.notesDir}/v${version}.md`;
+  const notes = readNotesFile(join(args.notesDir, `v${version}.md`), label);
   const ref = args.ref ?? tag;
   const suffix =
     args.repository && ref
       ? `\n\n---\n\nFull changelog: https://github.com/${args.repository}/blob/${ref}/CHANGELOG.md\n`
       : "\n";
-  return `${section}${suffix}`;
+  return `${notes}${suffix}`;
+}
+
+function structureProblems(notes) {
+  const problems = [];
+  const lines = notes.split("\n");
+  if (
+    !lines.some(
+      (line) => /^\s{0,3}#{1,6}\s+\S/.test(line) || /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(line),
+    )
+  ) {
+    problems.push("contains no markdown heading or list item");
+  }
+  const last = lines[lines.length - 1].trim();
+  const isHeading = /^#{1,6}\s+\S/.test(last);
+  const isFence = last.startsWith("```");
+  const explicitEnd = /[`)]$/.test(last);
+  const stripped = last.replace(/[*_"'\u201d\u2019\]]+$/, "");
+  if (!isHeading && !isFence && !explicitEnd && !/[.!?:;\u2026]$/.test(stripped)) {
+    problems.push(`ends mid-sentence: "${last}"`);
+  }
+  return problems;
+}
+
+function checkNotes(notesDir) {
+  let names = [];
+  try {
+    names = readdirSync(notesDir);
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+  const files = names.filter((name) => /^v.+\.md$/.test(name)).sort();
+  const failures = [];
+  for (const name of files) {
+    const label = `${notesDir}/${name}`;
+    const notes = readFileSync(join(notesDir, name), "utf8").replace(/\r\n/g, "\n").trim();
+    if (!notes) {
+      failures.push(`${label} is empty`);
+      continue;
+    }
+    for (const problem of structureProblems(notes)) failures.push(`${label} ${problem}`);
+  }
+  if (failures.length > 0) {
+    throw new Error(`Invalid release notes:\n${failures.map((f) => `  - ${f}`).join("\n")}`);
+  }
+  return files.length;
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     process.stdout.write(usage());
+    return;
+  }
+
+  if (args.check) {
+    const count = checkNotes(args.notesDir);
+    process.stdout.write(`release-notes: ${count} release notes file(s) OK\n`);
     return;
   }
 

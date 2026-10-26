@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/tui/render-primitives.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import {} from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { liveDetailShortcutDisplay } from "../shared/subagent-shortcuts.js";
@@ -173,8 +174,8 @@ export function modelThinkingBadge(theme, model, thinking) {
     const label = safeTerminalText(formatModelThinking(model ? safeTerminalText(model) : model, thinking));
     return label ? theme.fg("dim", ` (${label})`) : "";
 }
-export function childLocationText(loc) {
-    if (!loc)
+function childLocationText(loc) {
+    if (!loc || typeof loc.displayPath !== "string")
         return undefined;
     const safeLocationPart = (value) => safeTerminalText(value.replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n")));
     const parts = [`cwd: ${safeLocationPart(loc.displayPath)}`];

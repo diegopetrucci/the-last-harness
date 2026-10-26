@@ -1,10 +1,11 @@
+// Generated from extensions/shared/project-agent-guidance.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { findValidatedGitWorktree, } from "./project-agent-worktree.js";
-import { getAgentDir, ProjectTrustStore, } from "@earendil-works/pi-coding-agent";
-export { resolveValidatedGitWorktreeRoot } from "./project-agent-worktree.js";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+export { isCanonicalPackagedMinorAgent } from "./project-agent-provenance.js";
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
-export const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
+const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
 const PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY = "agents";
 const PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY = "builtin";
 export const PACKAGED_PRIMARY_AGENT_ROLES = ["architect", "rush", "product", "bug-hunter"];
@@ -38,8 +39,8 @@ const ROLE_FILENAMES = {
     oracle: "ORACLE_PROMPT_APPEND.md",
     contrarian: "CONTRARIAN_PROMPT_APPEND.md",
 };
-export const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
-export const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
+const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
+const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
 function errorCode(error) {
     if (typeof error !== "object" || error === null || !("code" in error))
         return undefined;
@@ -654,29 +655,6 @@ function addSkippedSourceDiagnostic(inventory, candidate) {
     });
     return true;
 }
-export function isCanonicalPackagedMinorAgent(agent) {
-    if (typeof agent !== "object" || agent === null || Array.isArray(agent))
-        return false;
-    const candidate = agent;
-    if (typeof candidate.name !== "string" || typeof candidate.filePath !== "string")
-        return false;
-    const role = PACKAGED_MINOR_AGENT_ROLES.find((packagedRole) => packagedRole === candidate.name);
-    if (!role)
-        return false;
-    let canonicalPath;
-    try {
-        canonicalPath = resolve(getAgentDir(), "tlh", "agents", "subagents", `${role}.md`);
-        return resolve(candidate.filePath) === canonicalPath;
-    }
-    catch {
-        return false;
-    }
-}
-export function projectAgentGuidanceFilename(role) {
-    if (typeof role !== "string" || !Object.hasOwn(ROLE_FILENAMES, role))
-        return undefined;
-    return ROLE_FILENAMES[role];
-}
 export function inventoryProjectAgentGuidance(cwdInput, agentDirInput) {
     const diagnostics = [];
     const cwd = resolveInputPath(cwdInput, "cwd", diagnostics);
@@ -751,10 +729,6 @@ export function resolveProjectAgentGuidanceFromInventory(inventory, roleInput) {
     return file?.content === undefined
         ? { role, inventory }
         : { role, guidance: file.content, sourcePath: file.path, inventory };
-}
-export function resolveProjectAgentGuidance(cwdInput, agentDirInput, roleInput) {
-    const inventory = inventoryProjectAgentGuidance(cwdInput, agentDirInput);
-    return resolveProjectAgentGuidanceFromInventory(inventory, roleInput);
 }
 function encodeProjectGuidanceSourceLabel(value) {
     return Array.from(value, (character) => {
