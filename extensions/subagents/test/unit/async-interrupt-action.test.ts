@@ -461,7 +461,7 @@ describe("async interrupt action", () => {
           ctx(),
         );
         assert.equal(result.isError, true);
-        assert.match(text(result), /owned by another session/);
+        assert.match(text(result), /owned by another session|ownership cannot be verified/);
       }
       assert.equal(fs.existsSync(steerRequestsDir(asyncDir)), false);
     } finally {
@@ -582,6 +582,10 @@ describe("async interrupt action", () => {
           assert.equal(result.isError, undefined);
           assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
           assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
+        } else if (persistedState === "missing") {
+          assert.equal(result.isError, true);
+          assert.match(text(result), /ownership cannot be verified/);
+          assert.deepEqual(kills, []);
         } else {
           assert.equal(result.isError, true, `async/${persistedState}`);
           assert.match(text(result), /No running async run with an interrupt-capable pid/);
@@ -690,5 +694,165 @@ describe("async interrupt action", () => {
     } finally {
       cleanup(runId, asyncDir);
     }
+  });
+  describe("session-scoped control ownership (#826)", () => {
+    function writeOwned(
+      runId: string,
+      opts: { sessionId?: string; state?: string; resultOwner?: string } = {},
+    ) {
+      const asyncDir = writeInterruptStatus(
+        runId,
+        (opts.state ?? "running") as InterruptLifecycleState,
+      );
+      const statusPath = path.join(asyncDir, "status.json");
+      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+      if (opts.sessionId === undefined) delete status.sessionId;
+      else status.sessionId = opts.sessionId;
+      writeJson(statusPath, status);
+      if (opts.resultOwner !== undefined) {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+        fs.writeFileSync(
+          path.join(RESULTS_DIR, `${runId}.json`),
+          JSON.stringify({
+            runId,
+            sessionId: opts.resultOwner,
+            success: false,
+          }),
+          "utf-8",
+        );
+      }
+      return asyncDir;
+    }
+    function snapshot(asyncDir: string): string {
+      const files: string[] = [];
+      const walk = (dir: string) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) walk(full);
+          else files.push(`${path.relative(asyncDir, full)}:${fs.readFileSync(full, "utf-8")}`);
+        }
+      };
+      walk(asyncDir);
+      return files.sort().join("\n");
+    }
+
+    const cases: Array<{
+      name: string;
+      opts: { sessionId?: string; resultOwner?: string };
+      message: RegExp;
+    }> = [
+      {
+        name: "foreign",
+        opts: { sessionId: "other-session" },
+        message: /owned by another session/,
+      },
+      { name: "ownerless", opts: {}, message: /ownership cannot be verified/ },
+      {
+        name: "conflicting",
+        opts: { sessionId: "session", resultOwner: "other-session" },
+        message: /ownership cannot be verified/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      for (const persisted of ["running", "paused"] as const) {
+        it(`fails closed for ${testCase.name} ${persisted} interrupt`, async () => {
+          const state = createState();
+          const runId = `interrupt-owner-${testCase.name}-${persisted}-${Date.now().toString(36)}`;
+          const asyncDir = writeOwned(runId, { ...testCase.opts, state: persisted });
+          if (persisted === "paused") {
+            // Stale continuation claim that must not be recovered by a foreign caller.
+            const statusPath = path.join(asyncDir, "status.json");
+            const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+            status.lifecycle = {
+              generation: 3,
+              continuation: { phase: "claimed", claimToken: "stale", claimOwnerPid: 99999999 },
+            };
+            writeJson(statusPath, status);
+          }
+          const before = snapshot(asyncDir);
+          const kills: unknown[] = [];
+          try {
+            const result = await executorWithKill(state, (pid, signal) => {
+              kills.push({ pid, signal });
+              return true;
+            }).execute(
+              "interrupt",
+              { action: "interrupt", id: runId },
+              new AbortController().signal,
+              undefined,
+              ctx(),
+            );
+            assert.equal(result.isError, true);
+            assert.match(text(result), testCase.message);
+            assert.match(text(result), /cannot be interrupted from this session/);
+            assert.deepEqual(kills, []);
+            assert.equal(snapshot(asyncDir), before);
+          } finally {
+            cleanup(runId, asyncDir);
+          }
+        });
+      }
+
+      it(`fails closed for ${testCase.name} steer without reconciling`, async () => {
+        const state = createState();
+        const runId = `steer-owner-${testCase.name}-${Date.now().toString(36)}`;
+        const asyncDir = writeOwned(runId, testCase.opts);
+        // Dead pid: an unauthorized reconcile would rewrite status to failed.
+        const before = snapshot(asyncDir);
+        try {
+          const result = await executorWithKill(state, () => {
+            const error = new Error("gone") as NodeJS.ErrnoException;
+            error.code = "ESRCH";
+            throw error;
+          }).execute(
+            "steer",
+            { action: "steer", id: runId, message: "Nope." },
+            new AbortController().signal,
+            undefined,
+            ctx(),
+          );
+          assert.equal(result.isError, true);
+          assert.match(text(result), testCase.message);
+          assert.equal(fs.existsSync(steerRequestsDir(asyncDir)), false);
+          assert.equal(snapshot(asyncDir), before);
+        } finally {
+          cleanup(runId, asyncDir);
+        }
+      });
+    }
+
+    it("fails closed for a foreign tracked job interrupt even when the id is tracked", async () => {
+      const state = createState();
+      const runId = `interrupt-owner-tracked-${Date.now().toString(36)}`;
+      const asyncDir = writeOwned(runId, { sessionId: "other-session" });
+      state.asyncJobs.set(runId, {
+        asyncId: runId,
+        asyncDir,
+        status: "running",
+        pid: 12345,
+        agents: ["worker"],
+        updatedAt: 100,
+      });
+      const before = snapshot(asyncDir);
+      const kills: unknown[] = [];
+      try {
+        for (const params of [
+          { action: "interrupt", id: runId },
+          { action: "interrupt" },
+        ] as const) {
+          const result = await executorWithKill(state, (pid, signal) => {
+            kills.push({ pid, signal });
+            return true;
+          }).execute("interrupt", { ...params }, new AbortController().signal, undefined, ctx());
+          assert.equal(result.isError, true);
+          assert.doesNotMatch(text(result), /Interrupt requested/);
+        }
+        assert.deepEqual(kills, []);
+        assert.equal(snapshot(asyncDir), before);
+      } finally {
+        cleanup(runId, asyncDir);
+      }
+    });
   });
 });

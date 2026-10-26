@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
-import { textContent } from "../support/run-status-fixtures.ts";
+import { textContent, ownerState, OWNER_SESSION } from "../support/run-status-fixtures.ts";
 
 describe("historical async status compatibility", () => {
   it("loads legacy acceptance and runtime ledger fields, ignores them, and renders lifecycle status", () => {
@@ -17,6 +17,7 @@ describe("historical async status compatibility", () => {
       const statusPath = path.join(asyncDir, "status.json");
       const historicalStatus = {
         runId: "run-legacy-ledger",
+        sessionId: OWNER_SESSION,
         mode: "single",
         state: "complete",
         startedAt: 100,
@@ -45,7 +46,7 @@ describe("historical async status compatibility", () => {
 
       const result = inspectSubagentStatus(
         { id: "run-legacy-ledger" },
-        { asyncDirRoot: asyncRoot, resultsDir },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
       );
       const text = textContent(result);
       assert.equal(result.isError, undefined);
@@ -70,6 +71,7 @@ describe("historical async status compatibility", () => {
         path.join(asyncDir, "status.json"),
         JSON.stringify({
           runId: "run-resume-blocked",
+          sessionId: OWNER_SESSION,
           mode: "single",
           state: "failed",
           startedAt: 100,
@@ -83,7 +85,7 @@ describe("historical async status compatibility", () => {
       );
       const result = inspectSubagentStatus(
         { id: "run-resume-blocked" },
-        { asyncDirRoot: asyncRoot, resultsDir },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
       );
       const text = textContent(result);
       assert.equal(result.isError, undefined);
@@ -111,6 +113,7 @@ describe("historical async status compatibility", () => {
         path.join(asyncDir, "status.json"),
         JSON.stringify({
           runId: "run-completed-continuation",
+          sessionId: OWNER_SESSION,
           mode: "single",
           state: "paused",
           startedAt: 100,
@@ -125,7 +128,7 @@ describe("historical async status compatibility", () => {
       );
       const result = inspectSubagentStatus(
         { id: "run-completed-continuation" },
-        { asyncDirRoot: asyncRoot, resultsDir },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
       );
       const text = textContent(result);
       assert.equal(result.isError, undefined);
@@ -147,6 +150,7 @@ describe("historical async status compatibility", () => {
       const statusPath = path.join(asyncDir, "status.json");
       const historicalStatus = {
         runId: "run-legacy-tool-budget",
+        sessionId: OWNER_SESSION,
         mode: "single",
         state: "running",
         startedAt: 100,
@@ -169,7 +173,7 @@ describe("historical async status compatibility", () => {
 
       const statusResult = inspectSubagentStatus(
         { id: "run-legacy-tool-budget" },
-        { asyncDirRoot: asyncRoot, resultsDir },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
       );
       const statusText = textContent(statusResult);
       assert.equal(statusResult.isError, undefined);

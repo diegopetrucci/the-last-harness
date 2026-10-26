@@ -305,9 +305,15 @@ For a result without child rows but with a top-level session, the final pointer 
 
 ### Recovering ownerless or foreign runs
 
-Durable revival (`resume`, including guided resume and paused continuations) requires the caller to be the run's owning parent session. The owner key is the parent session **file path**, or the session id when the session has no file. Reopening the original parent session file keeps ownership; a fork, a moved or copied file, and a new session have a different key and do not inherit it. If a different session needs the run's work, start a new run instead.
+Run ownership is session-scoped. Explicit `interrupt` (live and paused cancel), `steer`, `resume` (including guided resume and paused continuations), and `status` by id, directory, or result-only record are owner-only and fail closed. Checks run before stale-run repair, claim recovery, signals, or control writes. A known foreign owner is reported as owned by another session; missing, malformed, conflicting, or unreadable owner evidence is reported as unverifiable ownership. Id-prefix resolution matches only the caller's own runs: ambiguity errors list only own ids, and a prefix matching only foreign runs is not found. The interrupt-all/pause-all shortcut acts only on owned runs, has no cwd fallback, silently excludes foreign or unprovable runs, and pauses nothing when the caller identity is unknown.
 
-The rejection message links here and names the run id. It appears when the caller's key differs from the persisted owner, or when the persisted owner is unusable. The owner evidence is the top-level `sessionId` in the run's `status.json` and in its result record (`<runId>.json`). A missing `sessionId` counts as absent in either record, and a `null` one counts as absent in the result record. A `status.json` whose `sessionId` is present but not a string (`null` included) is rejected earlier as invalid status, with its own error rather than the ownership rejection. At least one non-empty string must be present, all supplied strings must match, and any other supplied value (empty, non-string, or a different string) invalidates ownership, as does an unreadable, invalid-JSON, or non-object result record. Neither record overrides the other.
+**Deliberate exceptions.** Stale-run reconciliation (no-id status list, restore scan, tracked polling) stays global because it is caller-independent dead-PID/24h repair. `doctor` remains read-only and reports aggregate counts and unreadable `status.json` paths. The supervisor channel keeps its own orchestrator-session check.
+
+**Runaway run owned by another session.** Reopen the owning parent session and interrupt it there. Otherwise a human may deliberately inspect and terminate the process (verify process identity first; this may lose resumability). There is no cross-session agent override.
+
+The rules below use the same owner check. Durable revival requires the caller to be the run's owning parent session. The owner key is the parent session **file path**, or the session id when the session has no file. Reopening the original parent session file keeps ownership; a fork, a moved or copied file, and a new session have a different key and do not inherit it. If a different session needs the run's work, start a new run instead.
+
+The rejection message links here and names the run id. It appears when the caller's key differs from the persisted owner, or when the persisted owner is unusable. The owner evidence is the top-level `sessionId` in the run's `status.json` and in its result record (`<runId>.json`). A missing `sessionId` counts as absent in either record, and a `null` one counts as absent in the result record. A `status.json` whose `sessionId` is present but not a string (`null` included) is handled per path: exact-id or directory `resume` fails earlier with the generic "Awaited supervisor lifecycle update failed" error, exact-id `status`, `interrupt`, and `steer` report unverifiable ownership, and prefix lookup excludes the run (not found). A result record's `runId` or legacy `id`, if supplied, must equal the looked-up run id, otherwise ownership is unverifiable. At least one non-empty string must be present, all supplied strings must match, and any other supplied value (empty, non-string, or a different string) invalidates ownership, as does an unreadable, invalid-JSON, or non-object result record. Neither record overrides the other.
 
 This is human-approved recovery, not a technically enforced boundary: a same-user agent can edit these files, so an agent must not do so on its own initiative. TLH has no automatic migration, grace period, or model-facing override.
 
@@ -345,8 +351,6 @@ This is human-approved recovery, not a technically enforced boundary: a same-use
 6. **Verify and reopen.** Re-read the edited records, then reopen the session whose exact key you wrote and retry the resume.
 
 **Undo.** Re-establish quiescence (steps 2–3), then copy `<backup>/status.json` back to `$RUN/status.json` and `<backup>/result.json` back to `$RESULT` (only for the records you backed up), using the backup path printed in step 4.
-
-Interrupt, cancel, and status-by-id are not session-scoped yet ([#826](https://github.com/diegopetrucci/the-last-harness/issues/826)).
 
 ### Terminal result and post-run facts
 

@@ -1,6 +1,7 @@
 // Generated from extensions/subagents/src/runs/background/async-cancellation.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { readStatus } from "../../shared/utils.js";
 import { continuationResumeBlock } from "./async-resume.js";
+import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "./async-owner-authorization.js";
 import { SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "../../shared/pause-messages.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.js";
 import { isCompletedLifecycleStepState, lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationClaim, transitionLifecycleStatus, withLifecycleContinuation, } from "../shared/lifecycle-state.js";
@@ -15,7 +16,26 @@ function hasResumableSiblingStep(steps, targetIndex) {
         !isCompletedLifecycleStepState(step.status) &&
         step.status !== "cancelled") ?? false);
 }
-export function cancelPersistedPausedAsyncRun(asyncDir, runId, index) {
+class OwnerRejection extends Error {
+    authorization;
+    constructor(authorization) {
+        super("async run owner rejected");
+        this.authorization = authorization;
+    }
+}
+function ownerRejectionResult(authorization, runId) {
+    return {
+        content: [
+            { type: "text", text: asyncRunOwnerRejectionMessage(authorization, runId, "cancelled") },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+    };
+}
+export function cancelPersistedPausedAsyncRun(asyncDir, runId, index, callerKey) {
+    const preAuthorization = authorizeAsyncRunOwner({ callerKey, asyncDir, runId });
+    if (preAuthorization.outcome !== "owned")
+        return ownerRejectionResult(preAuthorization, runId);
     try {
         let current = readStatus(asyncDir);
         if (!current) {
@@ -124,6 +144,9 @@ export function cancelPersistedPausedAsyncRun(asyncDir, runId, index) {
             asyncDir,
             expectedGeneration: lifecycleGeneration(current),
             mutate: (status) => {
+                const recheck = authorizeAsyncRunOwner({ callerKey, asyncDir, runId, status });
+                if (recheck.outcome !== "owned")
+                    throw new OwnerRejection(recheck);
                 const nextSteps = status.steps?.map((step, stepIndex) => stepIndex === targetIndex
                     ? {
                         ...step,
@@ -164,7 +187,9 @@ export function cancelPersistedPausedAsyncRun(asyncDir, runId, index) {
             details: { mode: "management", results: [] },
         };
     }
-    catch {
+    catch (error) {
+        if (error instanceof OwnerRejection)
+            return ownerRejectionResult(error.authorization, runId);
         return {
             content: [
                 {
