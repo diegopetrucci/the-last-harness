@@ -27,6 +27,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Awaited (default) subagent runs no longer appear a second time in the async subagent widget; only detached async runs are listed there (#848).
 - Explicit subagent interrupt, steer, resume, and status by id now require the owning parent session and fail closed; id-prefix lookup and interrupt-all are scoped to the caller's own runs (#826).
 - Aborting an awaited subagent right after it starts could leave its run permanently `running`; the runner now installs its signal handler before its first status write.
 - Durable subagent revival now requires the owning parent session; ownerless, foreign or conflicting-owner runs are rejected before any side effect (#822).

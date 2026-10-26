@@ -28,6 +28,35 @@ const resetWidgetLayout = widgetTestIsolation.resetWidgetLayout;
 const useDefaultKeybindings = widgetTestIsolation.useDefaultKeybindings;
 
 describe("subagent async widget rendering", () => {
+  it("hides awaited jobs from the widget and renders only detached jobs", () => {
+    const base = { status: "running" as const, startedAt: 0, updatedAt: 1000 };
+    const awaitedJob: AsyncJobState = {
+      ...base,
+      asyncId: "awaited-1",
+      asyncDir: "/tmp/awaited",
+      agents: ["scout"],
+      awaited: true,
+    };
+    const detachedJob: AsyncJobState = {
+      ...base,
+      asyncId: "detached-1",
+      asyncDir: "/tmp/detached",
+      agents: ["planner"],
+    };
+
+    const only = createUiContext(theme);
+    renderWidget(only.ctx as never, [awaitedJob]);
+    assert.deepEqual(only.widgets, [undefined]);
+
+    const mixed = createUiContext(theme);
+    renderWidget(mixed.ctx as never, [awaitedJob, detachedJob]);
+    assert.equal(mixed.widgets.length, 1);
+    const text = renderWidgetLines(mixed.widgets[0], 120, theme).join("\n");
+    assert.match(text, /planner/);
+    assert.doesNotMatch(text, /scout/);
+    assert.doesNotMatch(text, /Async agents/);
+  });
+
   it("orders running jobs before queued summaries and completions", () => {
     const now = Date.now();
     const lines = buildWidgetLines(
