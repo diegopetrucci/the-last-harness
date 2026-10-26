@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
   NATIVE_SUPERVISOR_TOOL_NAME,
@@ -128,17 +129,10 @@ async function pollUntil(
 }
 
 function makeParentState(sessionId: string | null, ctx: unknown): SubagentState {
-  return {
-    baseCwd: process.cwd(),
+  return makeSubagentState({
     currentSessionId: sessionId,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
     lastUiContext: ctx as SubagentState["lastUiContext"],
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  });
 }
 
 function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEvent {

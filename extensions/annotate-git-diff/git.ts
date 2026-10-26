@@ -362,7 +362,7 @@ async function getRevisionBytes(
   path: string,
 ): Promise<Buffer | null> {
   const spec = shellQuote(`${revision}:${path}`);
-  const output = await runBashAllowFailure(pi, repoRoot, `git show ${spec} | base64 | tr -d '\\n'`);
+  const output = await runBashAllowFailure(pi, repoRoot, `git show ${spec} | base64`);
   if (output == null) return null;
   const encoded = output.trim();
   try {

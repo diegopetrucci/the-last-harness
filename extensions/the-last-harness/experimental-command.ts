@@ -16,6 +16,7 @@ import {
   unknownExperimentalFeatureMessage,
 } from "./experimental.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
 import type { TlhExperimentalConfig, TlhExperimentalFeatureId, TlhSettings } from "./types.js";
 
 type TlhExperimentalWriteResult = {
@@ -49,15 +50,6 @@ function validateTlhExperimentalSettings(settings: unknown): asserts settings is
   ) {
     throw new Error("settings field 'tlh.experimental.enabledFeatures' must contain only strings");
   }
-}
-
-function parseTlhSettingsContent(content: string | undefined): TlhSettings {
-  if (!content) {
-    return {};
-  }
-  const parsed = JSON.parse(content) as unknown;
-  validateTlhExperimentalSettings(parsed);
-  return parsed;
 }
 
 function ensureMutableExperimentalSettings(
@@ -239,6 +231,7 @@ function writeExperimentalFeaturePreference(
     "Refusing to write experimental settings outside the isolated TLH profile.",
     (current) => {
       const settings = parseTlhSettingsContent(current);
+      validateTlhExperimentalSettings(settings);
       const currentEnabledFeatures = normalizeEnabledFeatures(
         settings.tlh?.experimental?.enabledFeatures,
       );

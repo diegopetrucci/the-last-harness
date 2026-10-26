@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test, { after } from "node:test";
 
+import { createInMemoryCredentialStore } from "./support/in-memory-credential-store.mjs";
+
 // Load Pi and keep all runtime calls inside a task-owned profile. The poisoned
 // values exercise the inherited-state boundary without pointing at real home
 // credentials or provider keys.
@@ -134,46 +136,6 @@ async function createRuntime(configuredProviders) {
     [configuredProviders.includes(PROVIDER_A), configuredProviders.includes(PROVIDER_B)],
   );
   return runtime;
-}
-
-function createInMemoryCredentialStore() {
-  const store = new Map();
-  const tails = new Map();
-  const enqueue = (providerId, fn) => {
-    const tail = tails.get(providerId) ?? Promise.resolve();
-    const result = tail.then(fn);
-    tails.set(
-      providerId,
-      result.then(
-        () => undefined,
-        () => undefined,
-      ),
-    );
-    return result;
-  };
-  return {
-    async read(providerId) {
-      return store.get(providerId);
-    },
-    async list() {
-      return [...store.entries()].map(([providerId, credential]) => ({
-        providerId,
-        type: credential.type,
-      }));
-    },
-    modify(providerId, fn) {
-      return enqueue(providerId, async () => {
-        const next = await fn(store.get(providerId));
-        if (next !== undefined) store.set(providerId, next);
-        return next;
-      });
-    },
-    delete(providerId) {
-      return enqueue(providerId, async () => {
-        store.delete(providerId);
-      });
-    },
-  };
 }
 
 function assertIsolatedEnvironment() {

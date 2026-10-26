@@ -16,7 +16,6 @@ import {
   authorizeAsyncRunOwner,
   type AsyncRunOwnerAuthorization,
 } from "../background/async-owner-authorization.ts";
-import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentParamsLike, ExecutorDeps } from "./executor-types.ts";
 import type { Details, SubagentState, SubagentToolResult } from "../../shared/types.ts";
@@ -35,23 +34,6 @@ type AsyncInterruptResult =
   | { ok: false; kind: "error"; error: string };
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.ts";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.ts";
-export {
-  registerForegroundMessageInbox,
-  clearForegroundMessageInbox,
-} from "./foreground-message-inbox.ts";
-export function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
-  let currentSessionId;
-  let parentSessionFile;
-  try {
-    currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-    parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-  } catch {
-    return [];
-  }
-  if (!parentSessionFile) return [];
-  if (deps.state?.currentSessionId !== currentSessionId) return [];
-  return [deps.getSubagentSessionRoot(parentSessionFile)];
-}
 export {
   readModelRegistrySnapshot,
   providerFallbackModelsForTarget,

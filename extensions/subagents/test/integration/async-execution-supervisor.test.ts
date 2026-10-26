@@ -132,7 +132,7 @@ describe("async execution supervisor", () => {
       (status) => status.state === "complete",
       "project provenance async completion",
     );
-    const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as any;
+    const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatusPayload;
     const payload = await readAsyncPayload(id);
     assert.deepEqual(status.steps?.[0]?.projectAgent, identity);
     assert.deepEqual(payload.results?.[0]?.projectAgent, identity);
@@ -219,7 +219,7 @@ describe("async execution supervisor", () => {
         await waitForAsyncState(asyncDir, "paused");
         const status = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         assert.equal(status.state, "paused");
         assert.equal(status.pid, undefined);
         assert.equal(status.pause?.kind, "awaiting_supervisor");
@@ -228,7 +228,7 @@ describe("async execution supervisor", () => {
         assert.equal(status.pause?.request?.tool, "contact_supervisor");
         assert.equal(status.steps?.[0]?.status, "paused");
         assert.equal(status.steps?.[0]?.pause?.kind, "awaiting_supervisor");
-        const payload = (await readAsyncPayload(id)) as any;
+        const payload = await readAsyncPayload(id);
         assert.equal(payload.state, "paused");
         assert.equal(payload.pause?.kind, "awaiting_supervisor");
         assert.equal(payload.results?.[0]?.pause?.kind, "awaiting_supervisor");
@@ -258,9 +258,9 @@ describe("async execution supervisor", () => {
         assert.equal(mockPi.callCount(), 2);
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         assert.equal(continuedStatus.state, "complete");
-        assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
+        assert.ok(typeof continuedStatus.lifecycle?.continuation?.continuationRunId === "string");
         assert.equal(continuedStatus.pid, undefined);
         const continuationPayload = await readAsyncPayload(
           continuedStatus.lifecycle.continuation.continuationRunId,
@@ -460,7 +460,7 @@ describe("async execution supervisor", () => {
         await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
         const pausedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         assert.deepEqual(pausedStatus.steps?.[0]?.modelIdentity, {
           provider: "anthropic",
           model: "claude-sonnet-4",
@@ -488,9 +488,9 @@ describe("async execution supervisor", () => {
         await waitForAsyncState(asyncDir, "complete", scaleTestTimeout(10_000));
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         const continuationRunId = continuedStatus.lifecycle?.continuation?.continuationRunId;
-        assert.equal(typeof continuationRunId, "string");
+        assert.ok(typeof continuationRunId === "string");
         const continuationPayload = await readAsyncPayload(continuationRunId);
         assert.equal(continuationPayload.results?.[0]?.model, "anthropic/claude-sonnet-4:high");
         assert.deepEqual(continuationPayload.results?.[0]?.modelIdentity, {
@@ -578,9 +578,9 @@ describe("async execution supervisor", () => {
         await waitForAsyncState(asyncDir, "complete");
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         const continuationRunId = continuedStatus.lifecycle?.continuation?.continuationRunId;
-        assert.equal(typeof continuationRunId, "string");
+        assert.ok(typeof continuationRunId === "string");
         const continuationPayload = await readAsyncPayload(continuationRunId);
         assert.equal(continuationPayload.state, "complete");
         assert.equal(continuationPayload.results[0]?.output, "resumed unchanged after reload");
@@ -645,7 +645,7 @@ describe("async execution supervisor", () => {
       assert.equal(mockPi.callCount(), 1);
       const cancelledStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as any;
+      ) as AsyncStatusPayload;
       assert.equal(cancelledStatus.state, "cancelled");
       assert.equal(cancelledStatus.pid, undefined);
       assert.equal(cancelledStatus.pause?.ownerPid, undefined);
@@ -707,7 +707,7 @@ describe("async execution supervisor", () => {
         await waitForAsyncState(asyncDir, "paused");
         const pausedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         pausedStatus.lifecycle = {
           ...pausedStatus.lifecycle,
           continuation: { claimToken: `claim-${id}`, claimedAt: Date.now(), ownerPid: 999999 },
@@ -730,7 +730,7 @@ describe("async execution supervisor", () => {
         await waitForAsyncState(asyncDir, "complete");
         const continuedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         assert.equal(continuedStatus.state, "complete");
         assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
         // Wait for the continuation mock-pi call record to appear (the
@@ -794,7 +794,7 @@ describe("async execution supervisor", () => {
       await waitForAsyncState(asyncDir, "paused");
       const pausedStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as any;
+      ) as AsyncStatusPayload;
       pausedStatus.lifecycle = {
         ...pausedStatus.lifecycle,
         continuation: { claimToken: `claim-${id}`, claimedAt: Date.now(), ownerPid: 999999 },
@@ -815,7 +815,7 @@ describe("async execution supervisor", () => {
       assert.equal(cancelled.isError, undefined);
       const cancelledStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as any;
+      ) as AsyncStatusPayload;
       assert.equal(cancelledStatus.state, "cancelled");
       assert.equal(cancelledStatus.lifecycle?.continuation, undefined);
     },
@@ -883,7 +883,7 @@ describe("async execution supervisor", () => {
       ]);
       const settledStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as any;
+      ) as AsyncStatusPayload;
       assert.ok(["complete", "cancelled"].includes(settledStatus.state));
       assert.ok(
         mockPi.callCount() <= 2,
@@ -895,7 +895,7 @@ describe("async execution supervisor", () => {
       assert.equal(successCount, 1);
       if (settledStatus.state === "complete") {
         assert.equal(mockPi.callCount(), 2);
-        assert.equal(typeof settledStatus.lifecycle?.continuation?.continuationRunId, "string");
+        assert.ok(typeof settledStatus.lifecycle?.continuation?.continuationRunId === "string");
         const continuationPayload = await readAsyncPayload(
           settledStatus.lifecycle.continuation.continuationRunId,
         );
@@ -1326,7 +1326,7 @@ describe("async execution supervisor", () => {
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
-      const progressPayload = (await readAsyncPayload(progressId)) as any;
+      const progressPayload = await readAsyncPayload(progressId);
       assert.equal(progressPayload.state, "complete");
       assert.equal(progressPayload.pause, undefined);
 
@@ -1359,7 +1359,7 @@ describe("async execution supervisor", () => {
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
-      const nativeUpdatePayload = (await readAsyncPayload(nativeUpdateId)) as any;
+      const nativeUpdatePayload = await readAsyncPayload(nativeUpdateId);
       assert.equal(nativeUpdatePayload.state, "complete");
       assert.equal(nativeUpdatePayload.pause, undefined);
     },
@@ -1448,18 +1448,17 @@ describe("async execution supervisor", () => {
         await waitForAsyncState(asyncDir, "paused");
         const status = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-        ) as any;
+        ) as AsyncStatusPayload;
         assert.deepEqual(
-          status.steps?.map((step: any) => step.status),
+          status.steps?.map((step) => step.status),
           ["paused", "paused"],
         );
         const requesterIndex =
-          status.steps?.findIndex((step: any) => step.pause?.kind === "awaiting_supervisor") ?? -1;
+          status.steps?.findIndex((step) => step.pause?.kind === "awaiting_supervisor") ?? -1;
         assert.ok(requesterIndex >= 0);
         const siblingIndex =
           status.steps?.findIndex(
-            (step: any, index: number) =>
-              index !== requesterIndex && step.pause?.kind === "cohort_pause",
+            (step, index) => index !== requesterIndex && step.pause?.kind === "cohort_pause",
           ) ?? -1;
         assert.ok(siblingIndex >= 0);
         assert.equal(status.pid, undefined);

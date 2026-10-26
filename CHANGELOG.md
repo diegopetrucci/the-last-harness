@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Breaking
+
+- Node.js 22 is no longer supported. The installer and package now require Node.js `^24.22.1 || >=26.12.1` (24.x from 24.22.1, and 26.12.1 or newer); Node.js 25.x and older releases are rejected, as are Node.js prerelease/nightly builds. Upgrade Node.js, then rerun the installer.
+
 ### What's new
 
 - Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume and cancel for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
@@ -24,6 +28,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Explicit subagent interrupt, steer, resume, and status by id now require the owning parent session and fail closed; id-prefix lookup and interrupt-all are scoped to the caller's own runs (#826).
+- Aborting an awaited subagent right after it starts could leave its run permanently `running`; the runner now installs its signal handler before its first status write.
 - Durable subagent revival now requires the owning parent session; ownerless, foreign or conflicting-owner runs are rejected before any side effect (#822).
 - A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped; a project-scoped agent list includes load warnings for canonical packaged roles.
 - `/toggle-context-cap` now refuses to write when `settings.json`, `tlh`, or `tlh.contextCap` is not a JSON object, instead of throwing or saving a corrupted settings file.
@@ -41,7 +46,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled Pi runtime from `1.3.0` to `1.4.0`. TLH behavior and defaults are unchanged; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence) and provider-backed checks remain pending.
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
+- Refreshed bundled extension pins: `pi-fast` 0.1.6 → 0.1.10, `pi-anthropic-auth` 3.4.2 → 3.4.3, `pi-mcp-adapter` 5.0.0 → 5.0.1, `pi-web-access` 0.29.2 → 0.29.3, `pi-inline-bash` 0.1.11 → 0.1.13, `pi-context-inspector` 0.1.15 → 0.1.17, and `pi-dirty-repo-guard` 0.1.11 → 0.1.12. `pi-fast` 0.1.10 adds `/ultrafast` for eligible direct OpenAI API-key `gpt-6-astra` requests and changes direct OpenAI ChatGPT OAuth Fast requests from `service_tier: "fast"` to `service_tier: "priority"`.
+- Refreshed the shipped `monaco-editor` dependency from 0.56.0 to 0.57.0.
 - Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
 - Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
 - Bumped the bundled Pi runtime from `1.0.3` to `1.0.4`. Pi 1.0.4 adds `*` patterns to `--tools`/`--exclude-tools`, `--no-mcp` for single-run MCP disablement, a codemode fix for `tools.read()` on images, and several MCP and provider fixes. Runtime behavior for TLH users is unchanged: mcporter remains the MCP adapter and `-builtin:mcp` remains active in isolated settings.
@@ -78,8 +86,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins`, `@types/node`, `oxfmt`, and `oxlint`.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
+- Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
 
 ## [0.46.0] - 2026-10-20
 

@@ -7,21 +7,8 @@ import { createRequire, syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, it } from "node:test";
 import { handlePauseAllShortcut } from "../../src/extension/pause-all-shortcut.ts";
 import { interruptRequestPath } from "../../src/runs/background/control-channel.ts";
-import { ASYNC_DIR, TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
-
-function createState(): SubagentState {
-  return {
-    baseCwd: process.cwd(),
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
-}
+import { ASYNC_DIR, TEMP_ROOT_DIR } from "../../src/shared/types.ts";
+import { makeSubagentState } from "../support/helpers.ts";
 
 function pauseCtx(sessionId: string | null = "current-session"): never {
   return {
@@ -77,7 +64,7 @@ afterEach(() => {
 
 describe("pause-all shortcut handler", () => {
   it("requests pause for running async work", () => {
-    const state = createState();
+    const state = makeSubagentState();
     const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pause-all-shortcut-"));
     cleanupPaths.add(asyncDir);
     fs.writeFileSync(
@@ -114,13 +101,13 @@ describe("pause-all shortcut handler", () => {
     syncBuiltinESMExports();
 
     const result = handlePauseAllShortcut(state, pauseCtx());
-    assert.match(result.message, /^Pause requested for 1 subagent run \(1 async\)\.$/);
+    assert.match(result.message, /^Pause requested for 1 subagent run\.$/);
     assert.ok(result.level === "info" || result.level === "warning");
     assertPortableInterruptRequested(asyncDir, 4242, kills);
   });
 
   it("uses the inbox without signalling a recycled pid for disk-only work", () => {
-    const state = createState();
+    const state = makeSubagentState();
     state.currentSessionId = "current-session";
     fs.mkdirSync(ASYNC_DIR, { recursive: true });
     const asyncDir = fs.mkdtempSync(path.join(ASYNC_DIR, "pause-all-disk-only-"));
@@ -162,12 +149,12 @@ describe("pause-all shortcut handler", () => {
 
     const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "info");
-    assert.match(result.message, /^Pause requested for 1 subagent run \(1 async\)\.$/);
+    assert.match(result.message, /^Pause requested for 1 subagent run\.$/);
     assertPortableInterruptRequested(asyncDir, 5252, kills);
   });
 
   it("still pauses disk-only top-level async work when the retired nested root is unavailable", () => {
-    const state = createState();
+    const state = makeSubagentState();
     state.currentSessionId = "current-session";
     fs.mkdirSync(ASYNC_DIR, { recursive: true });
     const asyncDir = fs.mkdtempSync(
@@ -213,12 +200,12 @@ describe("pause-all shortcut handler", () => {
 
     const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "info");
-    assert.match(result.message, /^Pause requested for 1 subagent run \(1 async\)\.$/);
+    assert.match(result.message, /^Pause requested for 1 subagent run\.$/);
     assertPortableInterruptRequested(asyncDir, 6262, kills);
   });
 
   it("ignores disk-only running nested async work after reload", () => {
-    const state = createState();
+    const state = makeSubagentState();
     state.currentSessionId = "current-session";
     const rootRunId = `pause-all-nested-root-${Date.now().toString(36)}`;
     const childRunId = `pause-all-nested-child-${Date.now().toString(36)}`;
@@ -267,7 +254,7 @@ describe("pause-all shortcut handler", () => {
   });
 
   it("ignores disk-only running nested async work from another session", () => {
-    const state = createState();
+    const state = makeSubagentState();
     state.currentSessionId = "current-session";
     const rootRunId = `pause-all-other-nested-root-${Date.now().toString(36)}`;
     const childRunId = `pause-all-other-nested-child-${Date.now().toString(36)}`;
@@ -320,7 +307,7 @@ describe("pause-all shortcut handler", () => {
   });
 
   it("ignores disk-only running async work from another session", () => {
-    const state = createState();
+    const state = makeSubagentState();
     state.currentSessionId = "current-session";
     fs.mkdirSync(ASYNC_DIR, { recursive: true });
     const asyncDir = fs.mkdtempSync(path.join(ASYNC_DIR, "pause-all-other-session-"));
@@ -418,7 +405,7 @@ describe("pause-all shortcut ownership (#826)", () => {
     ["ownerless", {}],
   ] as const) {
     it(`never interrupts a same-cwd ${name} disk-only run`, () => {
-      const state = createState();
+      const state = makeSubagentState();
       state.currentSessionId = "current-session";
       state.baseCwd = process.cwd();
       const asyncDir = diskRun(`pause-all-${name}-disk-`, extra);
@@ -431,7 +418,7 @@ describe("pause-all shortcut ownership (#826)", () => {
     });
 
     it(`never interrupts a same-cwd ${name} tracked job`, () => {
-      const state = createState();
+      const state = makeSubagentState();
       state.currentSessionId = "current-session";
       state.baseCwd = process.cwd();
       const asyncDir = diskRun(`pause-all-${name}-tracked-`, extra);
@@ -452,7 +439,7 @@ describe("pause-all shortcut ownership (#826)", () => {
   }
 
   it("interrupts nothing when the caller session id is unavailable", () => {
-    const state = createState();
+    const state = makeSubagentState();
     state.currentSessionId = "current-session";
     const asyncDir = diskRun("pause-all-null-caller-", { sessionId: "current-session" });
     const tracked = diskRun("pause-all-null-caller-tracked-", { sessionId: "current-session" });

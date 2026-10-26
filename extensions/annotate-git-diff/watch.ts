@@ -98,7 +98,3 @@ export function createRepoChangeWatcher(
     },
   };
 }
-
-export const __testing = {
-  isIgnoredWatchPath,
-};

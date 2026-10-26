@@ -76,7 +76,7 @@ describe("async execution output and event streaming", () => {
     mockPi.reset();
   });
 
-  it("keeps a Pi 0.87.1 system-role message_end out of the background answer", async () => {
+  it("keeps a system-role message_end out of the background answer", async () => {
     mockPi.onCall({
       jsonl: [
         {

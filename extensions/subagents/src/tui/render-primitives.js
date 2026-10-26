@@ -175,7 +175,7 @@ export function modelThinkingBadge(theme, model, thinking) {
     return label ? theme.fg("dim", ` (${label})`) : "";
 }
 function childLocationText(loc) {
-    if (!loc)
+    if (!loc || typeof loc.displayPath !== "string")
         return undefined;
     const safeLocationPart = (value) => safeTerminalText(value.replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n")));
     const parts = [`cwd: ${safeLocationPart(loc.displayPath)}`];

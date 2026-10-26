@@ -8,10 +8,8 @@ interface PauseAllShortcutResult {
   message: string;
 }
 
-function formatRunCount(total: number, async: number): string {
-  const parts: string[] = [];
-  if (async > 0) parts.push(`${async} async`);
-  return `Pause requested for ${total} subagent run${total === 1 ? "" : "s"}${parts.length > 0 ? ` (${parts.join(", ")})` : ""}.`;
+function formatRunCount(total: number): string {
+  return `Pause requested for ${total} subagent run${total === 1 ? "" : "s"}.`;
 }
 
 export function handlePauseAllShortcut(
@@ -47,7 +45,7 @@ export function handlePauseAllShortcut(
     if (failedTotal > 0) notes.push(`failed ${failedTotal}`);
     result = {
       level: notes.length > 0 ? "warning" : "info",
-      message: `${formatRunCount(interruptedTotal, summary.asyncRunIds.length)}${notes.length > 0 ? ` ${notes.join(" · ")}.` : ""}`,
+      message: `${formatRunCount(interruptedTotal)}${notes.length > 0 ? ` ${notes.join(" · ")}.` : ""}`,
     };
   }
 

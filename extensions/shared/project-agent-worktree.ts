@@ -304,9 +304,3 @@ export function resolveValidatedGitWorktreeRoot(
   if (!search.root) return undefined;
   return strictCanonicalPath(search.root, fileSystem);
 }
-
-/** @internal Exported for focused path-resolution tests only. */
-export const __testing = {
-  findValidatedGitWorktreeRootAt,
-  inspectGitWorktreeMarker,
-};

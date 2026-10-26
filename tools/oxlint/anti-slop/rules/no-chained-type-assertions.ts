@@ -1,6 +1,8 @@
 import { defineRule } from "@oxlint/plugins";
 import type { ESTree } from "@oxlint/plugins";
 
+import { isConstAssertion } from "../shared/is-const-assertion.ts";
+
 type TypeAssertionExpression = ESTree.TSAsExpression | ESTree.TSTypeAssertion;
 
 function isTypeAssertionExpression(node: ESTree.Node): node is TypeAssertionExpression {
@@ -13,15 +15,6 @@ function unwrapParenthesizedExpression(expression: ESTree.Expression): ESTree.Ex
     current = current.expression;
   }
   return current;
-}
-
-function isConstAssertion(node: TypeAssertionExpression): boolean {
-  const { typeAnnotation } = node;
-  return (
-    typeAnnotation.type === "TSTypeReference" &&
-    typeAnnotation.typeName.type === "Identifier" &&
-    typeAnnotation.typeName.name === "const"
-  );
 }
 
 function isOutermostAssertionInChain(node: TypeAssertionExpression): boolean {

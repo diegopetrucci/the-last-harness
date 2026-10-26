@@ -1,13 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
-  AgentSettledEvent as _AgentSettledEventBase,
+  AgentSettledEvent,
   ExtensionAPI,
   ExtensionContext,
   UIPromptKind,
 } from "@earendil-works/pi-coding-agent";
-/** Pi 1.1.0+ adds an `aborted` flag; model it as optional for compatibility with 1.0.x. */
-type AgentSettledEvent = _AgentSettledEventBase & { aborted?: boolean };
 import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 import {

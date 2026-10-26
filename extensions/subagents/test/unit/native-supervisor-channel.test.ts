@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
+import { makeSubagentState } from "../support/helpers.ts";
 import {
   NATIVE_SUPERVISOR_TOOL_NAME,
   createNativeSupervisorChannel,
@@ -99,17 +100,10 @@ const savedEnv = {
 };
 
 function makeState(sessionId: string | null, ctx: unknown): SubagentState {
-  return {
-    baseCwd: process.cwd(),
+  return makeSubagentState({
     currentSessionId: sessionId,
-    asyncJobs: new Map(),
-    cleanupTimers: new Map(),
     lastUiContext: ctx as SubagentState["lastUiContext"],
-    poller: null,
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
+  });
 }
 
 function writeRequest(input: {

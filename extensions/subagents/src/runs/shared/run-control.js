@@ -9,26 +9,8 @@ import { readStatus } from "../../shared/utils.js";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
 import { projectRunAuthorizationError, authorizePersistedProjectAgentRun, embeddedControlRestrictionError, } from "./project-agent-control.js";
 import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "../background/async-owner-authorization.js";
-import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.js";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.js";
-export { registerForegroundMessageInbox, clearForegroundMessageInbox, } from "./foreground-message-inbox.js";
-export function trustedSessionRootsForStatus(ctx, deps) {
-    let currentSessionId;
-    let parentSessionFile;
-    try {
-        currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-    }
-    catch {
-        return [];
-    }
-    if (!parentSessionFile)
-        return [];
-    if (deps.state?.currentSessionId !== currentSessionId)
-        return [];
-    return [deps.getSubagentSessionRoot(parentSessionFile)];
-}
 export { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "./run-support.js";
 function isAsyncInterruptFailure(result) {
     return !result.ok;
