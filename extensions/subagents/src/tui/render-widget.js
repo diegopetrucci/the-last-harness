@@ -1114,6 +1114,7 @@ function buildWidgetListParts(jobs, theme, width, expanded, phraseNow) {
     return { lines, footerLines };
 }
 export function renderWidget(ctx, jobs, controller, now) {
+    jobs = jobs.filter((job) => job.awaited !== true);
     if (jobs.length === 0) {
         resetWidgetLayoutSession();
         if (ctx.hasUI)
