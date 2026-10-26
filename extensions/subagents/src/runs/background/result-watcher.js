@@ -225,6 +225,19 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
             }
             retryState.ready = false;
         }
+        try {
+            const preData = JSON.parse(fsApi.readFileSync(resultPath, "utf-8"));
+            if (typeof preData?.sessionId !== "string" || preData.sessionId !== state.currentSessionId) {
+                resetResultRetry(resultPath);
+                return;
+            }
+        }
+        catch (error) {
+            if (isNotFoundError(error)) {
+                resetResultRetry(resultPath);
+                return;
+            }
+        }
         let claim;
         try {
             claim = claimResultArtifact(resultPath, fsApi);
@@ -233,8 +246,21 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
             diagnoseAndRetry(file, "claim", error);
             return;
         }
-        if (!claim)
+        if (!claim) {
+            let stillExists;
+            try {
+                stillExists = fsApi.existsSync(resultPath);
+            }
+            catch (error) {
+                diagnoseAndRetry(file, "check", error);
+                return;
+            }
+            if (stillExists)
+                scheduleResultRetry(file, "claim");
+            else
+                resetResultRetry(resultPath);
             return;
+        }
         let deliveryDecided = false;
         try {
             let resultExists;
