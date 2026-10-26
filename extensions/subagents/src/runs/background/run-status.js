@@ -5,6 +5,7 @@ import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLab
 import { formatDuration, formatModelThinking } from "../../shared/formatters.js";
 import { formatActivityLabel } from "../../shared/status-format.js";
 import { ASYNC_DIR, RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
+import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "./async-owner-authorization.js";
 import { continuationResumeBlock, resolveAsyncRunLocation } from "./async-resume.js";
 import { resolveSubagentRunId } from "./run-id-resolver.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
@@ -347,7 +348,7 @@ export function inspectSubagentStatus(params, deps = {}) {
                 location = { asyncDir: null, resultPath: null, resolvedId: requestedId };
         }
         else {
-            location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
+            location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir, currentSessionId);
         }
     }
     catch (error) {
@@ -362,6 +363,27 @@ export function inspectSubagentStatus(params, deps = {}) {
     if (!asyncDir && !resultPath) {
         return {
             content: [{ type: "text", text: "Async run not found. Provide id or dir." }],
+            isError: true,
+            details: { mode: "single", results: [] },
+        };
+    }
+    const ownerAuthorization = authorizeAsyncRunOwner({
+        callerKey: currentSessionId,
+        ...(asyncDir ? { asyncDir } : {}),
+        ...(resultPath ? { resultPath } : {}),
+        resultsDir,
+    });
+    if (ownerAuthorization.outcome !== "owned") {
+        const deniedRunId = ownerAuthorization.runId ??
+            resolvedId ??
+            path.basename(path.resolve((asyncDir ?? resultPath)), ".json");
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: safeTerminalText(asyncRunOwnerRejectionMessage(ownerAuthorization, deniedRunId, "inspected")),
+                },
+            ],
             isError: true,
             details: { mode: "single", results: [] },
         };

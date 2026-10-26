@@ -7,7 +7,9 @@ import { assertSafeNestedId } from "../shared/nested-events.ts";
 export type ResolvedSubagentRunId = { kind: "async"; id: string; location: AsyncRunLocation };
 
 interface ResolveSubagentRunIdDeps {
-  state?: SubagentState;
+  /** Caller scope for prefix matching: state.currentSessionId unless callerKey is given. */
+  state?: Pick<SubagentState, "currentSessionId">;
+  callerKey?: string;
   asyncDirRoot?: string;
   resultsDir?: string;
 }
@@ -37,8 +39,11 @@ export function resolveSubagentRunId(
   const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
   if (exactAsync) return { kind: "async", id, location: exactAsync };
 
+  // Exact ids resolve unfiltered (action paths owner-check them); prefixes are
+  // scoped to caller-owned runs before the ambiguity check.
+  const callerKey = deps.callerKey ?? deps.state?.currentSessionId ?? undefined;
   const matches: ResolvedSubagentRunId[] = [];
-  for (const match of findAsyncRunPrefixMatches(id, asyncDirRoot, resultsDir)) {
+  for (const match of findAsyncRunPrefixMatches(id, asyncDirRoot, resultsDir, callerKey)) {
     matches.push({ kind: "async", id: match.id, location: match.location });
   }
   const unique = new Map(matches.map((match) => [`${match.kind}:${match.id}`, match]));

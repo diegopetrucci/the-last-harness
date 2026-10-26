@@ -10,3 +10,10 @@ export function textContent(result: ReturnType<typeof inspectSubagentStatus>): s
   const first = result.content[0];
   return first?.type === "text" ? first.text : "";
 }
+
+/**
+ * Status inspection by id/dir is owner-gated, so fixtures carry this session id
+ * and calls pass the matching state.
+ */
+export const OWNER_SESSION = "owner-session";
+export const ownerState = { currentSessionId: OWNER_SESSION } as never;

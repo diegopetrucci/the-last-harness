@@ -4,7 +4,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
-import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import {
+  resolveAsyncResumeTarget,
+  resolveAsyncRunLocation,
+} from "../../src/runs/background/async-resume.ts";
 import type {
   ContextPressureProjection,
   SubagentModelIdentity,
@@ -20,6 +23,8 @@ describe("async resume lookup", () => {
       fs.writeFileSync(sessionFile, "", "utf-8");
       writeJson(path.join(asyncRoot, "run-abc", "status.json"), {
         runId: "run-abc",
+        // Prefix lookup is scoped to caller-owned runs, so the fixture needs an owner.
+        sessionId: "owner-session",
         mode: "single",
         state: "complete",
         startedAt: 100,
@@ -39,7 +44,11 @@ describe("async resume lookup", () => {
 
       const target = resolveAsyncResumeTarget(
         { id: "run-a" },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        {
+          asyncDirRoot: asyncRoot,
+          resultsDir: path.join(root, "results"),
+          callerKey: "owner-session",
+        },
       );
 
       assert.equal(target.kind, "revive");
@@ -488,6 +497,7 @@ describe("async resume lookup", () => {
       const asyncRoot = path.join(root, "runs");
       writeJson(path.join(asyncRoot, "run-aa", "status.json"), {
         runId: "run-aa",
+        sessionId: "owner-session",
         mode: "single",
         state: "running",
         startedAt: 100,
@@ -495,6 +505,7 @@ describe("async resume lookup", () => {
       });
       writeJson(path.join(asyncRoot, "run-ab", "status.json"), {
         runId: "run-ab",
+        sessionId: "owner-session",
         mode: "single",
         state: "running",
         startedAt: 100,
@@ -505,7 +516,11 @@ describe("async resume lookup", () => {
         () =>
           resolveAsyncResumeTarget(
             { id: "run-a" },
-            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+            {
+              asyncDirRoot: asyncRoot,
+              resultsDir: path.join(root, "results"),
+              callerKey: "owner-session",
+            },
           ),
         /Ambiguous async run id prefix 'run-a' matched: run-aa, run-ab/,
       );
@@ -1267,6 +1282,55 @@ describe("result-only revival cwd (BUG-02)", () => {
 
       assert.equal(target0.cwd, childCwd0, "child 0 revival cwd must be its own child cwd");
       assert.equal(target1.cwd, childCwd1, "child 1 revival cwd must be its own child cwd");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("async resume lookup scoping", () => {
+  it("scopes resolveAsyncRunLocation prefixes to the caller but leaves exact ids and dir unfiltered", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-location-scope-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const resultsDir = path.join(root, "results");
+      for (const [id, owner] of [
+        ["run-aa", "other"],
+        ["run-ab", "me"],
+      ] as const)
+        writeJson(path.join(asyncRoot, id, "status.json"), {
+          runId: id,
+          sessionId: owner,
+          mode: "single",
+          state: "running",
+          startedAt: 1,
+        });
+
+      assert.equal(
+        resolveAsyncRunLocation({ id: "run-a" }, asyncRoot, resultsDir, "me").resolvedId,
+        "run-ab",
+      );
+      // Foreign-only prefix and missing caller key never match or name foreign ids.
+      assert.equal(
+        resolveAsyncRunLocation({ id: "run-aa".slice(0, 5) }, asyncRoot, resultsDir, "you")
+          .asyncDir,
+        null,
+      );
+      assert.equal(resolveAsyncRunLocation({ id: "run-a" }, asyncRoot, resultsDir).asyncDir, null);
+      // Exact id and explicit dir resolve for a foreign caller (owner-checked later).
+      assert.equal(
+        resolveAsyncRunLocation({ id: "run-aa" }, asyncRoot, resultsDir, "me").resolvedId,
+        "run-aa",
+      );
+      assert.equal(
+        resolveAsyncRunLocation(
+          { dir: path.join(asyncRoot, "run-aa") },
+          asyncRoot,
+          resultsDir,
+          "me",
+        ).resolvedId,
+        "run-aa",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getArtifactsDir, resolveArtifactConfig } from "../shared/artifacts.js";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.js";
+import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "../runs/background/async-owner-authorization.js";
 import { handleManagementAction } from "../agents/agent-management.js";
 import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "./doctor.js";
 import { authorizeProjectInterruptTarget, authorizeProjectSteerTarget, buildManagementActionParams, buildRunStatusParams, buildResumeModelResolution, cancelPersistedPausedAsyncRun, getRequestedModeLabel, interruptAsyncRun, readModelRegistrySnapshot, requestInterruptAllRunningSubagentRuns, resolveSingleRunOutputBaseDir, selectInterruptTarget, steerAsyncRun, unknownAgentMessage, providerFallbackModelsForTarget, resumeAsyncRun, unsupportedSavedChainInput, unsupportedSavedChainInputResult, } from "../runs/shared/run-control.js";
@@ -481,7 +482,8 @@ function projectManagementErrorFrom(error) {
     return projectManagementError(error instanceof Error ? error.message : String(error));
 }
 async function executeSteerAction(params, ctx, deps) {
-    deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+    const callerKey = resolveCurrentSessionId(ctx.sessionManager);
+    deps.state.currentSessionId = callerKey;
     const message = (params.message ?? params.task ?? "").trim();
     if (!message) {
         return projectManagementError("action='steer' requires message.");
@@ -494,7 +496,7 @@ async function executeSteerAction(params, ctx, deps) {
     }
     let resolved;
     try {
-        resolved = resolveSubagentRunId(params.id, { state: deps.state });
+        resolved = resolveSubagentRunId(params.id, { state: deps.state, callerKey });
     }
     catch (error) {
         return projectManagementError(error instanceof Error ? error.message : String(error));
@@ -502,6 +504,14 @@ async function executeSteerAction(params, ctx, deps) {
     if (resolved?.kind !== "async") {
         return projectManagementError(`No async run found for '${params.id}'.`);
     }
+    const ownerAuthorization = authorizeAsyncRunOwner({
+        callerKey,
+        runId: resolved.id,
+        ...(resolved.location.asyncDir ? { asyncDir: resolved.location.asyncDir } : {}),
+        ...(resolved.location.resultPath ? { resultPath: resolved.location.resultPath } : {}),
+    });
+    if (ownerAuthorization.outcome !== "owned")
+        return projectManagementError(asyncRunOwnerRejectionMessage(ownerAuthorization, resolved.id, "steered"));
     try {
         await authorizeProjectSteerTarget({ params, ctx, deps });
     }
@@ -516,6 +526,7 @@ async function executeSteerAction(params, ctx, deps) {
             index: params.index,
             kill: deps.kill,
             location: resolved.location,
+            callerKey,
         });
     }
     catch (error) {
@@ -531,11 +542,12 @@ function isPersistedCancellationState(status) {
         continuation?.continuedAt !== undefined);
 }
 async function executeInterruptAction(params, ctx, deps) {
-    deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+    const callerKey = resolveCurrentSessionId(ctx.sessionManager);
+    deps.state.currentSessionId = callerKey;
     let resolved;
     let selectedParams = params;
     try {
-        const selected = selectInterruptTarget(params, deps.state);
+        const selected = selectInterruptTarget(params, deps.state, callerKey);
         resolved = selected.target;
         selectedParams = selected.params;
     }
@@ -546,6 +558,18 @@ async function executeInterruptAction(params, ctx, deps) {
     if (!asyncInterruptTarget) {
         return projectManagementError("No interrupt-capable run found in this session.");
     }
+    const ownerAuthorization = authorizeAsyncRunOwner({
+        callerKey,
+        runId: asyncInterruptTarget.id,
+        ...(asyncInterruptTarget.location.asyncDir
+            ? { asyncDir: asyncInterruptTarget.location.asyncDir }
+            : {}),
+        ...(asyncInterruptTarget.location.resultPath
+            ? { resultPath: asyncInterruptTarget.location.resultPath }
+            : {}),
+    });
+    if (ownerAuthorization.outcome !== "owned")
+        return projectManagementError(asyncRunOwnerRejectionMessage(ownerAuthorization, asyncInterruptTarget.id, "interrupted"));
     try {
         await authorizeProjectInterruptTarget({
             params: selectedParams,
@@ -567,11 +591,11 @@ async function executeInterruptAction(params, ctx, deps) {
             throw error;
         }
         if (isPersistedCancellationState(persistedStatus)) {
-            return cancelPersistedPausedAsyncRun(asyncInterruptTarget.location.asyncDir, asyncInterruptTarget.id, params.index);
+            return cancelPersistedPausedAsyncRun(asyncInterruptTarget.location.asyncDir, asyncInterruptTarget.id, params.index, callerKey);
         }
     }
     try {
-        const result = interruptAsyncRun(deps.state, asyncInterruptTarget.id, deps.kill, asyncInterruptTarget.location);
+        const result = interruptAsyncRun(deps.state, asyncInterruptTarget.id, deps.kill, asyncInterruptTarget.location, callerKey);
         return (result ??
             projectManagementError("No interrupt-capable run found in this session."));
     }

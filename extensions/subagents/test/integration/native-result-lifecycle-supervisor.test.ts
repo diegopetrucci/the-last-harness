@@ -924,7 +924,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.match(status.content[0]?.text ?? "", /Revive: subagent\(\{ action: "resume"/);
   });
 
-  it("bounds paused-cancel lifecycle failures without leaking raw status paths", async () => {
+  it("fails closed without leaking raw status paths when paused-cancel status is corrupt", async () => {
     const defaultTempRoot = resolveTempRootDir({
       env: { ...process.env, PI_SUBAGENTS_TEMP_ROOT: "   " },
     });
@@ -979,7 +979,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
         makeMinimalCtx(tempDir),
       );
       assert.equal(cancelled.isError, true);
-      assert.match(cancelled.content[0]?.text ?? "", /Awaited supervisor lifecycle update failed/);
+      assert.match(cancelled.content[0]?.text ?? "", /ownership cannot be verified/);
       assert.doesNotMatch(
         cancelled.content[0]?.text ?? "",
         /Failed to (inspect|read|parse) async status file/,
@@ -1003,6 +1003,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
         JSON.stringify(
           {
             runId: base,
+            sessionId: "session-123",
             mode: "single",
             state: "complete",
             startedAt: 100,
@@ -1057,6 +1058,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
           JSON.stringify(
             {
               runId,
+              sessionId: "session-123",
               mode: "single",
               state: "complete",
               startedAt: 100,

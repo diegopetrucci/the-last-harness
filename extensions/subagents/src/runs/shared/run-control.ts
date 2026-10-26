@@ -4,21 +4,21 @@ import { resolveAsyncRunLocation, type AsyncRunLocation } from "../background/as
 import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveSubagentRunId } from "../background/run-id-resolver.ts";
-import { normalizeComparableCwd, readStatus } from "../../shared/utils.ts";
+import { readStatus } from "../../shared/utils.ts";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.ts";
 import {
   projectRunAuthorizationError,
   authorizePersistedProjectAgentRun,
   embeddedControlRestrictionError,
 } from "./project-agent-control.ts";
+import {
+  asyncRunOwnerRejectionMessage,
+  authorizeAsyncRunOwner,
+  type AsyncRunOwnerAuthorization,
+} from "../background/async-owner-authorization.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentParamsLike, ExecutorDeps } from "./executor-types.ts";
-import type {
-  AsyncStatus,
-  Details,
-  SubagentState,
-  SubagentToolResult,
-} from "../../shared/types.ts";
+import type { Details, SubagentState, SubagentToolResult } from "../../shared/types.ts";
 import type { ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 
 type KillFn = ExecutorDeps["kill"];
@@ -26,6 +26,11 @@ type AsyncInterruptTarget = { asyncId: string; asyncDir: string };
 type AsyncInterruptResult =
   | { ok: true }
   | { ok: false; kind: "not_running" }
+  | {
+      ok: false;
+      kind: "unauthorized";
+      authorization: Exclude<AsyncRunOwnerAuthorization, { outcome: "owned" }>;
+    }
   | { ok: false; kind: "error"; error: string };
 export { buildResumeModelResolution, resumeAsyncRun } from "../background/async-control-resume.ts";
 export { cancelPersistedPausedAsyncRun } from "../background/async-cancellation.ts";
@@ -99,6 +104,7 @@ function getAsyncInterruptTarget(
   state: SubagentState,
   runId?: string,
   location?: AsyncRunLocation,
+  callerKey?: string,
 ): AsyncInterruptTarget | undefined {
   if (location) {
     if (location.asyncDir) {
@@ -121,6 +127,12 @@ function getAsyncInterruptTarget(
   let newest;
   for (const job of state.asyncJobs.values()) {
     if (job.status !== "running") continue;
+    // Only runs the caller provably owns are candidates for the implicit target.
+    if (
+      authorizeAsyncRunOwner({ callerKey, asyncDir: job.asyncDir, runId: job.asyncId }).outcome !==
+      "owned"
+    )
+      continue;
     if (!newest || (job.updatedAt ?? 0) > newest.updatedAt) {
       newest = { asyncId: job.asyncId, asyncDir: job.asyncDir, updatedAt: job.updatedAt ?? 0 };
     }
@@ -143,10 +155,11 @@ function resolvedAsyncInterruptTarget(
 export function selectInterruptTarget(
   params: SubagentParamsLike,
   state: SubagentState,
+  callerKey: string | undefined = state.currentSessionId ?? undefined,
 ): { target: ResolvedSubagentRunId | undefined; params: SubagentParamsLike } {
   const requestedId = params.id?.trim();
   if (requestedId) {
-    const resolved = resolveSubagentRunId(requestedId, { state });
+    const resolved = resolveSubagentRunId(requestedId, { state, callerKey });
     if (resolved) return { target: resolved, params: { ...params, id: resolved.id } };
     const asyncTarget = getAsyncInterruptTarget(state, requestedId);
     if (asyncTarget) {
@@ -158,7 +171,7 @@ export function selectInterruptTarget(
     }
     return { target: undefined, params };
   }
-  const asyncTarget = getAsyncInterruptTarget(state, undefined);
+  const asyncTarget = getAsyncInterruptTarget(state, undefined, undefined, callerKey);
   if (!asyncTarget) return { target: undefined, params };
   const target = resolvedAsyncInterruptTarget(asyncTarget);
   return {
@@ -170,12 +183,22 @@ export function selectInterruptTarget(
 function requestAsyncInterruptForTarget(
   state: SubagentState,
   target: AsyncInterruptTarget,
+  callerKey: string | undefined,
   kill?: KillFn,
 ): AsyncInterruptResult {
+  const authorizeTarget = () =>
+    authorizeAsyncRunOwner({ callerKey, asyncDir: target.asyncDir, runId: target.asyncId });
+  // Authorize before reconciliation (which can write), and again right before delivery.
+  const preAuthorization = authorizeTarget();
+  if (preAuthorization.outcome !== "owned")
+    return { ok: false, kind: "unauthorized", authorization: preAuthorization };
   const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
   if (!status || status.state !== "running" || typeof status.pid !== "number") {
     return { ok: false, kind: "not_running" };
   }
+  const deliveryAuthorization = authorizeTarget();
+  if (deliveryAuthorization.outcome !== "owned")
+    return { ok: false, kind: "unauthorized", authorization: deliveryAuthorization };
   try {
     deliverInterruptRequest({
       asyncDir: target.asyncDir,
@@ -197,19 +220,8 @@ function requestAsyncInterruptForTarget(
 function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
-function diskOnlyAsyncStatusBelongsElsewhere(state: SubagentState, status: AsyncStatus): boolean {
-  if (state.currentSessionId && status.sessionId)
-    return state.currentSessionId !== status.sessionId;
-  if (
-    state.baseCwd &&
-    status.cwd &&
-    normalizeComparableCwd(state.baseCwd) !== normalizeComparableCwd(status.cwd)
-  )
-    return true;
-  return false;
-}
 function discoverDiskOnlyRunningAsyncTargets(
-  state: SubagentState,
+  callerKey: string,
   knownAsyncDirs: ReadonlySet<string>,
 ): { targets: AsyncInterruptTarget[]; errors: string[] } {
   const targets: AsyncInterruptTarget[] = [];
@@ -233,14 +245,21 @@ function discoverDiskOnlyRunningAsyncTargets(
 
   for (const candidate of candidates) {
     if (knownAsyncDirs.has(candidate.asyncDir)) continue;
+    // Authorize first and skip silently: foreign or unprovable runs must not
+    // be reconciled, signalled, or named in errors.
+    try {
+      const authorization = authorizeAsyncRunOwner({
+        callerKey,
+        asyncDir: candidate.asyncDir,
+        runId: candidate.fallbackId,
+      });
+      if (authorization.outcome !== "owned") continue;
+    } catch {
+      continue;
+    }
     try {
       const rawStatus = readStatus(candidate.asyncDir);
-      if (
-        !rawStatus ||
-        rawStatus.state !== "running" ||
-        diskOnlyAsyncStatusBelongsElsewhere(state, rawStatus)
-      )
-        continue;
+      if (!rawStatus || rawStatus.state !== "running") continue;
       const status = reconcileAsyncRun(candidate.asyncDir).status;
       if (status?.state === "running") {
         targets.push({
@@ -257,7 +276,15 @@ function discoverDiskOnlyRunningAsyncTargets(
   }
   return { targets, errors };
 }
-export function requestInterruptAllRunningSubagentRuns(state: SubagentState): {
+/**
+ * Interrupt every running run the caller provably owns (tracked and disk-only).
+ * An unknown caller key interrupts nothing. Foreign/unprovable runs are excluded
+ * silently (not reported as skipped).
+ */
+export function requestInterruptAllRunningSubagentRuns(
+  state: SubagentState,
+  callerKey: string | undefined,
+): {
   asyncRunIds: string[];
   skippedAsyncRunIds: string[];
   errors: string[];
@@ -271,15 +298,19 @@ export function requestInterruptAllRunningSubagentRuns(state: SubagentState): {
     skippedAsyncRunIds: [],
     errors: [],
   };
+  if (typeof callerKey !== "string" || callerKey.length === 0) return result;
   const knownAsyncDirs = new Set<string>();
   for (const job of state.asyncJobs.values()) {
     knownAsyncDirs.add(job.asyncDir);
-    const interruptResult = requestAsyncInterruptForTarget(state, {
-      asyncId: job.asyncId,
-      asyncDir: job.asyncDir,
-    });
+    const interruptResult = requestAsyncInterruptForTarget(
+      state,
+      { asyncId: job.asyncId, asyncDir: job.asyncDir },
+      callerKey,
+    );
     if (!isAsyncInterruptFailure(interruptResult)) {
       result.asyncRunIds.push(job.asyncId);
+    } else if (interruptResult.kind === "unauthorized") {
+      continue;
     } else if (interruptResult.kind === "error") {
       result.errors.push(
         `Failed to interrupt async run ${job.asyncId}: ${interruptResult.error ?? "unknown error"}`,
@@ -288,11 +319,13 @@ export function requestInterruptAllRunningSubagentRuns(state: SubagentState): {
       result.skippedAsyncRunIds.push(job.asyncId);
     }
   }
-  const diskOnly = discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs);
+  const diskOnly = discoverDiskOnlyRunningAsyncTargets(callerKey, knownAsyncDirs);
   for (const target of diskOnly.targets) {
-    const interruptResult = requestAsyncInterruptForTarget(state, target);
+    const interruptResult = requestAsyncInterruptForTarget(state, target, callerKey);
     if (!isAsyncInterruptFailure(interruptResult)) {
       result.asyncRunIds.push(target.asyncId);
+    } else if (interruptResult.kind === "unauthorized") {
+      continue;
     } else if (interruptResult.kind === "error") {
       result.errors.push(
         `Failed to interrupt async run ${target.asyncId}: ${interruptResult.error ?? "unknown error"}`,
@@ -307,12 +340,13 @@ export function requestInterruptAllRunningSubagentRuns(state: SubagentState): {
 export function interruptAsyncRun(
   state: SubagentState,
   runId: string | undefined,
-  kill?: KillFn,
-  location?: AsyncRunLocation,
+  kill: KillFn | undefined,
+  location: AsyncRunLocation | undefined,
+  callerKey: string | undefined,
 ): SubagentToolResult<Details> | null {
-  const target = getAsyncInterruptTarget(state, runId, location);
+  const target = getAsyncInterruptTarget(state, runId, location, callerKey);
   if (!target) return null;
-  const interruptResult = requestAsyncInterruptForTarget(state, target, kill);
+  const interruptResult = requestAsyncInterruptForTarget(state, target, callerKey, kill);
   if (!isAsyncInterruptFailure(interruptResult)) {
     return {
       content: [{ type: "text", text: `Interrupt requested for async run ${target.asyncId}.` }],
@@ -323,22 +357,21 @@ export function interruptAsyncRun(
     content: [
       {
         type: "text",
-        text: isAsyncInterruptNotRunning(interruptResult)
-          ? `No running async run with an interrupt-capable pid was found for '${runId ?? "current"}'.`
-          : `Failed to interrupt async run ${target.asyncId}: ${interruptResult.error ?? "unknown error"}`,
+        text:
+          interruptResult.kind === "unauthorized"
+            ? asyncRunOwnerRejectionMessage(
+                interruptResult.authorization,
+                target.asyncId,
+                "interrupted",
+              )
+            : isAsyncInterruptNotRunning(interruptResult)
+              ? `No running async run with an interrupt-capable pid was found for '${runId ?? "current"}'.`
+              : `Failed to interrupt async run ${target.asyncId}: ${interruptResult.error ?? "unknown error"}`,
       },
     ],
     isError: true,
     details: { mode: "management", results: [] },
   };
-}
-function asyncControlOwnedByCurrentSession(state: SubagentState, status: AsyncStatus): boolean {
-  return (
-    typeof state.currentSessionId === "string" &&
-    state.currentSessionId.length > 0 &&
-    typeof status.sessionId === "string" &&
-    status.sessionId === state.currentSessionId
-  );
 }
 export function steerAsyncRun(input: {
   state: SubagentState;
@@ -347,6 +380,7 @@ export function steerAsyncRun(input: {
   index?: number;
   kill?: KillFn;
   location: AsyncRunLocation;
+  callerKey: string | undefined;
 }): SubagentToolResult<Details> {
   if (!input.location.asyncDir) {
     return {
@@ -357,25 +391,35 @@ export function steerAsyncRun(input: {
       details: { mode: "management", results: [] },
     };
   }
-  const status = reconcileAsyncRun(input.location.asyncDir, { kill: input.kill }).status;
+  const steerDir = input.location.asyncDir;
+  const authorizeTarget = () =>
+    authorizeAsyncRunOwner({
+      callerKey: input.callerKey,
+      asyncDir: steerDir,
+      runId: input.runId,
+    });
+  const steerRejection = (
+    authorization: Exclude<AsyncRunOwnerAuthorization, { outcome: "owned" }>,
+  ): SubagentToolResult<Details> => ({
+    content: [
+      {
+        type: "text",
+        text: asyncRunOwnerRejectionMessage(authorization, input.runId, "steered"),
+      },
+    ],
+    isError: true,
+    details: { mode: "management", results: [] },
+  });
+  // Authorize before reconciliation (which can write) and any state-detail error.
+  const preAuthorization = authorizeTarget();
+  if (preAuthorization.outcome !== "owned") return steerRejection(preAuthorization);
+  const status = reconcileAsyncRun(steerDir, { kill: input.kill }).status;
   if (!status || (status.state !== "running" && status.state !== "queued")) {
     return {
       content: [
         {
           type: "text",
           text: `Async run '${input.runId}' is not running or queued and cannot be steered.`,
-        },
-      ],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
-  }
-  if (!asyncControlOwnedByCurrentSession(input.state, status)) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Async run '${status.runId}' is owned by another session and cannot be steered from this session.`,
         },
       ],
       isError: true,
@@ -424,7 +468,9 @@ export function steerAsyncRun(input: {
       };
     }
   }
-  requestAsyncSteer(input.location.asyncDir, {
+  const deliveryAuthorization = authorizeTarget();
+  if (deliveryAuthorization.outcome !== "owned") return steerRejection(deliveryAuthorization);
+  requestAsyncSteer(steerDir, {
     message: input.message,
     targetIndex: input.index,
     source: "steer-action",
@@ -449,7 +495,12 @@ export async function authorizeProjectSteerTarget(input: {
 }): Promise<void> {
   let location;
   try {
-    location = resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR);
+    location = resolveAsyncRunLocation(
+      input.params,
+      ASYNC_DIR,
+      RESULTS_DIR,
+      input.deps.state.currentSessionId ?? undefined,
+    );
   } catch (error) {
     throw projectRunAuthorizationError(
       error instanceof Error ? error.message : "the persisted control target is invalid.",
@@ -501,7 +552,12 @@ export async function authorizeProjectInterruptTarget(input: {
 }): Promise<void> {
   let location;
   try {
-    location = resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR);
+    location = resolveAsyncRunLocation(
+      input.params,
+      ASYNC_DIR,
+      RESULTS_DIR,
+      input.deps.state.currentSessionId ?? undefined,
+    );
   } catch (error) {
     throw projectRunAuthorizationError(
       error instanceof Error ? error.message : "the persisted interrupt target is invalid.",

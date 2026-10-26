@@ -10,6 +10,16 @@ import { interruptRequestPath } from "../../src/runs/background/control-channel.
 import { ASYNC_DIR, TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { makeSubagentState } from "../support/helpers.ts";
 
+function pauseCtx(sessionId: string | null = "current-session"): never {
+  return {
+    hasUI: false,
+    sessionManager: {
+      getSessionFile: () => null,
+      getSessionId: () => sessionId,
+    },
+  } as never;
+}
+
 const cleanupPaths = new Set<string>();
 const NESTED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const require = createRequire(import.meta.url);
@@ -60,7 +70,8 @@ describe("pause-all shortcut handler", () => {
     fs.writeFileSync(
       path.join(asyncDir, "status.json"),
       JSON.stringify({
-        runId: "async-run",
+        runId: path.basename(asyncDir),
+        sessionId: "current-session",
         mode: "single",
         state: "running",
         startedAt: Date.now(),
@@ -68,8 +79,8 @@ describe("pause-all shortcut handler", () => {
       }),
       "utf-8",
     );
-    state.asyncJobs.set("async-run", {
-      asyncId: "async-run",
+    state.asyncJobs.set(path.basename(asyncDir), {
+      asyncId: path.basename(asyncDir),
       asyncDir,
       status: "running",
       mode: "single",
@@ -89,7 +100,7 @@ describe("pause-all shortcut handler", () => {
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
 
-    const result = handlePauseAllShortcut(state, { hasUI: false } as never);
+    const result = handlePauseAllShortcut(state, pauseCtx());
     assert.match(result.message, /^Pause requested for 1 subagent run\.$/);
     assert.ok(result.level === "info" || result.level === "warning");
     assertPortableInterruptRequested(asyncDir, 4242, kills);
@@ -105,7 +116,7 @@ describe("pause-all shortcut handler", () => {
     fs.writeFileSync(
       path.join(asyncDir, "status.json"),
       JSON.stringify({
-        runId: "disk-only-async-run",
+        runId: path.basename(asyncDir),
         sessionId: "current-session",
         mode: "single",
         state: "running",
@@ -136,7 +147,7 @@ describe("pause-all shortcut handler", () => {
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
 
-    const result = handlePauseAllShortcut(state, { hasUI: false } as never);
+    const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "info");
     assert.match(result.message, /^Pause requested for 1 subagent run\.$/);
     assertPortableInterruptRequested(asyncDir, 5252, kills);
@@ -153,7 +164,7 @@ describe("pause-all shortcut handler", () => {
     fs.writeFileSync(
       path.join(asyncDir, "status.json"),
       JSON.stringify({
-        runId: "top-level-async-run",
+        runId: path.basename(asyncDir),
         sessionId: "current-session",
         mode: "single",
         state: "running",
@@ -187,7 +198,7 @@ describe("pause-all shortcut handler", () => {
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
 
-    const result = handlePauseAllShortcut(state, { hasUI: false } as never);
+    const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "info");
     assert.match(result.message, /^Pause requested for 1 subagent run\.$/);
     assertPortableInterruptRequested(asyncDir, 6262, kills);
@@ -235,7 +246,7 @@ describe("pause-all shortcut handler", () => {
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
 
-    const result = handlePauseAllShortcut(state, { hasUI: false } as never);
+    const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "warning");
     assert.equal(result.message, "No running subagent work to pause.");
     assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
@@ -288,7 +299,7 @@ describe("pause-all shortcut handler", () => {
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
 
-    const result = handlePauseAllShortcut(state, { hasUI: false } as never);
+    const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "warning");
     assert.equal(result.message, "No running subagent work to pause.");
     assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
@@ -304,7 +315,7 @@ describe("pause-all shortcut handler", () => {
     fs.writeFileSync(
       path.join(asyncDir, "status.json"),
       JSON.stringify({
-        runId: "other-session-async-run",
+        runId: path.basename(asyncDir),
         sessionId: "other-session",
         mode: "single",
         state: "running",
@@ -338,10 +349,115 @@ describe("pause-all shortcut handler", () => {
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
 
-    const result = handlePauseAllShortcut(state, { hasUI: false } as never);
+    const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "warning");
     assert.equal(result.message, "No running subagent work to pause.");
     assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
     assert.deepEqual(kills, []);
+  });
+});
+
+describe("pause-all shortcut ownership (#826)", () => {
+  function diskRun(prefix: string, extra: Record<string, unknown>): string {
+    fs.mkdirSync(ASYNC_DIR, { recursive: true });
+    const asyncDir = fs.mkdtempSync(path.join(ASYNC_DIR, prefix));
+    cleanupPaths.add(asyncDir);
+    fs.writeFileSync(
+      path.join(asyncDir, "status.json"),
+      JSON.stringify({
+        runId: path.basename(asyncDir),
+        mode: "single",
+        state: "running",
+        cwd: process.cwd(),
+        startedAt: Date.now(),
+        pid: 8282,
+        ...extra,
+      }),
+      "utf-8",
+    );
+    return asyncDir;
+  }
+  function onlyAsyncDir(asyncDir: string): void {
+    builtinFs.readdirSync = ((
+      target: fs.PathLike,
+      options?:
+        | BufferEncoding
+        | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+        | null,
+    ) => {
+      if (target === NESTED_RUNS_DIR) return [];
+      if (target === ASYNC_DIR)
+        return readDirectoryEntries(target).filter(
+          (entry) => entry.name === path.basename(asyncDir),
+        );
+      return originalReaddirSync(target, options as never);
+    }) as typeof fs.readdirSync;
+    syncBuiltinESMExports();
+  }
+  function assertUntouched(asyncDir: string, kills: unknown[], before: string): void {
+    assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
+    assert.deepEqual(kills, []);
+    assert.equal(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"), before);
+  }
+
+  for (const [name, extra] of [
+    ["foreign", { sessionId: "other-session" }],
+    ["ownerless", {}],
+  ] as const) {
+    it(`never interrupts a same-cwd ${name} disk-only run`, () => {
+      const state = makeSubagentState();
+      state.currentSessionId = "current-session";
+      state.baseCwd = process.cwd();
+      const asyncDir = diskRun(`pause-all-${name}-disk-`, extra);
+      const before = fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8");
+      const kills = stubPortableInterruptKill();
+      onlyAsyncDir(asyncDir);
+      const result = handlePauseAllShortcut(state, pauseCtx());
+      assert.equal(result.message, "No running subagent work to pause.");
+      assertUntouched(asyncDir, kills, before);
+    });
+
+    it(`never interrupts a same-cwd ${name} tracked job`, () => {
+      const state = makeSubagentState();
+      state.currentSessionId = "current-session";
+      state.baseCwd = process.cwd();
+      const asyncDir = diskRun(`pause-all-${name}-tracked-`, extra);
+      const before = fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8");
+      state.asyncJobs.set(path.basename(asyncDir), {
+        asyncId: path.basename(asyncDir),
+        asyncDir,
+        status: "running",
+        mode: "single",
+        agents: ["worker"],
+      });
+      const kills = stubPortableInterruptKill();
+      onlyAsyncDir(asyncDir);
+      const result = handlePauseAllShortcut(state, pauseCtx());
+      assert.equal(result.message, "No running subagent work to pause.");
+      assertUntouched(asyncDir, kills, before);
+    });
+  }
+
+  it("interrupts nothing when the caller session id is unavailable", () => {
+    const state = makeSubagentState();
+    state.currentSessionId = "current-session";
+    const asyncDir = diskRun("pause-all-null-caller-", { sessionId: "current-session" });
+    const tracked = diskRun("pause-all-null-caller-tracked-", { sessionId: "current-session" });
+    state.asyncJobs.set(path.basename(tracked), {
+      asyncId: path.basename(tracked),
+      asyncDir: tracked,
+      status: "running",
+      mode: "single",
+      agents: ["worker"],
+    });
+    const before = fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8");
+    const kills = stubPortableInterruptKill();
+    onlyAsyncDir(asyncDir);
+    for (const ctx of [pauseCtx(null), { hasUI: false } as never]) {
+      const result = handlePauseAllShortcut(state, ctx);
+      assert.equal(result.message, "No running subagent work to pause.");
+    }
+    assertUntouched(asyncDir, kills, before);
+    assert.equal(fs.existsSync(interruptRequestPath(tracked)), false);
   });
 });
