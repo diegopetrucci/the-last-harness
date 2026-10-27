@@ -255,12 +255,27 @@ describe("result watcher", () => {
         "utf8",
       );
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    /** Poll a condition with short real-time waits; fail with a clear message on timeout. */
+    const waitFor = async (predicate: () => boolean, description: string, timeoutMs = 5000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (!predicate()) {
+        if (Date.now() > deadline) {
+          assert.fail(`Timed out after ${timeoutMs}ms waiting for ${description}`);
+        }
+        await sleep(10);
+      }
+    };
 
     it("never creates a claim for an artifact owned by another session", async () => {
       const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-result-watcher-noclaim-"));
       const claimOpens: string[] = [];
+      const resultReads: string[] = [];
       const fsProxy = {
         ...fs,
+        readFileSync: ((p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+          resultReads.push(String(p));
+          return (fs.readFileSync as (...a: unknown[]) => string)(p, ...rest);
+        }) as typeof fs.readFileSync,
         openSync: ((p: fs.PathLike, ...rest: unknown[]) => {
           claimOpens.push(String(p));
           return (fs.openSync as (...a: unknown[]) => number)(p, ...rest);
@@ -274,7 +289,10 @@ describe("result watcher", () => {
       try {
         writeResult(resultPath, "session-owner");
         watcher.primeExistingResults();
-        await sleep(300);
+        await waitFor(
+          () => resultReads.some((p) => p === resultPath),
+          "a pre-claim read of the foreign result artifact",
+        );
         assert.deepEqual(claimOpens, []);
         assert.equal(foreign.emitted.length, 0);
         assert.equal(fs.existsSync(resultPath), true);
@@ -303,11 +321,12 @@ describe("result watcher", () => {
         clearInterval: (() => {}) as typeof clearInterval,
       };
       /** Fire every live (not cleared, not yet fired) retry timer, then let the coalescer run. */
-      const fireLive = async () => {
+      const fireLive = async (settled?: () => boolean, description = "retry outcome") => {
         const live = pending.filter((entry) => !cleared.has(entry.handle));
         pending.length = 0;
         for (const entry of live) entry.callback();
-        await sleep(150);
+        if (settled) await waitFor(settled, description);
+        else await sleep(50);
       };
       const liveCount = () => pending.filter((entry) => !cleared.has(entry.handle)).length;
       return { timers, fireLive, liveCount };
@@ -326,17 +345,16 @@ describe("result watcher", () => {
         writeResult(resultPath, "session-owner");
         fs.writeFileSync(claimPath, "foreign claim", "utf8");
         watcher.primeExistingResults();
-        await sleep(150);
+        await waitFor(() => manual.liveCount() === 1, "contended claim to schedule one retry");
         assert.equal(owner.emitted.length, 0);
         assert.equal(fs.existsSync(resultPath), true);
         assert.equal(manual.liveCount(), 1, "contended claim should schedule one retry");
         // Foreign watcher releases on session mismatch; no further .json event.
         fs.unlinkSync(claimPath);
-        await manual.fireLive();
-        assert.equal(owner.emitted.length, 1);
+        await manual.fireLive(() => owner.emitted.length === 1, "retry to deliver the result");
         assert.equal(fs.existsSync(resultPath), false);
         assert.equal(fs.existsSync(claimPath), false);
-        await manual.fireLive();
+        assert.equal(manual.liveCount(), 0, "no further retry after delivery");
         assert.equal(owner.emitted.length, 1);
       } finally {
         watcher.stopResultWatcher();
@@ -357,7 +375,7 @@ describe("result watcher", () => {
         writeResult(resultPath, "session-owner");
         fs.writeFileSync(claimPath, "foreign claim", "utf8");
         watcher.primeExistingResults();
-        await sleep(150);
+        await waitFor(() => manual.liveCount() === 1, "contended claim to schedule one retry");
         assert.equal(owner.emitted.length, 0);
         assert.equal(manual.liveCount(), 1, "contended claim should schedule one retry");
         fs.unlinkSync(resultPath);
