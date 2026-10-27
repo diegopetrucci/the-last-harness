@@ -443,17 +443,21 @@ export function runPiStreaming(
       if (processCleanup) return Promise.resolve(processCleanup);
       if (cleanupPromise) return cleanupPromise;
       cleanupPromise = (async () => {
-        processCleanup = processGroupId
-          ? await cleanupOwnedProcessGroup(processGroupId, {
-              owner: processGroupOwner,
-              ...(firstSignal === "SIGTERM" ? { firstSignal } : {}),
-            })
-          : skipOwnedProcessGroupCleanup(
-              ownsProcessGroup ? "process_group_unavailable" : "unsupported_platform",
-              processGroupId,
-              ownsProcessGroup,
-            );
-        return processCleanup;
+        try {
+          processCleanup = processGroupId
+            ? await cleanupOwnedProcessGroup(processGroupId, {
+                owner: processGroupOwner,
+                ...(firstSignal === "SIGTERM" ? { firstSignal } : {}),
+              })
+            : skipOwnedProcessGroupCleanup(
+                ownsProcessGroup ? "process_group_unavailable" : "unsupported_platform",
+                processGroupId,
+                ownsProcessGroup,
+              );
+          return processCleanup;
+        } finally {
+          if (processGroupId && !runnerTerminating) liveChildGroups.delete(processGroupId);
+        }
       })();
       return cleanupPromise;
     };
@@ -680,10 +684,10 @@ export function runPiStreaming(
     }
     child.on("exit", (exitCode, signal) => {
       processGroupOwner?.observeExit(child.pid);
-      // While the runner is terminating, the group stays tracked until a
-      // group-level probe proves it gone: the leader exiting says nothing about
-      // descendants that ignored SIGTERM.
-      if (processGroupId && !runnerTerminating) liveChildGroups.delete(processGroupId);
+      // The group stays tracked after the leader exits: the leader exiting says
+      // nothing about descendants that ignored SIGTERM. It is released once
+      // post-exit cleanup settles (see resolveProcessCleanup); while the runner
+      // is terminating, only a group-level probe proving it gone releases it.
       if (runnerTerminating) return;
       childExited = true;
       exitCodeFromExit = exitCode;

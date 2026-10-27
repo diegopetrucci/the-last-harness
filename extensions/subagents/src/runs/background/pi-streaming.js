@@ -279,13 +279,19 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             if (cleanupPromise)
                 return cleanupPromise;
             cleanupPromise = (async () => {
-                processCleanup = processGroupId
-                    ? await cleanupOwnedProcessGroup(processGroupId, {
-                        owner: processGroupOwner,
-                        ...(firstSignal === "SIGTERM" ? { firstSignal } : {}),
-                    })
-                    : skipOwnedProcessGroupCleanup(ownsProcessGroup ? "process_group_unavailable" : "unsupported_platform", processGroupId, ownsProcessGroup);
-                return processCleanup;
+                try {
+                    processCleanup = processGroupId
+                        ? await cleanupOwnedProcessGroup(processGroupId, {
+                            owner: processGroupOwner,
+                            ...(firstSignal === "SIGTERM" ? { firstSignal } : {}),
+                        })
+                        : skipOwnedProcessGroupCleanup(ownsProcessGroup ? "process_group_unavailable" : "unsupported_platform", processGroupId, ownsProcessGroup);
+                    return processCleanup;
+                }
+                finally {
+                    if (processGroupId && !runnerTerminating)
+                        liveChildGroups.delete(processGroupId);
+                }
             })();
             return cleanupPromise;
         };
@@ -514,8 +520,6 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
         }
         child.on("exit", (exitCode, signal) => {
             processGroupOwner?.observeExit(child.pid);
-            if (processGroupId && !runnerTerminating)
-                liveChildGroups.delete(processGroupId);
             if (runnerTerminating)
                 return;
             childExited = true;

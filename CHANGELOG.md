@@ -27,6 +27,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Subagent runners now keep a child's process group tracked until post-exit cleanup settles, so an abort after the leader exits no longer leaves SIGINT/SIGTERM-ignoring descendants alive (#828).
 - Async subagent completions are no longer stranded when another tlh session's result watcher briefly holds the shared result claim: foreign-session watchers skip artifacts they do not own, and the owner retries a contended claim. (#851)
 - Awaited (default) subagent runs no longer appear a second time in the async subagent widget; only detached async runs are listed there (#848).
 - Explicit subagent interrupt, steer, resume, and status by id now require the owning parent session and fail closed; id-prefix lookup and interrupt-all are scoped to the caller's own runs (#826).
