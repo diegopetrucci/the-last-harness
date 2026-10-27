@@ -27,6 +27,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Async subagent completions are no longer stranded when another tlh session's result watcher briefly holds the shared result claim: foreign-session watchers skip artifacts they do not own, and the owner retries a contended claim. (#851)
 - Awaited (default) subagent runs no longer appear a second time in the async subagent widget; only detached async runs are listed there (#848).
 - Explicit subagent interrupt, steer, resume, and status by id now require the owning parent session and fail closed; id-prefix lookup and interrupt-all are scoped to the caller's own runs (#826).
 - Aborting an awaited subagent right after it starts could leave its run permanently `running`; the runner now installs its signal handler before its first status write.
