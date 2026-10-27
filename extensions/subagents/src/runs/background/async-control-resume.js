@@ -10,6 +10,7 @@ import { UNCHANGED_SUPERVISOR_RESUME_MESSAGE } from "../../shared/pause-messages
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 import { resolveControlConfig } from "../shared/subagent-control.js";
 import { canonicalSubagentModelIdentity, modelReferenceFromIdentity, } from "../shared/model-fallback.js";
+import { detachedWorkAllowed } from "../../shared/bench-scb-foreground.js";
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.js";
 import { buildRevivedAsyncTask, continuationResumeBlock, readPersistedResultOwner, resolveAsyncResumeTarget, resolveAsyncRunLocation, resolvePersistedOwner, } from "../background/async-resume.js";
 import { advanceLifecycleContinuation, checkPidLiveness, lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
@@ -749,6 +750,18 @@ export async function resumeAsyncRun(input) {
         };
     }
     const { modelContextWindow } = contextPolicy;
+    if (!detachedWorkAllowed()) {
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Resuming '${target.runId}' is disabled on this branch because it would launch detached background work. Dispatch a fresh awaited subagent run instead (include the needed context in its task).`,
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    }
     const continuationRunId = randomUUID().slice(0, 8);
     let claimedPause;
     try {

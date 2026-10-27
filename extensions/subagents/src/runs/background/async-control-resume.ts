@@ -22,6 +22,7 @@ import {
   canonicalSubagentModelIdentity,
   modelReferenceFromIdentity,
 } from "../shared/model-fallback.ts";
+import { detachedWorkAllowed } from "../../shared/bench-scb-foreground.ts";
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.ts";
 import {
   buildRevivedAsyncTask,
@@ -1046,6 +1047,22 @@ export async function resumeAsyncRun(input: {
     };
   }
   const { modelContextWindow } = contextPolicy;
+
+  // bench/scb-only: durable resume would launch a detached child that outlives
+  // the one-shot parent process. Fail closed before any claim or spawn; the
+  // caller must redispatch a fresh (awaited) run instead.
+  if (!detachedWorkAllowed()) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Resuming '${target.runId}' is disabled on this branch because it would launch detached background work. Dispatch a fresh awaited subagent run instead (include the needed context in its task).`,
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
 
   const continuationRunId = randomUUID().slice(0, 8);
   let claimedPause: PausedContinuationClaim | undefined;

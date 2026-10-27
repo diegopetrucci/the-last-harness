@@ -213,6 +213,7 @@ extensions/subagents/src/runs/shared/subagent-control.js linguist-generated=true
 extensions/subagents/src/runs/shared/subagent-prompt-runtime.js linguist-generated=true
 extensions/subagents/src/runs/shared/ticket-context.js linguist-generated=true
 extensions/subagents/src/runs/shared/tk-ticket.js linguist-generated=true
+extensions/subagents/src/shared/bench-scb-foreground.js linguist-generated=true
 extensions/subagents/src/shared/artifacts.js linguist-generated=true
 extensions/subagents/src/shared/atomic-json.js linguist-generated=true
 extensions/subagents/src/shared/child-location.js linguist-generated=true

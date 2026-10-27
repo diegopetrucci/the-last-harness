@@ -48,6 +48,7 @@ import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.ts";
 import type { ModelScopeConfig, ModelSource } from "../runs/shared/model-scope.ts";
 import { retiredNestedLaunchError } from "../runs/shared/pi-args.ts";
 import { normalizeSkillInput } from "../agents/skills.ts";
+import { detachedWorkAllowed } from "../shared/bench-scb-foreground.ts";
 import {
   executeAsyncParallel,
   executeAsyncSingle,
@@ -846,6 +847,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         paramsWithResolvedCwd,
         unsupportedSavedChainDetail,
       ) as SubagentToolResult<Details>;
+    // bench/scb-only: detached (async:true) dispatch would outlive the one-shot parent.
+    if (paramsWithResolvedCwd.async === true && !detachedWorkAllowed()) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "async:true is disabled on this branch because detached background runs outlive the parent process. Omit async to run the subagent awaited (foreground).",
+          },
+        ],
+        isError: true,
+        details: { mode: "management" as const, results: [] },
+      };
+    }
     const action = paramsWithResolvedCwd.action;
     if (action) {
       if (action === "doctor")

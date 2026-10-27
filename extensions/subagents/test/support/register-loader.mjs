@@ -20,3 +20,8 @@ registerHooks({ resolve });
 // Isolate test runs onto a per-process temp root (issue #45). Shared with
 // unit tests via isolate-temp-root.mjs.
 import "./isolate-temp-root.mjs";
+
+// bench/scb: detached launches are rejected in production; legacy tests that
+// exercise the detached machinery opt back in. Tests of the rejection itself
+// delete this variable.
+process.env.TLH_BENCH_SCB_ALLOW_DETACHED ??= "1";

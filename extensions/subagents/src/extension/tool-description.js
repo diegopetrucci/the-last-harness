@@ -7,7 +7,7 @@ EXECUTION
 • PARALLEL: { tasks:[{ agent, task, ticket?, cwd?, output?, outputMode?, model? }, ...] }.
 • ticket is an optional ticket ID. TLH runs tk show <id> in the effective task cwd before launch, injects the exact body under ## Ticket <id>, and records only the ID in status/results.
 • Sync (default): the parent awaits the run and receives its terminal result; ordinary single/parallel calls use the TLH-tracked awaited runner.
-• Optional execution fields: async:true, cwd, artifacts. async:true keeps the detached background behavior.
+• Optional execution fields: async:true, cwd, artifacts. async:true is rejected on this branch (foreground-only).
 • artifacts controls whether per-child run artifacts are written; diagnostic detail is profile-configured.
 
 OUTPUT / MODELS
@@ -22,7 +22,7 @@ ACTIONS
 • Paused-awaiting-supervisor status reports that no child process is running and gives exact unchanged resume, guided resume, and cancel commands.
 
 ASYNC / SAFETY
-• async:true launches detached background work. Do not sleep or poll just to wait; continue useful work or let completion notifications arrive.
+• async:true is rejected on this branch; resume of paused/finished runs is disabled (redispatch fresh). Do not sleep or poll just to wait; continue useful work or let completion notifications arrive.
 • Subagents cannot spawn subagents. Subagent processes do not have orchestrator capability.
 • Keep one writer per cwd; use fresh read-only review when needed, then have the parent apply edits.
 • Async status/artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and { action:"status", id:"..." }.`;

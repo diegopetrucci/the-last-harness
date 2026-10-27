@@ -13,6 +13,7 @@ export { buildResumeModelResolution, normalizeProjectAgentAccess, requestInterru
 import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.js";
 import { retiredNestedLaunchError } from "../runs/shared/pi-args.js";
 import { normalizeSkillInput } from "../agents/skills.js";
+import { detachedWorkAllowed } from "../shared/bench-scb-foreground.js";
 import { executeAsyncParallel, executeAsyncSingle, isAsyncAvailable, } from "../runs/background/async-execution.js";
 import { resolveCurrentSessionId, resolveProjectAgentSessionId, } from "../shared/session-identity.js";
 import { resolveControlConfig } from "../runs/shared/subagent-control.js";
@@ -616,6 +617,18 @@ export function createSubagentExecutor(deps) {
         const unsupportedSavedChainDetail = unsupportedSavedChainInput(paramsWithResolvedCwd);
         if (unsupportedSavedChainDetail)
             return unsupportedSavedChainInputResult(paramsWithResolvedCwd, unsupportedSavedChainDetail);
+        if (paramsWithResolvedCwd.async === true && !detachedWorkAllowed()) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: "async:true is disabled on this branch because detached background runs outlive the parent process. Omit async to run the subagent awaited (foreground).",
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
+        }
         const action = paramsWithResolvedCwd.action;
         if (action) {
             if (action === "doctor")
