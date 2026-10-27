@@ -291,7 +291,7 @@ test("initial async single dispatch uses the capture seam without launching a de
   });
   writeTestVisibilitySettings(fixture);
 
-  await withEnv(testEnv(fixture), async () => {
+  await withEnv({ ...testEnv(fixture), TLH_BENCH_SCB_ALLOW_DETACHED: "1" }, async () => {
     installTlhModelVisibilityFilter();
     const { runtime, registry, cleanup } = await createModelRegistry();
     t.after(cleanup);

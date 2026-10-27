@@ -407,48 +407,51 @@ test("embedded subagents: rush resume/steer is enforced by the executor per exac
   );
   const { owner, embeddedStep, writeRun } = rushRunFixture(t, fixture);
 
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const { applySessionStart, toolCall } = registerRuntimeHarness({
-      primaryAgents: selectablePrimaryAgents(),
-      subagentMetadata: [],
-    });
-    const hookCtx = createToolCallContext(
-      [
-        {
-          type: "custom",
-          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-          data: { selected: "rush" },
-        },
-      ],
-      undefined,
-      { cwd: fixture.cwd },
-    );
-    await applySessionStart(hookCtx);
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TLH_BENCH_SCB_ALLOW_DETACHED: "1" },
+    async () => {
+      const { applySessionStart, toolCall } = registerRuntimeHarness({
+        primaryAgents: selectablePrimaryAgents(),
+        subagentMetadata: [],
+      });
+      const hookCtx = createToolCallContext(
+        [
+          {
+            type: "custom",
+            customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+            data: { selected: "rush" },
+          },
+        ],
+        undefined,
+        { cwd: fixture.cwd },
+      );
+      await applySessionStart(hookCtx);
 
-    const { call, dispatched } = rushExecutorCaller({ fixture, owner, toolCall, hookCtx });
-    for (const action of ["resume", "steer"]) {
-      const state = action === "resume" ? "complete" : "running";
-      const reason = new RegExp(`Rush may not use subagent action=${action}`);
-      const base = { action, message: "Go." };
-      const before = dispatched.length;
-      const blocked = async (runId, extra = {}, anyRejection = false) => {
-        const result = await call({ ...base, id: runId, ...extra });
-        assert.equal(result.isError, true, `${action} ${runId}`);
-        if (!anyRejection) assert.match(result.content[0]?.text ?? "", reason);
-      };
-      await blocked(writeRun(state, [{ agent: "developer" }]));
-      const mixed = writeRun(state, [{ agent: "developer" }, embeddedStep]);
-      await blocked(mixed, { index: 0 });
-      await blocked(mixed, {}, action === "resume");
-      await blocked("missing-run-1", {}, true);
-      assert.equal(dispatched.length, before, `${action} dispatched nothing while blocked`);
+      const { call, dispatched } = rushExecutorCaller({ fixture, owner, toolCall, hookCtx });
+      for (const action of ["resume", "steer"]) {
+        const state = action === "resume" ? "complete" : "running";
+        const reason = new RegExp(`Rush may not use subagent action=${action}`);
+        const base = { action, message: "Go." };
+        const before = dispatched.length;
+        const blocked = async (runId, extra = {}, anyRejection = false) => {
+          const result = await call({ ...base, id: runId, ...extra });
+          assert.equal(result.isError, true, `${action} ${runId}`);
+          if (!anyRejection) assert.match(result.content[0]?.text ?? "", reason);
+        };
+        await blocked(writeRun(state, [{ agent: "developer" }]));
+        const mixed = writeRun(state, [{ agent: "developer" }, embeddedStep]);
+        await blocked(mixed, { index: 0 });
+        await blocked(mixed, {}, action === "resume");
+        await blocked("missing-run-1", {}, true);
+        assert.equal(dispatched.length, before, `${action} dispatched nothing while blocked`);
 
-      const allowed = await call({ ...base, id: writeRun(state, [embeddedStep]) });
-      assert.equal(allowed.isError, undefined, allowed.content[0]?.text);
-      const mixedAllowed = await call({ ...base, id: mixed, index: 1 });
-      assert.equal(mixedAllowed.isError, undefined, mixedAllowed.content[0]?.text);
-    }
-  });
+        const allowed = await call({ ...base, id: writeRun(state, [embeddedStep]) });
+        assert.equal(allowed.isError, undefined, allowed.content[0]?.text);
+        const mixedAllowed = await call({ ...base, id: mixed, index: 1 });
+        assert.equal(mixedAllowed.isError, undefined, mixedAllowed.content[0]?.text);
+      }
+    },
+  );
 });
 
 test("embedded subagents: rush hook backstop blocks resume/steer unless the bridge reports the restriction", async (t) => {

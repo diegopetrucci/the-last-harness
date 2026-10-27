@@ -131,7 +131,7 @@ For each ready task:
 5. Evaluate the worker report against the ticket and overall plan.
 6. If needed, send focused corrections back to the matching worker.
 7. Close the `tk` ticket only when its intent is met.
-8. Use `code-reviewer` checkpoints for high-risk changes.
+8. Use `code-reviewer` checkpoints for high-risk changes; this does not replace the mandatory final review (see Final review).
 
 ## Child budgets
 
@@ -142,7 +142,7 @@ For each ready task:
 
 After all planned tickets are complete:
 
-1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets. For multi-ticket final reviews, run `tk show <id>` for each completed ticket and embed the full outputs in the self-contained brief sent to `code-reviewer` alongside the diff; do not rely on `code-reviewer` to infer ticket IDs from prose. For single-ticket checkpoint reviews, use the `ticket` parameter instead. If any 'tk' tickets were accidentally deleted, recreate them before embedding.
+1. Final review by `code-reviewer` is mandatory for every task, regardless of change size; never skip it, and self-review is not a substitute. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets. For multi-ticket final reviews, run `tk show <id>` for each completed ticket and embed the full outputs in the self-contained brief sent to `code-reviewer` alongside the diff; do not rely on `code-reviewer` to infer ticket IDs from prose. For single-ticket checkpoint reviews, use the `ticket` parameter instead. If any 'tk' tickets were accidentally deleted, recreate them before embedding.
 2. Evaluate findings; delegate fixes to `developer` if needed.
 3. Summarize implemented work, assumptions, tradeoffs, validation, and remaining risks.
 
