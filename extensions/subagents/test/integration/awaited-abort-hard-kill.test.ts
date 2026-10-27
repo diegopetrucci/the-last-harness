@@ -165,4 +165,88 @@ describe("awaited abort hard-kill", () => {
       "descendants must be SIGKILLed within the cleanup bound",
     );
   });
+
+  function isAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function waitForLeaderExit(leaderPid: number): Promise<void> {
+    const deadline = Date.now() + 15_000;
+    while (isAlive(leaderPid)) {
+      if (Date.now() > deadline) throw new Error("leader did not exit normally");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  function killQuietly(pids: number[]): void {
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        void 0;
+      }
+    }
+  }
+
+  it("SIGKILLs stubborn descendants when aborted after the leader exited normally (#828)", async () => {
+    const id = `awaited-abort-after-exit-${Date.now().toString(36)}`;
+    const bus = createEventBus();
+    const controller = new AbortController();
+    mockPi.onCall({ output: "leader exits normally", spawnStubbornDescendants: true });
+
+    const pending = executeAsyncSingle(
+      id,
+      singleParams(bus, tempDir, id, { signal: controller.signal }),
+    );
+    let pids: number[] = [];
+    try {
+      await waitForMockPiCall(mockPi, 0);
+      const leaderPid = startedMockPiPids(mockPi)[0]!;
+      const { childPid, grandchildPid } = JSON.parse(
+        fs.readFileSync(path.join(mockPi.dir, `descendants-${leaderPid}.json`), "utf-8"),
+      ) as { childPid: number; grandchildPid: number };
+      pids = [childPid, grandchildPid];
+      await waitForLeaderExit(leaderPid);
+      assert.ok(pids.every(isAlive), "descendants must outlive the leader");
+      const abortedAt = Date.now();
+      controller.abort();
+      const result = await pending;
+      await waitForPidsToExit(pids, "stubborn descendants after normal leader exit");
+      assert.ok(
+        Date.now() - abortedAt < PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000,
+        "descendants must be SIGKILLed within the cleanup bound",
+      );
+      assert.equal(result.details.results[0]?.terminationReason, "cancelled");
+    } finally {
+      killQuietly(pids);
+      await Promise.resolve(pending).catch(() => undefined);
+    }
+  });
+
+  it("cleans up stubborn descendants after a normal leader exit without abort", async () => {
+    const id = `awaited-no-abort-descendant-${Date.now().toString(36)}`;
+    const bus = createEventBus();
+    mockPi.onCall({ output: "leader exits normally", spawnStubbornDescendants: true });
+
+    const pending = executeAsyncSingle(id, singleParams(bus, tempDir, id));
+    let pids: number[] = [];
+    try {
+      await waitForMockPiCall(mockPi, 0);
+      const leaderPid = startedMockPiPids(mockPi)[0]!;
+      const { childPid, grandchildPid } = JSON.parse(
+        fs.readFileSync(path.join(mockPi.dir, `descendants-${leaderPid}.json`), "utf-8"),
+      ) as { childPid: number; grandchildPid: number };
+      pids = [childPid, grandchildPid];
+      await pending;
+      await waitForPidsToExit(pids, "stubborn descendants without abort");
+    } finally {
+      killQuietly(pids);
+      await Promise.resolve(pending).catch(() => undefined);
+    }
+  });
 });
