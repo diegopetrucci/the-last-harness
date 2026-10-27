@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
@@ -245,10 +246,15 @@ describe("no-pi-intercom regression guard", () => {
         sendMessage: () => {},
         getSessionName: () => "parent-session",
       };
-      const parentChannel = createNativeSupervisorChannel(
-        parentPi as never,
-        makeParentState(orchestratorSessionId, parentCtx),
-      );
+      const parentState = makeParentState(orchestratorSessionId, parentCtx);
+      // The channel only surfaces requests for runs the parent owns.
+      parentState.asyncJobs.set(runId, {
+        asyncId: runId,
+        asyncDir: path.join(os.tmpdir(), runId),
+        status: "running",
+        steps: [{ agent, status: "running" }],
+      } as never);
+      const parentChannel = createNativeSupervisorChannel(parentPi as never, parentState);
 
       try {
         parentChannel.start();

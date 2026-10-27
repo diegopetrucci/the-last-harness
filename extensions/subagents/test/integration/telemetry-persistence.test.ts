@@ -26,6 +26,13 @@ import type {
 import { buildCompletionDetails } from "../../src/runs/background/notify.ts";
 import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 const controls: ResolvedControlConfig = {
   enabled: true,
   needsAttentionAfterMs: 2_000,
@@ -155,8 +162,16 @@ describe("subagent telemetry persistence", () => {
       "foreground-telemetry",
       {
         tasks: [
-          { agent: "foreground-one", task: "Run the first foreground telemetry fixture." },
-          { agent: "foreground-two", task: "Run the second foreground telemetry fixture." },
+          {
+            agent: "foreground-one",
+            task: "Run the first foreground telemetry fixture.",
+            cwd: taskDir(tempDir, "one"),
+          },
+          {
+            agent: "foreground-two",
+            task: "Run the second foreground telemetry fixture.",
+            cwd: taskDir(tempDir, "two"),
+          },
         ],
       },
       new AbortController().signal,

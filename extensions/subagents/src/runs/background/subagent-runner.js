@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
+import { releaseWorkspaceReservationsForRun } from "../shared/workspace-reservation.js";
 import { stepSteerInboxDir } from "./control-channel.js";
 import { resolveArtifactConfig } from "../../shared/artifacts.js";
 import { DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput, } from "../../shared/types.js";
@@ -1282,6 +1283,7 @@ async function runSubagentWithInput(config, plan) {
         appendEvent,
         writeRunLog: (input) => writeRunLog(logPath, input),
     });
+    releaseWorkspaceReservationsForRun(id);
 }
 const configArg = process.argv[2];
 if (configArg) {

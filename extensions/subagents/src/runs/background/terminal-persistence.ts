@@ -21,6 +21,7 @@ import type {
   RunnerStatusStep,
 } from "./run-status-owner.ts";
 import { writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.ts";
+import { tryWriteTerminalRecordFromArtifact } from "./terminal-record.ts";
 
 /**
  * The detached runner's per-child result, kept separate from terminal writing.
@@ -487,6 +488,8 @@ function writeResultArtifact(
     ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
     ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
   };
+  // Durable record first: any delivered results-dir notification implies it exists.
+  tryWriteTerminalRecordFromArtifact(input.asyncDir, result);
   try {
     writeAtomicJson(input.resultPath, result);
   } catch (error) {
@@ -548,7 +551,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
   writeNormalizedLifecycleStatus(input.asyncDir, statusPayload);
   const agent = firstStep?.agent ?? "subagent";
   try {
-    writeAtomicJson(input.resultPath, {
+    const gateArtifact = {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id: input.config.id,
       generation: lifecycleGeneration(statusPayload),
@@ -576,7 +579,9 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
       asyncDir: input.asyncDir,
       sessionId: input.config.sessionId,
       ...(input.config.projectAgents ? { projectAgents: input.config.projectAgents } : {}),
-    } satisfies AsyncResultArtifact);
+    } satisfies AsyncResultArtifact;
+    tryWriteTerminalRecordFromArtifact(input.asyncDir, gateArtifact);
+    writeAtomicJson(input.resultPath, gateArtifact);
   } catch (error) {
     console.error(`Failed to write gate-rejection result file ${input.resultPath}:`, error);
   }

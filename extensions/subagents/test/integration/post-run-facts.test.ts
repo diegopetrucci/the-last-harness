@@ -220,11 +220,11 @@ describe("async post-run facts", () => {
         ],
       });
       const notification = formatSingleCompletion(notificationDetails);
-      assert.ok(
-        notification.indexOf("Facts:") > notification.indexOf("Output artifact:"),
-        "notification facts should follow the artifact path",
-      );
-      assert.match(notification, /tools=1\/1\/1/);
+      // Runtime-measured facts appear on the child line; no `Facts:` label or child text.
+      assert.match(notificationDetails.factsPreview ?? "", /tools=1\/1\/1/);
+      assert.match(notification, /^- #0 .*: (?:completed|failed) \| #1 .*tools=1\/1\/1/m);
+      assert.doesNotMatch(notification, /Facts:/);
+      assert.match(notification, /Output artifact:/);
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
       fs.rmSync(asyncDir, { recursive: true, force: true });

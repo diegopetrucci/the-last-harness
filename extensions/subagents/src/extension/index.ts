@@ -80,6 +80,7 @@ import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-c
 import registerSubagentNotify, {
   boundedReference,
   MAX_DISPLAY_SUMMARY_CHARS,
+  MAX_TOTAL_PREVIEW_CHARS,
   type SubagentNotifyDetails,
 } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
@@ -726,9 +727,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
           : undefined;
       const boundStructuredPreview = (value: unknown): string => {
         const preview = typeof value === "string" ? value : "(no output)";
-        return preview.length <= MAX_DISPLAY_SUMMARY_CHARS
+        // Structured previews are already bounded per child; this is only a ceiling.
+        return preview.length <= MAX_TOTAL_PREVIEW_CHARS
           ? preview
-          : `${preview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
+          : `${preview.slice(0, MAX_TOTAL_PREVIEW_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
       };
       const details = structuredDetails
         ? {

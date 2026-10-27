@@ -592,6 +592,15 @@ describe("terminal persistence", () => {
     assert.equal(artifact.timedOut, true);
     assert.equal(artifact.summary, timeoutError);
     assert.equal(artifact.error, timeoutError);
+    // The durable terminal record is written alongside (before) the notification file.
+    const record = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "terminal-record.json"), "utf8"),
+    ) as { state: string; children: Array<{ index: number; status: string }> };
+    assert.equal(record.state, "failed");
+    assert.deepEqual(
+      record.children.map((child) => child.status),
+      ["failed", "failed"],
+    );
     assert.deepEqual(
       artifact.results.map((result) => result.error),
       [ordinaryError, timeoutError],

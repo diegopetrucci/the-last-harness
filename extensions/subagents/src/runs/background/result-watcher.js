@@ -6,10 +6,12 @@ import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { isCompletedLifecycleState, isCompletedLifecycleStepState, lifecycleContinuationForIndex, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
+import { ensureTerminalRecordFromArtifact } from "./terminal-record.js";
 import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.js";
 import { claimResultArtifact, resultArtifactClaimCleanupDelayMs, RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS, } from "./result-artifact-consumer.js";
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
+const SAFETY_RESCAN_INTERVAL_MS = 20_000;
 const RESULT_RETRY_MAX_ATTEMPTS = RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS;
 function sanitizeResultChildren(value, resultPath) {
     if (!Array.isArray(value))
@@ -112,6 +114,7 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
     const fsApi = deps.fs ?? fs;
     const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
     let stopped = false;
+    let safetyRescanTimer;
     const resultRetryStates = new Map();
     const resultRetryDiagnostics = new Set();
     const claimCleanupTimers = new Map();
@@ -316,6 +319,13 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
                     resetResultRetry(resultPath);
                     return;
                 }
+                try {
+                    ensureTerminalRecordFromArtifact(data, runId);
+                }
+                catch (error) {
+                    diagnoseAndRetry(file, "persist terminal record for", error);
+                    return;
+                }
                 const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
                 const resultChildren = hasResultChildren
                     ? data.results
@@ -479,11 +489,22 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
         })
             .forEach((file) => state.resultFileCoalescer.schedule(file, 0));
     };
+    const clearSafetyRescan = () => {
+        if (safetyRescanTimer)
+            timers.clearInterval(safetyRescanTimer);
+        safetyRescanTimer = undefined;
+    };
+    const startSafetyRescan = () => {
+        clearSafetyRescan();
+        safetyRescanTimer = timers.setInterval(primeExistingResults, SAFETY_RESCAN_INTERVAL_MS);
+        safetyRescanTimer.unref?.();
+    };
     const startPollingFallback = (reason) => {
         if (stopped)
             return;
         state.watcher?.close();
         state.watcher = null;
+        clearSafetyRescan();
         if (state.watcherRestartTimer)
             return;
         console.error(`Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${getErrorCode(reason) ?? "unknown error"}).`);
@@ -547,9 +568,11 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
                 console.error(`Subagent result watcher failed for '${resultsDir}':`, error);
                 state.watcher?.close();
                 state.watcher = null;
+                clearSafetyRescan();
                 scheduleRestart();
             });
             state.watcher.unref?.();
+            startSafetyRescan();
         }
         catch (error) {
             if (stopped)
@@ -560,11 +583,13 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
             }
             console.error(`Failed to start subagent result watcher for '${resultsDir}':`, error);
             state.watcher = null;
+            clearSafetyRescan();
             scheduleRestart();
         }
     };
     const stopResultWatcher = () => {
         stopped = true;
+        clearSafetyRescan();
         state.watcher?.close();
         state.watcher = null;
         if (state.watcherRestartTimer) {

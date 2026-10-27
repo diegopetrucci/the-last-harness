@@ -12,6 +12,13 @@ import {
   asyncRunOwnerRejectionMessage,
   authorizeAsyncRunOwner,
 } from "../runs/background/async-owner-authorization.ts";
+import {
+  ensureTerminalRecord,
+  hasUnretrievedTerminalRecord,
+  markTerminalRecordRetrieved,
+} from "../runs/background/terminal-record.ts";
+import { formatTerminalRecordResult } from "../runs/background/result-action.ts";
+import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import { handleManagementAction } from "../agents/agent-management.ts";
 import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "./doctor.ts";
 import {
@@ -61,6 +68,7 @@ import { resolveControlConfig } from "../runs/shared/subagent-control.ts";
 
 import { normalizeSingleOutputOverride } from "../runs/shared/single-output.ts";
 import { readStatus, resolveChildCwd } from "../shared/utils.ts";
+import { acquireWorkspaceReservations } from "../runs/shared/workspace-reservation.ts";
 import {
   normalizeTicketId,
   readTicketBody,
@@ -408,6 +416,36 @@ async function runAsyncPath(
     };
   }
   const id = randomUUID();
+  const reservationRequests = hasTasks
+    ? (params.tasks ?? []).map((task, index) => ({
+        agent: task.agent,
+        childIndex: index,
+        cwd: resolveChildCwd(effectiveCwd, task.cwd),
+      }))
+    : params.agent
+      ? [{ agent: params.agent, childIndex: 0, cwd: effectiveCwd }]
+      : [];
+  /** Acquire writer reservations just before launch; conflicts return before any spawn. */
+  const reserved = (
+    launch: () => SubagentToolResult<Details> | Promise<SubagentToolResult<Details>>,
+  ): SubagentToolResult<Details> | Promise<SubagentToolResult<Details>> => {
+    const reservation = acquireWorkspaceReservations(
+      id,
+      deps.state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? null,
+      reservationRequests,
+    );
+    if (!reservation.ok) return toExecutionErrorResult(params, new Error(reservation.message));
+    let launched: SubagentToolResult<Details> | Promise<SubagentToolResult<Details>>;
+    try {
+      launched = launch();
+    } catch (error) {
+      reservation.release();
+      throw error;
+    }
+    if (launched instanceof Promise) return launched.finally(reservation.release);
+    if ((launched as SubagentToolResult<Details>).isError) reservation.release();
+    return launched;
+  };
   const asyncCtx = {
     pi: deps.pi,
     cwd: ctx.cwd,
@@ -420,6 +458,7 @@ async function runAsyncPath(
   const { availableModels } = modelRegistrySnapshot;
   const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
   if (hasTasks && params.tasks) {
+    const tasks = params.tasks;
     const agentConfigs = params.tasks.map((task) =>
       agents.find((agent) => agent.name === task.agent),
     );
@@ -451,30 +490,30 @@ async function runAsyncPath(
           : {}),
       ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
     }));
-    return (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
-      awaited,
-      signal: data.signal,
-      onUpdate: data.onUpdate,
-      tasks: parallelTasks,
-      concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
-      agents,
-      ctx: asyncCtx,
-      availableModels,
-      cwd: effectiveCwd,
-      maxOutput: params.maxOutput,
-      artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-      artifactConfig,
-      shareEnabled,
-      sessionRoot,
-      sessionFilesByFlatIndex: params.tasks.map((task, index) =>
-        sessionFileForTask(task.agent, index),
-      ),
-      maxSubagentDepth: currentMaxSubagentDepth,
-      controlConfig,
-      projectAgentIdentities: data.projectAgentIdentities,
-      ticketBodies,
-      ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
-    });
+    return reserved(() =>
+      (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
+        awaited,
+        signal: data.signal,
+        onUpdate: data.onUpdate,
+        tasks: parallelTasks,
+        concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
+        agents,
+        ctx: asyncCtx,
+        availableModels,
+        cwd: effectiveCwd,
+        maxOutput: params.maxOutput,
+        artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
+        artifactConfig,
+        shareEnabled,
+        sessionRoot,
+        sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index)),
+        maxSubagentDepth: currentMaxSubagentDepth,
+        controlConfig,
+        projectAgentIdentities: data.projectAgentIdentities,
+        ticketBodies,
+        ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
+      }),
+    );
   }
 
   if (hasSingle) {
@@ -504,40 +543,42 @@ async function runAsyncPath(
       },
     );
     const executeSingle = deps.executeAsyncSingle ?? executeAsyncSingle;
-    return executeSingle(id, {
-      awaited,
-      signal: data.signal,
-      onUpdate: data.onUpdate,
-      agent: params.agent!,
-      task: params.task ?? "",
-      ...(params.ticket ? { ticket: params.ticket } : {}),
-      ...(params.ticket && ticketBodies
-        ? { ticketBody: ticketBodies.get(ticketLookupKey(effectiveCwd, params.ticket)) }
-        : {}),
-      agentConfig: a,
-      ctx: asyncCtx,
-      availableModels,
-      cwd: effectiveCwd,
-      maxOutput: params.maxOutput,
-      artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-      artifactConfig,
-      shareEnabled,
-      sessionRoot,
-      sessionFile: sessionFileForTask(params.agent!, 0),
-      skills,
-      output: effectiveOutput,
-      outputMode: effectiveOutputMode,
-      outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, id),
-      modelOverride,
-      providerFallbackModels: providerFallbackModelsForTarget(params),
-      modelFallbackNotice: params.modelFallbackNotice,
-      maxSubagentDepth,
-      controlConfig,
-      projectAgent: data.projectAgentIdentities?.find(
-        (identity) => `embedded.${identity.slug}` === params.agent,
-      ),
-      ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
-    });
+    return reserved(() =>
+      executeSingle(id, {
+        awaited,
+        signal: data.signal,
+        onUpdate: data.onUpdate,
+        agent: params.agent!,
+        task: params.task ?? "",
+        ...(params.ticket ? { ticket: params.ticket } : {}),
+        ...(params.ticket && ticketBodies
+          ? { ticketBody: ticketBodies.get(ticketLookupKey(effectiveCwd, params.ticket)) }
+          : {}),
+        agentConfig: a,
+        ctx: asyncCtx,
+        availableModels,
+        cwd: effectiveCwd,
+        maxOutput: params.maxOutput,
+        artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
+        artifactConfig,
+        shareEnabled,
+        sessionRoot,
+        sessionFile: sessionFileForTask(params.agent!, 0),
+        skills,
+        output: effectiveOutput,
+        outputMode: effectiveOutputMode,
+        outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, id),
+        modelOverride,
+        providerFallbackModels: providerFallbackModelsForTarget(params),
+        modelFallbackNotice: params.modelFallbackNotice,
+        maxSubagentDepth,
+        controlConfig,
+        projectAgent: data.projectAgentIdentities?.find(
+          (identity) => `embedded.${identity.slug}` === params.agent,
+        ),
+        ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
+      }),
+    );
   }
 
   return null;
@@ -723,6 +764,74 @@ async function executeSteerAction(
   }
 }
 
+function executeResultAction(
+  params: SubagentParamsLike,
+  ctx: ExtensionContext,
+  deps: ExecutorDeps,
+): SubagentToolResult<Details> {
+  const callerKey = resolveCurrentSessionId(ctx.sessionManager);
+  deps.state.currentSessionId = callerKey;
+  if (params.dir) {
+    return projectManagementError(
+      "dir is no longer supported. Run directories are resolved internally; public dir selectors are no longer supported.",
+    );
+  }
+  if (!params.id) return projectManagementError("action='result' requires id.");
+  let resolved: ResolvedSubagentRunId | undefined;
+  try {
+    resolved = resolveSubagentRunId(params.id, { state: deps.state, callerKey });
+  } catch (error) {
+    return projectManagementError(error instanceof Error ? error.message : String(error));
+  }
+  if (resolved?.kind !== "async") {
+    return projectManagementError(`No async run found for '${params.id}'.`);
+  }
+  const ownerAuthorization = authorizeAsyncRunOwner({
+    callerKey,
+    runId: resolved.id,
+    ...(resolved.location.asyncDir ? { asyncDir: resolved.location.asyncDir } : {}),
+    ...(resolved.location.resultPath ? { resultPath: resolved.location.resultPath } : {}),
+  });
+  if (ownerAuthorization.outcome !== "owned")
+    return projectManagementError(
+      asyncRunOwnerRejectionMessage(ownerAuthorization, resolved.id, "retrieved"),
+    );
+  const asyncDir = resolved.location.asyncDir;
+  if (!asyncDir) {
+    return projectManagementError(
+      `Async run '${resolved.id}' has no durable run directory; its result cannot be retrieved.`,
+    );
+  }
+  try {
+    const status = reconcileAsyncRun(asyncDir, { kill: deps.kill }).status;
+    if (!status) {
+      return projectManagementError(`Async run '${resolved.id}' has no readable status.`);
+    }
+    const record = ensureTerminalRecord(asyncDir, status, { kill: deps.kill });
+    if (!record) {
+      return projectManagementError(
+        `Async run '${resolved.id}' is ${status.state} and has no final result yet. Use action='status' to check progress; results are available once it finishes.`,
+      );
+    }
+    if (params.index !== undefined && !record.children.some((c) => c.index === params.index)) {
+      return projectManagementError(
+        `Async run '${resolved.id}' has no child at index ${params.index} (children: ${record.children.length}).`,
+      );
+    }
+    const { text, indices } = formatTerminalRecordResult(record, params.index);
+    markTerminalRecordRetrieved(asyncDir, record, indices);
+    const remaining = hasUnretrievedTerminalRecord(asyncDir, record)
+      ? "\n\nSome children have not been retrieved yet; call action='result' without index for all."
+      : "";
+    return {
+      content: [{ type: "text", text: text + remaining }],
+      details: { mode: "management", results: [] },
+    };
+  } catch (error) {
+    return projectManagementErrorFrom(error);
+  }
+}
+
 function isPersistedCancellationState(status: AsyncStatus | null | undefined): boolean {
   const continuation = status?.lifecycle?.continuation;
   return (
@@ -864,6 +973,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         });
       }
       if (action === "steer") return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
+      if (action === "result") return executeResultAction(paramsWithResolvedCwd, ctx, deps);
       if (action === "interrupt") return executeInterruptAction(paramsWithResolvedCwd, ctx, deps);
       if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
         return {

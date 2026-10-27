@@ -33,6 +33,13 @@ import {
 } from "../support/native-result-lifecycle-fixtures.ts";
 import { scaleTestTimeout, type ScaledMs } from "../support/scale-timeout.ts";
 
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 describe("durable supervisor pause, continuation, and cancellation", () => {
   let tempDir: string;
   let mockPi: MockPi;
@@ -578,11 +585,21 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       "awaited-parallel-pause-original",
       {
         tasks: [
-          { agent: "done", task: "finish" },
-          { agent: "ask", task: "ask supervisor" },
-          { agent: "wait", task: "keep working", model: "anthropic/claude-sonnet-4" },
-          { agent: "started", task: "start late work", model: "openai/gpt-5-mini" },
-          { agent: "queued", task: "must not start" },
+          { agent: "done", task: "finish", cwd: taskDir(tempDir, "done") },
+          { agent: "ask", task: "ask supervisor", cwd: taskDir(tempDir, "ask") },
+          {
+            agent: "wait",
+            task: "keep working",
+            model: "anthropic/claude-sonnet-4",
+            cwd: taskDir(tempDir, "wait"),
+          },
+          {
+            agent: "started",
+            task: "start late work",
+            model: "openai/gpt-5-mini",
+            cwd: taskDir(tempDir, "started"),
+          },
+          { agent: "queued", task: "must not start", cwd: taskDir(tempDir, "queued") },
         ],
       },
       new AbortController().signal,

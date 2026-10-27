@@ -240,7 +240,8 @@ describe("result watcher to native notify", () => {
       await waitUntil(() => sent.length === 1);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
       assert.equal(sent.length, 1, "notify must project the watcher event exactly once");
-      assert.match(sent[0]!.content, /Summary:\n  failure summary/);
+      assert.doesNotMatch(sent[0]!.content, /failure summary|Summary:/);
+      assert.match(sent[0]!.content, /action: "result", id: "/);
       assert.doesNotMatch(sent[0]!.content, /raw body|private status/);
       assert.equal(fs.existsSync(resultPath), false);
     } finally {
@@ -267,7 +268,7 @@ describe("result watcher to native notify", () => {
       });
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.match(sent[0]!.content, /Summary:\n  share failed after completion/);
+      assert.doesNotMatch(sent[0]!.content, /share failed after completion/);
       assert.match(sent[0]!.content, /Session share error: share failed:/);
       assert.doesNotMatch(sent[0]!.content, /share-tail/);
       assert.equal(fs.existsSync(resultPath), false);
@@ -367,7 +368,11 @@ describe("result watcher to native notify", () => {
       });
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.match(sent[0]!.content, /recovered awaited result/);
+      assert.doesNotMatch(sent[0]!.content, /recovered awaited result/);
+      assert.match(
+        (sent[0]!.details as { resultPreview: string }).resultPreview,
+        /recovered awaited result/,
+      );
       assert.equal(wakes.length, 1);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
       assert.equal(fs.existsSync(resultPath), false);
@@ -745,8 +750,15 @@ describe("result watcher to native notify", () => {
         cases.length,
       );
       assert.equal(wakes.length, cases.length);
-      assert.match(sent[0]!.content, /stale runner repaired/);
-      assert.match(sent[1]!.content, /Async runner plan was missing/);
+      assert.match(
+        (sent[0]!.details as { resultPreview: string }).resultPreview,
+        /stale runner repaired/,
+      );
+      assert.doesNotMatch(sent[0]!.content, /stale runner repaired/);
+      assert.match(
+        (sent[1]!.details as { resultPreview: string }).resultPreview,
+        /Async runner plan was missing/,
+      );
     } finally {
       watcher.stopResultWatcher();
       for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
@@ -969,7 +981,11 @@ describe("result watcher to native notify", () => {
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
       assert.equal(claimFailures, 0);
-      assert.match(sent[0]!.content, /retried delivery/);
+      assert.match(
+        (sent[0]!.details as { resultPreview: string }).resultPreview,
+        /retried delivery/,
+      );
+      assert.doesNotMatch(sent[0]!.content, /retried delivery/);
       assert.equal(fs.existsSync(fixture.resultPath), false);
     } finally {
       watcher.stopResultWatcher();

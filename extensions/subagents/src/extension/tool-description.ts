@@ -17,7 +17,8 @@ OUTPUT / MODELS
 
 
 ACTIONS
-• Supported actions only: { action: "list" }, { action: "get", agent: "name" }, { action: "status", id?: "..." }, { action: "interrupt", id?: "..." }, { action: "resume", id: "...", message?: "...", index?: 0 }, { action: "steer", id: "...", message: "...", index?: 0 }, { action: "doctor" }.
+• Supported actions only: { action: "list" }, { action: "get", agent: "name" }, { action: "status", id?: "..." }, { action: "interrupt", id?: "..." }, { action: "resume", id: "...", message?: "...", index?: 0 }, { action: "steer", id: "...", message: "...", index?: 0 }, { action: "result", id: "...", index?: 0 }, { action: "doctor" }.
+• action="result" returns bounded per-child output for a finished run you own; each child is bounded independently and its artifact path holds the full output.
 • Paused-awaiting-supervisor status reports that no child process is running and gives exact unchanged resume, guided resume, and cancel commands.
 
 ASYNC / SAFETY

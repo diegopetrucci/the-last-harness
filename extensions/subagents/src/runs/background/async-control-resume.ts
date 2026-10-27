@@ -89,6 +89,7 @@ import {
   embeddedControlRestrictionError,
 } from "../shared/project-agent-control.ts";
 import type { ExecutorDeps, SubagentParamsLike } from "../shared/executor-types.ts";
+import { acquireWorkspaceReservations } from "../shared/workspace-reservation.ts";
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
 type ResumeSourceTarget = AsyncResumeSourceTarget;
 
@@ -1048,6 +1049,21 @@ export async function resumeAsyncRun(input: {
   const { modelContextWindow } = contextPolicy;
 
   const continuationRunId = randomUUID().slice(0, 8);
+  // Revival is a writer launch like any other: reserve before any claim mutation.
+  const reservation = acquireWorkspaceReservations(continuationRunId, callerKey, [
+    {
+      agent: target.agent,
+      childIndex: "index" in target ? (target.index ?? 0) : 0,
+      cwd: effectiveCwd,
+    },
+  ]);
+  if (!reservation.ok) {
+    return {
+      content: [{ type: "text", text: reservation.message }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
   let claimedPause: PausedContinuationClaim | undefined;
   try {
     const claimDecision = claimPausedAwaitingSupervisorTarget(
@@ -1058,6 +1074,7 @@ export async function resumeAsyncRun(input: {
       { kill: input.deps.kill },
     );
     if (claimDecision && "blockedMessage" in claimDecision) {
+      reservation.release();
       return {
         content: [{ type: "text", text: claimDecision.blockedMessage }],
         isError: true,
@@ -1066,6 +1083,7 @@ export async function resumeAsyncRun(input: {
     }
     claimedPause = claimDecision;
   } catch (error) {
+    reservation.release();
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text", text: message }],
@@ -1094,7 +1112,13 @@ export async function resumeAsyncRun(input: {
     continuationTelemetry.provenance ?? input.deps.telemetryProvenance;
   const continuationTelemetryLineage: SubagentTelemetryLineage | undefined =
     continuationTelemetry.lineage;
-  persistContinuationTelemetry(target, runId);
+  try {
+    persistContinuationTelemetry(target, runId);
+  } catch (error) {
+    reservation.release();
+    claimedPause?.rollbackReserved();
+    throw error;
+  }
   let result: {
     content: Array<{ type: "text"; text: string }>;
     details: Details;
@@ -1158,10 +1182,12 @@ export async function resumeAsyncRun(input: {
       ...(continuationTelemetryLineage ? { telemetryLineage: continuationTelemetryLineage } : {}),
     }) as typeof result;
   } catch (error) {
+    reservation.release();
     claimedPause?.rollbackReserved();
     throw error;
   }
   if (result.isError) {
+    reservation.release();
     claimedPause?.rollbackReserved();
     return result;
   }

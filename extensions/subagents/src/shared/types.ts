@@ -1009,6 +1009,7 @@ export const SUBAGENT_ACTIONS = [
   "interrupt",
   "resume",
   "steer",
+  "result",
   "doctor",
 ] as const;
 

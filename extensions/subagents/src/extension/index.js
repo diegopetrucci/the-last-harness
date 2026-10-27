@@ -23,7 +23,7 @@ import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { disposeAwaitedRuns } from "../runs/background/awaited-run-registry.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.js";
-import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
+import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, MAX_TOTAL_PREVIEW_CHARS, } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
@@ -484,9 +484,9 @@ export default function registerSubagentExtension(pi) {
             : undefined;
         const boundStructuredPreview = (value) => {
             const preview = typeof value === "string" ? value : "(no output)";
-            return preview.length <= MAX_DISPLAY_SUMMARY_CHARS
+            return preview.length <= MAX_TOTAL_PREVIEW_CHARS
                 ? preview
-                : `${preview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
+                : `${preview.slice(0, MAX_TOTAL_PREVIEW_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
         };
         const details = structuredDetails
             ? {

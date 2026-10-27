@@ -98,6 +98,7 @@ describe("SubagentParams schema", () => {
       "interrupt",
       "resume",
       "steer",
+      "result",
       "doctor",
     ]);
     const description = String(actionSchema.description ?? "");
@@ -433,7 +434,7 @@ describe("SubagentParams schema", () => {
     const actionEnum = getPropertySchema(schema, ["action"])?.enum;
     assert.deepEqual(
       actionEnum,
-      ["list", "get", "status", "interrupt", "resume", "steer", "doctor"],
+      ["list", "get", "status", "interrupt", "resume", "steer", "result", "doctor"],
       "action enum mismatch",
     );
     assert.equal(schema.additionalProperties, false, "root must have additionalProperties: false");

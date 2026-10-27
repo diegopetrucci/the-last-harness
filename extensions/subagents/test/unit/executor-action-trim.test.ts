@@ -21,7 +21,7 @@ import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/typ
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const EXPECTED_VALID = "list, get, status, interrupt, resume, steer, doctor";
+const EXPECTED_VALID = "list, get, status, interrupt, resume, steer, result, doctor";
 
 function createState(): SubagentState {
   return makeSubagentState({

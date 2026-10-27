@@ -4,6 +4,7 @@ import { lifecycleGeneration } from "../shared/lifecycle-state.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { resolveSubagentTelemetryOutcome, telemetryFromRunnerResults, } from "../../shared/telemetry.js";
 import { writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.js";
+import { tryWriteTerminalRecordFromArtifact } from "./terminal-record.js";
 export function buildPausedRunnerTelemetry(input) {
     const provenance = input.config.telemetry?.provenance;
     if (!provenance)
@@ -301,6 +302,7 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
         ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
         ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
     };
+    tryWriteTerminalRecordFromArtifact(input.asyncDir, result);
     try {
         writeAtomicJson(input.resultPath, result);
     }
@@ -359,7 +361,7 @@ export function persistContinuationGateRejection(input) {
     writeNormalizedLifecycleStatus(input.asyncDir, statusPayload);
     const agent = firstStep?.agent ?? "subagent";
     try {
-        writeAtomicJson(input.resultPath, {
+        const gateArtifact = {
             lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
             id: input.config.id,
             generation: lifecycleGeneration(statusPayload),
@@ -387,7 +389,9 @@ export function persistContinuationGateRejection(input) {
             asyncDir: input.asyncDir,
             sessionId: input.config.sessionId,
             ...(input.config.projectAgents ? { projectAgents: input.config.projectAgents } : {}),
-        });
+        };
+        tryWriteTerminalRecordFromArtifact(input.asyncDir, gateArtifact);
+        writeAtomicJson(input.resultPath, gateArtifact);
     }
     catch (error) {
         console.error(`Failed to write gate-rejection result file ${input.resultPath}:`, error);

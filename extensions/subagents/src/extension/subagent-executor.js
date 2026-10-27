@@ -5,6 +5,9 @@ import * as path from "node:path";
 import { getArtifactsDir, resolveArtifactConfig } from "../shared/artifacts.js";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.js";
 import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "../runs/background/async-owner-authorization.js";
+import { ensureTerminalRecord, hasUnretrievedTerminalRecord, markTerminalRecordRetrieved, } from "../runs/background/terminal-record.js";
+import { formatTerminalRecordResult } from "../runs/background/result-action.js";
+import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.js";
 import { handleManagementAction } from "../agents/agent-management.js";
 import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "./doctor.js";
 import { authorizeProjectInterruptTarget, authorizeProjectSteerTarget, buildManagementActionParams, buildRunStatusParams, buildResumeModelResolution, cancelPersistedPausedAsyncRun, getRequestedModeLabel, interruptAsyncRun, readModelRegistrySnapshot, requestInterruptAllRunningSubagentRuns, resolveSingleRunOutputBaseDir, selectInterruptTarget, steerAsyncRun, unknownAgentMessage, providerFallbackModelsForTarget, resumeAsyncRun, unsupportedSavedChainInput, unsupportedSavedChainInputResult, } from "../runs/shared/run-control.js";
@@ -18,6 +21,7 @@ import { resolveCurrentSessionId, resolveProjectAgentSessionId, } from "../share
 import { resolveControlConfig } from "../runs/shared/subagent-control.js";
 import { normalizeSingleOutputOverride } from "../runs/shared/single-output.js";
 import { readStatus, resolveChildCwd } from "../shared/utils.js";
+import { acquireWorkspaceReservations } from "../runs/shared/workspace-reservation.js";
 import { normalizeTicketId, readTicketBody, ticketLookupKey, } from "../runs/shared/ticket-context.js";
 import { resolveSubagentRunId, } from "../runs/background/run-id-resolver.js";
 import { inspectSubagentStatus } from "../runs/background/run-status.js";
@@ -259,6 +263,33 @@ async function runAsyncPath(data, deps) {
         };
     }
     const id = randomUUID();
+    const reservationRequests = hasTasks
+        ? (params.tasks ?? []).map((task, index) => ({
+            agent: task.agent,
+            childIndex: index,
+            cwd: resolveChildCwd(effectiveCwd, task.cwd),
+        }))
+        : params.agent
+            ? [{ agent: params.agent, childIndex: 0, cwd: effectiveCwd }]
+            : [];
+    const reserved = (launch) => {
+        const reservation = acquireWorkspaceReservations(id, deps.state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? null, reservationRequests);
+        if (!reservation.ok)
+            return toExecutionErrorResult(params, new Error(reservation.message));
+        let launched;
+        try {
+            launched = launch();
+        }
+        catch (error) {
+            reservation.release();
+            throw error;
+        }
+        if (launched instanceof Promise)
+            return launched.finally(reservation.release);
+        if (launched.isError)
+            reservation.release();
+        return launched;
+    };
     const asyncCtx = {
         pi: deps.pi,
         cwd: ctx.cwd,
@@ -271,6 +302,7 @@ async function runAsyncPath(data, deps) {
     const { availableModels } = modelRegistrySnapshot;
     const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
     if (hasTasks && params.tasks) {
+        const tasks = params.tasks;
         const agentConfigs = params.tasks.map((task) => agents.find((agent) => agent.name === task.agent));
         const modelSources = params.tasks.map((task) => modelSourceForTaskOverride(task.model));
         const modelOverrides = params.tasks.map((task, index) => resolveSubagentModelOverride(task.model ?? agentConfigs[index]?.model, ctx.model, {
@@ -298,7 +330,7 @@ async function runAsyncPath(data, deps) {
                     : {}),
             ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
         }));
-        return (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
+        return reserved(() => (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
             awaited,
             signal: data.signal,
             onUpdate: data.onUpdate,
@@ -313,13 +345,13 @@ async function runAsyncPath(data, deps) {
             artifactConfig,
             shareEnabled,
             sessionRoot,
-            sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index)),
+            sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index)),
             maxSubagentDepth: currentMaxSubagentDepth,
             controlConfig,
             projectAgentIdentities: data.projectAgentIdentities,
             ticketBodies,
             ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
-        });
+        }));
     }
     if (hasSingle) {
         const a = agents.find((x) => x.name === params.agent);
@@ -341,7 +373,7 @@ async function runAsyncPath(data, deps) {
             source: params.model ? "explicit" : "inherited",
         });
         const executeSingle = deps.executeAsyncSingle ?? executeAsyncSingle;
-        return executeSingle(id, {
+        return reserved(() => executeSingle(id, {
             awaited,
             signal: data.signal,
             onUpdate: data.onUpdate,
@@ -372,7 +404,7 @@ async function runAsyncPath(data, deps) {
             controlConfig,
             projectAgent: data.projectAgentIdentities?.find((identity) => `embedded.${identity.slug}` === params.agent),
             ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
-        });
+        }));
     }
     return null;
 }
@@ -533,6 +565,62 @@ async function executeSteerAction(params, ctx, deps) {
         return projectManagementErrorFrom(error);
     }
 }
+function executeResultAction(params, ctx, deps) {
+    const callerKey = resolveCurrentSessionId(ctx.sessionManager);
+    deps.state.currentSessionId = callerKey;
+    if (params.dir) {
+        return projectManagementError("dir is no longer supported. Run directories are resolved internally; public dir selectors are no longer supported.");
+    }
+    if (!params.id)
+        return projectManagementError("action='result' requires id.");
+    let resolved;
+    try {
+        resolved = resolveSubagentRunId(params.id, { state: deps.state, callerKey });
+    }
+    catch (error) {
+        return projectManagementError(error instanceof Error ? error.message : String(error));
+    }
+    if (resolved?.kind !== "async") {
+        return projectManagementError(`No async run found for '${params.id}'.`);
+    }
+    const ownerAuthorization = authorizeAsyncRunOwner({
+        callerKey,
+        runId: resolved.id,
+        ...(resolved.location.asyncDir ? { asyncDir: resolved.location.asyncDir } : {}),
+        ...(resolved.location.resultPath ? { resultPath: resolved.location.resultPath } : {}),
+    });
+    if (ownerAuthorization.outcome !== "owned")
+        return projectManagementError(asyncRunOwnerRejectionMessage(ownerAuthorization, resolved.id, "retrieved"));
+    const asyncDir = resolved.location.asyncDir;
+    if (!asyncDir) {
+        return projectManagementError(`Async run '${resolved.id}' has no durable run directory; its result cannot be retrieved.`);
+    }
+    try {
+        const status = reconcileAsyncRun(asyncDir, { kill: deps.kill }).status;
+        if (!status) {
+            return projectManagementError(`Async run '${resolved.id}' has no readable status.`);
+        }
+        const record = ensureTerminalRecord(asyncDir, status, { kill: deps.kill });
+        if (!record) {
+            return projectManagementError(`Async run '${resolved.id}' is ${status.state} and has no final result yet. Use action='status' to check progress; results are available once it finishes.`);
+        }
+        if (params.index !== undefined && !record.children.some((c) => c.index === params.index)) {
+            return projectManagementError(`Async run '${resolved.id}' has no child at index ${params.index} (children: ${record.children.length}).`);
+        }
+        const { text, indices } = formatTerminalRecordResult(record, params.index);
+        markTerminalRecordRetrieved(asyncDir, record, indices);
+        const remaining = hasUnretrievedTerminalRecord(asyncDir, record)
+            ? "\n\nSome children have not been retrieved yet; call action='result' without index for all."
+            : "";
+        return {
+            content: [{ type: "text", text: text + remaining }],
+            details: { mode: "management", results: [] },
+        };
+    }
+    catch (error) {
+        return projectManagementErrorFrom(error);
+    }
+}
 function isPersistedCancellationState(status) {
     const continuation = status?.lifecycle?.continuation;
     return (status?.state === "paused" ||
@@ -636,6 +724,8 @@ export function createSubagentExecutor(deps) {
             }
             if (action === "steer")
                 return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
+            if (action === "result")
+                return executeResultAction(paramsWithResolvedCwd, ctx, deps);
             if (action === "interrupt")
                 return executeInterruptAction(paramsWithResolvedCwd, ctx, deps);
             if (!SUBAGENT_ACTIONS.includes(action)) {

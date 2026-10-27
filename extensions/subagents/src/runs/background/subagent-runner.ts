@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { releaseWorkspaceReservationsForRun } from "../shared/workspace-reservation.ts";
 import { stepSteerInboxDir } from "./control-channel.ts";
 import { resolveArtifactConfig } from "../../shared/artifacts.ts";
 import {
@@ -1636,6 +1637,8 @@ async function runSubagentWithInput(
     appendEvent,
     writeRunLog: (input) => writeRunLog(logPath, input),
   });
+  // Terminal or durable pause: free this run's workspace writer reservations.
+  releaseWorkspaceReservationsForRun(id);
 }
 
 const configArg = process.argv[2];

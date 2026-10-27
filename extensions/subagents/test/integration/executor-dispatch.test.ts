@@ -28,6 +28,13 @@ import {
 import type { MockPi } from "../support/helpers.ts";
 import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 type DiscoverAgents = typeof discoverAgents;
 
 interface ExecutorResult {
@@ -780,12 +787,14 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     const binDir = path.join(ticketRoot, "bin");
     const firstCwd = path.join(ticketRoot, "first");
     const secondCwd = path.join(ticketRoot, "second");
+    const thirdCwd = path.join(ticketRoot, "third");
     const lookupLog = path.join(ticketRoot, "lookups.log");
     const previousPath = process.env.PATH;
     try {
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(firstCwd, { recursive: true });
       fs.mkdirSync(secondCwd, { recursive: true });
+      fs.mkdirSync(thirdCwd, { recursive: true });
       fs.writeFileSync(
         path.join(binDir, "tk"),
         `#!/usr/bin/env node
@@ -795,7 +804,7 @@ const expected = {
     { cwd: ${JSON.stringify(firstCwd)}, body: "# Count ticket\\n" },
     { cwd: ${JSON.stringify(secondCwd)}, body: "# Count ticket in a second cwd\\n" },
   ],
-  "tlhm-other": [{ cwd: ${JSON.stringify(firstCwd)}, body: "# Other ticket\\n" }],
+  "tlhm-other": [{ cwd: ${JSON.stringify(thirdCwd)}, body: "# Other ticket\\n" }],
 };
 const candidates = expected[process.argv[3]] ?? [];
 const ticket = candidates.find((candidate) => fs.realpathSync(process.cwd()) === fs.realpathSync(candidate.cwd));
@@ -819,7 +828,7 @@ process.stdout.write(ticket.body);
               ticket: "tlhm-count",
               cwd: secondCwd,
             },
-            { agent: "echo", task: "different ticket", ticket: "tlhm-other", cwd: firstCwd },
+            { agent: "echo", task: "different ticket", ticket: "tlhm-other", cwd: thirdCwd },
           ],
         },
         new AbortController().signal,
@@ -1003,9 +1012,10 @@ process.stdout.write(ticket.body);
       }).execute(
         testCase.name,
         {
-          tasks: Array.from({ length: testCase.count }, () => ({
+          tasks: Array.from({ length: testCase.count }, (_, index) => ({
             agent: "echo",
             task: "task one",
+            cwd: taskDir(tempDir, `bound-${index}`),
           })),
         },
         new AbortController().signal,
@@ -1045,9 +1055,9 @@ process.stdout.write(ticket.body);
         "id",
         {
           tasks: [
-            { agent: "echo", task: "task one" },
-            { agent: "second", task: "task two" },
-            { agent: "echo", task: "task three" },
+            { agent: "echo", task: "task one", cwd: taskDir(tempDir, `${testCase.name}-0`) },
+            { agent: "second", task: "task two", cwd: taskDir(tempDir, `${testCase.name}-1`) },
+            { agent: "echo", task: "task three", cwd: taskDir(tempDir, `${testCase.name}-2`) },
           ],
         },
         new AbortController().signal,
@@ -1074,8 +1084,8 @@ process.stdout.write(ticket.body);
       "id",
       {
         tasks: [
-          { agent: "echo", task: "task one" },
-          { agent: "second", task: "task two" },
+          { agent: "echo", task: "task one", cwd: taskDir(tempDir, "bg-one") },
+          { agent: "second", task: "task two", cwd: taskDir(tempDir, "bg-two") },
         ],
         async: true,
       },

@@ -192,6 +192,9 @@ extensions/subagents/src/runs/background/single-step-execution.js linguist-gener
 extensions/subagents/src/runs/background/stale-run-reconciler.js linguist-generated=true
 extensions/subagents/src/runs/background/subagent-runner.js linguist-generated=true
 extensions/subagents/src/runs/background/terminal-persistence.js linguist-generated=true
+extensions/subagents/src/runs/background/terminal-record.js linguist-generated=true
+extensions/subagents/src/runs/background/result-action.js linguist-generated=true
+extensions/subagents/src/runs/background/wake-message.js linguist-generated=true
 extensions/subagents/src/runs/shared/active-runtime.js linguist-generated=true
 extensions/subagents/src/runs/shared/child-protocol.js linguist-generated=true
 extensions/subagents/src/runs/shared/deadline-timer.js linguist-generated=true
@@ -213,6 +216,7 @@ extensions/subagents/src/runs/shared/subagent-control.js linguist-generated=true
 extensions/subagents/src/runs/shared/subagent-prompt-runtime.js linguist-generated=true
 extensions/subagents/src/runs/shared/ticket-context.js linguist-generated=true
 extensions/subagents/src/runs/shared/tk-ticket.js linguist-generated=true
+extensions/subagents/src/runs/shared/workspace-reservation.js linguist-generated=true
 extensions/subagents/src/shared/artifacts.js linguist-generated=true
 extensions/subagents/src/shared/atomic-json.js linguist-generated=true
 extensions/subagents/src/shared/child-location.js linguist-generated=true

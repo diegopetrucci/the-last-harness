@@ -19,6 +19,13 @@ import {
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
 
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 describe("native result grouping", () => {
   let tempDir: string;
   let mockPi: MockPi;
@@ -382,8 +389,8 @@ describe("native result grouping", () => {
       "parallel-native",
       {
         tasks: [
-          { agent: "a", task: "task-a" },
-          { agent: "b", task: "task-b" },
+          { agent: "a", task: "task-a", cwd: taskDir(tempDir, "a") },
+          { agent: "b", task: "task-b", cwd: taskDir(tempDir, "b") },
         ],
       },
       new AbortController().signal,
@@ -475,8 +482,8 @@ describe("native result grouping", () => {
       "parallel-mixed-native",
       {
         tasks: [
-          { agent: "a", task: "task-a" },
-          { agent: "b", task: "task-b" },
+          { agent: "a", task: "task-a", cwd: taskDir(tempDir, "a") },
+          { agent: "b", task: "task-b", cwd: taskDir(tempDir, "b") },
         ],
       },
       new AbortController().signal,

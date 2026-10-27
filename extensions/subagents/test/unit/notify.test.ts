@@ -32,10 +32,13 @@ describe("registerSubagentNotify", () => {
     });
 
     assert.equal(sentMessages.length, 1);
-    assert.match(
-      (sentMessages[0]!.message as { content: string }).content,
-      /Summary:\n  recoverable awaited result/,
-    );
+    const recovered = sentMessages[0]!.message as {
+      content: string;
+      details: { resultPreview: string };
+    };
+    assert.doesNotMatch(recovered.content, /recoverable awaited result/);
+    assert.match(recovered.content, /action: "result", id: "awaited-completion"/);
+    assert.equal(recovered.details.resultPreview, "recoverable awaited result");
     assert.equal(wakes.length, 1);
   });
 
@@ -95,7 +98,7 @@ describe("registerSubagentNotify", () => {
     };
     assert.equal(
       message.content,
-      "Background task completed: **worker**\n\nSummary:\n  (no output)\n\nAsync id: notify-empty-1",
+      'Background task completed: **worker**\n\nAsync id: notify-empty-1\nFetch output (bounded per child): subagent({ action: "result", id: "notify-empty-1" })',
     );
     assert.equal(message.details.resultPreview, "(no output)");
     assert.equal(wakes.length, 1);
@@ -122,7 +125,7 @@ describe("registerSubagentNotify", () => {
 
     const message = sentMessages[0]!.message as { content: string; details: unknown };
     assert.match(message.content, /^Background task completed: \*\*worker\*\* \(2\/3\)/);
-    assert.match(message.content, /Summary:\n  Done streaming\n  All clear/);
+    assert.doesNotMatch(message.content, /Done streaming|All clear|Summary:/);
     assert.doesNotMatch(message.content, /raw body|secret status/);
     assert.deepEqual(message.details, {
       agent: "worker",
@@ -154,7 +157,7 @@ describe("registerSubagentNotify", () => {
         sessionId: "session-1",
       });
       const content = (sentMessages[0]!.message as { content: string }).content;
-      assert.ok(content.indexOf("Summary:") < content.indexOf("Revive:"));
+      assert.ok(content.indexOf("Fetch output") < content.indexOf("Revive:"));
       assert.match(
         content,
         /Revive: subagent\(\{ action: "resume", id: "notify-event-1", message: "\.\.\." \}\)/,
@@ -177,7 +180,7 @@ describe("registerSubagentNotify", () => {
       timestamp: 100,
       terminalResult: terminalResult(),
     });
-    assert.doesNotMatch(formatSingleCompletion(topLevelDetails), /Facts:/);
+    assert.equal(topLevelDetails.factsPreview, undefined);
 
     const childDetails = buildCompletionDetails({
       id: "notify-child-facts",
@@ -195,9 +198,15 @@ describe("registerSubagentNotify", () => {
         },
       ],
     });
-    const childNotice = formatSingleCompletion(childDetails);
-    assert.ok(childNotice.indexOf("Output artifact:") < childNotice.indexOf("Facts:"));
-    assert.match(childNotice, /Facts: #1 exit=0, duration=12ms, tokens=\?, tools=1\/0\/2/);
+    // Runtime-measured facts ride on the child's own line in model-visible content.
+    assert.match(
+      childDetails.factsPreview ?? "",
+      /#1 exit=0, duration=12ms, tokens=\?, tools=1\/0\/2/,
+    );
+    assert.match(
+      formatSingleCompletion(childDetails),
+      /^- #0 worker: completed \| #1 exit=0, duration=12ms, tokens=\?, tools=1\/0\/2/m,
+    );
   });
 
   it("redacts protected paused lifecycle paths and raw child output", () => {
@@ -371,7 +380,7 @@ describe("registerSubagentNotify", () => {
     assert.equal(sentMessages.length, 1);
     assert.match(
       (sentMessages[0]!.message as { content: string }).content,
-      /^Background task failed: \*\*worker\*\*\n\nSummary:\n  child failed/,
+      /^Background task failed: \*\*worker\*\*\n\nAsync id: notify-failed-1\n/,
     );
     assert.equal(wakes.length, 1);
   });

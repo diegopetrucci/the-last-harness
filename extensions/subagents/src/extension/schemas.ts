@@ -94,21 +94,22 @@ const SubagentParamsSchema = Type.Object(
     ),
     action: Type.Optional(
       Type.String({
-        enum: ["list", "get", "status", "interrupt", "resume", "steer", "doctor"],
+        enum: ["list", "get", "status", "interrupt", "resume", "steer", "result", "doctor"],
         description:
-          "Management action. One of: list, get, status, interrupt, resume, steer, doctor. Omit for execution mode (single agent or parallel tasks).",
+          "Management action. One of: list, get, status, interrupt, resume, steer, result, doctor. Omit for execution mode (single agent or parallel tasks).",
       }),
     ),
     id: Type.Optional(
       Type.String({
         description:
-          "Run id or prefix for action='status', action='interrupt', action='resume', or action='steer', including durable paused-awaiting-supervisor runs.",
+          "Run id or prefix for action='status', action='interrupt', action='resume', action='steer', or action='result', including durable paused-awaiting-supervisor runs.",
       }),
     ),
     index: Type.Optional(
       Type.Integer({
         minimum: 0,
-        description: "Zero-based child index for actions that target a specific child.",
+        description:
+          "Zero-based child index for actions that target a specific child (action='result' returns only that child).",
       }),
     ),
     message: Type.Optional(

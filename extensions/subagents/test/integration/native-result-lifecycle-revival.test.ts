@@ -28,6 +28,13 @@ import {
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
 
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 describe("completed-run revival", () => {
   let tempDir: string;
   let mockPi: MockPi;
@@ -1309,8 +1316,8 @@ describe("completed-run revival", () => {
       "awaited-resume-original",
       {
         tasks: [
-          { agent: "a", task: "task-a" },
-          { agent: "b", task: "task-b" },
+          { agent: "a", task: "task-a", cwd: taskDir(tempDir, "a") },
+          { agent: "b", task: "task-b", cwd: taskDir(tempDir, "b") },
         ],
       },
       new AbortController().signal,
