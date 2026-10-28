@@ -9,6 +9,10 @@ import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-gui
 import { getArtifactsDir, resolveArtifactConfig } from "../shared/artifacts.ts";
 
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
+import {
+  asyncRunOwnerRejectionMessage,
+  authorizeAsyncRunOwner,
+} from "../runs/background/async-owner-authorization.ts";
 import { handleManagementAction } from "../agents/agent-management.ts";
 import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "./doctor.ts";
 import {
@@ -748,7 +752,8 @@ async function executeSteerAction(
   ctx: ExtensionContext,
   deps: ExecutorDeps,
 ): Promise<SubagentToolResult<Details>> {
-  deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+  const callerKey = resolveCurrentSessionId(ctx.sessionManager);
+  deps.state.currentSessionId = callerKey;
   const message = (params.message ?? params.task ?? "").trim();
   if (!message) {
     return projectManagementError("action='steer' requires message.");
@@ -763,13 +768,25 @@ async function executeSteerAction(
   }
   let resolved: ResolvedSubagentRunId | undefined;
   try {
-    resolved = resolveSubagentRunId(params.id, { state: deps.state });
+    resolved = resolveSubagentRunId(params.id, { state: deps.state, callerKey });
   } catch (error) {
     return projectManagementError(error instanceof Error ? error.message : String(error));
   }
   if (resolved?.kind !== "async") {
     return projectManagementError(`No async run found for '${params.id}'.`);
   }
+  // Exact ids resolve unfiltered; authorize ownership before project-agent
+  // authorization, reconciliation, or any state-detail error.
+  const ownerAuthorization = authorizeAsyncRunOwner({
+    callerKey,
+    runId: resolved.id,
+    ...(resolved.location.asyncDir ? { asyncDir: resolved.location.asyncDir } : {}),
+    ...(resolved.location.resultPath ? { resultPath: resolved.location.resultPath } : {}),
+  });
+  if (ownerAuthorization.outcome !== "owned")
+    return projectManagementError(
+      asyncRunOwnerRejectionMessage(ownerAuthorization, resolved.id, "steered"),
+    );
   try {
     await authorizeProjectSteerTarget({ params, ctx, deps });
   } catch (error) {
@@ -783,6 +800,7 @@ async function executeSteerAction(
       index: params.index,
       kill: deps.kill,
       location: resolved.location,
+      callerKey,
     }) as SubagentToolResult<Details>;
   } catch (error) {
     return projectManagementErrorFrom(error);
@@ -805,11 +823,12 @@ async function executeInterruptAction(
   ctx: ExtensionContext,
   deps: ExecutorDeps,
 ): Promise<SubagentToolResult<Details>> {
-  deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+  const callerKey = resolveCurrentSessionId(ctx.sessionManager);
+  deps.state.currentSessionId = callerKey;
   let resolved: ResolvedSubagentRunId | undefined;
   let selectedParams = params;
   try {
-    const selected = selectInterruptTarget(params, deps.state);
+    const selected = selectInterruptTarget(params, deps.state, callerKey);
     resolved = selected.target as ResolvedSubagentRunId;
     selectedParams = selected.params;
   } catch (error) {
@@ -819,6 +838,22 @@ async function executeInterruptAction(
   if (!asyncInterruptTarget) {
     return projectManagementError("No interrupt-capable run found in this session.");
   }
+  // Exact ids resolve unfiltered; authorize ownership before project-agent
+  // authorization, reconciliation, claim recovery, or any state-detail error.
+  const ownerAuthorization = authorizeAsyncRunOwner({
+    callerKey,
+    runId: asyncInterruptTarget.id,
+    ...(asyncInterruptTarget.location.asyncDir
+      ? { asyncDir: asyncInterruptTarget.location.asyncDir }
+      : {}),
+    ...(asyncInterruptTarget.location.resultPath
+      ? { resultPath: asyncInterruptTarget.location.resultPath }
+      : {}),
+  });
+  if (ownerAuthorization.outcome !== "owned")
+    return projectManagementError(
+      asyncRunOwnerRejectionMessage(ownerAuthorization, asyncInterruptTarget.id, "interrupted"),
+    );
   try {
     await authorizeProjectInterruptTarget({
       params: selectedParams,
@@ -841,6 +876,7 @@ async function executeInterruptAction(
         asyncInterruptTarget.location.asyncDir,
         asyncInterruptTarget.id,
         params.index,
+        callerKey,
       );
     }
   }
@@ -850,6 +886,7 @@ async function executeInterruptAction(
       asyncInterruptTarget.id,
       deps.kill,
       asyncInterruptTarget.location,
+      callerKey,
     );
     return (result ??
       projectManagementError(

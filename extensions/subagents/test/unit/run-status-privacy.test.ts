@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
-import { errno, textContent } from "../support/run-status-fixtures.ts";
+import { errno, textContent, ownerState, OWNER_SESSION } from "../support/run-status-fixtures.ts";
 
 describe("async run status inspection privacy and lifecycle", () => {
   it("reports an unreadable status clearly for direct id lookup", () => {
@@ -20,10 +20,15 @@ describe("async run status inspection privacy and lifecycle", () => {
 
       const result = inspectSubagentStatus(
         { id: "run-invalid" },
-        { asyncDirRoot: asyncRoot, resultsDir, now: () => 1_600 },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir, now: () => 1_600 },
       );
       assert.equal(result.isError, true);
-      assert.equal(textContent(result), `unreadable status at ${statusPath}`);
+      // Owner cannot be established from an unreadable status, so it is denied
+      // (without the status path) rather than diagnosed.
+      assert.equal(
+        textContent(result),
+        "Async run 'run-invalid' ownership cannot be verified; it cannot be inspected from this session.",
+      );
       assert.doesNotMatch(textContent(result), /MALFORMED_STATUS_BODY_SENTINEL/);
       assert.equal(fs.readFileSync(statusPath, "utf-8"), `{ "runId": "${sentinel}`);
       assert.equal(fs.existsSync(path.join(root, "quarantined-async-subagent-runs")), false);
@@ -44,6 +49,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         JSON.stringify(
           {
             runId: "run-elapsed",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "running",
             pid: process.pid,
@@ -59,7 +65,7 @@ describe("async run status inspection privacy and lifecycle", () => {
 
       const result = inspectSubagentStatus(
         { id: "run-elapsed" },
-        { asyncDirRoot: asyncRoot, resultsDir, now: () => 1_600 },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir, now: () => 1_600 },
       );
       const text = textContent(result);
       assert.equal(result.isError, undefined);
@@ -84,6 +90,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         JSON.stringify(
           {
             runId: "run-continued",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "continued",
             startedAt: 100,
@@ -110,7 +117,7 @@ describe("async run status inspection privacy and lifecycle", () => {
 
       const result = inspectSubagentStatus(
         { id: "run-continued" },
-        { asyncDirRoot: asyncRoot, resultsDir },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
       );
       const text = textContent(result);
       assert.equal(result.isError, undefined);
@@ -139,6 +146,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         JSON.stringify(
           {
             id: "run-paused-result",
+            sessionId: OWNER_SESSION,
             agent: "worker",
             success: false,
             state: "paused",
@@ -155,7 +163,10 @@ describe("async run status inspection privacy and lifecycle", () => {
       );
 
       const text = textContent(
-        inspectSubagentStatus({ id: "run-paused-result" }, { asyncDirRoot: asyncRoot, resultsDir }),
+        inspectSubagentStatus(
+          { id: "run-paused-result" },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
+        ),
       );
       assert.match(text, /Run: run-paused-result/);
       assert.match(text, /State: paused/);
@@ -180,6 +191,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         JSON.stringify(
           {
             runId: "run-pausing-private",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "pausing",
             pid: 12345,
@@ -231,6 +243,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         inspectSubagentStatus(
           { id: "run-pausing-private" },
           {
+            state: ownerState,
             asyncDirRoot: asyncRoot,
             resultsDir,
             kill: () => {
@@ -266,6 +279,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         JSON.stringify(
           {
             runId: "run-paused",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "paused",
             pid: 12345,
@@ -291,7 +305,7 @@ describe("async run status inspection privacy and lifecycle", () => {
 
       const result = inspectSubagentStatus(
         { id: "run-paused" },
-        { asyncDirRoot: asyncRoot, resultsDir },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir },
       );
       const text = textContent(result);
       assert.match(
@@ -325,6 +339,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         JSON.stringify(
           {
             runId: "run-pausing",
+            sessionId: OWNER_SESSION,
             mode: "single",
             state: "pausing",
             pid: 12345,
@@ -359,7 +374,7 @@ describe("async run status inspection privacy and lifecycle", () => {
       const text = textContent(
         inspectSubagentStatus(
           { id: "run-pausing" },
-          { asyncDirRoot: asyncRoot, resultsDir, kill: () => true },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir, kill: () => true },
         ),
       );
       assert.match(text, /Pause: awaiting supervisor \(Need approval\)/);
@@ -385,6 +400,7 @@ describe("async run status inspection privacy and lifecycle", () => {
         JSON.stringify(
           {
             runId: "run-pausing-cohort",
+            sessionId: OWNER_SESSION,
             mode: "parallel",
             state: "pausing",
             pid: 12345,
@@ -417,7 +433,7 @@ describe("async run status inspection privacy and lifecycle", () => {
       const text = textContent(
         inspectSubagentStatus(
           { id: "run-pausing-cohort" },
-          { asyncDirRoot: asyncRoot, resultsDir, kill: () => true },
+          { state: ownerState, asyncDirRoot: asyncRoot, resultsDir, kill: () => true },
         ),
       );
       assert.match(text, /Pause: cohort pause while another child awaited supervisor\./);

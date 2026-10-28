@@ -240,6 +240,156 @@ describe("result watcher", () => {
     }
   });
 
+  describe("cross-session claim contention", () => {
+    const makePi = () => {
+      const emitted: unknown[] = [];
+      return {
+        emitted,
+        pi: { events: { on: () => () => {}, emit: (_e: string, d: unknown) => emitted.push(d) } },
+      };
+    };
+    const writeResult = (resultPath: string, sessionId: string) =>
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify({ id: "run", agent: "worker", success: true, summary: "s", sessionId }),
+        "utf8",
+      );
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    /** Poll a condition with short real-time waits; fail with a clear message on timeout. */
+    const waitFor = async (predicate: () => boolean, description: string, timeoutMs = 5000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (!predicate()) {
+        if (Date.now() > deadline) {
+          assert.fail(`Timed out after ${timeoutMs}ms waiting for ${description}`);
+        }
+        await sleep(10);
+      }
+    };
+
+    it("never creates a claim for an artifact owned by another session", async () => {
+      const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-result-watcher-noclaim-"));
+      const claimOpens: string[] = [];
+      const resultReads: string[] = [];
+      const fsProxy = {
+        ...fs,
+        readFileSync: ((p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+          resultReads.push(String(p));
+          return (fs.readFileSync as (...a: unknown[]) => string)(p, ...rest);
+        }) as typeof fs.readFileSync,
+        openSync: ((p: fs.PathLike, ...rest: unknown[]) => {
+          claimOpens.push(String(p));
+          return (fs.openSync as (...a: unknown[]) => number)(p, ...rest);
+        }) as typeof fs.openSync,
+      };
+      const foreign = makePi();
+      const state = createState();
+      state.currentSessionId = "session-foreign";
+      const watcher = createResultWatcher(foreign.pi, state, resultsDir, { fs: fsProxy });
+      const resultPath = path.join(resultsDir, "run.json");
+      try {
+        writeResult(resultPath, "session-owner");
+        watcher.primeExistingResults();
+        await waitFor(
+          () => resultReads.some((p) => p === resultPath),
+          "a pre-claim read of the foreign result artifact",
+        );
+        assert.deepEqual(claimOpens, []);
+        assert.equal(foreign.emitted.length, 0);
+        assert.equal(fs.existsSync(resultPath), true);
+        assert.equal(fs.existsSync(`${resultPath}.claim`), false);
+      } finally {
+        watcher.stopResultWatcher();
+        fs.rmSync(resultsDir, { recursive: true, force: true });
+      }
+    });
+
+    const makeManualTimers = () => {
+      type TimerHandle = ReturnType<typeof setTimeout>;
+      const pending: Array<{ callback: () => void; delay: number; handle: TimerHandle }> = [];
+      const cleared = new Set<TimerHandle>();
+      const timers = {
+        setTimeout: ((callback: () => void, delay = 0) => {
+          const handle = { unref() {} } as TimerHandle;
+          pending.push({ callback, delay, handle });
+          return handle;
+        }) as typeof setTimeout,
+        clearTimeout: ((handle: TimerHandle) => {
+          cleared.add(handle);
+        }) as typeof clearTimeout,
+        setInterval: (() =>
+          ({ unref() {} }) as ReturnType<typeof setInterval>) as typeof setInterval,
+        clearInterval: (() => {}) as typeof clearInterval,
+      };
+      /** Fire every live (not cleared, not yet fired) retry timer, then let the coalescer run. */
+      const fireLive = async (settled?: () => boolean, description = "retry outcome") => {
+        const live = pending.filter((entry) => !cleared.has(entry.handle));
+        pending.length = 0;
+        for (const entry of live) entry.callback();
+        if (settled) await waitFor(settled, description);
+        else await sleep(50);
+      };
+      const liveCount = () => pending.filter((entry) => !cleared.has(entry.handle)).length;
+      return { timers, fireLive, liveCount };
+    };
+
+    it("retries a contended claim and delivers exactly once after a foreign holder releases", async () => {
+      const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-result-watcher-retry-"));
+      const owner = makePi();
+      const state = createState();
+      state.currentSessionId = "session-owner";
+      const manual = makeManualTimers();
+      const watcher = createResultWatcher(owner.pi, state, resultsDir, { timers: manual.timers });
+      const resultPath = path.join(resultsDir, "run.json");
+      const claimPath = `${resultPath}.claim`;
+      try {
+        writeResult(resultPath, "session-owner");
+        fs.writeFileSync(claimPath, "foreign claim", "utf8");
+        watcher.primeExistingResults();
+        await waitFor(() => manual.liveCount() === 1, "contended claim to schedule one retry");
+        assert.equal(owner.emitted.length, 0);
+        assert.equal(fs.existsSync(resultPath), true);
+        assert.equal(manual.liveCount(), 1, "contended claim should schedule one retry");
+        // Foreign watcher releases on session mismatch; no further .json event.
+        fs.unlinkSync(claimPath);
+        await manual.fireLive(() => owner.emitted.length === 1, "retry to deliver the result");
+        assert.equal(fs.existsSync(resultPath), false);
+        assert.equal(fs.existsSync(claimPath), false);
+        assert.equal(manual.liveCount(), 0, "no further retry after delivery");
+        assert.equal(owner.emitted.length, 1);
+      } finally {
+        watcher.stopResultWatcher();
+        fs.rmSync(resultsDir, { recursive: true, force: true });
+      }
+    });
+
+    it("stops retrying when a contended artifact disappears", async () => {
+      const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-result-watcher-gone-"));
+      const owner = makePi();
+      const state = createState();
+      state.currentSessionId = "session-owner";
+      const manual = makeManualTimers();
+      const watcher = createResultWatcher(owner.pi, state, resultsDir, { timers: manual.timers });
+      const resultPath = path.join(resultsDir, "run.json");
+      const claimPath = `${resultPath}.claim`;
+      try {
+        writeResult(resultPath, "session-owner");
+        fs.writeFileSync(claimPath, "foreign claim", "utf8");
+        watcher.primeExistingResults();
+        await waitFor(() => manual.liveCount() === 1, "contended claim to schedule one retry");
+        assert.equal(owner.emitted.length, 0);
+        assert.equal(manual.liveCount(), 1, "contended claim should schedule one retry");
+        fs.unlinkSync(resultPath);
+        fs.unlinkSync(claimPath);
+        await manual.fireLive();
+        assert.equal(owner.emitted.length, 0);
+        assert.equal(manual.liveCount(), 0, "no further retry once the artifact is gone");
+      } finally {
+        watcher.stopResultWatcher();
+        fs.rmSync(resultsDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("removes orphan claim markers on startup without reading result bodies", () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-orphan-claim-"));
     const orphanClaimPath = path.join(resultsDir, "orphan.json.claim");
@@ -444,7 +594,9 @@ describe("result watcher", () => {
         pending[callbackIndex++]!.callback();
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      assert.equal(readAttempts, RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS + 1);
+      // Each attempt reads once in the pre-claim ownership filter and once after claiming.
+      const attempts = RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS + 1;
+      assert.equal(readAttempts, attempts * 2);
       assert.deepEqual(
         pending.map((entry) => entry.delay),
         [100, 250, 500, 1_000, 2_000],
@@ -458,14 +610,14 @@ describe("result watcher", () => {
       );
       assert.equal(fs.existsSync(resultPath), true);
       assert.equal(fs.existsSync(`${resultPath}.claim`), false);
-      assert.equal(claimAttempts, readAttempts);
-      assert.equal(claimReleases, readAttempts);
+      assert.equal(claimAttempts, attempts);
+      assert.equal(claimReleases, attempts);
 
       watcher.primeExistingResults();
       await new Promise((resolve) => setTimeout(resolve, 100));
-      assert.equal(readAttempts, RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS + 1);
-      assert.equal(claimAttempts, readAttempts);
-      assert.equal(claimReleases, readAttempts);
+      assert.equal(readAttempts, attempts * 2);
+      assert.equal(claimAttempts, attempts);
+      assert.equal(claimReleases, attempts);
       assert.equal(logged.filter((args) => String(args[0] ?? "").includes(resultPath)).length, 1);
     } finally {
       console.error = originalError;

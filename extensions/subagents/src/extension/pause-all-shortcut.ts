@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestInterruptAllRunningSubagentRuns } from "./subagent-executor.ts";
+import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import type { SubagentState } from "../shared/types.ts";
 
 interface PauseAllShortcutResult {
@@ -15,7 +16,14 @@ export function handlePauseAllShortcut(
   state: SubagentState,
   ctx: ExtensionContext,
 ): PauseAllShortcutResult {
-  const summary = requestInterruptAllRunningSubagentRuns(state);
+  // Capture the caller key once; an unavailable identity interrupts nothing.
+  let callerKey: string | undefined;
+  try {
+    callerKey = resolveCurrentSessionId(ctx.sessionManager);
+  } catch {
+    callerKey = undefined;
+  }
+  const summary = requestInterruptAllRunningSubagentRuns(state, callerKey);
   const interruptedTotal = summary.asyncRunIds.length;
   const skippedTotal = summary.skippedAsyncRunIds.length;
   const failedTotal = summary.errors.length;

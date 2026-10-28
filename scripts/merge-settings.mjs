@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageFilterDisables, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
-import { cloneMcpAdapterEntries, evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, mcpAdapterPackageIdentities, sameMcpAdapterEntries, } from "./lib/mcp-adapter-cutover.mjs";
+import { cloneMcpAdapterEntries, evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterLegacyFloorSource, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, mcpAdapterPackageIdentities, sameMcpAdapterEntries, } from "./lib/mcp-adapter-cutover.mjs";
 import { isLocalPackageSource, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
@@ -863,6 +863,19 @@ function writeSettings(settingsPath, value, { dryRun, existed }) {
         backupPath,
     });
 }
+/**
+ * Advance a held, TLH-owned exact pre-v5 adapter pin to the legacy floor. The
+ * decision is always the one computed from the original settings.
+ */
+function applyMcpAdapterLegacyFloor(settings, extension, decision, { force, managedPackageIdentities }) {
+    const floor = mcpAdapterLegacyFloorSource(extension, decision, settings);
+    if (!floor || !Array.isArray(settings.packages))
+        return undefined;
+    if (!force && !managedPackageIdentities.has(floor.identity))
+        return undefined;
+    settings.packages[floor.index] = floor.to;
+    return `update ${floor.identity} pin: ${floor.from} -> ${floor.to} (last pre-v5 adapter; v5 cutover still held)`;
+}
 function log(args, message) {
     if (!args.quiet)
         console.log(message);
@@ -895,8 +908,16 @@ function main() {
     const mcpNotice = mcpAdapterCutoverNotice(mcpCutover);
     if (mcpNotice)
         console.error(mcpNotice);
+    const floorOptions = {
+        force: args.force,
+        managedPackageIdentities: readDefaultExtensionProvenance(existing).managedPackageIdentities,
+    };
+    // Snapshot after the floor rewrite so the invariant below still guards every
+    // other change to a held adapter entry.
+    const flooredExisting = clone(existing);
+    applyMcpAdapterLegacyFloor(flooredExisting, mcporterEntry, mcpCutover, floorOptions);
     const heldMcpState = mcpCutover.freeze && mcporterEntry
-        ? { packageEntries: cloneMcpAdapterEntries(existing, mcporterEntry) }
+        ? { packageEntries: cloneMcpAdapterEntries(flooredExisting, mcporterEntry) }
         : undefined;
     const profileDir = dirname(settingsPath);
     const homeDir = process.env.HOME || homedir();
@@ -908,6 +929,9 @@ function main() {
         mcpCutover,
     });
     const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
+    const floorChange = applyMcpAdapterLegacyFloor(next, mcporterEntry, mcpCutover, floorOptions);
+    if (floorChange)
+        changes.push(floorChange);
     applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
     // Omitted sources are inferred from the existing TLH registration above, but
     // only an explicit override authorizes switching between canonical and local

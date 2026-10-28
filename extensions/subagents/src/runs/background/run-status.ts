@@ -17,6 +17,10 @@ import {
   type SubagentToolResult,
   normalizeSubagentRunMode,
 } from "../../shared/types.ts";
+import {
+  asyncRunOwnerRejectionMessage,
+  authorizeAsyncRunOwner,
+} from "./async-owner-authorization.ts";
 import { continuationResumeBlock, resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
@@ -549,7 +553,7 @@ export function inspectSubagentStatus(
       if (resolved?.kind === "async") location = resolved.location;
       else location = { asyncDir: null, resultPath: null, resolvedId: requestedId };
     } else {
-      location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
+      location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir, currentSessionId);
     }
   } catch (error) {
     const message = statusErrorMessage(error);
@@ -564,6 +568,33 @@ export function inspectSubagentStatus(
   if (!asyncDir && !resultPath) {
     return {
       content: [{ type: "text", text: "Async run not found. Provide id or dir." }],
+      isError: true,
+      details: { mode: "single", results: [] },
+    };
+  }
+
+  // Owner-gate before reconcile (which may write) or any rendering. Foreign and
+  // unverifiable runs are denied, not redacted, and the message carries no paths.
+  const ownerAuthorization = authorizeAsyncRunOwner({
+    callerKey: currentSessionId,
+    ...(asyncDir ? { asyncDir } : {}),
+    ...(resultPath ? { resultPath } : {}),
+    resultsDir,
+  });
+  if (ownerAuthorization.outcome !== "owned") {
+    const deniedRunId =
+      ownerAuthorization.runId ??
+      resolvedId ??
+      path.basename(path.resolve((asyncDir ?? resultPath) as string), ".json");
+    return {
+      content: [
+        {
+          type: "text",
+          text: safeTerminalText(
+            asyncRunOwnerRejectionMessage(ownerAuthorization, deniedRunId, "inspected"),
+          ),
+        },
+      ],
       isError: true,
       details: { mode: "single", results: [] },
     };

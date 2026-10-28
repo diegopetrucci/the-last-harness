@@ -11,16 +11,17 @@ import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 import { resolveControlConfig } from "../shared/subagent-control.js";
 import { canonicalSubagentModelIdentity, modelReferenceFromIdentity, } from "../shared/model-fallback.js";
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.js";
-import { buildRevivedAsyncTask, continuationResumeBlock, readPersistedResultOwner, resolveAsyncResumeTarget, resolvePersistedOwner, } from "../background/async-resume.js";
+import { buildRevivedAsyncTask, continuationResumeBlock, readPersistedResultOwner, resolveAsyncResumeTarget, resolveAsyncRunLocation, resolvePersistedOwner, } from "../background/async-resume.js";
 import { advanceLifecycleContinuation, checkPidLiveness, lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { childMessageAckPath, requestAsyncResume, waitForChildMessageAcceptance, } from "../background/control-channel.js";
+import { authorizeAsyncRunOwner, isOwnedByCaller, } from "../background/async-owner-authorization.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { assessDurableResumeContext, formatDurableResumeContextBlock, parseContextUsageDiagnostics, resolveEffectiveContextWindow, } from "../../shared/context-diagnostics.js";
 import { readStatus } from "../../shared/utils.js";
 import { isAsyncStatusReadError } from "./async-status-boundary.js";
 import { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "../shared/run-support.js";
-import { RESULTS_DIR, } from "../../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
 import { authorizePersistedProjectAgentRun, embeddedControlRestrictionError, } from "../shared/project-agent-control.js";
@@ -78,10 +79,10 @@ function isClaimedPausedLifecycle(status, index = 0) {
     const continuation = indexedLifecycleContinuation(status, index);
     return Boolean(continuation?.claimToken && continuation.phase === "reserved");
 }
-function resolveResumeTarget(params, _state, options = {}) {
+function resolveResumeTarget(params, state, options = {}) {
     return {
         source: "async",
-        ...resolveAsyncResumeTarget(params, {}, {
+        ...resolveAsyncResumeTarget(params, { callerKey: state.currentSessionId ?? undefined }, {
             requireSessionFile: options.asyncRequireSessionFile,
             readOnly: options.readOnly,
             deferPausedContinuationGate: options.deferPausedContinuationGate,
@@ -98,12 +99,6 @@ function ownerRejectionResult(runId) {
         isError: true,
         details: { mode: "management", results: [] },
     };
-}
-function isOwnedByCaller(owner, callerKey) {
-    return (typeof callerKey === "string" &&
-        callerKey.length > 0 &&
-        typeof owner === "string" &&
-        owner === callerKey);
 }
 function revivedPressureOptions(target, claimedPause) {
     return {
@@ -434,7 +429,10 @@ async function resolveResumeActionTarget(input) {
     let target;
     try {
         const resolved = input.requestedId
-            ? resolveSubagentRunId(input.requestedId, { state: input.deps.state })
+            ? resolveSubagentRunId(input.requestedId, {
+                state: input.deps.state,
+                callerKey: input.callerKey,
+            })
             : undefined;
         if (resolved?.kind === "async" || input.params.dir) {
             const preResolutionDir = resolved?.kind === "async"
@@ -443,13 +441,29 @@ async function resolveResumeActionTarget(input) {
                     ? path.resolve(input.params.dir)
                     : null;
             const preResolutionStatus = preResolutionDir ? readStatus(preResolutionDir) : undefined;
-            if (preResolutionStatus?.state === "running" &&
-                !isOwnedByCaller(resolvePersistedOwner(preResolutionStatus.sessionId, readPersistedResultOwner(RESULTS_DIR, preResolutionStatus.runId)), input.callerKey))
-                return ownerRejectionResult(preResolutionStatus.runId);
+            const gateLocations = [
+                resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR, input.callerKey),
+                ...(resolved?.kind === "async" ? [resolved.location] : []),
+            ];
+            for (const location of gateLocations) {
+                const present = (location.asyncDir !== null && fs.existsSync(location.asyncDir)) ||
+                    (location.resultPath !== null && fs.existsSync(location.resultPath));
+                if (!present)
+                    continue;
+                const authorization = authorizeAsyncRunOwner({
+                    callerKey: input.callerKey,
+                    ...(location.asyncDir ? { asyncDir: location.asyncDir } : {}),
+                    ...(location.resultPath ? { resultPath: location.resultPath } : {}),
+                    ...(location.resolvedId ? { runId: location.resolvedId } : {}),
+                    resultsDir: RESULTS_DIR,
+                });
+                if (authorization.outcome !== "owned")
+                    return ownerRejectionResult(authorization.runId ?? location.resolvedId ?? "unknown");
+            }
             const hadLiveResumeIntent = Boolean(input.requestedFollowUp && preResolutionStatus?.state === "running");
             const asyncTarget = {
                 source: "async",
-                ...resolveAsyncResumeTarget(input.params, { kill: input.deps.kill, resultsDir: RESULTS_DIR }, {
+                ...resolveAsyncResumeTarget(input.params, { kill: input.deps.kill, resultsDir: RESULTS_DIR, callerKey: input.callerKey }, {
                     requireSessionFile: true,
                     readOnly: true,
                     deferPausedContinuationGate: true,

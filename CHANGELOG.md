@@ -28,6 +28,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Held profiles on an older TLH-managed exact pre-v5 MCP adapter pin now advance to 2.36.0 during install/update (still held from v5), so Pi 1.3.0 stops warning about host packages in adapter dependencies.
+- Subagent runners now keep a child's process group tracked until post-exit cleanup settles, so an abort after the leader exits no longer leaves SIGINT/SIGTERM-ignoring descendants alive (#828).
+- Async subagent completions are no longer stranded when another tlh session's result watcher briefly holds the shared result claim: foreign-session watchers skip artifacts they do not own, and the owner retries a contended claim. (#851)
+- Awaited (default) subagent runs no longer appear a second time in the async subagent widget; only detached async runs are listed there (#848).
+- Explicit subagent interrupt, steer, resume, and status by id now require the owning parent session and fail closed; id-prefix lookup and interrupt-all are scoped to the caller's own runs (#826).
 - Aborting an awaited subagent right after it starts could leave its run permanently `running`; the runner now installs its signal handler before its first status write.
 - Durable subagent revival now requires the owning parent session; ownerless, foreign or conflicting-owner runs are rejected before any side effect (#822).
 - A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped; a project-scoped agent list includes load warnings for canonical packaged roles.

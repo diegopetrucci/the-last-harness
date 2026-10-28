@@ -1584,6 +1584,8 @@ export function renderWidget(
   controller?: SubagentLiveDetailController,
   now?: number,
 ): void {
+  // Awaited runs already show a live tool card; keep them out of the widget.
+  jobs = jobs.filter((job) => job.awaited !== true);
   if (jobs.length === 0) {
     resetWidgetLayoutSession();
     if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);

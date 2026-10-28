@@ -13,6 +13,7 @@ import {
   formatAsyncRunList,
   type AsyncRunSummary,
 } from "../../src/runs/background/async-status.ts";
+import { ownerState, OWNER_SESSION } from "../support/run-status-fixtures.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { formatAwaitedNativeSubagentResult } from "../../src/shared/result-formatting.ts";
 
@@ -108,6 +109,7 @@ describe("background display boundaries", () => {
         path.join(asyncDir, "status.json"),
         JSON.stringify({
           runId: "run-status",
+          sessionId: OWNER_SESSION,
           state: "failed",
           mode: "single",
           startedAt: 100,
@@ -120,7 +122,7 @@ describe("background display boundaries", () => {
 
       const result = inspectSubagentStatus(
         { id: "run-status" },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { state: ownerState, asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
       );
 
       const rendered = textContent(result);

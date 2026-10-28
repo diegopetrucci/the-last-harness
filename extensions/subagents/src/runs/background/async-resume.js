@@ -10,6 +10,7 @@ import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitize
 import { isSubagentPromptVariant, normalizeSubagentPromptVariant, } from "../../shared/types.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
+import { authorizeAsyncRunOwner } from "./async-owner-authorization.js";
 import { readStatus } from "../../shared/utils.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.js";
@@ -282,9 +283,11 @@ function exactResultPath(resultsDir, runId) {
     assertInsideRoot(resultsDir, resultPath, "Async result file");
     return fs.existsSync(resultPath) ? resultPath : null;
 }
-export function findAsyncRunPrefixMatches(prefix, asyncDirRoot, resultsDir) {
+export function findAsyncRunPrefixMatches(prefix, asyncDirRoot, resultsDir, callerKey) {
     const requestedId = assertRunId(prefix, "id");
     if (!requestedId)
+        return [];
+    if (typeof callerKey !== "string" || callerKey.length === 0)
         return [];
     const asyncRoot = path.resolve(asyncDirRoot);
     const resultRoot = path.resolve(resultsDir);
@@ -294,20 +297,28 @@ export function findAsyncRunPrefixMatches(prefix, asyncDirRoot, resultsDir) {
             ...prefixedRunIds(resultRoot, requestedId, ".json"),
         ]),
     ].sort();
-    return matchingIds.map((id) => {
+    const matches = [];
+    for (const id of matchingIds) {
         const asyncDir = path.join(asyncRoot, id);
         assertInsideRoot(asyncRoot, asyncDir, "Async run directory");
-        return {
-            id,
-            location: {
-                asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
-                resultPath: exactResultPath(resultRoot, id),
-                resolvedId: id,
-            },
+        const location = {
+            asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
+            resultPath: exactResultPath(resultRoot, id),
+            resolvedId: id,
         };
-    });
+        const authorization = authorizeAsyncRunOwner({
+            callerKey,
+            runId: id,
+            ...(location.asyncDir ? { asyncDir: location.asyncDir } : {}),
+            ...(location.resultPath ? { resultPath: location.resultPath } : {}),
+            resultsDir: resultRoot,
+        });
+        if (authorization.outcome === "owned")
+            matches.push({ id, location });
+    }
+    return matches;
 }
-export function resolveAsyncRunLocation(params, asyncDirRoot, resultsDir) {
+export function resolveAsyncRunLocation(params, asyncDirRoot, resultsDir, callerKey) {
     const asyncRoot = path.resolve(asyncDirRoot);
     const resultRoot = path.resolve(resultsDir);
     const requestedId = assertRunId(params.id, "id");
@@ -332,7 +343,7 @@ export function resolveAsyncRunLocation(params, asyncDirRoot, resultsDir) {
             resolvedId: requestedId,
         };
     }
-    const matching = findAsyncRunPrefixMatches(requestedId, asyncRoot, resultRoot);
+    const matching = findAsyncRunPrefixMatches(requestedId, asyncRoot, resultRoot, callerKey);
     if (matching.length === 0)
         return { asyncDir: null, resultPath: null, resolvedId: requestedId };
     if (matching.length > 1) {
@@ -662,28 +673,37 @@ function resolvePromptVariant(context, index, statusStep) {
 }
 const UNREADABLE_OWNER_EVIDENCE = Object.freeze({ malformed: true });
 export function readPersistedResultOwner(resultsDir, runId) {
+    return readPersistedResultEvidence(resultsDir, runId).owner;
+}
+export function readPersistedResultEvidence(resultsDir, runId) {
+    const unreadable = { owner: UNREADABLE_OWNER_EVIDENCE, identityMismatch: false };
     if (runId.trim() === "" || !isPathFreeRunId(runId))
-        return UNREADABLE_OWNER_EVIDENCE;
+        return unreadable;
     const resultPath = path.join(resultsDir, `${runId}.json`);
     if (!isInsideRoot(resultsDir, resultPath))
-        return UNREADABLE_OWNER_EVIDENCE;
+        return unreadable;
     let raw;
     try {
         raw = fs.readFileSync(resultPath, "utf-8");
     }
     catch (error) {
         return error?.code === "ENOENT"
-            ? undefined
-            : UNREADABLE_OWNER_EVIDENCE;
+            ? { owner: undefined, identityMismatch: false }
+            : unreadable;
     }
     try {
         const parsed = JSON.parse(raw);
-        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-            ? parsed.sessionId
-            : UNREADABLE_OWNER_EVIDENCE;
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+            return unreadable;
+        const record = parsed;
+        const mismatched = (value) => value !== undefined && value !== runId;
+        return {
+            owner: record.sessionId,
+            identityMismatch: mismatched(record.runId) || mismatched(record.id),
+        };
     }
     catch {
-        return UNREADABLE_OWNER_EVIDENCE;
+        return unreadable;
     }
 }
 function persistedOwnerEvidence(context) {
@@ -888,7 +908,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
     const resultsDir = deps.resultsDir ?? RESULTS_DIR;
     const requireSessionFile = options.requireSessionFile ?? true;
-    const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
+    const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir, deps.callerKey);
     if (!location.asyncDir && !location.resultPath) {
         throw new Error("Async run not found. Provide id or dir.");
     }

@@ -28,6 +28,7 @@ import {
   continuationResumeBlock,
   readPersistedResultOwner,
   resolveAsyncResumeTarget,
+  resolveAsyncRunLocation,
   resolvePersistedOwner,
 } from "../background/async-resume.ts";
 import {
@@ -46,6 +47,10 @@ import {
   requestAsyncResume,
   waitForChildMessageAcceptance,
 } from "../background/control-channel.ts";
+import {
+  authorizeAsyncRunOwner,
+  isOwnedByCaller,
+} from "../background/async-owner-authorization.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import {
@@ -70,6 +75,7 @@ import {
   type SubagentTerminalResult,
   type SubagentState,
   type SubagentToolResult,
+  ASYNC_DIR,
   RESULTS_DIR,
 } from "../../shared/types.ts";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
@@ -172,7 +178,7 @@ function isClaimedPausedLifecycle(status: AsyncStatus | null | undefined, index 
 
 function resolveResumeTarget(
   params: SubagentParamsLike,
-  _state: SubagentState,
+  state: SubagentState,
   options: {
     asyncRequireSessionFile?: boolean;
     readOnly?: boolean;
@@ -183,7 +189,7 @@ function resolveResumeTarget(
     source: "async",
     ...resolveAsyncResumeTarget(
       params,
-      {},
+      { callerKey: state.currentSessionId ?? undefined },
       {
         requireSessionFile: options.asyncRequireSessionFile,
         readOnly: options.readOnly,
@@ -206,15 +212,6 @@ function ownerRejectionResult(runId: string): SubagentToolResult<Details> {
     isError: true,
     details: { mode: "management", results: [] },
   };
-}
-
-function isOwnedByCaller(owner: unknown, callerKey: string | undefined): boolean {
-  return (
-    typeof callerKey === "string" &&
-    callerKey.length > 0 &&
-    typeof owner === "string" &&
-    owner === callerKey
-  );
 }
 
 type PausedContinuationClaim = {
@@ -656,7 +653,10 @@ async function resolveResumeActionTarget(input: {
   let target: ResumeSourceTarget;
   try {
     const resolved: ResolvedSubagentRunId | undefined = input.requestedId
-      ? resolveSubagentRunId(input.requestedId, { state: input.deps.state })
+      ? resolveSubagentRunId(input.requestedId, {
+          state: input.deps.state,
+          callerKey: input.callerKey,
+        })
       : undefined;
     if (resolved?.kind === "async" || input.params.dir) {
       const preResolutionDir =
@@ -666,19 +666,29 @@ async function resolveResumeActionTarget(input: {
             ? path.resolve(input.params.dir)
             : null;
       const preResolutionStatus = preResolutionDir ? readStatus(preResolutionDir) : undefined;
-      // Gate before the non-read-only resolution below can reconcile a stale run.
-      // Owner evidence is status AND result, read without mutating anything.
-      if (
-        preResolutionStatus?.state === "running" &&
-        !isOwnedByCaller(
-          resolvePersistedOwner(
-            preResolutionStatus.sessionId,
-            readPersistedResultOwner(RESULTS_DIR, preResolutionStatus.runId),
-          ),
-          input.callerKey,
-        )
-      )
-        return ownerRejectionResult(preResolutionStatus.runId);
+      // Gate every resolved target (exact id, prefix, dir, result-only) before the
+      // resolver can reconcile a stale run or raise any state-detail error. Owner
+      // evidence is status AND result, read without mutating anything. A target
+      // that resolves to nothing on disk falls through to the resolver's not-found.
+      const gateLocations = [
+        resolveAsyncRunLocation(input.params, ASYNC_DIR, RESULTS_DIR, input.callerKey),
+        ...(resolved?.kind === "async" ? [resolved.location] : []),
+      ];
+      for (const location of gateLocations) {
+        const present =
+          (location.asyncDir !== null && fs.existsSync(location.asyncDir)) ||
+          (location.resultPath !== null && fs.existsSync(location.resultPath));
+        if (!present) continue;
+        const authorization = authorizeAsyncRunOwner({
+          callerKey: input.callerKey,
+          ...(location.asyncDir ? { asyncDir: location.asyncDir } : {}),
+          ...(location.resultPath ? { resultPath: location.resultPath } : {}),
+          ...(location.resolvedId ? { runId: location.resolvedId } : {}),
+          resultsDir: RESULTS_DIR,
+        });
+        if (authorization.outcome !== "owned")
+          return ownerRejectionResult(authorization.runId ?? location.resolvedId ?? "unknown");
+      }
       const hadLiveResumeIntent = Boolean(
         input.requestedFollowUp && preResolutionStatus?.state === "running",
       );
@@ -686,7 +696,7 @@ async function resolveResumeActionTarget(input: {
         source: "async",
         ...resolveAsyncResumeTarget(
           input.params,
-          { kill: input.deps.kill, resultsDir: RESULTS_DIR },
+          { kill: input.deps.kill, resultsDir: RESULTS_DIR, callerKey: input.callerKey },
           {
             requireSessionFile: true,
             // Do not reconcile or repair a live lifecycle record until the

@@ -344,6 +344,22 @@ export function createResultWatcher(
       }
       retryState.ready = false;
     }
+    // Pre-claim ownership filter: a watcher for another session sharing this
+    // results dir must never create the claim sidecar for an artifact it does
+    // not own, or it could block the owner. Read/parse failures fall through
+    // to the claim path so malformed/I-O handling is unchanged.
+    try {
+      const preData = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
+      if (typeof preData?.sessionId !== "string" || preData.sessionId !== state.currentSessionId) {
+        resetResultRetry(resultPath);
+        return;
+      }
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        resetResultRetry(resultPath);
+        return;
+      }
+    }
     let claim: ResultArtifactClaim | undefined;
     try {
       claim = claimResultArtifact(resultPath, fsApi);
@@ -351,7 +367,21 @@ export function createResultWatcher(
       diagnoseAndRetry(file, "claim", error);
       return;
     }
-    if (!claim) return;
+    if (!claim) {
+      // Undefined means the artifact is gone or another consumer holds the
+      // claim. A contended claim may be released without a further .json
+      // event, so retry (bounded) while the artifact still exists.
+      let stillExists: boolean;
+      try {
+        stillExists = fsApi.existsSync(resultPath);
+      } catch (error) {
+        diagnoseAndRetry(file, "check", error);
+        return;
+      }
+      if (stillExists) scheduleResultRetry(file, "claim");
+      else resetResultRetry(resultPath);
+      return;
+    }
     let deliveryDecided = false;
     try {
       let resultExists: boolean;

@@ -1,10 +1,18 @@
 // Generated from extensions/subagents/src/extension/pause-all-shortcut.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { requestInterruptAllRunningSubagentRuns } from "./subagent-executor.js";
+import { resolveCurrentSessionId } from "../shared/session-identity.js";
 function formatRunCount(total) {
     return `Pause requested for ${total} subagent run${total === 1 ? "" : "s"}.`;
 }
 export function handlePauseAllShortcut(state, ctx) {
-    const summary = requestInterruptAllRunningSubagentRuns(state);
+    let callerKey;
+    try {
+        callerKey = resolveCurrentSessionId(ctx.sessionManager);
+    }
+    catch {
+        callerKey = undefined;
+    }
+    const summary = requestInterruptAllRunningSubagentRuns(state, callerKey);
     const interruptedTotal = summary.asyncRunIds.length;
     const skippedTotal = summary.skippedAsyncRunIds.length;
     const failedTotal = summary.errors.length;
