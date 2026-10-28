@@ -345,7 +345,6 @@ async function runSubagentWithInput(config, plan) {
     const appendDiagnosticEvent = (line, droppedEventType) => appendDiagnosticJsonl(eventsPath, line, droppedEventType);
     const statusOwner = createBackgroundRunStatusOwner({
         id,
-        ...(config.awaited ? { awaited: true } : {}),
         asyncDir,
         cwd,
         plan,

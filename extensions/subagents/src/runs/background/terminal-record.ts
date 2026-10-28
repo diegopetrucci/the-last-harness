@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { truncateWithMarker } from "../../shared/string-utils.ts";
+import { readStatus } from "../../shared/utils.ts";
 import {
   RESULTS_DIR,
   type AsyncResultArtifact,
@@ -213,6 +214,13 @@ export function ensureTerminalRecordFromArtifact(candidate: unknown, runId: stri
   const asyncDir = artifact.asyncDir;
   if (typeof asyncDir !== "string" || asyncDir.length === 0) return false;
   if (!fs.existsSync(asyncDir)) return false;
+  // `result` authorizes from canonical status; without a readable status the record
+  // would not be retrievable, so the results file must be kept instead.
+  try {
+    if (readStatus(asyncDir, { cache: false }) === null) return false;
+  } catch {
+    return false;
+  }
   if (readTerminalRecord(asyncDir, artifact.id)) return true;
   writeTerminalRecord(asyncDir, terminalRecordFromArtifact(artifact));
   return true;
@@ -266,19 +274,67 @@ export function readTerminalRecord(asyncDir: string, runId: string): TerminalRec
   return undefined;
 }
 
-function readResultsDirArtifact(
-  resultsDir: string,
+function readResultsFileArtifact(
+  resultPath: string,
   runId: string,
 ): AsyncResultArtifact | undefined {
   try {
-    const parsed: unknown = JSON.parse(
-      fs.readFileSync(path.join(resultsDir, `${runId}.json`), "utf-8"),
-    );
+    const parsed: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     if (isTerminalArtifactFor(parsed, runId)) return parsed;
   } catch {
     // Unlinked by the watcher or never written.
   }
   return undefined;
+}
+
+function readResultsDirArtifact(
+  resultsDir: string,
+  runId: string,
+): AsyncResultArtifact | undefined {
+  return readResultsFileArtifact(path.join(resultsDir, `${runId}.json`), runId);
+}
+
+/**
+ * In-memory record from a retained results file, for runs with no usable asyncDir
+ * (the watcher keeps such files because they are the only durable copy).
+ */
+export function terminalRecordFromResultsFile(
+  resultPath: string,
+  runId: string,
+): TerminalRecord | undefined {
+  const artifact = readResultsFileArtifact(resultPath, runId);
+  return artifact ? terminalRecordFromArtifact(artifact) : undefined;
+}
+
+/**
+ * Re-derive a record from canonical status after a terminal lifecycle change
+ * (e.g. a paused child cancelled), keeping the retained child output.
+ */
+function refreshedRecord(existing: TerminalRecord, status: AsyncStatus): TerminalRecord {
+  const { synthesized: _synthesized, ...fresh } = terminalRecordFromStatus(status);
+  return {
+    ...fresh,
+    ...(existing.synthesized ? { synthesized: true as const } : {}),
+    children: fresh.children.map((child) => {
+      const prior = existing.children.find((candidate) => candidate.index === child.index);
+      if (!prior) return child;
+      return {
+        ...prior,
+        status: child.status,
+        ...optionalField("error", child.error ?? prior.error),
+      };
+    }),
+  };
+}
+
+function isStale(existing: TerminalRecord, status: AsyncStatus): boolean {
+  // Only paused records can go stale: a paused run later turns terminal in place.
+  if (existing.state === "paused" && status.state !== "paused") return true;
+  return (status.steps ?? []).some(
+    (step, index) =>
+      step.status === "cancelled" &&
+      existing.children.find((child) => child.index === index)?.status !== "cancelled",
+  );
 }
 
 /** A terminal status is finalized once it has an end time and its runner is gone. */
@@ -302,7 +358,16 @@ export function ensureTerminalRecord(
   if (!isTerminalLifecycleState(status.state)) return undefined;
   const runId = status.runId || path.basename(asyncDir);
   const existing = readTerminalRecord(asyncDir, runId);
-  if (existing) return existing;
+  if (existing) {
+    if (!isStale(existing, status) || !finalizedForSynthesis(status, options.kill)) return existing;
+    try {
+      const refreshed = refreshedRecord(existing, status);
+      writeTerminalRecord(asyncDir, refreshed);
+      return refreshed;
+    } catch {
+      return existing;
+    }
+  }
   const artifact = readResultsDirArtifact(options.resultsDir ?? RESULTS_DIR, runId);
   try {
     if (artifact) {

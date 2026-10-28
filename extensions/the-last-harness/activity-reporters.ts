@@ -889,13 +889,11 @@ function programStatusChildId(runId: string): string | undefined {
   return isValidProgramStatusId(id) ? id : undefined;
 }
 
-/** Child records for active detached jobs; never includes task text, only agent names. */
+/** Child records for active async jobs; never includes task text, only agent names. */
 function resolveChildren(snapshot: TlhEffectiveActivitySnapshot): ProgramStatusChild[] {
   const children = new Map<string, ProgramStatusChild>();
-  const awaited = new Set(snapshot.awaitedAsyncJobIds);
   for (const runId of [...snapshot.activeAsyncJobIds].sort()) {
     if (children.size >= PROGRAM_STATUS_MAX_CHILDREN) break;
-    if (awaited.has(runId)) continue;
     const id = programStatusChildId(runId);
     if (id === undefined || children.has(id)) continue;
     const names = snapshot.activeAsyncJobAgents?.[runId];
@@ -959,9 +957,7 @@ export function createProgramStatusActivityReporter(
       else {
         // Count agents, not jobs: a parallel job counts once per agent name.
         let count = 0;
-        const awaited = new Set(snapshot.awaitedAsyncJobIds);
         for (const runId of snapshot.activeAsyncJobIds) {
-          if (awaited.has(runId)) continue;
           const names = snapshot.activeAsyncJobAgents?.[runId];
           count += names && names.length > 0 ? names.length : 1;
         }

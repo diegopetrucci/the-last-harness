@@ -21,7 +21,6 @@ import {
   buildCompletionDetails,
   formatSingleCompletion,
 } from "../../src/runs/background/notify.ts";
-import { formatAwaitedNativeSubagentResult } from "../../src/shared/result-formatting.ts";
 
 function artifactConfig() {
   return {
@@ -179,28 +178,6 @@ describe("async post-run facts", () => {
       assert.deepEqual(metadata.terminalResult, resultFacts);
 
       const child = payload.results[0]!;
-      const rendered = formatAwaitedNativeSubagentResult({
-        runId: id,
-        mode: "single",
-        children: [
-          {
-            agent: child.agent,
-            status: child.success ? "completed" : "failed",
-            summary: child.output,
-            index: 0,
-            artifactPath: child.artifactPaths?.outputPath,
-            sessionPath: child.sessionFile,
-            terminalResult: resultFacts,
-          },
-        ],
-      });
-      const artifactIndex = rendered.text.indexOf("Output artifact:");
-      const factsIndex = rendered.text.indexOf("Facts:");
-      const sessionIndex = rendered.text.indexOf("Session:");
-      assert.ok(artifactIndex >= 0, "rendered result should include the output artifact path");
-      assert.ok(factsIndex > artifactIndex, "rendered facts should follow the artifact path");
-      assert.ok(sessionIndex > factsIndex, "rendered session path should follow the facts");
-
       const notificationDetails = buildCompletionDetails({
         id,
         agent: child.agent,

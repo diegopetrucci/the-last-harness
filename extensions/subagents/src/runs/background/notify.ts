@@ -3,8 +3,7 @@
  *
  * The result watcher owns detached completion delivery. Every detached result
  * produces one message immediately; there is no batching window and no
- * notification-level replay/dedupe. A live awaited owner consumes its result
- * privately; an awaited marker without that owner is eligible for recovery.
+ * notification-level replay/dedupe.
  *
  * Trust boundary: the model-visible message content is built only from
  * runtime-generated facts (run id, agent names, per-child status and
@@ -46,7 +45,6 @@ import {
 } from "../../shared/telemetry.ts";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.ts";
-import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
 
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
@@ -66,6 +64,10 @@ export const BUDGET_EXHAUSTION_GUIDANCE =
 
 interface SubagentChildResult {
   agent: string;
+  sessionFile?: string;
+  model?: string;
+  modelAttempts?: Array<{ usage?: unknown }>;
+  totalCost?: { inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown };
   output?: string;
   success?: boolean;
   status?: "completed" | "failed" | "paused";
@@ -100,6 +102,34 @@ export interface SubagentNotifyChild {
   facts?: string;
 }
 
+/** Machine-readable usage in the shape analyzers already normalize. */
+export interface SubagentChildRecordUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  cost: number;
+  turns: number;
+}
+
+/**
+ * Complete per-child machine record for session/usage analyzers (epic contract
+ * C8). Persisted in `details` only; every field is runtime-measured or a
+ * bounded identifier — never child-authored text — and none reaches `content`.
+ */
+export interface SubagentChildRecord {
+  runId: string;
+  index: number;
+  agent: string;
+  /** Runtime-resolved terminal state, shaped like the telemetry outcome envelope. */
+  outcome: { state: "completed" | "failed" | "paused" | "cancelled" };
+  /** Full (unabbreviated) child session path; omitted when absent or over the path bound. */
+  sessionFile?: string;
+  model?: string;
+  usage?: SubagentChildRecordUsage;
+}
+
 export interface SubagentNotifyDetails {
   agent: string;
   status: "completed" | "failed" | "paused";
@@ -111,6 +141,10 @@ export interface SubagentNotifyDetails {
   resultPreview: string;
   /** Per-child outcomes in index order; absent for single results without child entries. */
   children?: SubagentNotifyChild[];
+  /** Complete per-child machine records (lineage/usage), capped at MAX_NOTIFY_CHILDREN. */
+  childRecords?: SubagentChildRecord[];
+  /** Number of children beyond the cap that have no record. */
+  childRecordsOmitted?: number;
   /** True when lifecycle privacy hides child details. */
   privacySafe?: boolean;
   /** Set at send time on the persisted completion message. */
@@ -153,7 +187,6 @@ interface SubagentResult {
   totalTasks?: number;
   sessionId?: string | null;
   generation?: number;
-  awaited?: boolean;
   pause?: { kind?: string };
   terminalResult?: SubagentTerminalResult;
   telemetry?: SubagentRunTelemetry | Record<string, unknown>;
@@ -423,6 +456,75 @@ function buildChildren(children: SubagentChildResult[]): SubagentNotifyChild[] |
   });
 }
 
+function finiteNonNegative(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function childRecordUsage(child: SubagentChildResult): SubagentChildRecordUsage | undefined {
+  const attempts = (Array.isArray(child.modelAttempts) ? child.modelAttempts : []).filter(
+    (attempt): attempt is { usage: Record<string, unknown> } =>
+      typeof attempt?.usage === "object" && attempt.usage !== null,
+  );
+  let usage: Omit<SubagentChildRecordUsage, "total"> | undefined;
+  if (attempts.length > 0) {
+    usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+    for (const { usage: u } of attempts) {
+      usage.input += finiteNonNegative(u.input);
+      usage.output += finiteNonNegative(u.output);
+      usage.cacheRead += finiteNonNegative(u.cacheRead);
+      usage.cacheWrite += finiteNonNegative(u.cacheWrite);
+      usage.cost += finiteNonNegative(u.cost);
+      usage.turns += finiteNonNegative(u.turns);
+    }
+  } else if (child.totalCost) {
+    usage = {
+      input: finiteNonNegative(child.totalCost.inputTokens),
+      output: finiteNonNegative(child.totalCost.outputTokens),
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: finiteNonNegative(child.totalCost.costUsd),
+      turns: 0,
+    };
+  } else {
+    // Fall back to provider-reported per-attempt tokens when nothing richer exists.
+    let input = 0;
+    let output = 0;
+    let found = false;
+    for (const attempt of child.terminalResult?.facts.attempts ?? []) {
+      if (attempt.providerTokens.status !== "available") continue;
+      found = true;
+      input += finiteNonNegative(attempt.providerTokens.usage.input);
+      output += finiteNonNegative(attempt.providerTokens.usage.output);
+    }
+    if (found) usage = { input, output, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+  }
+  if (!usage) return undefined;
+  return { ...usage, total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite };
+}
+
+function buildChildRecords(
+  runId: string | undefined,
+  children: SubagentChildResult[],
+): SubagentChildRecord[] | undefined {
+  if (!runId || children.length === 0) return undefined;
+  return children.slice(0, MAX_NOTIFY_CHILDREN).map((child, position) => {
+    const sessionFile =
+      typeof child.sessionFile === "string" ? child.sessionFile : child.sessionPath;
+    const usage = childRecordUsage(child);
+    return {
+      runId,
+      index: isValidChildIndex(child.index, children.length) ? child.index : position,
+      agent: boundedLabel(child.agent || "worker"),
+      outcome: { state: child.terminalResult?.state ?? resolveChildStatus(child) },
+      ...(sessionFile && sessionFile.length <= MAX_SESSION_PATH_CHARS ? { sessionFile } : {}),
+      ...(typeof child.model === "string" && child.model
+        ? { model: boundedLabel(child.model) }
+        : {}),
+      ...(usage ? { usage } : {}),
+    };
+  });
+}
+
 function buildFacts(children: SubagentChildResult[]): string | undefined {
   const facts = children
     .slice(0, MAX_NOTIFY_CHILDREN)
@@ -614,6 +716,9 @@ function serializableDetails(details: SubagentNotifyDetails): Record<string, unk
           })),
         }
       : {}),
+    ...(details.childRecords
+      ? { childRecords: details.childRecords.slice(0, MAX_NOTIFY_CHILDREN) }
+      : {}),
     ...(details.factsPreview
       ? {
           factsPreview: truncateWithMarker(
@@ -698,6 +803,8 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
   const sessionPaths = collectSessionPaths(result, children);
   const factsPreview = privacySafe ? undefined : buildFacts(children);
   const childDetails = privacySafe ? undefined : buildChildren(children);
+  // Machine lineage stays in persisted (non-model-visible) details even when protected.
+  const childRecords = buildChildRecords(asyncId, children);
 
   return {
     agent,
@@ -705,6 +812,10 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
     ...(taskInfo ? { taskInfo } : {}),
     resultPreview: privacySafe ? "Paused awaiting supervisor." : buildSummary(result, children),
     ...(childDetails ? { children: childDetails } : {}),
+    ...(childRecords ? { childRecords } : {}),
+    ...(childRecords && children.length > childRecords.length
+      ? { childRecordsOmitted: children.length - childRecords.length }
+      : {}),
     ...(privacySafe ? { privacySafe: true } : {}),
     ...(factsPreview ? { factsPreview } : {}),
     ...(artifactPaths ? { artifactPaths } : {}),
@@ -754,17 +865,6 @@ export default function registerSubagentNotify(
   const handleComplete = (data: unknown) => {
     const result = data as SubagentResult;
     if (typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId) return;
-    // Let the live owner validate and privately consume the completion before
-    // projecting a detached notification. A persisted `awaited` flag alone
-    // cannot prove that an owner still exists after a reload, so those
-    // artifacts remain eligible for recovery notifications.
-    const completionRunId =
-      typeof result.id === "string"
-        ? result.id
-        : typeof result.runId === "string"
-          ? result.runId
-          : undefined;
-    if (completionRunId && dispatchAwaitedRunCompletion(completionRunId, result)) return;
     sendCompletion(pi, buildCompletionDetails(result), { triggerTurn: true, isIdle });
   };
 

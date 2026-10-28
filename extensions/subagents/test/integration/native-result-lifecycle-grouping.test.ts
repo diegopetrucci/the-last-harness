@@ -12,12 +12,20 @@ import {
   makeMinimalCtx,
   removeTempDir,
 } from "../support/helpers.ts";
+import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 import {
   expectUnsupportedChainRequest as expectUnsupportedChainRequestFor,
   makeNativeResultLifecycleExecutor,
   type NativeExecutor,
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
+
+/** Launches are detached: wait for the run's terminal result artifact. */
+async function settled(result: { details?: { asyncId?: string } }) {
+  const asyncId = result.details?.asyncId;
+  assert.ok(asyncId, "expected a detached run id");
+  return readAsyncPayload(asyncId);
+}
 
 /** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
 function taskDir(root: string, name: string): string {
@@ -26,7 +34,7 @@ function taskDir(root: string, name: string): string {
   return dir;
 }
 
-describe("native result grouping", () => {
+describe("detached result artifacts", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -60,28 +68,38 @@ describe("native result grouping", () => {
     return expectUnsupportedChainRequestFor(executor, requestId, request, tempDir, mockPi);
   }
 
-  it("single awaited runs return one native grouped result", async () => {
+  it("single detached runs persist one terminal artifact and expose output through the result action", async () => {
     mockPi.onCall({ output: "Full child output from worker" });
     const { executor } = makeExecutor();
 
-    const result = await executor.execute(
+    const launched = await executor.execute(
       "single-native",
       { agent: "worker", task: "Summarize feature status" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
-    assert.match(result.content[0]?.text ?? "", /^subagent results/m);
-    assert.match(result.content[0]?.text ?? "", /Mode: single/);
-    assert.match(result.content[0]?.text ?? "", /Status: completed/);
-    assert.match(result.content[0]?.text ?? "", /Children: 1 completed/);
-    assert.match(result.content[0]?.text ?? "", /1\/1\. worker — completed/);
-    assert.match(result.content[0]?.text ?? "", /Summary:\nFull child output from worker/);
+    assert.equal(launched.isError, undefined);
+    assert.doesNotMatch(launched.content[0]?.text ?? "", /Full child output from worker/);
+    const runId = launched.details?.asyncId;
+    assert.ok(runId, "expected a detached run id");
+    const payload = await readAsyncPayload(runId);
+    assert.equal(payload.mode, "single");
+    assert.equal(payload.success, true);
+    assert.equal(payload.results[0]?.finalOutput, "Full child output from worker");
+
+    const fetched = await executor.execute(
+      "single-native-result",
+      { action: "result", id: runId },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(tempDir),
+    );
+    assert.equal(fetched.isError, undefined);
     assert.equal(
-      (result.content[0]?.text ?? "").match(/Full child output from worker/g)?.length ?? 0,
+      (fetched.content[0]?.text ?? "").match(/Full child output from worker/g)?.length ?? 0,
       1,
     );
-    assert.equal(result.details?.results?.[0]?.finalOutput, "Full child output from worker");
   });
 
   it("public artifacts:false disables child artifacts but keeps file-only output and sessions", async () => {
@@ -107,8 +125,8 @@ describe("native result grouping", () => {
       ctx,
     );
 
-    const child = result.details?.results?.[0];
     assert.equal(result.isError, undefined);
+    const child = (await settled(result)).results[0];
     assert.equal(child?.artifactPaths, undefined);
     assert.equal(fs.existsSync(childArtifactsDir), false);
     assert.equal(child?.outputMode, "file-only");
@@ -120,50 +138,7 @@ describe("native result grouping", () => {
     assert.ok(fs.existsSync(child.sessionFile), "expected persisted canonical child session file");
   });
 
-  it("native single runs always use the grouped result", async () => {
-    mockPi.onCall({ output: "Legacy awaited output" });
-    const { executor } = makeExecutor();
-
-    const result = await executor.execute(
-      "single-native-default",
-      { agent: "worker", task: "Summarize feature" },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    assert.match(result.content[0]?.text ?? "", /Mode: single/);
-    assert.match(result.content[0]?.text ?? "", /Summary:\nLegacy awaited output/);
-  });
-
-  it("native awaited results return without external delivery", async () => {
-    mockPi.onCall({ output: "Unacknowledged awaited output" });
-    const { executor } = makeExecutor();
-
-    const result = await executor.execute(
-      "single-no-ack",
-      { agent: "worker", task: "Summarize feature" },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    assert.match(result.content[0]?.text ?? "", /Summary:\nUnacknowledged awaited output/);
-  });
-
-  it("native awaited results are independent of external extension files", async () => {
-    mockPi.onCall({ output: "No external extension awaited output" });
-    const { executor } = makeExecutor();
-
-    const result = await executor.execute(
-      "single-no-package",
-      { agent: "worker", task: "Summarize feature" },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    assert.match(result.content[0]?.text ?? "", /Summary:\nNo external extension awaited output/);
-  });
-
-  it("native awaited summaries honor maxOutput truncation without discarding full structured output", async () => {
+  it("detached runs keep the full structured output regardless of maxOutput", async () => {
     const fullOutput = `first visible line\n${"second hidden line".repeat(700)}\nthird hidden line`;
     mockPi.onCall({ output: fullOutput });
     const { executor } = makeExecutor();
@@ -176,15 +151,10 @@ describe("native result grouping", () => {
       makeMinimalCtx(tempDir),
     );
 
-    const text = result.content[0]?.text ?? "";
-    assert.match(text, /\[TRUNCATED: showing first 1 of \d+ lines/);
-    assert.doesNotMatch(text, /second hidden line/);
-    assert.equal(result.details?.results?.[0]?.finalOutput, fullOutput);
-    assert.equal(result.details?.results?.[0]?.truncation?.truncated, true);
-    assert.ok(text.length <= 8_000);
+    assert.equal((await settled(result)).results[0]?.finalOutput, fullOutput);
   });
 
-  it("native awaited summaries preserve file-only references even when maxOutput is smaller", async () => {
+  it("detached file-only runs keep a saved-output reference even when maxOutput is smaller", async () => {
     mockPi.onCall({ output: "full saved native output\nwith hidden details" });
     const { executor } = makeExecutor();
 
@@ -193,7 +163,7 @@ describe("native result grouping", () => {
       {
         agent: "worker",
         task: "Write report",
-        output: "native-file-only.md",
+        output: path.join(tempDir, "native-file-only.md"),
         outputMode: "file-only",
         maxOutput: { lines: 1, bytes: 10 },
       },
@@ -202,16 +172,18 @@ describe("native result grouping", () => {
       makeMinimalCtx(tempDir),
     );
 
-    const text = result.content[0]?.text ?? "";
-    assert.match(text, /Summary:\nOutput saved to:/);
-    assert.match(text, /native-file-only\.md/);
-    assert.doesNotMatch(text, /full saved native output/);
-    assert.doesNotMatch(text, /\[TRUNCATED:/);
-    assert.match(result.details?.results?.[0]?.finalOutput ?? "", /^Output saved to:/);
-    assert.equal(result.details?.results?.[0]?.outputMode, "file-only");
+    const child = (await settled(result)).results[0];
+    assert.match(child?.output ?? "", /^Output saved to:/);
+    assert.match(child?.output ?? "", /native-file-only\.md/);
+    assert.doesNotMatch(child?.output ?? "", /full saved native output/);
+    assert.equal(child?.outputMode, "file-only");
+    assert.equal(
+      fs.readFileSync(path.join(tempDir, "native-file-only.md"), "utf8"),
+      "full saved native output\nwith hidden details",
+    );
   });
 
-  it("failed file-only awaited runs return truncated native error context without leaking full output", async () => {
+  it("failed detached file-only runs keep error context and the full output", async () => {
     mockPi.onCall({
       output: "single visible partial\nsingle hidden partial\nsingle final hidden",
       stderr: "single terminal failure",
@@ -224,7 +196,7 @@ describe("native result grouping", () => {
       {
         agent: "worker",
         task: "Summarize failure",
-        output: "failed-file-only.md",
+        output: path.join(tempDir, "failed-file-only.md"),
         outputMode: "file-only",
         maxOutput: { lines: 1, bytes: 100 },
       },
@@ -233,24 +205,20 @@ describe("native result grouping", () => {
       makeMinimalCtx(tempDir),
     );
 
-    const text = result.content[0]?.text ?? "";
-    assert.equal(result.isError, true);
-    assert.match(text, /Mode: single/);
-    assert.match(text, /Status: failed/);
-    assert.match(text, /Children: 1 failed/);
-    assert.match(text, /1\/1\. worker — failed/);
-    assert.match(text, /single terminal failure/);
-    assert.match(text, /Output:\n\[TRUNCATED: showing first 1 of \d+ lines/);
-    assert.doesNotMatch(text, /single hidden partial/);
-    assert.equal(result.details?.results?.[0]?.outputMode, "file-only");
-    assert.equal(result.details?.results?.[0]?.savedOutputPath, undefined);
+    const payload = await settled(result);
+    assert.equal(payload.success, false);
+    const child = payload.results[0];
+    assert.equal(child?.success, false);
+    assert.match(`${child?.error ?? ""}${child?.stderr ?? ""}`, /single terminal failure/);
+    assert.equal(child?.outputMode, "file-only");
+    assert.equal(child?.savedOutputPath, undefined);
     assert.equal(
-      result.details?.results?.[0]?.finalOutput,
+      child?.finalOutput,
       "single visible partial\nsingle hidden partial\nsingle final hidden",
     );
   });
 
-  it("file-only output-save failures return truncated output plus an actionable save error", async () => {
+  it("detached file-only output-save failures surface an actionable save error", async () => {
     const blockedParent = path.join(tempDir, "not-a-directory");
     fs.writeFileSync(blockedParent, "blocking file", "utf-8");
     const requestedOutput = path.join(blockedParent, "report.md");
@@ -271,26 +239,19 @@ describe("native result grouping", () => {
       makeMinimalCtx(tempDir),
     );
 
-    const text = result.content[0]?.text ?? "";
     assert.equal(result.isError, undefined);
-    assert.match(text, /Status: completed/);
-    assert.match(text, /\[TRUNCATED: showing first 1 of \d+ lines/);
-    assert.doesNotMatch(text, /save hidden line/);
-    assert.match(text, /Output file error:/);
-    assert.equal(text.match(/Output file error:/g)?.length ?? 0, 1);
-    assert.match(text, /not-a-directory/);
-    assert.ok(text.indexOf("Output file error:") < text.indexOf("[TRUNCATED:"));
-    assert.ok(text.length <= 8_000);
-    assert.match(text, /(?:EEXIST|ENOTDIR|not a directory|file already exists)/i);
-    assert.equal(result.details?.results?.[0]?.savedOutputPath, undefined);
-    assert.ok(result.details?.results?.[0]?.outputSaveError);
-    assert.equal(
-      result.details?.results?.[0]?.finalOutput,
-      "save visible line\nsave hidden line\nsave final hidden",
+    const child = (await settled(result)).results[0];
+    assert.equal(child?.success, true);
+    assert.match(child?.outputSaveError ?? "", /not-a-directory/);
+    assert.match(
+      child?.outputSaveError ?? "",
+      /(?:EEXIST|ENOTDIR|not a directory|file already exists)/i,
     );
+    assert.equal(child?.savedOutputPath, undefined);
+    assert.equal(child?.finalOutput, "save visible line\nsave hidden line\nsave final hidden");
   });
 
-  it("parallel native summaries retain save errors without leaking output beyond maxOutput", async () => {
+  it("detached parallel runs retain per-child save errors", async () => {
     const blockedParent = path.join(tempDir, "parallel-not-a-directory");
     fs.writeFileSync(blockedParent, "blocking file", "utf-8");
     const requestedOutput = path.join(blockedParent, "report.md");
@@ -317,22 +278,17 @@ describe("native result grouping", () => {
       makeMinimalCtx(tempDir),
     );
 
-    const text = result.content[0]?.text ?? "";
     assert.equal(result.isError, undefined);
-    assert.match(text, /Status: completed/);
-    assert.match(text, /\[TRUNCATED: showing first 1 of \d+ lines/);
-    assert.doesNotMatch(text, /parallel hidden line/);
-    assert.match(text, /Output file error:/);
-    const saveError = result.details?.results?.[0]?.outputSaveError;
-    assert.ok(saveError);
-    assert.match(saveError, new RegExp(blockedParent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(text, new RegExp(saveError.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.ok(text.indexOf("Output file error:") < text.indexOf("[TRUNCATED:"));
+    const child = (await settled(result)).results[0];
+    assert.ok(child?.outputSaveError);
+    assert.match(
+      child.outputSaveError,
+      new RegExp(blockedParent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
     assert.equal(
-      result.details?.results?.[0]?.finalOutput,
+      child.finalOutput,
       "parallel visible line\nparallel hidden line\nparallel final hidden",
     );
-    assert.ok(text.length <= 8_000);
   });
 
   it("chain native requests fail closed before file-save work starts", async () => {
@@ -380,7 +336,7 @@ describe("native result grouping", () => {
     assert.equal(fs.existsSync(requestedOutput), false);
   });
 
-  it("top-level parallel runs bound oversized grouped native output while retaining full details", async () => {
+  it("top-level parallel launches stay bounded while retaining full child output", async () => {
     const fullOutput = `Parallel child output ${"P".repeat(12_000)}`;
     mockPi.onCall({ output: fullOutput });
     const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
@@ -397,13 +353,15 @@ describe("native result grouping", () => {
       undefined,
       makeMinimalCtx(tempDir),
     );
-    assert.match(result.content[0]?.text ?? "", /Mode: parallel/);
-    assert.match(result.content[0]?.text ?? "", /Children: 2 completed/);
-    assert.match(result.content[0]?.text ?? "", /1\/2\. a — completed/);
-    assert.match(result.content[0]?.text ?? "", /2\/2\. b — completed/);
-    assert.match(result.content[0]?.text ?? "", /Summary:\nParallel child output/);
+    const payload = await settled(result);
+    assert.equal(payload.mode, "parallel");
+    assert.equal(payload.results.length, 2);
+    assert.deepEqual(
+      payload.results.map((entry) => entry.agent),
+      ["a", "b"],
+    );
     assert.equal(
-      result.details?.results?.every((entry) => entry.finalOutput === fullOutput),
+      payload.results.every((entry) => entry.finalOutput === fullOutput),
       true,
     );
     assert.ok((result.content[0]?.text ?? "").length <= 8_000);
@@ -444,7 +402,7 @@ describe("native result grouping", () => {
     });
   });
 
-  it("failed chain awaited requests fail closed before any child can fail", async () => {
+  it("failed chain requests fail closed before any child can fail", async () => {
     const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
     await expectUnsupportedChainRequest(executor, "chain-failed", {
@@ -468,7 +426,7 @@ describe("native result grouping", () => {
     });
   });
 
-  it("mixed awaited outcomes produce failed native grouped status and counts", async () => {
+  it("mixed detached outcomes produce a failed run with per-child results", async () => {
     mockPi.onCall({ matchArgIncludes: "task-a", output: "Parallel child success", exitCode: 0 });
     mockPi.onCall({
       matchArgIncludes: "task-b",
@@ -491,11 +449,14 @@ describe("native result grouping", () => {
       makeMinimalCtx(tempDir),
     );
 
-    assert.equal(result.isError, true);
-    assert.match(result.content[0]?.text ?? "", /Status: failed/);
-    assert.match(result.content[0]?.text ?? "", /Children: 1 completed, 1 failed/);
-    assert.match(result.content[0]?.text ?? "", /1\/2\. a — completed/);
-    assert.match(result.content[0]?.text ?? "", /2\/2\. b — failed/);
-    assert.match(result.content[0]?.text ?? "", /Parallel child failure/);
+    assert.equal(result.isError, undefined);
+    const payload = await settled(result);
+    assert.equal(payload.success, false);
+    assert.equal(payload.results[0]?.success, true);
+    assert.equal(payload.results[1]?.success, false);
+    assert.match(
+      `${payload.results[1]?.error ?? ""}${payload.results[1]?.stderr ?? ""}${payload.results[1]?.output ?? ""}`,
+      /Parallel child failure/,
+    );
   });
 });

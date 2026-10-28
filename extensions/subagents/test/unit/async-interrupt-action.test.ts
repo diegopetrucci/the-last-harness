@@ -576,7 +576,7 @@ describe("async interrupt action", () => {
           assert.equal(result.isError, undefined, `async/${persistedState}`);
           assert.match(
             text(result),
-            persistedState === "paused" ? /Cancelled paused (?:awaited )?run/ : /already cancelled/,
+            persistedState === "paused" ? /Cancelled paused async run/ : /already cancelled/,
           );
         } else if (persistedState === "running") {
           assert.equal(result.isError, undefined);

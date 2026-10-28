@@ -7,7 +7,6 @@ import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { isCompletedLifecycleState, isCompletedLifecycleStepState, lifecycleContinuationForIndex, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { ensureTerminalRecordFromArtifact } from "./terminal-record.js";
-import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.js";
 import { claimResultArtifact, resultArtifactClaimCleanupDelayMs, RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS, } from "./result-artifact-consumer.js";
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -319,8 +318,9 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
                     resetResultRetry(resultPath);
                     return;
                 }
+                let durable;
                 try {
-                    ensureTerminalRecordFromArtifact(data, runId);
+                    durable = ensureTerminalRecordFromArtifact(data, runId);
                 }
                 catch (error) {
                     diagnoseAndRetry(file, "persist terminal record for", error);
@@ -377,11 +377,11 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
                         }
                         : {}),
                 };
-                const consumedByAwaitedOwner = dispatchAwaitedRunCompletion(runId, completionEvent);
                 deliveryDecided = true;
                 resetResultRetry(resultPath);
-                if (!consumedByAwaitedOwner) {
-                    pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionEvent);
+                pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionEvent);
+                if (!durable) {
+                    return;
                 }
                 try {
                     fsApi.unlinkSync(resultPath);

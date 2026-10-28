@@ -14,6 +14,7 @@
     "scripts/lib/mcp-adapter-migration.mjs",
     "scripts/lib/session-analysis.mjs",
     "scripts/lib/session-analysis-coverage.mjs",
+    "scripts/lib/session-analysis-async-lineage.mjs",
     "scripts/lib/subagent-analysis.mjs",
     "scripts/lib/subagent-analysis-keys.mjs",
     "scripts/lib/subagent-analysis-aggregation.mjs",

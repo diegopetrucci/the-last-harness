@@ -134,7 +134,6 @@ function statusToSummary(asyncDir, status) {
     return {
         id: status.runId || path.basename(asyncDir),
         asyncDir,
-        ...(status.awaited ? { awaited: true } : {}),
         ...(status.sessionId ? { sessionId: status.sessionId } : {}),
         ...(typeof status.pid === "number" ? { pid: status.pid } : {}),
         state: status.state,
@@ -364,10 +363,9 @@ function formatRunHeader(run) {
     const lifecycleState = run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
         ? "pausing"
         : safeTerminalText(run.state);
-    const ownership = run.awaited ? " | awaited" : "";
     return privacySafe
-        ? `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
-        : `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
+        ? `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
+        : `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
 }
 export function formatAsyncRunList(runs, heading = "Active async runs", unreadableStatuses = []) {
     if (runs.length === 0 && unreadableStatuses.length === 0)

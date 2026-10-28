@@ -133,7 +133,7 @@ function createAgent({
 function createContext(cwd, modelRegistry, model) {
   return {
     cwd,
-    mode: "json",
+    mode: "tui",
     hasUI: false,
     ui: { notify() {}, confirm: async () => false },
     sessionManager: {

@@ -114,6 +114,8 @@ const PACKAGED_SCRIPT_FILES = [
   "scripts/lib/session-analysis.mts",
   "scripts/lib/session-analysis-coverage.mjs",
   "scripts/lib/session-analysis-coverage.mts",
+  "scripts/lib/session-analysis-async-lineage.mjs",
+  "scripts/lib/session-analysis-async-lineage.mts",
   "scripts/lib/subagent-analysis-types.mjs",
   "scripts/lib/subagent-analysis-types.mts",
   "scripts/lib/subagent-analysis-validation.mjs",

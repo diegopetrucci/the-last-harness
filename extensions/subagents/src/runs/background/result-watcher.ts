@@ -17,7 +17,6 @@ import {
 } from "../shared/lifecycle-state.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { ensureTerminalRecordFromArtifact } from "./terminal-record.ts";
-import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
 import {
   claimResultArtifact,
   resultArtifactClaimCleanupDelayMs,
@@ -73,7 +72,6 @@ type ResultFileData = {
   asyncDir?: string;
   lifecycleArtifactVersion?: number;
   generation?: number;
-  awaited?: boolean;
   telemetry?: unknown;
 };
 
@@ -445,8 +443,9 @@ export function createResultWatcher(
 
         // Durable-before-unlink: the results file may be the only full copy of the
         // output, so it is only emitted/unlinked once the terminal record exists.
+        let durable: boolean;
         try {
-          ensureTerminalRecordFromArtifact(data, runId);
+          durable = ensureTerminalRecordFromArtifact(data, runId);
         } catch (error) {
           diagnoseAndRetry(file, "persist terminal record for", error);
           return;
@@ -508,20 +507,18 @@ export function createResultWatcher(
               }
             : {}),
         };
-        // The result watcher owns delivery. Give every claimed artifact to the
-        // live owner first; the owner validates the artifact's run identity and
-        // current lifecycle generation while holding the claim. This keeps an
-        // owner registered at generation N alive through ordinary generation-
-        // bumping transitions without allowing a stale/replacement artifact to
-        // be suppressed by a marker that only knows the run id.
-        const consumedByAwaitedOwner = dispatchAwaitedRunCompletion(runId, completionEvent);
         // From this point a listener may have received the completion. Keep
         // the sidecar even if later cleanup fails because delivery outcome is
         // no longer knowable and replay would duplicate the notification.
         deliveryDecided = true;
         resetResultRetry(resultPath);
-        if (!consumedByAwaitedOwner) {
-          pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionEvent);
+        pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionEvent);
+        if (!durable) {
+          // No durable record could be written (missing asyncDir or unsupported
+          // envelope), so the results file is the only copy: keep it, and keep
+          // the claim as the delivered marker so a rescan cannot re-emit it.
+          // `result` falls back to reading this file.
+          return;
         }
         try {
           fsApi.unlinkSync(resultPath);

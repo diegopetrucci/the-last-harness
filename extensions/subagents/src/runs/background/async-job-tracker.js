@@ -8,7 +8,6 @@ import { readStatus } from "../../shared/utils.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { scanAsyncRunsForRestore } from "./async-status.js";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.js";
-import { isAwaitedRun } from "./awaited-run-registry.js";
 import { canonicalLifecycleState } from "./async-status-boundary.js";
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.js";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
@@ -72,7 +71,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         return {
             asyncId: run.id,
             asyncDir: run.asyncDir,
-            ...(run.awaited ? { awaited: true } : {}),
             status: run.state,
             ...(run.lifecycle ? { lifecycle: run.lifecycle } : {}),
             ...(run.telemetry ? { telemetry: run.telemetry } : {}),
@@ -302,8 +300,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     const status = reconciliation.status ?? readStatus(job.asyncDir, options.statusRead);
                     if (status) {
                         const previousStatus = job.status;
-                        if (status.awaited)
-                            job.awaited = true;
                         job.status = status.state;
                         job.lifecycle = status.lifecycle;
                         if (!COMPLETION_RETENTION_STATES.has(job.status))
@@ -392,7 +388,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const newJob = {
             asyncId: info.id,
             asyncDir,
-            ...(isAwaitedRun(info.id) ? { awaited: true } : {}),
             status: "queued",
             ...(telemetry ? { telemetry } : {}),
             pid: typeof info.pid === "number" ? info.pid : undefined,
@@ -426,8 +421,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         if (job && telemetry)
             job.telemetry = telemetry;
         if (job) {
-            if (result.awaited)
-                job.awaited = true;
             const eventState = canonicalLifecycleState(result.state);
             job.status =
                 eventState === "cancelled"

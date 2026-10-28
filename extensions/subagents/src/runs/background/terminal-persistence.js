@@ -11,7 +11,7 @@ export function buildPausedRunnerTelemetry(input) {
         return undefined;
     return telemetryFromRunnerResults({
         runId: input.config.id,
-        execution: input.config.awaited ? "foreground" : "async",
+        execution: "async",
         mode: input.plan.kind,
         results: input.results,
         provenance,
@@ -48,7 +48,7 @@ function timeoutWonRun(input) {
 function buildRunnerTelemetry(input, state, endedAt, success) {
     return telemetryFromRunnerResults({
         runId: input.config.id,
-        execution: input.config.awaited ? "foreground" : "async",
+        execution: "async",
         mode: input.plan.kind,
         results: input.results,
         provenance: input.config.telemetry?.provenance,
@@ -165,11 +165,6 @@ function resultSummary(input, state, paused) {
         return input.pausedOutputForIndex(requesterIndex, requesterAgent);
     }
     if (state === "failed") {
-        if (input.config.awaited) {
-            return input.statusOwner.supervisorPauseTransitionFailed
-                ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
-                : input.summary;
-        }
         return (input.statusPayload.error ??
             (input.statusOwner.supervisorPauseTransitionFailed
                 ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
@@ -270,7 +265,6 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
         success: state === "complete",
         state,
         summary: resultSummary(input, state, paused),
-        ...(input.config.awaited ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         ...(deadlineAt !== undefined ? { deadlineAt } : {}),
         ...(timedOut ? { timedOut: true } : {}),
@@ -336,7 +330,7 @@ export function persistContinuationGateRejection(input) {
     }));
     const gateTelemetry = telemetryFromRunnerResults({
         runId: input.config.id,
-        execution: input.config.awaited ? "foreground" : "async",
+        execution: "async",
         mode: input.plan.kind,
         results: gateResults.length > 0
             ? gateResults

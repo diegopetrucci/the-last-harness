@@ -186,7 +186,6 @@ function formatDetailedAsyncStatus(status, asyncDir, outputPath, reconciliation,
             : undefined,
         statusActivityText ? `Activity: ${statusActivityText}` : undefined,
         steeringText ? `Steering: ${steeringText}` : undefined,
-        status.awaited ? "Awaited: true" : undefined,
         `Mode: ${safeTerminalText(normalizeSubagentRunMode(status.mode))}`,
         !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
             ? `PID: ${status.pid}`

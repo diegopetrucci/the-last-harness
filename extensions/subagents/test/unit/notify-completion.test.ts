@@ -446,6 +446,17 @@ describe("single completion notifications", () => {
       assert.equal(details.artifactPaths, undefined);
       assert.equal(details.sessionPaths, undefined);
       assert.equal(details.factsPreview, undefined);
+      // Machine lineage is persisted for protected completions, but never rendered.
+      assert.deepEqual(details.childRecords, [
+        {
+          runId: "private-paused",
+          index: 0,
+          agent: "worker",
+          outcome: { state: "paused" },
+          sessionFile: sessionPath,
+        },
+      ]);
+      assert.doesNotMatch(content, /private-session\.jsonl/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -519,5 +530,52 @@ describe("single completion notifications", () => {
     assert.match(content, /^- #5 late: failed \| #1 exit=0, duration=12ms, .*workspace=unknown$/m);
     assert.doesNotMatch(content, /late failure detail/);
     assert.match(details.resultPreview, /late: late failure detail/);
+  });
+
+  it("persists bounded complete per-child machine records without leaking them into content", () => {
+    const details = buildCompletionDetails({
+      id: "records-run",
+      agent: "parallel",
+      success: true,
+      summary: "ignored",
+      timestamp: 100,
+      results: Array.from({ length: 70 }, (_, index) => ({
+        agent: `worker-${index}`,
+        status: "completed" as const,
+        index,
+        summary: "CHILD-AUTHORED-TEXT ".repeat(400),
+        sessionFile: `/tmp/sessions/records-run/${index}.jsonl`,
+        model: "openai/gpt-x",
+        modelAttempts: [
+          { usage: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, cost: 0.1, turns: 1 } },
+          { usage: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.2, turns: 2 } },
+        ],
+      })),
+    } as Parameters<typeof buildCompletionDetails>[0]);
+    const records = details.childRecords ?? [];
+    assert.equal(records.length, 64);
+    assert.equal(details.childRecordsOmitted, 6);
+    assert.deepEqual(records[9], {
+      runId: "records-run",
+      index: 9,
+      agent: "worker-9",
+      outcome: { state: "completed" },
+      sessionFile: "/tmp/sessions/records-run/9.jsonl",
+      model: "openai/gpt-x",
+      usage: {
+        input: 7,
+        output: 3,
+        cacheRead: 1,
+        cacheWrite: 0,
+        total: 11,
+        cost: 0.1 + 0.2,
+        turns: 3,
+      },
+    });
+    // Records are machine fields only: no child-authored text, bounded per child.
+    assert.ok(JSON.stringify(records[9]).length < 400);
+    assert.doesNotMatch(JSON.stringify(records), /CHILD-AUTHORED-TEXT/);
+    const content = formatSingleCompletion(details);
+    assert.doesNotMatch(content, /CHILD-AUTHORED-TEXT|records-run\/9\.jsonl|"usage"/);
   });
 });

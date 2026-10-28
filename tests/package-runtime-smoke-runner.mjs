@@ -31,7 +31,17 @@ class FakeEvents {
   }
 
   async emit(event, data) {
-    await Promise.all((this.#handlers.get(event) ?? []).map((handler) => handler(data)));
+    await Promise.all(
+      (this.#handlers.get(event) ?? []).map(async (handler) => {
+        try {
+          await handler(data);
+        } catch (error) {
+          // This harness never binds extension actions, so the detached run's completion
+          // notification cannot send a message; the smoke test reads output via `result`.
+          if (!String(error?.message).includes("Extension runtime not initialized")) throw error;
+        }
+      }),
+    );
   }
 
   listenerCount(event) {
@@ -117,10 +127,26 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
       sessionContext,
     );
     assert.equal(result.isError, undefined);
-    const text = result.content
-      .filter((entry) => entry.type === "text")
-      .map((entry) => entry.text)
-      .join("\n");
+    // The launch is detached; fetch the child's output with the result action once it finishes.
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "packed child launch must report a detached run id");
+    let text = "";
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const fetched = await subagentTool.execute(
+        "packed-child-result",
+        { action: "result", id: asyncId },
+        new AbortController().signal,
+        undefined,
+        sessionContext,
+      );
+      text = fetched.content
+        .filter((entry) => entry.type === "text")
+        .map((entry) => entry.text)
+        .join("\n");
+      if (!fetched.isError && text.includes(marker)) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
     assert.match(text, new RegExp(marker));
     const evidence = JSON.parse(readFileSync(extensionEvidencePath, "utf8"));
     assert.deepEqual(evidence.errors, []);

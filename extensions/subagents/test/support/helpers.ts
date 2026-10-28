@@ -474,7 +474,7 @@ export function makeMinimalCtx(cwd: string): ExtensionContext {
 
   return {
     cwd,
-    mode: "json",
+    mode: "tui",
     hasUI: false,
     ui: createMinimalUiContext(),
     sessionManager,

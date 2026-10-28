@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { makeSubagentState } from "../support/helpers.ts";
+import { durableArtifact } from "../support/durable-artifact.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS } from "../../src/runs/background/result-artifact-consumer.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
@@ -31,12 +32,14 @@ describe("result watcher", () => {
       const resultPath = path.join(resultsDir, "session-run.json");
       fs.writeFileSync(
         resultPath,
-        JSON.stringify({
-          id: "session-run",
-          sessionId: "session-current",
-          success: true,
-          summary: "done",
-        }),
+        JSON.stringify(
+          durableArtifact({
+            id: "session-run",
+            sessionId: "session-current",
+            success: true,
+            summary: "done",
+          }),
+        ),
         "utf-8",
       );
 
@@ -77,11 +80,13 @@ describe("result watcher", () => {
       const resultPath = path.join(resultsDir, "foreign-run.json");
       fs.writeFileSync(
         resultPath,
-        JSON.stringify({
-          id: "foreign-run",
-          success: true,
-          summary: "done",
-        }),
+        JSON.stringify(
+          durableArtifact({
+            id: "foreign-run",
+            success: true,
+            summary: "done",
+          }),
+        ),
         "utf-8",
       );
 
@@ -139,31 +144,35 @@ describe("result watcher", () => {
       try {
         fs.writeFileSync(
           ownerResultPath,
-          JSON.stringify({
-            id: "owner-run",
-            agent: "worker",
-            mode: "single",
-            success: true,
-            state: "complete",
-            summary: "owner output",
-            results: [{ agent: "worker", output: "owner output", success: true }],
-            sessionId: "session-owner",
-            cwd: "/repo",
-          }),
+          JSON.stringify(
+            durableArtifact({
+              id: "owner-run",
+              agent: "worker",
+              mode: "single",
+              success: true,
+              state: "complete",
+              summary: "owner output",
+              results: [{ agent: "worker", output: "owner output", success: true }],
+              sessionId: "session-owner",
+              cwd: "/repo",
+            }),
+          ),
           "utf-8",
         );
         fs.writeFileSync(
           sessionlessResultPath,
-          JSON.stringify({
-            id: "sessionless-run",
-            agent: "worker",
-            mode: "single",
-            success: true,
-            state: "complete",
-            summary: "sessionless output",
-            results: [{ agent: "worker", output: "sessionless output", success: true }],
-            cwd: "/repo",
-          }),
+          JSON.stringify(
+            durableArtifact({
+              id: "sessionless-run",
+              agent: "worker",
+              mode: "single",
+              success: true,
+              state: "complete",
+              summary: "sessionless output",
+              results: [{ agent: "worker", output: "sessionless output", success: true }],
+              cwd: "/repo",
+            }),
+          ),
           "utf-8",
         );
 
@@ -218,14 +227,16 @@ describe("result watcher", () => {
     try {
       fs.writeFileSync(
         resultPath,
-        JSON.stringify({
-          id: "raced-run",
-          agent: "worker",
-          success: true,
-          state: "complete",
-          summary: "one delivery",
-          sessionId: "session-owner",
-        }),
+        JSON.stringify(
+          durableArtifact({
+            id: "raced-run",
+            agent: "worker",
+            success: true,
+            state: "complete",
+            summary: "one delivery",
+            sessionId: "session-owner",
+          }),
+        ),
         "utf8",
       );
       firstWatcher.primeExistingResults();
@@ -251,7 +262,9 @@ describe("result watcher", () => {
     const writeResult = (resultPath: string, sessionId: string) =>
       fs.writeFileSync(
         resultPath,
-        JSON.stringify({ id: "run", agent: "worker", success: true, summary: "s", sessionId }),
+        JSON.stringify(
+          durableArtifact({ id: "run", agent: "worker", success: true, summary: "s", sessionId }),
+        ),
         "utf8",
       );
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -398,7 +411,9 @@ describe("result watcher", () => {
     fs.writeFileSync(orphanClaimPath, "opaque claim marker", "utf8");
     fs.writeFileSync(
       pairedResultPath,
-      JSON.stringify({ id: "paired", sessionId: "other-session", summary: "not ours" }),
+      JSON.stringify(
+        durableArtifact({ id: "paired", sessionId: "other-session", summary: "not ours" }),
+      ),
       "utf8",
     );
     fs.writeFileSync(pairedClaimPath, "opaque claim marker", "utf8");
@@ -485,14 +500,16 @@ describe("result watcher", () => {
     try {
       fs.writeFileSync(
         resultPath,
-        JSON.stringify({
-          id: "permanent-unlink",
-          agent: "worker",
-          success: true,
-          state: "complete",
-          summary: "delivered before cleanup failed",
-          sessionId: "session-1",
-        }),
+        JSON.stringify(
+          durableArtifact({
+            id: "permanent-unlink",
+            agent: "worker",
+            success: true,
+            state: "complete",
+            summary: "delivered before cleanup failed",
+            sessionId: "session-1",
+          }),
+        ),
         "utf8",
       );
       watcher.primeExistingResults();
@@ -577,14 +594,16 @@ describe("result watcher", () => {
     try {
       fs.writeFileSync(
         resultPath,
-        JSON.stringify({
-          id: "persistent-read",
-          agent: "worker",
-          success: true,
-          state: "complete",
-          summary: "unreadable result",
-          sessionId: "session-1",
-        }),
+        JSON.stringify(
+          durableArtifact({
+            id: "persistent-read",
+            agent: "worker",
+            success: true,
+            state: "complete",
+            summary: "unreadable result",
+            sessionId: "session-1",
+          }),
+        ),
         "utf8",
       );
       watcher.primeExistingResults();
@@ -700,21 +719,23 @@ describe("result watcher", () => {
     try {
       fs.writeFileSync(
         retryResultPath,
-        JSON.stringify({ id: "retry", summary: "retry", sessionId: "session-1" }),
+        JSON.stringify(durableArtifact({ id: "retry", summary: "retry", sessionId: "session-1" })),
         "utf8",
       );
       watcher.primeExistingResults();
       await new Promise((resolve) => setTimeout(resolve, 100));
       fs.writeFileSync(
         cleanupResultPath,
-        JSON.stringify({
-          id: "cleanup",
-          agent: "worker",
-          success: true,
-          state: "complete",
-          summary: "cleanup",
-          sessionId: "session-1",
-        }),
+        JSON.stringify(
+          durableArtifact({
+            id: "cleanup",
+            agent: "worker",
+            success: true,
+            state: "complete",
+            summary: "cleanup",
+            sessionId: "session-1",
+          }),
+        ),
         "utf8",
       );
       watcher.primeExistingResults();
@@ -871,30 +892,32 @@ describe("result watcher", () => {
         fs.writeFileSync(childSessionPath, "", "utf-8");
         fs.writeFileSync(
           path.join(resultsDir, "async-fallback.json"),
-          JSON.stringify({
-            id: "async-fallback",
-            runId: "run-fallback",
-            agent: "parallel:a+b",
-            mode: "parallel",
-            success: true,
-            state: "complete",
-            summary: "Combined summary",
-            results: [
-              {
-                agent: "a",
-                output: "Result from a",
-                success: true,
-                sessionFile: childSessionPath,
-              },
-              {
-                agent: "b",
-                output: "Result from b",
-                success: false,
-                error: "B failed",
-              },
-            ],
-            sessionId: "session-1",
-          }),
+          JSON.stringify(
+            durableArtifact({
+              id: "run-fallback",
+              runId: "run-fallback",
+              agent: "parallel:a+b",
+              mode: "parallel",
+              success: true,
+              state: "complete",
+              summary: "Combined summary",
+              results: [
+                {
+                  agent: "a",
+                  output: "Result from a",
+                  success: true,
+                  sessionFile: childSessionPath,
+                },
+                {
+                  agent: "b",
+                  output: "Result from b",
+                  success: false,
+                  error: "B failed",
+                },
+              ],
+              sessionId: "session-1",
+            }),
+          ),
           "utf-8",
         );
         poll?.();
@@ -980,7 +1003,7 @@ describe("result watcher", () => {
 
         fs.writeFileSync(
           path.join(resultsDir, "done.json"),
-          JSON.stringify({ sessionId: "session-1", summary: "done" }),
+          JSON.stringify(durableArtifact({ id: "done", sessionId: "session-1", summary: "done" })),
           "utf-8",
         );
         poll?.();
@@ -1054,7 +1077,9 @@ describe("result watcher", () => {
         // Written while the watcher is down: no fs.watch event will ever fire for it.
         fs.writeFileSync(
           path.join(resultsDir, "during-restart.json"),
-          JSON.stringify({ sessionId: "session-1", summary: "done" }),
+          JSON.stringify(
+            durableArtifact({ id: "during-restart", sessionId: "session-1", summary: "done" }),
+          ),
           "utf-8",
         );
         restart?.();
@@ -1100,34 +1125,36 @@ describe("result watcher", () => {
         fs.writeFileSync(firstSession, "", "utf-8");
         fs.writeFileSync(
           path.join(resultsDir, "async-1.json"),
-          JSON.stringify({
-            id: "async-1",
-            runId: "run-123",
-            agent: "parallel:a+b",
-            mode: "parallel",
-            success: true,
-            state: "complete",
-            summary: "Combined summary",
-            results: [
-              {
-                agent: "a",
-                output: "Result from a",
-                success: true,
-                sessionFile: firstSession,
-                artifactPaths: { outputPath: "/tmp/a-output.md" },
-              },
-              {
-                agent: "b",
-                output: "Result from b",
-                success: false,
-                sessionFile: missingSession,
-                artifactPaths: { outputPath: "/tmp/b-output.md" },
-              },
-            ],
-            sessionId: "session-1",
-            sessionFile: "/tmp/session.jsonl",
-            asyncDir: "/tmp/async-1",
-          }),
+          JSON.stringify(
+            durableArtifact({
+              id: "run-123",
+              runId: "run-123",
+              agent: "parallel:a+b",
+              mode: "parallel",
+              success: true,
+              state: "complete",
+              summary: "Combined summary",
+              results: [
+                {
+                  agent: "a",
+                  output: "Result from a",
+                  success: true,
+                  sessionFile: firstSession,
+                  artifactPaths: { outputPath: "/tmp/a-output.md" },
+                },
+                {
+                  agent: "b",
+                  output: "Result from b",
+                  success: false,
+                  sessionFile: missingSession,
+                  artifactPaths: { outputPath: "/tmp/b-output.md" },
+                },
+              ],
+              sessionId: "session-1",
+              sessionFile: "/tmp/session.jsonl",
+              asyncDir: "/tmp/async-1",
+            }),
+          ),
           "utf-8",
         );
         watcher.primeExistingResults();
@@ -1170,18 +1197,20 @@ describe("result watcher", () => {
       try {
         fs.writeFileSync(
           path.join(resultsDir, "async-top-session.json"),
-          JSON.stringify({
-            id: "async-top-session",
-            mode: "parallel",
-            success: false,
-            state: "failed",
-            results: [
-              { agent: "a", output: "A", success: true },
-              { agent: "b", output: "B", success: false },
-            ],
-            sessionId: "session-1",
-            sessionFile: "/tmp/top-session.jsonl",
-          }),
+          JSON.stringify(
+            durableArtifact({
+              id: "async-top-session",
+              mode: "parallel",
+              success: false,
+              state: "failed",
+              results: [
+                { agent: "a", output: "A", success: true },
+                { agent: "b", output: "B", success: false },
+              ],
+              sessionId: "session-1",
+              sessionFile: "/tmp/top-session.jsonl",
+            }),
+          ),
           "utf-8",
         );
         watcher.primeExistingResults();
@@ -1227,31 +1256,33 @@ describe("result watcher", () => {
       try {
         fs.writeFileSync(
           path.join(resultsDir, "async-paused.json"),
-          JSON.stringify({
-            id: "async-paused",
-            runId: "run-paused",
-            agent: "a+b",
-            mode: "parallel",
-            success: false,
-            state: "paused",
-            summary: "Paused after interrupt. Waiting for explicit next action.",
-            results: [
-              {
-                agent: "a",
-                output: "Result from a",
-                success: true,
-                exitCode: 0,
-              },
-              {
-                agent: "b",
-                output: "Paused after interrupt",
-                success: false,
-                exitCode: 0,
-                interrupted: true,
-              },
-            ],
-            sessionId: "session-1",
-          }),
+          JSON.stringify(
+            durableArtifact({
+              id: "run-paused",
+              runId: "run-paused",
+              agent: "a+b",
+              mode: "parallel",
+              success: false,
+              state: "paused",
+              summary: "Paused after interrupt. Waiting for explicit next action.",
+              results: [
+                {
+                  agent: "a",
+                  output: "Result from a",
+                  success: true,
+                  exitCode: 0,
+                },
+                {
+                  agent: "b",
+                  output: "Paused after interrupt",
+                  success: false,
+                  exitCode: 0,
+                  interrupted: true,
+                },
+              ],
+              sessionId: "session-1",
+            }),
+          ),
           "utf-8",
         );
         watcher.primeExistingResults();
@@ -1297,16 +1328,18 @@ describe("result watcher", () => {
       try {
         fs.writeFileSync(
           path.join(resultsDir, "async-2.json"),
-          JSON.stringify({
-            id: "async-2",
-            runId: "run-456",
-            agent: "worker",
-            success: true,
-            state: "complete",
-            summary: "Worker summary",
-            results: [{ agent: "worker", output: "Worker summary" }],
-            sessionId: "session-1",
-          }),
+          JSON.stringify(
+            durableArtifact({
+              id: "run-456",
+              runId: "run-456",
+              agent: "worker",
+              success: true,
+              state: "complete",
+              summary: "Worker summary",
+              results: [{ agent: "worker", output: "Worker summary" }],
+              sessionId: "session-1",
+            }),
+          ),
           "utf-8",
         );
         watcher.primeExistingResults();

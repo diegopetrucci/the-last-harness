@@ -1072,7 +1072,7 @@ export function transitionSubagentRunTelemetryLifecycle(input: {
   };
 }
 
-/** Build the envelope used by foreground tool results and parent-session records. */
+/** Build the envelope for per-child results and parent-session records. */
 export function telemetryFromSingleResults(input: {
   runId: string;
   mode: SubagentRunMode;
@@ -1103,7 +1103,7 @@ export function telemetryFromSingleResults(input: {
       : undefined);
   return buildSubagentRunTelemetry({
     ...input,
-    execution: "foreground",
+    execution: "async",
     outcome: runOutcome,
     steps: input.results.map((result, index) => {
       const activityValues = {

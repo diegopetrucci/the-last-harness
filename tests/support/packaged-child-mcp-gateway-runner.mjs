@@ -1,4 +1,4 @@
-import { chmodSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall, fauxProvider } from "@earendil-works/pi-ai";
 import {
@@ -85,7 +85,43 @@ const modelRuntime = await ModelRuntime.create({
 });
 modelRuntime.registerNativeProvider(faux.provider);
 const model = faux.getModel();
+function subagentToolResults(messages) {
+  return messages.filter(
+    (message) => message?.role === "toolResult" && message.toolName === "subagent",
+  );
+}
+
+async function waitForTerminal(asyncDir) {
+  const statusPath = join(asyncDir, "status.json");
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    try {
+      const state = JSON.parse(readFileSync(statusPath, "utf8")).state;
+      if (["complete", "failed", "cancelled"].includes(state)) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`detached child did not finish: ${asyncDir}`);
+}
+
 const respond = async (context) => {
+  const results = subagentToolResults(context.messages);
+  if (results.length === 1) {
+    // The launch is detached: wait for the run, then fetch its output with the result action.
+    const { asyncId, asyncDir } = results[0].details ?? {};
+    if (!asyncId || !asyncDir || !existsSync(asyncDir)) {
+      throw new Error("detached launch did not report a run id and directory");
+    }
+    await waitForTerminal(asyncDir);
+    return fauxAssistantMessage(
+      fauxToolCall(
+        "subagent",
+        { action: "result", id: asyncId },
+        { id: "result-packaged-mcp-child" },
+      ),
+      { stopReason: "toolUse" },
+    );
+  }
   const childResult = latestSubagentResult(context.messages);
   if (childResult === undefined) {
     return fauxAssistantMessage(
@@ -124,7 +160,7 @@ const session = (
   })
 ).session;
 try {
-  await session.bindExtensions({});
+  await session.bindExtensions({ mode: "rpc" });
   await session.prompt("Delegate the deterministic fixture check.", {
     expandPromptTemplates: false,
   });

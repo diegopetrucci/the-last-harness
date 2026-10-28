@@ -521,7 +521,7 @@ describe("async execution runner launch and configuration validation", () => {
     }
   });
 
-  it("async launch messages stay concise one-line receipts", async () => {
+  it("async launch messages stay concise two-line receipts", async () => {
     const artifactConfig = {
       enabled: false,
       includeInput: false,
@@ -544,12 +544,15 @@ describe("async execution runner launch and configuration validation", () => {
       agentConfig: makeAgent("worker"),
       ...commonParams,
     });
-    assert.match(singleResult.content[0]?.text ?? "", /^Async: worker \[[^\]\n]+\]$/);
+    assert.match(
+      singleResult.content[0]?.text ?? "",
+      /^Async: worker \[[^\]\n]+\]\nEsc does not stop detached children\./,
+    );
     assert.doesNotMatch(
       singleResult.content[0]?.text ?? "",
       /Do not run sleep timers or polling loops/,
     );
-    assert.equal(singleResult.content[0]?.text?.includes("\n"), false);
+    assert.equal(singleResult.content[0]?.text?.split("\n").length, 2);
     await waitForAsyncResultFile(singleId, scaleTestTimeout(30_000));
 
     mockPi.onCall({ output: "parallel one done" });
@@ -563,12 +566,15 @@ describe("async execution runner launch and configuration validation", () => {
       agents: [makeAgent("worker"), makeAgent("reviewer")],
       ...commonParams,
     });
-    assert.match(parallelResult.content[0]?.text ?? "", /^Async parallel: .+ \[[^\]\n]+\]$/);
+    assert.match(
+      parallelResult.content[0]?.text ?? "",
+      /^Async parallel: .+ \[[^\]\n]+\]\nEsc does not stop detached children\./,
+    );
     assert.doesNotMatch(
       parallelResult.content[0]?.text ?? "",
       /Do not run sleep timers or polling loops/,
     );
-    assert.equal(parallelResult.content[0]?.text?.includes("\n"), false);
+    assert.equal(parallelResult.content[0]?.text?.split("\n").length, 2);
     const parallelResultPath = await waitForAsyncResultFile(parallelId);
     const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as {
       agent?: string;

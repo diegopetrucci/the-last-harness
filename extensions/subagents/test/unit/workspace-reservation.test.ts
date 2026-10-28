@@ -309,8 +309,8 @@ describe("executor integration", () => {
       pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "p" } as any,
       state: makeSubagentState({ baseCwd: "" }),
       config: { maxSubagentDepth: 2, control: {} } as any,
-      tempArtifactsDir: os.tmpdir(),
-      getSubagentSessionRoot: () => os.tmpdir(),
+      tempArtifactsDir: root,
+      getSubagentSessionRoot: () => root,
       expandTilde: (v) => v,
       discoverAgents: () => ({ agents }) as any,
       executeAsyncSingle: ((id: string) => {

@@ -7,7 +7,6 @@ import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
 import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.js";
-import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.js";
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
 export const MAX_NOTIFY_CHILDREN = 64;
@@ -228,6 +227,70 @@ function buildChildren(children) {
         };
     });
 }
+function finiteNonNegative(value) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+function childRecordUsage(child) {
+    const attempts = (Array.isArray(child.modelAttempts) ? child.modelAttempts : []).filter((attempt) => typeof attempt?.usage === "object" && attempt.usage !== null);
+    let usage;
+    if (attempts.length > 0) {
+        usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+        for (const { usage: u } of attempts) {
+            usage.input += finiteNonNegative(u.input);
+            usage.output += finiteNonNegative(u.output);
+            usage.cacheRead += finiteNonNegative(u.cacheRead);
+            usage.cacheWrite += finiteNonNegative(u.cacheWrite);
+            usage.cost += finiteNonNegative(u.cost);
+            usage.turns += finiteNonNegative(u.turns);
+        }
+    }
+    else if (child.totalCost) {
+        usage = {
+            input: finiteNonNegative(child.totalCost.inputTokens),
+            output: finiteNonNegative(child.totalCost.outputTokens),
+            cacheRead: 0,
+            cacheWrite: 0,
+            cost: finiteNonNegative(child.totalCost.costUsd),
+            turns: 0,
+        };
+    }
+    else {
+        let input = 0;
+        let output = 0;
+        let found = false;
+        for (const attempt of child.terminalResult?.facts.attempts ?? []) {
+            if (attempt.providerTokens.status !== "available")
+                continue;
+            found = true;
+            input += finiteNonNegative(attempt.providerTokens.usage.input);
+            output += finiteNonNegative(attempt.providerTokens.usage.output);
+        }
+        if (found)
+            usage = { input, output, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+    }
+    if (!usage)
+        return undefined;
+    return { ...usage, total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite };
+}
+function buildChildRecords(runId, children) {
+    if (!runId || children.length === 0)
+        return undefined;
+    return children.slice(0, MAX_NOTIFY_CHILDREN).map((child, position) => {
+        const sessionFile = typeof child.sessionFile === "string" ? child.sessionFile : child.sessionPath;
+        const usage = childRecordUsage(child);
+        return {
+            runId,
+            index: isValidChildIndex(child.index, children.length) ? child.index : position,
+            agent: boundedLabel(child.agent || "worker"),
+            outcome: { state: child.terminalResult?.state ?? resolveChildStatus(child) },
+            ...(sessionFile && sessionFile.length <= MAX_SESSION_PATH_CHARS ? { sessionFile } : {}),
+            ...(typeof child.model === "string" && child.model
+                ? { model: boundedLabel(child.model) }
+                : {}),
+            ...(usage ? { usage } : {}),
+        };
+    });
+}
 function buildFacts(children) {
     const facts = children
         .slice(0, MAX_NOTIFY_CHILDREN)
@@ -392,6 +455,9 @@ function serializableDetails(details) {
                 })),
             }
             : {}),
+        ...(details.childRecords
+            ? { childRecords: details.childRecords.slice(0, MAX_NOTIFY_CHILDREN) }
+            : {}),
         ...(details.factsPreview
             ? {
                 factsPreview: truncateWithMarker(details.factsPreview, MAX_NOTIFY_CHILDREN * (MAX_COMPLETION_FACTS_CHARS + 200), "… [facts truncated]"),
@@ -457,12 +523,17 @@ export function buildCompletionDetails(result) {
     const sessionPaths = collectSessionPaths(result, children);
     const factsPreview = privacySafe ? undefined : buildFacts(children);
     const childDetails = privacySafe ? undefined : buildChildren(children);
+    const childRecords = buildChildRecords(asyncId, children);
     return {
         agent,
         status,
         ...(taskInfo ? { taskInfo } : {}),
         resultPreview: privacySafe ? "Paused awaiting supervisor." : buildSummary(result, children),
         ...(childDetails ? { children: childDetails } : {}),
+        ...(childRecords ? { childRecords } : {}),
+        ...(childRecords && children.length > childRecords.length
+            ? { childRecordsOmitted: children.length - childRecords.length }
+            : {}),
         ...(privacySafe ? { privacySafe: true } : {}),
         ...(factsPreview ? { factsPreview } : {}),
         ...(artifactPaths ? { artifactPaths } : {}),
@@ -503,13 +574,6 @@ export default function registerSubagentNotify(pi, state) {
     const handleComplete = (data) => {
         const result = data;
         if (typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId)
-            return;
-        const completionRunId = typeof result.id === "string"
-            ? result.id
-            : typeof result.runId === "string"
-                ? result.runId
-                : undefined;
-        if (completionRunId && dispatchAwaitedRunCompletion(completionRunId, result))
             return;
         sendCompletion(pi, buildCompletionDetails(result), { triggerTurn: true, isIdle });
     };

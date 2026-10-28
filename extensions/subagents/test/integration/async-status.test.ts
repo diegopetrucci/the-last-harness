@@ -131,8 +131,9 @@ describe("async status helpers", () => {
       assert.equal(runs[0]?.steps.length, 2);
       assert.equal(runs[0]?.steps[1]?.agent, "worker");
       assert.equal(runs[0]?.steps[1]?.status, "running");
-      assert.equal(runs[0]?.awaited, true);
-      assert.match(formatAsyncRunList(runs), /run-a \| running \| awaited .*\| parallel/);
+      // Historical status files carry `awaited: true`; it is tolerated, not rendered.
+      assert.match(formatAsyncRunList(runs), /run-a \| running .*\| parallel/);
+      assert.doesNotMatch(formatAsyncRunList(runs), /awaited/);
       assert.match(formatAsyncRunList(runs), /output: .*output-1\.log/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1508,7 +1509,7 @@ describe("async status helpers", () => {
     }
   });
 
-  it("uses awaited-style wording for top-level async parallel runs", () => {
+  it("uses run-count wording for top-level async parallel runs", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-top-parallel-wording-"));
     try {
       createAsyncDir(root, "run-parallel", {

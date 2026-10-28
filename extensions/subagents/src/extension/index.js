@@ -15,12 +15,11 @@ import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPacka
 import { CLEANUP_MARKER_FRESH_WINDOW_MS, CLEANUP_MARKER_LEASE_OFFSET_MS, RUNTIME_CLEANUP_MARKER_NAME, } from "./runtime-cleanup-constants.js";
 import { resolveRunnerModulePath, resolveRunnerNodeCommand, } from "../runs/background/async-execution.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
-import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } from "../tui/render.js";
+import { renderWidget, renderSubagentResult } from "../tui/render.js";
 import { SubagentParams } from "./schemas.js";
 import { createSubagentExecutor, normalizeProjectAgentAccess, } from "./subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
-import { disposeAwaitedRuns } from "../runs/background/awaited-run-registry.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.js";
 import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, MAX_TOTAL_PREVIEW_CHARS, } from "../runs/background/notify.js";
@@ -126,29 +125,6 @@ export function scheduleDetachedRuntimeCleanup(deps = {}) {
     }
     catch {
     }
-}
-function subagentResultIsRunning(result) {
-    return (result.details?.progress?.some((entry) => entry.status === "running") ||
-        result.details?.results.some((entry) => entry.progress?.status === "running") ||
-        false);
-}
-function ensureSubagentResultAnimation(context) {
-    const state = context.state;
-    if (state.subagentResultAnimationTimer)
-        return;
-    if (typeof context.invalidate !== "function")
-        return;
-    if (state.frame === undefined)
-        state.frame = 0;
-    state.subagentResultAnimationTimer = setInterval(() => {
-        state.frame = ((state.frame ?? 0) + 1) % 10;
-        try {
-            context.invalidate?.();
-        }
-        catch {
-            void 0;
-        }
-    }, 80);
 }
 function isStaleExtensionContextError(error) {
     return error instanceof Error && error.message.includes("Extension context no longer active");
@@ -438,9 +414,7 @@ export default function registerSubagentExtension(pi) {
     startResultWatcher();
     primeExistingResults();
     const runtimeCleanup = () => {
-        disposeAwaitedRuns();
         removeLiveDetailTerminalInput();
-        liveDetailController.clearToolRows();
         toolResultBridge.clear();
         stopResultWatcher();
         supervisorChannel.dispose();
@@ -573,28 +547,12 @@ export default function registerSubagentExtension(pi) {
                 return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`, 0, 0);
             }
             const isParallel = (args.tasks?.length ?? 0) > 0;
-            const asyncLabel = args.async === true ? theme.fg("warning", " [async]") : "";
             if (isParallel)
-                return new Text(`${theme.fg("toolTitle", theme.bold("subagent"))}${asyncLabel}`, 0, 0);
-            return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`, 0, 0);
+                return new Text(theme.fg("toolTitle", theme.bold("subagent")), 0, 0);
+            return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}`, 0, 0);
         },
         renderResult(result, options, theme, context) {
-            const rendererState = context.state;
-            const isLiveToolRow = state.lastUiContext?.hasUI === true &&
-                Boolean(context.toolCallId) &&
-                typeof rendererState === "object" &&
-                rendererState !== null &&
-                typeof context.invalidate === "function" &&
-                liveDetailController.registerToolRow(context.toolCallId, rendererState, context.invalidate);
-            if (subagentResultIsRunning(result) && isLiveToolRow) {
-                ensureSubagentResultAnimation(context);
-            }
-            else {
-                clearLegacyResultAnimationTimer(context);
-            }
-            const frame = context.state?.frame ?? 0;
-            const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
-            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme, frame, Date.now());
+            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded: options.expanded }, theme);
         },
     });
     pi.registerTool(tool);
@@ -704,7 +662,6 @@ export default function registerSubagentExtension(pi) {
             }
             state.lastUiContext = ctx;
             cleanupSessionArtifacts(ctx);
-            liveDetailController.clearToolRows();
             resetJobs(ctx);
             restoreAttempted = true;
             restoreActiveJobs(ctx);
@@ -723,14 +680,9 @@ export default function registerSubagentExtension(pi) {
         installLiveDetailTerminalInput(ctx);
         supervisorChannel.start();
     });
-    pi.on("session_tree", () => {
-        liveDetailController.clearToolRows();
-    });
-    pi.on("session_compact", () => {
-        liveDetailController.clearToolRows();
-    });
+    pi.on("session_tree", () => { });
+    pi.on("session_compact", () => { });
     pi.on("session_shutdown", () => {
-        disposeAwaitedRuns();
         removeLiveDetailTerminalInput();
         toolResultBridge.clear();
         delete process.env[SUBAGENT_PARENT_SESSION_ENV];
@@ -753,7 +705,6 @@ export default function registerSubagentExtension(pi) {
         }
         state.cleanupTimers.clear();
         state.asyncJobs.clear();
-        liveDetailController.clearToolRows();
         supervisorChannel.dispose();
         if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
             delete globalStore[runtimeCleanupStoreKey];

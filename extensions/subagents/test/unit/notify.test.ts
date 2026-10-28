@@ -9,15 +9,11 @@ import {
   buildCompletionDetails,
   formatSingleCompletion,
 } from "../../src/runs/background/notify.ts";
-import {
-  registerAwaitedRun,
-  unregisterAwaitedRun,
-} from "../../src/runs/background/awaited-run-registry.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { createPi, terminalResult } from "../support/notify-fixtures.ts";
 
 describe("registerSubagentNotify", () => {
-  it("recovers an awaited marker when no live owner remains", () => {
+  it("delivers a completion carrying a historical awaited marker", () => {
     const { events, sentMessages, wakes } = createPi();
 
     events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -40,42 +36,6 @@ describe("registerSubagentNotify", () => {
     assert.match(recovered.content, /action: "result", id: "awaited-completion"/);
     assert.equal(recovered.details.resultPreview, "recoverable awaited result");
     assert.equal(wakes.length, 1);
-  });
-
-  it("suppresses a completion generation owned by a live awaited run", () => {
-    const { events, sentMessages, wakes } = createPi();
-    const id = `notify-generation-${Date.now().toString(36)}`;
-    registerAwaitedRun(
-      id,
-      () => true,
-      2,
-      undefined,
-      () => true,
-    );
-    try {
-      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-        id,
-        agent: "worker",
-        success: true,
-        summary: "owned generation",
-        timestamp: 123,
-        generation: 2,
-        sessionId: "session-1",
-      });
-      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-        id,
-        agent: "worker",
-        success: true,
-        summary: "later owned generation",
-        timestamp: 124,
-        generation: 3,
-        sessionId: "session-1",
-      });
-      assert.deepEqual(sentMessages, []);
-      assert.deepEqual(wakes, []);
-    } finally {
-      unregisterAwaitedRun(id, 2);
-    }
   });
 
   it("uses a fixed shape and fallback summary for an empty completion", () => {
@@ -266,8 +226,17 @@ describe("registerSubagentNotify", () => {
         ],
         sessionId: "session-1",
       });
-      const sentDetails = sentHarness.sentMessages[0]!.message as { details?: unknown };
-      assert.doesNotMatch(JSON.stringify(sentDetails.details), /private-session|\/private\//);
+      const sentMessage = sentHarness.sentMessages[0]!.message as {
+        content?: unknown;
+        details?: { childRecords?: Array<{ sessionFile?: string; outcome?: unknown }> };
+      };
+      assert.doesNotMatch(JSON.stringify(sentMessage.content), /private-session|\/private\//);
+      // Persisted details keep only the machine lineage record, not paths/previews/facts.
+      const { childRecords, ...rest } = sentMessage.details ?? {};
+      assert.doesNotMatch(JSON.stringify(rest), /private-session|\/private\//);
+      assert.equal(childRecords?.length, 1);
+      assert.equal(childRecords?.[0]?.sessionFile, sessionPath);
+      assert.deepEqual(childRecords?.[0]?.outcome, { state: "paused" });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

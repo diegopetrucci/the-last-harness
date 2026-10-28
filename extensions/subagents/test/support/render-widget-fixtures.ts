@@ -5,14 +5,9 @@ import {
 } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
 import { Container, Text, getKeybindings, setKeybindings } from "@earendil-works/pi-tui";
 import { createPlainTheme } from "./themes.ts";
-import {
-  buildWidgetLines,
-  clearLegacyResultAnimationTimer,
-  renderWidget,
-  widgetPhraseSlotKey,
-} from "../../src/tui/render.ts";
+import { buildWidgetLines, renderWidget, widgetPhraseSlotKey } from "../../src/tui/render.ts";
 
-export { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget, widgetPhraseSlotKey };
+export { buildWidgetLines, renderWidget, widgetPhraseSlotKey };
 export { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 export { createSubagentLiveDetailController } from "../../src/shared/subagent-shortcuts.ts";
 export {

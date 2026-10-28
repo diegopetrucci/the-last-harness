@@ -101,7 +101,7 @@ type AppendDiagnosticJsonl = (filePath: string, line: string, droppedEventType?:
 /**
  * Active prompt temp dirs for concurrent step executions in this runner process.
  * A shared SIGTERM/SIGINT handler cleans all of them then re-raises the signal,
- * ensuring that process-group kills (e.g. from an awaited-owner abort) don't
+ * ensuring that process-group kills (e.g. from a cancellation) don't
  * leak temp files and the process still terminates with the correct signal.
  */
 const activeTempDirs = new Set<string>();

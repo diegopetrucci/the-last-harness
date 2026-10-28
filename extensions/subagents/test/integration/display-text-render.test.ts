@@ -4,7 +4,7 @@ import { createPlainTheme } from "../support/themes.ts";
 import { renderSubagentResult, buildWidgetLines } from "../../src/tui/render.ts";
 import type { ChildLocationSnapshot } from "../../src/shared/child-location.ts";
 import { BINARY_CONTENT_PLACEHOLDER } from "../../src/shared/display-text.ts";
-import type { AgentProgress, AsyncJobState, Details } from "../../src/shared/types.ts";
+import type { AsyncJobState, Details } from "../../src/shared/types.ts";
 
 const theme = createPlainTheme();
 const unsafe = "visible \x1b[31mred\x1b[0m\x07tail";
@@ -150,24 +150,8 @@ describe("TUI display boundaries", () => {
     assert.equal(rows.filter((row) => row.includes("⎿  fake-widget-row")).length, 1);
   });
 
-  it("keeps expanded result-card progress single-line, preserves documents, and retains binary placeholders", () => {
+  it("preserves expanded result-card documents on separate rows", () => {
     const binary = "\x01\x02A".repeat(30) + "\x00";
-    const progress: AgentProgress = {
-      index: 0,
-      agent: "worker",
-      status: "running",
-      task: "review",
-      currentTool: "inspect",
-      currentToolArgs: "--flag",
-      recentTools: [
-        { tool: "card-tool", args: "card-arg-one\r\n  ⎿  fake-card-row", endMs: 1 },
-        { tool: "card-binary-tool", args: binary, endMs: 2 },
-      ],
-      recentOutput: ["card-recent-one\r\ncard-recent-two", binary],
-      toolCount: 1,
-      tokens: 1,
-      durationMs: 1,
-    };
     const details: Details = {
       mode: "single",
       results: [
@@ -176,7 +160,6 @@ describe("TUI display boundaries", () => {
           task: "review",
           exitCode: 0,
           finalOutput: "card-document-one\r\ncard-document-two",
-          progress,
           usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
         },
       ],
@@ -187,28 +170,11 @@ describe("TUI display boundaries", () => {
       { expanded: true },
       theme,
     ).render(180);
-    assert.equal(
-      expandedRows.filter((row) => row.includes("card-arg-one") && row.includes("fake-card-row"))
-        .length,
-      1,
-    );
-    assert.equal(
-      expandedRows.filter(
-        (row) => row.includes("card-recent-one") && row.includes("card-recent-two"),
-      ).length,
-      1,
-    );
     const documentRowOne = expandedRows.findIndex((row) => row.includes("card-document-one"));
     const documentRowTwo = expandedRows.findIndex((row) => row.includes("card-document-two"));
     assert.notEqual(documentRowOne, -1);
     assert.notEqual(documentRowTwo, -1);
     assert.notEqual(documentRowOne, documentRowTwo);
-    assert.equal(expandedRows.filter((row) => row.includes(BINARY_CONTENT_PLACEHOLDER)).length, 2);
-    assert.equal(
-      expandedRows.filter((row) => row.trimStart().startsWith("⎿  fake-card-row")).length,
-      0,
-    );
-    assert.equal(expandedRows.filter((row) => row.includes("⎿  fake-card-row")).length, 1);
 
     const collapsedRows = renderSubagentResult(
       {

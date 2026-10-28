@@ -31,6 +31,7 @@ export const SAFE_SUBAGENT_ACTIONS = Object.freeze([
   "status",
   "interrupt",
   "doctor",
+  "result",
   "resume",
   "steer",
 ]);

@@ -79,7 +79,7 @@ export function cancelPersistedPausedAsyncRun(
     let current = readStatus(asyncDir);
     if (!current) {
       return {
-        content: [{ type: "text", text: `Paused awaited run '${runId}' was not found.` }],
+        content: [{ type: "text", text: `Paused async run '${runId}' was not found.` }],
         isError: true,
         details: { mode: "management", results: [] },
       };
@@ -98,7 +98,7 @@ export function cancelPersistedPausedAsyncRun(
         content: [
           {
             type: "text",
-            text: `Awaited run '${runId}' has ${stepCount} children. Provide index to cancel one paused child.`,
+            text: `Async run '${runId}' has ${stepCount} children. Provide index to cancel one paused child.`,
           },
         ],
         isError: true,
@@ -110,7 +110,7 @@ export function cancelPersistedPausedAsyncRun(
         content: [
           {
             type: "text",
-            text: `Awaited run '${runId}' has ${stepCount} children. Index ${targetIndex ?? -1} is out of range.`,
+            text: `Async run '${runId}' has ${stepCount} children. Index ${targetIndex ?? -1} is out of range.`,
           },
         ],
         isError: true,
@@ -126,7 +126,7 @@ export function cancelPersistedPausedAsyncRun(
         content: [
           {
             type: "text",
-            text: `Awaited run '${runId}' child ${targetIndex} is already cancelled.`,
+            text: `Async run '${runId}' child ${targetIndex} is already cancelled.`,
           },
         ],
         details: { mode: "management", results: [] },
@@ -140,7 +140,7 @@ export function cancelPersistedPausedAsyncRun(
         content: [
           {
             type: "text",
-            text: `Awaited run '${runId}' already continued into '${lifecycleContinuationForIndex(current, targetIndex)?.continuationRunId ?? current.lifecycle?.continuation?.continuationRunId ?? "unknown"}' and can no longer be cancelled from the paused supervisor lifecycle.`,
+            text: `Async run '${runId}' already continued into '${lifecycleContinuationForIndex(current, targetIndex)?.continuationRunId ?? current.lifecycle?.continuation?.continuationRunId ?? "unknown"}' and can no longer be cancelled from the paused supervisor lifecycle.`,
           },
         ],
         isError: true,
@@ -152,7 +152,7 @@ export function cancelPersistedPausedAsyncRun(
         content: [
           {
             type: "text",
-            text: `Awaited run '${runId}' child ${targetIndex} is already claimed for continuation and cannot be cancelled through the paused supervisor lifecycle.`,
+            text: `Async run '${runId}' child ${targetIndex} is already claimed for continuation and cannot be cancelled through the paused supervisor lifecycle.`,
           },
         ],
         isError: true,
@@ -169,7 +169,7 @@ export function cancelPersistedPausedAsyncRun(
         content: [
           {
             type: "text",
-            text: `Awaited run '${runId}' child ${targetIndex} is not a paused child.`,
+            text: `Async run '${runId}' child ${targetIndex} is not a paused child.`,
           },
         ],
         isError: true,
@@ -231,7 +231,7 @@ export function cancelPersistedPausedAsyncRun(
       content: [
         {
           type: "text",
-          text: `Cancelled paused awaited run ${runId} child ${targetIndex}. Existing enabled artifacts and the canonical child session were preserved; compact mode may omit the diagnostic child transcript. Resume is no longer available for that child.`,
+          text: `Cancelled paused async run ${runId} child ${targetIndex}. Existing enabled artifacts and the canonical child session were preserved; compact mode may omit the diagnostic child transcript. Resume is no longer available for that child.`,
         },
       ],
       details: { mode: "management", results: [] },
@@ -242,7 +242,7 @@ export function cancelPersistedPausedAsyncRun(
       content: [
         {
           type: "text",
-          text: `Paused awaited run '${runId}' could not be updated safely. ${SUPERVISOR_LIFECYCLE_ERROR_MESSAGE}`,
+          text: `Paused async run '${runId}' could not be updated safely. ${SUPERVISOR_LIFECYCLE_ERROR_MESSAGE}`,
         },
       ],
       isError: true,

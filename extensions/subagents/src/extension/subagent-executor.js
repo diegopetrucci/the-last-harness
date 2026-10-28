@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { getArtifactsDir, resolveArtifactConfig } from "../shared/artifacts.js";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.js";
 import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "../runs/background/async-owner-authorization.js";
-import { ensureTerminalRecord, hasUnretrievedTerminalRecord, markTerminalRecordRetrieved, } from "../runs/background/terminal-record.js";
+import { ensureTerminalRecord, terminalRecordFromResultsFile, hasUnretrievedTerminalRecord, markTerminalRecordRetrieved, } from "../runs/background/terminal-record.js";
 import { formatTerminalRecordResult } from "../runs/background/result-action.js";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.js";
 import { handleManagementAction } from "../agents/agent-management.js";
@@ -33,6 +33,20 @@ function toExecutionErrorResult(params, error) {
         content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
         isError: true,
         details: { mode: getRequestedModeLabel(params), results: [] },
+    };
+}
+const HEADLESS_EXTENSION_MODES = new Set(["print", "json"]);
+export const HEADLESS_DETACHED_REJECTION = "Detached subagent runs are unavailable in print/json mode: the process exits after the prompt, so completion results cannot be delivered. Use an interactive (tui) or RPC session to launch subagents. Management actions (list, get, status, result, interrupt, steer, doctor) still work.";
+export const ASYNC_FALSE_REJECTION = "async:false is no longer supported: subagent runs are always detached. Omit the async parameter (async:true is accepted and ignored), end your turn after dispatching, and when the completion notification arrives call subagent with action 'result' and the run id to fetch the output. No subagent was launched.";
+export const PRELAUNCH_ABORT_REJECTION = "Subagent launch rejected: the tool call was already aborted before any run was started. No subagent was spawned.";
+function headlessDetachedRejection(ctx, params) {
+    const mode = ctx.mode;
+    if (mode === undefined || !HEADLESS_EXTENSION_MODES.has(mode))
+        return undefined;
+    return {
+        content: [{ type: "text", text: HEADLESS_DETACHED_REJECTION }],
+        isError: true,
+        details: { mode: params.action ? "management" : getRequestedModeLabel(params), results: [] },
     };
 }
 function buildParallelModeError(message) {
@@ -241,7 +255,7 @@ function prepareTicketBodies(params, effectiveCwd) {
     return ticketBodies.size > 0 ? { ticketBodies } : {};
 }
 async function runAsyncPath(data, deps) {
-    const { params, effectiveCwd, agents, ctx, shareEnabled, sessionRoot, sessionFileForTask, artifactConfig, artifactsDir, awaited, controlConfig, ticketBodies, } = data;
+    const { params, effectiveCwd, agents, ctx, shareEnabled, sessionRoot, sessionFileForTask, artifactConfig, artifactsDir, controlConfig, ticketBodies, } = data;
     const hasTasks = (params.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(params.agent);
     if (hasTasks && params.tasks) {
@@ -331,9 +345,6 @@ async function runAsyncPath(data, deps) {
             ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
         }));
         return reserved(() => (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
-            awaited,
-            signal: data.signal,
-            onUpdate: data.onUpdate,
             tasks: parallelTasks,
             concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
             agents,
@@ -374,9 +385,6 @@ async function runAsyncPath(data, deps) {
         });
         const executeSingle = deps.executeAsyncSingle ?? executeAsyncSingle;
         return reserved(() => executeSingle(id, {
-            awaited,
-            signal: data.signal,
-            onUpdate: data.onUpdate,
             agent: params.agent,
             task: params.task ?? "",
             ...(params.ticket ? { ticket: params.ticket } : {}),
@@ -418,7 +426,7 @@ function duplicateSubagentCallResult(params) {
         content: [
             {
                 type: "text",
-                text: "Rejected: a subagent call is already in progress. Issue exactly ONE subagent call per turn.",
+                text: "Rejected: a subagent call is already in progress. Do not overlap launches; use tasks[] to run agents in parallel.",
             },
         ],
         isError: true,
@@ -496,12 +504,12 @@ function projectManagementError(text) {
         details: { mode: "management", results: [] },
     };
 }
-function awaitedLifecycleFailure() {
+function asyncLifecycleFailure() {
     return {
         content: [
             {
                 type: "text",
-                text: "Awaited supervisor lifecycle update failed. The run was stopped safely and marked failed.",
+                text: "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.",
             },
         ],
         isError: true,
@@ -510,7 +518,7 @@ function awaitedLifecycleFailure() {
 }
 function projectManagementErrorFrom(error) {
     if (isAsyncStatusReadError(error))
-        return awaitedLifecycleFailure();
+        return asyncLifecycleFailure();
     return projectManagementError(error instanceof Error ? error.message : String(error));
 }
 async function executeSteerAction(params, ctx, deps) {
@@ -565,6 +573,16 @@ async function executeSteerAction(params, ctx, deps) {
         return projectManagementErrorFrom(error);
     }
 }
+function hasReadableStatus(asyncDir) {
+    if (!asyncDir)
+        return false;
+    try {
+        return readStatus(asyncDir, { cache: false }) !== null;
+    }
+    catch {
+        return false;
+    }
+}
 function executeResultAction(params, ctx, deps) {
     const callerKey = resolveCurrentSessionId(ctx.sessionManager);
     deps.state.currentSessionId = callerKey;
@@ -583,15 +601,29 @@ function executeResultAction(params, ctx, deps) {
     if (resolved?.kind !== "async") {
         return projectManagementError(`No async run found for '${params.id}'.`);
     }
+    const asyncDir = hasReadableStatus(resolved.location.asyncDir)
+        ? resolved.location.asyncDir
+        : null;
     const ownerAuthorization = authorizeAsyncRunOwner({
         callerKey,
         runId: resolved.id,
-        ...(resolved.location.asyncDir ? { asyncDir: resolved.location.asyncDir } : {}),
+        ...(asyncDir ? { asyncDir } : {}),
         ...(resolved.location.resultPath ? { resultPath: resolved.location.resultPath } : {}),
     });
     if (ownerAuthorization.outcome !== "owned")
         return projectManagementError(asyncRunOwnerRejectionMessage(ownerAuthorization, resolved.id, "retrieved"));
-    const asyncDir = resolved.location.asyncDir;
+    if (!asyncDir && resolved.location.resultPath) {
+        const fallback = terminalRecordFromResultsFile(resolved.location.resultPath, resolved.id);
+        if (fallback) {
+            if (params.index !== undefined && !fallback.children.some((c) => c.index === params.index)) {
+                return projectManagementError(`Async run '${resolved.id}' has no child at index ${params.index} (children: ${fallback.children.length}).`);
+            }
+            return {
+                content: [{ type: "text", text: formatTerminalRecordResult(fallback, params.index).text }],
+                details: { mode: "management", results: [] },
+            };
+        }
+    }
     if (!asyncDir) {
         return projectManagementError(`Async run '${resolved.id}' has no durable run directory; its result cannot be retrieved.`);
     }
@@ -675,7 +707,7 @@ async function executeInterruptAction(params, ctx, deps) {
         }
         catch (error) {
             if (isAsyncStatusReadError(error))
-                return awaitedLifecycleFailure();
+                return asyncLifecycleFailure();
             throw error;
         }
         if (isPersistedCancellationState(persistedStatus)) {
@@ -711,7 +743,11 @@ export function createSubagentExecutor(deps) {
             if (action === "status")
                 return executeStatusAction(paramsWithResolvedCwd, ctx, deps);
             if (action === "resume") {
+                const headless = headlessDetachedRejection(ctx, paramsWithResolvedCwd);
+                if (headless)
+                    return headless;
                 return resumeAsyncRun({
+                    signal,
                     params: paramsWithResolvedCwd,
                     requestCwd,
                     ctx,
@@ -759,6 +795,13 @@ export function createSubagentExecutor(deps) {
                 details: { mode: "single", results: [] },
             };
         }
+        if (paramsWithResolvedCwd.async === false)
+            return buildRequestedModeError(paramsWithResolvedCwd, ASYNC_FALSE_REJECTION);
+        const headless = headlessDetachedRejection(ctx, paramsWithResolvedCwd);
+        if (headless)
+            return headless;
+        if (signal?.aborted)
+            return toExecutionErrorResult(paramsWithResolvedCwd, new Error(PRELAUNCH_ABORT_REJECTION));
         const ticketNormalized = normalizeExecutionTickets(paramsWithResolvedCwd);
         if (ticketNormalized.error) {
             return buildRequestedModeError(paramsWithResolvedCwd, ticketNormalized.error);
@@ -776,6 +819,9 @@ export function createSubagentExecutor(deps) {
             return toExecutionErrorResult(effectiveParams, new Error(projectResolution.error));
         }
         effectiveParams = applyProjectAgentOpenRouterModel(projectResolution.params, projectResolution.projectAgentIdentities, ctx.model);
+        if (signal?.aborted) {
+            return toExecutionErrorResult(effectiveParams, new Error(PRELAUNCH_ABORT_REJECTION));
+        }
         const effectiveCwd = projectResolution.effectiveCwd;
         const discovered = projectResolution.discovered;
         const discoveredAgents = discovered.agents;
@@ -793,7 +839,6 @@ export function createSubagentExecutor(deps) {
             return buildRequestedModeError(effectiveParams, ticketPreparation.error);
         }
         const ticketBodies = ticketPreparation.ticketBodies;
-        const awaited = effectiveParams.async !== true;
         const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
         const artifactConfig = {
             ...configuredArtifactConfig,
@@ -829,7 +874,6 @@ export function createSubagentExecutor(deps) {
             signal,
             onUpdate: onUpdateWithContext,
             agents,
-            awaited,
             ...(projectResolution.projectAgentIdentities
                 ? { projectAgentIdentities: projectResolution.projectAgentIdentities }
                 : {}),
@@ -849,7 +893,7 @@ export function createSubagentExecutor(deps) {
             const asyncResult = await runAsyncPath(execData, deps);
             if (asyncResult)
                 return asyncResult;
-            return toExecutionErrorResult(effectiveParams, new Error("The awaited subagent runner is unavailable."));
+            return toExecutionErrorResult(effectiveParams, new Error("The detached subagent runner is unavailable."));
         }
         catch (error) {
             return toExecutionErrorResult(effectiveParams, error);

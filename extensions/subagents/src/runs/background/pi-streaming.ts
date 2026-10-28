@@ -127,7 +127,7 @@ export function runtimeModelReference(identity: SubagentModelIdentity): string {
 
 /**
  * Detached child process groups still running under this runner. If the runner
- * itself is signalled (e.g. an awaited-owner abort), its children live in their
+ * itself is signalled (e.g. a cancellation), its children live in their
  * own groups and would otherwise outlive it when they ignore SIGINT/SIGTERM.
  */
 const liveChildGroups = new Map<number, OwnedProcessGroupOwner>();

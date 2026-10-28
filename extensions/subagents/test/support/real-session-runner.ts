@@ -39,6 +39,8 @@ export interface RealSessionRunOptions {
   childText: string;
   respond: FauxResponder;
   timeoutMs?: number;
+  /** Extension mode the parent binds with; defaults to the upstream headless default (print). */
+  mode?: "print" | "json" | "tui" | "rpc";
   /** Optional callback to write fixtures into the temp cwd and home directories before the session starts. */
   setup?: (dirs: { cwd: string; home: string }) => void;
 }
@@ -307,7 +309,7 @@ export async function runRealSubagentSession(
       }
     });
 
-    await session.bindExtensions({});
+    await session.bindExtensions(options.mode ? { mode: options.mode } : {});
     const timeoutMs = options.timeoutMs ?? 30_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {

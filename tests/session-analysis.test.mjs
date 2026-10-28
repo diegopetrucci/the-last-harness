@@ -1224,3 +1224,117 @@ test("extractSubagentCorrelationsWithStatus: refuses symlink pointing outside se
   );
   assert.equal(correlations[0]?.childSessionId, undefined);
 });
+
+test("extractSubagentCorrelationsWithStatus: resolves async completion childRecords beyond eight children", async (t) => {
+  const dir = makeTempDir("session-analysis-async-lineage-", t);
+  const { mkdirSync } = await import("node:fs");
+  const sessionsDir = join(dir, "sessions");
+  mkdirSync(join(sessionsDir, "proj"), { recursive: true });
+  const childFiles = [];
+  for (let index = 0; index < 12; index++) {
+    const file = join(sessionsDir, "proj", `child-${index}.jsonl`);
+    writeFileSync(file, sessionHeader(`child-id-${index}`) + "\n", "utf8");
+    childFiles.push(file);
+  }
+  const completion = (details) =>
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent-notify",
+      content: "Background task completed",
+      timestamp: "2026-01-01T00:00:05.000Z",
+      details,
+    });
+  const parentPath = writeFixture(t, [
+    sessionHeader("parent-async"),
+    completion({
+      asyncId: "async-run-1",
+      // Display refs stay capped at eight; childRecords are the lineage source.
+      sessionPaths: childFiles.slice(0, 8),
+      childRecords: childFiles.map((sessionFile, index) => ({
+        runId: "async-run-1",
+        index,
+        agent: `worker-${index}`,
+        outcome: { state: "completed" },
+        sessionFile,
+      })),
+    }),
+  ]);
+  const scan = await scanSessionFile(parentPath);
+  assert.equal(scan.correlationAsyncCompletionCount, 12);
+  const { correlations, failureReasons } = await extractSubagentCorrelationsWithStatus(
+    scan,
+    sessionsDir,
+  );
+  assert.deepEqual(failureReasons, []);
+  assert.equal(correlations.length, 12);
+  assert.ok(correlations.every((c) => c.runId === "async-run-1" && c.childResolved));
+  assert.equal(correlations[11]?.childIndex, 11);
+  assert.equal(correlations[11]?.childSessionId, "child-id-11");
+  assert.equal(correlations[0]?.toolCallId, undefined);
+});
+
+test("extractSubagentCorrelationsWithStatus: resolves lineage for protected paused completions", async (t) => {
+  const dir = makeTempDir("session-analysis-paused-lineage-", t);
+  const { mkdirSync } = await import("node:fs");
+  const sessionsDir = join(dir, "sessions");
+  mkdirSync(join(sessionsDir, "proj"), { recursive: true });
+  const childFile = join(sessionsDir, "proj", "paused-child.jsonl");
+  writeFileSync(childFile, sessionHeader("paused-child-id") + "\n", "utf8");
+  const parentPath = writeFixture(t, [
+    sessionHeader("parent-paused"),
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent-notify",
+      content: "Background task paused:\n\nPaused awaiting supervisor.",
+      timestamp: "2026-01-01T00:00:05.000Z",
+      details: {
+        asyncId: "paused-run-1",
+        status: "paused",
+        privacySafe: true,
+        childRecords: [
+          {
+            runId: "paused-run-1",
+            index: 0,
+            agent: "worker",
+            outcome: { state: "paused" },
+            sessionFile: childFile,
+          },
+        ],
+      },
+    }),
+  ]);
+  const scan = await scanSessionFile(parentPath);
+  const { correlations, failureReasons } = await extractSubagentCorrelationsWithStatus(
+    scan,
+    sessionsDir,
+  );
+  assert.deepEqual(failureReasons, []);
+  assert.equal(correlations.length, 1);
+  assert.equal(correlations[0]?.childResolved, true);
+  assert.equal(correlations[0]?.childSessionId, "paused-child-id");
+});
+
+test("extractSubagentCorrelationsWithStatus: detects async completion evidence changing after scan", async (t) => {
+  const parentPath = writeFixture(t, [sessionHeader("parent-async-race")]);
+  const line = (file) =>
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent-notify",
+      details: {
+        asyncId: "run-r",
+        childRecords: [{ runId: "run-r", index: 0, agent: "a", sessionFile: file }],
+      },
+    });
+  writeFileSync(
+    parentPath,
+    [sessionHeader("parent-async-race"), line("/x/one.jsonl")].join("\n") + "\n",
+  );
+  const scan = await scanSessionFile(parentPath);
+  writeFileSync(
+    parentPath,
+    [sessionHeader("parent-async-race"), line("/x/two.jsonl")].join("\n") + "\n",
+  );
+  const result = await extractSubagentCorrelationsWithStatus(scan);
+  assert.deepEqual(result.correlations, []);
+  assert.ok(result.failureReasons.includes("digestMismatch"));
+});

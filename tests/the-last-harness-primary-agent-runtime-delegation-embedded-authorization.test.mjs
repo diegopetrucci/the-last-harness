@@ -6,6 +6,7 @@ import test from "node:test";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
+import { releaseWorkspaceReservationsForRun } from "../extensions/subagents/src/runs/shared/workspace-reservation.ts";
 import { createSubagentExecutor } from "../extensions/subagents/src/extension/subagent-executor.ts";
 import {
   ASYNC_DIR,
@@ -339,7 +340,13 @@ function rushRunFixture(t, fixture) {
   t.after(() => {
     for (const runId of runIds) rmSync(join(ASYNC_DIR, runId), { recursive: true, force: true });
     // Remove the shared temp dirs only when empty so unrelated runs are never touched.
-    for (const dir of [ASYNC_DIR, RESULTS_DIR, TEMP_ARTIFACTS_DIR, TEMP_ROOT_DIR]) {
+    for (const dir of [
+      join(TEMP_ROOT_DIR, "workspace-reservations"),
+      ASYNC_DIR,
+      RESULTS_DIR,
+      TEMP_ARTIFACTS_DIR,
+      TEMP_ROOT_DIR,
+    ]) {
       try {
         rmdirSync(dir);
       } catch {
@@ -443,9 +450,16 @@ test("embedded subagents: rush resume/steer is enforced by the executor per exac
       await blocked("missing-run-1", {}, true);
       assert.equal(dispatched.length, before, `${action} dispatched nothing while blocked`);
 
+      // The stubbed dispatch never reaches a terminal state, so release the revived
+      // runs' writer reservations (held by this live process) between allowed calls.
+      const releaseDispatched = () => {
+        for (const id of dispatched.slice(before)) releaseWorkspaceReservationsForRun(id);
+      };
       const allowed = await call({ ...base, id: writeRun(state, [embeddedStep]) });
+      releaseDispatched();
       assert.equal(allowed.isError, undefined, allowed.content[0]?.text);
       const mixedAllowed = await call({ ...base, id: mixed, index: 1 });
+      releaseDispatched();
       assert.equal(mixedAllowed.isError, undefined, mixedAllowed.content[0]?.text);
     }
   });

@@ -89,7 +89,8 @@ const SubagentParamsSchema = Type.Object(
     ),
     async: Type.Optional(
       Type.Boolean({
-        description: "Launch detached background work (default: false, or per config)",
+        description:
+          "Deprecated and ignored: runs are always detached. true is accepted; false is rejected.",
       }),
     ),
     action: Type.Optional(

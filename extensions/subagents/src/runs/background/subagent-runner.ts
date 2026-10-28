@@ -486,7 +486,7 @@ async function runSubagentWithInput(
   // Lifecycle status writes take a lock dir whose owner.json is published a
   // moment after mkdir; a signal with no listener kills the runner inside that
   // window and leaves an ownerless (fail-closed, unrecoverable) lock, so an
-  // awaited-owner abort could never persist 'cancelled'. A listener defers the
+  // abort signal could never persist 'cancelled'. A listener defers the
   // signal to the event loop, between synchronous writes. Idempotent.
   ensureKillCleanup();
   const eventsPath = path.join(asyncDir, "events.jsonl");
@@ -502,7 +502,6 @@ async function runSubagentWithInput(
     appendDiagnosticJsonl(eventsPath, line, droppedEventType);
   const statusOwner = createBackgroundRunStatusOwner({
     id,
-    ...(config.awaited ? { awaited: true } : {}),
     asyncDir,
     cwd,
     plan,

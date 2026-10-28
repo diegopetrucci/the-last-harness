@@ -7,6 +7,7 @@ import { makeSubagentState } from "../support/helpers.ts";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 import { ASYNC_DIR, RESULTS_DIR } from "../../src/shared/types.ts";
+import { cancelPersistedPausedAsyncRun } from "../../src/runs/background/async-cancellation.ts";
 import {
   TERMINAL_RECORD_FILE,
   hasUnretrievedTerminalRecord,
@@ -246,6 +247,56 @@ describe("subagent result action", () => {
     assert.match(text, /Child 1: b — failed/);
     assert.match(text, /child broke/);
     assert.equal(readTerminalRecord(asyncDir, runId)?.synthesized, true);
+  });
+
+  it("refreshes the terminal record with a new revision after a paused child is cancelled", async () => {
+    const runId = newRunId();
+    const asyncDir = writeStatus(runId, {
+      state: "paused",
+      pause: { kind: "awaiting_supervisor" },
+      steps: [
+        {
+          agent: "a",
+          status: "paused",
+          recentOutput: ["kept tail"],
+          pause: { kind: "awaiting_supervisor" },
+        },
+      ],
+    });
+    const first = await run({ id: runId });
+    assert.equal(first.isError, false, first.text);
+    assert.match(first.text, /Child 0: a — paused/);
+    const before = readTerminalRecord(asyncDir, runId);
+    assert.ok(before);
+    assert.equal(hasUnretrievedTerminalRecord(asyncDir, before), false, "retrieved marker set");
+    const cancelStatusBefore = JSON.stringify(before.children.map((c) => c.status));
+    assert.equal(cancelStatusBefore, '["paused"]');
+
+    const cancelled = cancelPersistedPausedAsyncRun(asyncDir, runId, 0, SESSION);
+    assert.notEqual(cancelled.isError, true, JSON.stringify(cancelled.content));
+
+    const second = await run({ id: runId });
+    assert.equal(second.isError, false, second.text);
+    assert.match(second.text, /Child 0: a — cancelled/);
+    assert.match(second.text, /kept tail/, "retained output preserved");
+    const after = readTerminalRecord(asyncDir, runId);
+    assert.equal(after?.state, "cancelled");
+    assert.notEqual(after?.revision, before.revision);
+    // The refresh reset the earlier retrieval marker; this retrieval marked the new revision.
+    assert.equal(hasUnretrievedTerminalRecord(asyncDir, after!), false);
+  });
+
+  it("reads a retained results file when the run has no usable asyncDir", async () => {
+    const runId = newRunId();
+    fs.mkdirSync(RESULTS_DIR, { recursive: true });
+    const missingDir = path.join(os.tmpdir(), `absent-${runId}`);
+    writeJson(
+      path.join(RESULTS_DIR, `${runId}.json`),
+      artifact(runId, missingDir, [{ agent: "a", success: true, output: "only copy" }]),
+    );
+    const { text, isError } = await run({ id: runId });
+    assert.equal(isError, false, text);
+    assert.match(text, /only copy/);
   });
 
   it("does not synthesize while the runner is still alive", async () => {

@@ -1473,3 +1473,48 @@ test("analyzeSessionEntries leaves observedLatency absent when no toolCallId pai
   // Token values must still be correct.
   assert.equal(analysis.totals.primary.totalTokens, 90, "totalTokens unchanged");
 });
+
+test("async completion childRecords attribute per-child usage once and ignore the display children", () => {
+  const records = [0, 1, 2].map((index) => ({
+    runId: "async-run-9",
+    index,
+    agent: `worker-${index}`,
+    outcome: { state: "completed" },
+    model: "openai-codex/gpt-5.4-mini",
+    sessionFile: `/Users/me/.the-last-harness/agent/sessions/--repo--/async-run-9/${index}.jsonl`,
+    usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, cost: 0.01, turns: 1 },
+  }));
+  const analysis = analyzeSessionEntries(
+    [
+      {
+        type: "custom_message",
+        id: "cm1",
+        parentId: null,
+        timestamp: "2026-06-16T00:00:00Z",
+        customType: "subagent-notify",
+        content: "Background task completed",
+        details: {
+          agent: "worker-0",
+          status: "completed",
+          asyncId: "async-run-9",
+          children: records.map(({ index, agent, outcome }) => ({
+            // display view
+            index,
+            agent,
+            status: outcome.state,
+          })),
+          childRecords: records,
+        },
+      },
+    ],
+    { toolCatalog },
+  );
+  assert.equal(analysis.subagents.runCount, 3);
+  assert.equal(analysis.totals.subagents.inputTokens, 30);
+  assert.equal(analysis.totals.subagents.outputTokens, 15);
+  assert.deepEqual(analysis.subagents.runs.map((run) => run.agent).sort(), [
+    "worker-0",
+    "worker-1",
+    "worker-2",
+  ]);
+});

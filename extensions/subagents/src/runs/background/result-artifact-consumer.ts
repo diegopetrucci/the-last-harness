@@ -1,10 +1,9 @@
 /**
  * Cross-consumer arbitration for terminal result artifacts.
  *
- * The result watcher is the only public completion-delivery owner, while an
- * awaited run may consume its own artifact internally. A small exclusive
- * sidecar is the single durable claim: it prevents those two consumers (and
- * separate extension processes) from reading and delivering the same artifact
+ * The result watcher is the only public completion-delivery owner. A small
+ * exclusive sidecar is the single durable claim: it prevents concurrent
+ * consumers (such as separate extension processes) from reading and delivering the same artifact
  * concurrently without moving or rewriting the result itself.
  *
  * The sidecar is removed when a consumer releases an unconsumed claim or when

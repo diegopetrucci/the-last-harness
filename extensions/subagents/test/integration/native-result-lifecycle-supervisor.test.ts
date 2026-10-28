@@ -86,7 +86,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     return expectUnsupportedChainRequestFor(executor, requestId, request, tempDir, mockPi);
   }
 
-  it("status keeps paused awaited supervisor runs actionable and guided resume starts independent pressure state", async () => {
+  it("status keeps paused detached supervisor runs actionable and guided resume starts independent pressure state", async () => {
     const pressureMessage = (text: string, totalTokens = 800, model = "mock/test-model") => ({
       type: "message_end",
       message: {
@@ -144,14 +144,15 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "awaited-paused-status-original",
+      "detached-paused-status-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       await pressureContext(),
     );
-    const runId = original.details?.runId;
-    assert.ok(runId, "expected awaited run id");
+    const runId = original.details?.asyncId;
+    assert.ok(runId, "expected detached run id");
+    await waitForAsyncState(runId, "paused");
     const pausedPressureStatus = readAsyncStatusJson<{
       steps?: Array<{
         contextPressure?: { severity?: string; crossedThreshold?: string };
@@ -163,19 +164,9 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.deepEqual(pausedPressureStatus.steps?.[0]?.contextPressureCrossedThresholds, [
       "warning",
     ]);
-    assert.match(original.content[0]?.text ?? "", /paused awaiting supervisor/i);
-    assert.match(
-      original.content[0]?.text ?? "",
-      /Resume unchanged: subagent\(\{ action: "resume", id: "/,
-    );
-    assert.match(
-      original.content[0]?.text ?? "",
-      /Resume with guidance: subagent\(\{ action: "resume", id: ".*", message: "Supervisor replied: \.\.\." \}\)/,
-    );
-    assert.match(original.content[0]?.text ?? "", /action: "interrupt"/);
 
     const status = await executor.execute(
-      "awaited-paused-status",
+      "detached-paused-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
@@ -196,7 +187,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.doesNotMatch(statusText, /Cwd:|Session:|Transcript: \/|Output: \//);
 
     const revived = await executor.execute(
-      "awaited-paused-resume",
+      "detached-paused-resume",
       {
         action: "resume",
         id: runId,
@@ -243,14 +234,15 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       ).length,
       1,
     );
-    const selectedSession = original.details?.results?.[0]?.sessionFile;
+    const selectedSession = readAsyncStatusJson<{ steps?: Array<{ sessionFile?: string }> }>(runId)
+      .steps?.[0]?.sessionFile;
     assert.ok(selectedSession, "expected paused child session file");
     const reviveArgs = await readMockCallArgs(1);
     assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
     assert.equal(mockPi.callCount(), 2);
   });
 
-  it("resume unchanged revives a paused awaited supervisor run in the same session", async () => {
+  it("resume unchanged revives a paused detached supervisor run in the same session", async () => {
     mockPi.onCall({
       steps: [
         {
@@ -272,17 +264,18 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "awaited-paused-unchanged-original",
+      "detached-paused-unchanged-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
-    const runId = original.details?.runId;
-    assert.ok(runId, "expected awaited run id");
+    const runId = original.details?.asyncId;
+    assert.ok(runId, "expected detached run id");
+    await waitForAsyncState(runId, "paused");
 
     const revived = await executor.execute(
-      "awaited-paused-unchanged-resume",
+      "detached-paused-unchanged-resume",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
@@ -329,14 +322,15 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "awaited-paused-generation-original",
+      "detached-paused-generation-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
-    const runId = original.details?.runId;
-    assert.ok(runId, "expected awaited run id");
+    const runId = original.details?.asyncId;
+    assert.ok(runId, "expected detached run id");
+    await waitForAsyncState(runId, "paused");
     const pausedStatus = readAsyncStatusJson<{
       state?: string;
       pid?: number;
@@ -351,7 +345,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.ok((pausedStatus.lifecycle?.generation ?? -1) >= 2);
 
     const revived = await executor.execute(
-      "awaited-paused-generation-resume",
+      "detached-paused-generation-resume",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
@@ -381,7 +375,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     );
   });
 
-  it("disk-only paused awaited recovery supports status and unchanged resume", async () => {
+  it("disk-only paused detached recovery supports status and unchanged resume", async () => {
     mockPi.onCall({
       steps: [
         {
@@ -403,21 +397,21 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await first.executor.execute(
-      "awaited-paused-reload-original",
+      "detached-paused-reload-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
-    const runId = original.details?.runId;
-    assert.ok(runId, "expected awaited run id");
-    assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
+    const runId = original.details?.asyncId;
+    assert.ok(runId, "expected detached run id");
+    await waitForAsyncState(runId, "paused");
 
     const reloaded = makeExecutor({
       agents: [makeAgent("a")],
     });
     const status = await reloaded.executor.execute(
-      "awaited-paused-reload-status",
+      "detached-paused-reload-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
@@ -427,7 +421,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.doesNotMatch(status.content[0]?.text ?? "", /Cwd:|Dir:|Session:|\/private|\/tmp\//);
 
     const revived = await reloaded.executor.execute(
-      "awaited-paused-reload-resume",
+      "detached-paused-reload-resume",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
@@ -453,10 +447,9 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(typeof persistedStatus.lifecycle?.continuation?.continuationRunId, "string");
     assert.equal(typeof persistedStatus.lifecycle?.continuation?.completedAt, "number");
     assert.equal(persistedStatus.pid, undefined);
-    assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
 
     const duplicate = await reloaded.executor.execute(
-      "awaited-paused-reload-resume-duplicate",
+      "detached-paused-reload-resume-duplicate",
       { action: "resume", id: runId },
       new AbortController().signal,
       undefined,
@@ -470,7 +463,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.doesNotMatch(duplicate.content[0]?.text ?? "", /Session:|Async dir:|\/private|\/tmp\//);
 
     const cancelled = await reloaded.executor.execute(
-      "awaited-paused-reload-cancel",
+      "detached-paused-reload-cancel",
       { action: "interrupt", id: runId },
       new AbortController().signal,
       undefined,
@@ -484,7 +477,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.doesNotMatch(cancelled.content[0]?.text ?? "", /Session:|Async dir:|\/private|\/tmp\//);
   });
 
-  it("persists paused awaited parallel cohorts with per-index actions and terminal transitions", async () => {
+  it("persists paused detached parallel cohorts with per-index actions and terminal transitions", async () => {
     const cohortPressureMessage = {
       type: "message_end",
       message: {
@@ -496,30 +489,6 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       },
     };
     const supervisorRequestGate = path.join(tempDir, "supervisor-request-gate");
-    type ParallelProgressUpdate = {
-      details?: {
-        results?: Array<{
-          progress?: { index?: number };
-          contextPressure?: { severity?: string };
-          contextPressureCrossedThresholds?: string[];
-        }>;
-      };
-    };
-    let resolvePressureUpdate!: () => void;
-    const pressureUpdate = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Timed out waiting for parent-observed context pressure update")),
-        scaleTestTimeout(10_000),
-      );
-      timeout.unref?.();
-      resolvePressureUpdate = () => {
-        clearTimeout(timeout);
-        resolve();
-      };
-    });
-    // Keep an early test failure from leaving the deferred timeout rejection
-    // unhandled; the awaited promise below still propagates the timeout.
-    void pressureUpdate.catch(() => {});
     mockPi.onCall({
       matchArgIncludes: "finish",
       jsonl: [events.assistantMessage("completed sibling")],
@@ -581,8 +550,8 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       { provider: "openai", models: [cohortOpenAiModel] },
     ]);
     cohortContext.model = cohortTestModel;
-    const originalPromise = first.executor.execute(
-      "awaited-parallel-pause-original",
+    const original = await first.executor.execute(
+      "detached-parallel-pause-original",
       {
         tasks: [
           { agent: "done", task: "finish", cwd: taskDir(tempDir, "done") },
@@ -603,30 +572,28 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
         ],
       },
       new AbortController().signal,
-      (update: unknown) => {
-        const details = (update as ParallelProgressUpdate).details;
-        const activeSibling = details?.results?.find((result) => result.progress?.index === 2);
-        if (
-          activeSibling?.contextPressure?.severity === "warning" &&
-          activeSibling.contextPressureCrossedThresholds?.includes("warning")
-        ) {
-          resolvePressureUpdate();
-        }
-      },
+      undefined,
       cohortContext,
     );
+    const runId = original.details?.asyncId;
+    assert.ok(runId, "expected detached run id");
     await waitForMockPiCall(3);
     assert.equal(mockPi.callCount(), 4);
     const spawnedPids = startedMockPiPids();
     // Spawn records prove the cohort was dispatched; release the requester only
-    // after the parent has observed the active sibling's pressure snapshot.
-    await pressureUpdate;
+    // after the persisted status shows the active sibling's pressure snapshot.
+    await waitForAsyncStatusPredicate(
+      runId,
+      (status) =>
+        (
+          status as {
+            steps?: Array<{ contextPressureCrossedThresholds?: string[] }>;
+          }
+        ).steps?.[2]?.contextPressureCrossedThresholds?.includes("warning") === true,
+      "active sibling context pressure",
+    );
     fs.writeFileSync(supervisorRequestGate, "", "utf-8");
-    const original = await originalPromise;
-    const runId = original.details?.runId;
-    assert.ok(runId, "expected awaited run id");
     assert.equal(spawnedPids.length, 4);
-    assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
     await waitForAsyncState(runId, "paused");
     const pausedStatus = readAsyncStatusJson<{
       state?: string;
@@ -684,7 +651,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       ],
     });
     const status = await second.executor.execute(
-      "awaited-parallel-pause-status",
+      "detached-parallel-pause-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
@@ -713,7 +680,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     }
 
     const cancelled = await second.executor.execute(
-      "awaited-parallel-pause-cancel",
+      "detached-parallel-pause-cancel",
       { action: "interrupt", id: runId, index: cohortIndexes[0] },
       new AbortController().signal,
       undefined,
@@ -730,7 +697,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(afterCancel.steps?.[cohortIndexes[1]]?.status, "paused");
 
     const revived = await second.executor.execute(
-      "awaited-parallel-pause-resume",
+      "detached-parallel-pause-resume",
       { action: "resume", id: runId, index: requesterIndex },
       new AbortController().signal,
       undefined,
@@ -749,7 +716,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       ],
     });
     const duplicate = await third.executor.execute(
-      "awaited-parallel-pause-duplicate",
+      "detached-parallel-pause-duplicate",
       { action: "resume", id: runId, index: requesterIndex },
       new AbortController().signal,
       undefined,
@@ -763,7 +730,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     await waitForAsyncStatusPredicate(
       runId,
       (status) => status.steps?.[requesterIndex]?.status === "complete",
-      "completed paused awaited parallel child",
+      "completed paused detached parallel child",
     );
     const continuedStatus = readAsyncStatusJson<{
       state?: string;
@@ -776,7 +743,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(typeof continuedStatus.steps?.[4]?.status, "string");
   });
 
-  it("chain status flows fail closed before paused awaited recovery exists", async () => {
+  it("chain status flows fail closed before paused detached recovery exists", async () => {
     const { executor } = makeExecutor({
       agents: [makeAgent("a"), makeAgent("b")],
     });
@@ -847,7 +814,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(original.details?.runId, undefined);
   });
 
-  it("interrupt makes a paused awaited supervisor run terminal, idempotent, and artifact-preserving", async () => {
+  it("interrupt makes a paused detached supervisor run terminal, idempotent, and artifact-preserving", async () => {
     mockPi.onCall({
       steps: [
         {
@@ -865,15 +832,17 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
       agents: [makeAgent("a")],
     });
     const original = await executor.execute(
-      "awaited-paused-cancel-original",
+      "detached-paused-cancel-original",
       { agent: "a", task: "ask supervisor" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
-    const runId = original.details?.runId;
-    assert.ok(runId, "expected awaited run id");
-    const outputPath = original.details?.results?.[0]?.artifactPaths?.outputPath;
+    const runId = original.details?.asyncId;
+    assert.ok(runId, "expected detached run id");
+    await waitForAsyncState(runId, "paused");
+    const outputFile = readAsyncStatusJson<{ outputFile?: string }>(runId).outputFile;
+    const outputPath = outputFile && path.resolve(path.join(ASYNC_DIR, runId), outputFile);
     assert.ok(outputPath, "expected preserved output artifact path");
     const pausedStatus = readAsyncStatusJson<{
       state?: string;
@@ -886,14 +855,14 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.equal(pausedStatus.pause?.ownerPid, undefined);
 
     const cancelled = await executor.execute(
-      "awaited-paused-cancel",
+      "detached-paused-cancel",
       { action: "interrupt", id: runId },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.equal(cancelled.isError, undefined);
-    assert.match(cancelled.content[0]?.text ?? "", /Cancelled paused awaited run/);
+    assert.match(cancelled.content[0]?.text ?? "", /Cancelled paused/);
     assert.equal(fs.existsSync(outputPath!), true);
     const cancelledStatus = readAsyncStatusJson<{
       state?: string;
@@ -911,7 +880,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     );
 
     const cancelledAgain = await executor.execute(
-      "awaited-paused-cancel-again",
+      "detached-paused-cancel-again",
       { action: "interrupt", id: runId },
       new AbortController().signal,
       undefined,
@@ -921,7 +890,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.match(cancelledAgain.content[0]?.text ?? "", /already cancelled/i);
 
     const resumed = await executor.execute(
-      "awaited-paused-cancelled-resume",
+      "detached-paused-cancelled-resume",
       { action: "resume", id: runId, message: "Follow up" },
       new AbortController().signal,
       undefined,
@@ -931,7 +900,7 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     assert.match(resumed.content[0]?.text ?? "", /cancelled.*cannot be resumed/i);
 
     const status = await executor.execute(
-      "awaited-paused-cancel-status",
+      "detached-paused-cancel-status",
       { action: "status", id: runId },
       new AbortController().signal,
       undefined,
@@ -972,24 +941,25 @@ describe("durable supervisor pause, continuation, and cancellation", () => {
     let resultPath: string | undefined;
     try {
       const original = await executor.execute(
-        "awaited-paused-cancel-failure-original",
+        "detached-paused-cancel-failure-original",
         { agent: "a", task: "ask supervisor" },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
-      const runId = original.details?.runId;
+      const runId = original.details?.asyncId;
       if (typeof runId === "string" && runId.length > 0) {
         runDir = path.join(ASYNC_DIR, runId);
         statusPath = path.join(runDir, "status.json");
         resultPath = path.join(RESULTS_DIR, `${runId}.json`);
       }
-      assert.ok(runId, "expected awaited run id");
-      assert.ok(statusPath, "expected awaited status path");
+      assert.ok(runId, "expected detached run id");
+      assert.ok(statusPath, "expected detached status path");
+      await waitForAsyncState(runId, "paused");
       fs.writeFileSync(statusPath, "{not-json", "utf-8");
 
       const cancelled = await executor.execute(
-        "awaited-paused-cancel-failure",
+        "detached-paused-cancel-failure",
         { action: "interrupt", id: runId },
         new AbortController().signal,
         undefined,

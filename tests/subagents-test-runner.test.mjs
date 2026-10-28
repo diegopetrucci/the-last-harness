@@ -141,7 +141,7 @@ test("subagents runner resolves its suite and loader outside the repository cwd"
     timeout: 60_000,
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout, /^subagents e2e: 1\/1 passed \(1 file\)\s*$/);
+  assert.match(result.stdout, /^subagents e2e: 2\/2 passed \(1 file\)\s*$/);
   assert.equal(result.stderr, "");
 });
 

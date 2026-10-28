@@ -5,9 +5,9 @@
  * This exercises all three collapsed/expanded routes:
  *   - collapsed single job  → compactSingleWidgetLines
  *   - collapsed multi-job   → widgetParallelAgentDetails
- *   - expanded              → awaitedStyleWidgetStepLines (original wired path)
+ *   - expanded              → asyncStyleWidgetStepLines (original wired path)
  *
- * Secondary tests cover the awaited renderSubagentResult paths.
+ * Secondary tests cover the renderSubagentResult paths.
  *
  * For each context: absent case, five content cases, and narrow-terminal wrapping.
  */
@@ -274,10 +274,10 @@ describe("child-location widget parallel", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Awaited compact: single result
+// Result card compact: single result
 // ---------------------------------------------------------------------------
 
-describe("child-location awaited compact single", () => {
+describe("child-location result card compact single", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(makeToolResult(loc), { expanded: false }, theme as any);
     return component.render(width).join("\n");
@@ -331,10 +331,10 @@ describe("child-location awaited compact single", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Awaited compact: parallel results
+// Result card compact: parallel results
 // ---------------------------------------------------------------------------
 
-describe("child-location awaited compact multi", () => {
+describe("child-location result card compact multi", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(
       makeToolResult(loc, "parallel"),
@@ -378,10 +378,10 @@ describe("child-location awaited compact multi", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Awaited expanded: single result
+// Result card expanded: single result
 // ---------------------------------------------------------------------------
 
-describe("child-location awaited expanded single", () => {
+describe("child-location result card expanded single", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(makeToolResult(loc), { expanded: true }, theme as any);
     return component.render(width).join("\n");
@@ -419,10 +419,10 @@ describe("child-location awaited expanded single", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Awaited expanded: parallel results
+// Result card expanded: parallel results
 // ---------------------------------------------------------------------------
 
-describe("child-location awaited expanded multi", () => {
+describe("child-location result card expanded multi", () => {
   function render(loc: ChildLocationSnapshot | undefined, width = 120): string {
     const component = renderSubagentResult(
       makeToolResult(loc, "parallel"),
@@ -640,7 +640,7 @@ describe("child-location ordering", () => {
 // These test the three routing paths inside buildWidgetComponent:
 //   1. collapsed single job  → compactSingleWidgetLines compact loop
 //   2. collapsed multi-job   → widgetParallelAgentDetails
-//   3. expanded              → awaitedStyleWidgetStepLines
+//   3. expanded              → asyncStyleWidgetStepLines
 //
 // The compact loop in compactSingleWidgetLines only triggers when
 // buildSingleWidgetLines produces > 10 lines for a parallel-mode single job.
@@ -800,7 +800,7 @@ describe("buildWidgetComponent — collapsed multi-job (widgetParallelAgentDetai
   });
 });
 
-describe("buildWidgetComponent — expanded (awaitedStyleWidgetStepLines)", () => {
+describe("buildWidgetComponent — expanded (asyncStyleWidgetStepLines)", () => {
   beforeEach(() => {
     resetWidgetLayoutSession();
   });

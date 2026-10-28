@@ -598,7 +598,26 @@ function preflightResumeContextPolicy(target, agentConfig, modelOverride, curren
     }
     return { kind: "ready", modelContextWindow };
 }
+function resolveFollowUp(requested, target) {
+    if (requested)
+        return requested;
+    return target.kind === "revive" &&
+        target.state === "paused" &&
+        target.pauseKind === "awaiting_supervisor"
+        ? UNCHANGED_SUPERVISOR_RESUME_MESSAGE
+        : "";
+}
+const RESUME_ABORT_REJECTION = "Subagent resume rejected: the tool call was already aborted before any run was started. No subagent was spawned.";
+function abortedResumeResult() {
+    return {
+        content: [{ type: "text", text: RESUME_ABORT_REJECTION }],
+        isError: true,
+        details: { mode: "management", results: [] },
+    };
+}
 export async function resumeAsyncRun(input) {
+    if (input.signal?.aborted)
+        return abortedResumeResult();
     const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
     const callerKey = resolveCurrentSessionId(input.ctx.sessionManager);
     input.deps.state.currentSessionId = callerKey;
@@ -622,7 +641,7 @@ export async function resumeAsyncRun(input) {
                 content: [
                     {
                         type: "text",
-                        text: "Awaited supervisor lifecycle update failed. The run was stopped safely and marked failed.",
+                        text: "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.",
                     },
                 ],
                 isError: true,
@@ -649,12 +668,7 @@ export async function resumeAsyncRun(input) {
             details: { mode: "management", results: [] },
         };
     }
-    const followUp = requestedFollowUp ||
-        (target.kind === "revive" &&
-            target.state === "paused" &&
-            target.pauseKind === "awaiting_supervisor"
-            ? UNCHANGED_SUPERVISOR_RESUME_MESSAGE
-            : "");
+    const followUp = resolveFollowUp(requestedFollowUp, target);
     if (!followUp) {
         return {
             content: [{ type: "text", text: "action='resume' requires message." }],
@@ -678,7 +692,7 @@ export async function resumeAsyncRun(input) {
                     content: [
                         {
                             type: "text",
-                            text: "Awaited supervisor lifecycle update failed. The run was stopped safely and marked failed.",
+                            text: "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.",
                         },
                     ],
                     isError: true,
@@ -750,6 +764,8 @@ export async function resumeAsyncRun(input) {
         };
     }
     const { modelContextWindow } = contextPolicy;
+    if (input.signal?.aborted)
+        return abortedResumeResult();
     const continuationRunId = randomUUID().slice(0, 8);
     const reservation = acquireWorkspaceReservations(continuationRunId, callerKey, [
         {

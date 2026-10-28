@@ -92,7 +92,6 @@ interface AsyncRunStepSummary {
 export interface AsyncRunSummary {
   id: string;
   asyncDir: string;
-  awaited?: boolean;
   sessionId?: string;
   pid?: number;
   state: AsyncStatus["state"];
@@ -311,7 +310,6 @@ function statusToSummary(
   return {
     id: status.runId || path.basename(asyncDir),
     asyncDir,
-    ...(status.awaited ? { awaited: true } : {}),
     ...(status.sessionId ? { sessionId: status.sessionId } : {}),
     ...(typeof status.pid === "number" ? { pid: status.pid } : {}),
     state: status.state,
@@ -562,10 +560,9 @@ function formatRunHeader(run: AsyncRunSummary): string {
     run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
       ? "pausing"
       : safeTerminalText(run.state);
-  const ownership = run.awaited ? " | awaited" : "";
   return privacySafe
-    ? `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
-    : `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
+    ? `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
+    : `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
 }
 
 export function formatAsyncRunList(

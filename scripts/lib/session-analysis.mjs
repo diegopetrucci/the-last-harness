@@ -20,6 +20,7 @@ import { createInterface } from "node:readline";
 import { pairToolCalls } from "../../extensions/the-last-harness/tool-pairing.js";
 import { BACKGROUND_COMPLETION_NUDGE, CONTROL_NOTICE_NUDGE, isCompletionBatchCandidate, MAX_COMPLETION_BATCH_COUNT, MAX_COMPLETION_CHUNK_ENTRIES, MAX_COMPLETION_BATCH_ID_LENGTH, projectCompletionBatchFlushFields, SUBAGENT_ACTIONS, SUBAGENT_COMPLETION_BATCH_KIND, SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION, SUBAGENT_CONTROL_TYPE, SUBAGENT_NOTIFY_TYPE, } from "./subagent-analysis-parser.mjs";
 import { ACCEPTANCE_STATUSES, OUTCOME_STATES, TERMINATION_REASONS, } from "./subagent-analysis-validation.mjs";
+import { asyncCompletionRecords, resolveChildSession, } from "./session-analysis-async-lineage.mjs";
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -773,23 +774,26 @@ function projectSubagentDetails(value, options = {}) {
         if (projected.invalid)
             invalid = true;
     }
-    if (hasOwn(value, "results")) {
-        if (!Array.isArray(value.results)) {
+    // `childRecords`: async per-child records (step fidelity); paths/run ids not retained.
+    for (const key of ["results", "childRecords"]) {
+        if (!hasOwn(value, key))
+            continue;
+        const raw = value[key];
+        if (!Array.isArray(raw)) {
             invalid = true;
+            continue;
         }
-        else {
-            const results = [];
-            if (value.results.length > MAX_PROJECTION_ITEMS)
+        const children = [];
+        if (raw.length > MAX_PROJECTION_ITEMS)
+            invalid = true;
+        for (const child of raw.slice(0, MAX_PROJECTION_ITEMS)) {
+            const projected = projectLegacyChild(child);
+            if (projected.value !== undefined)
+                children.push(projected.value);
+            if (projected.invalid)
                 invalid = true;
-            for (const child of value.results.slice(0, MAX_PROJECTION_ITEMS)) {
-                const projected = projectLegacyChild(child);
-                if (projected.value !== undefined)
-                    results.push(projected.value);
-                if (projected.invalid)
-                    invalid = true;
-            }
-            result.results = results;
         }
+        result[key] = children;
     }
     if (hasOwn(value, "controlEvents")) {
         if (!Array.isArray(value.controlEvents)) {
@@ -1322,6 +1326,7 @@ export async function scanSessionFile(filePath) {
             continue;
         }
         if (entryType === "custom_message") {
+            captureAsyncCompletionEvidence(correlationEvidenceCapture, parsed);
             const message = customMessageForEntry(parsed);
             if (message !== undefined) {
                 const projection = projectMessageEntry(parsed, message);
@@ -1364,6 +1369,7 @@ export async function scanSessionFile(filePath) {
         correlationEvidenceDigest: correlationEvidence?.digest ?? null,
         correlationEvidenceGeneration: correlationEvidence?.generation ?? 0,
         correlationEvidenceCaptureOverflow: correlationEvidenceCapture.overflow,
+        correlationAsyncCompletionCount: correlationEvidence?.asyncCount ?? 0,
     };
 }
 /**
@@ -1396,7 +1402,31 @@ export async function readSessionHeader(filePath) {
     return null;
 }
 function createCorrelationEvidenceCapture() {
-    return { byToolCallId: new Map(), overflow: false };
+    return {
+        byToolCallId: new Map(),
+        overflow: false,
+        asyncHash: createHash("sha256"),
+        asyncCount: 0,
+        asyncRecords: [],
+    };
+}
+function captureAsyncCompletionEvidence(capture, entry) {
+    if (capture.overflow)
+        return;
+    const records = asyncCompletionRecords(entry, {
+        legacyId: projectionLegacyId,
+        path: (value) => projectionString(value, MAX_PROJECTION_PATH_LENGTH),
+        metadata: projectionMetadata,
+    });
+    if (records.length === 0)
+        return;
+    if (capture.asyncCount + records.length > MAX_CORRELATION_TRACKED_IDS) {
+        capture.overflow = true;
+        return;
+    }
+    capture.asyncCount += records.length;
+    capture.asyncRecords.push(...records);
+    capture.asyncHash.update(`${JSON.stringify(records)}\n`);
 }
 function recordCorrelationEvidence(capture, toolCallId, kind, token) {
     if (capture.overflow)
@@ -1512,7 +1542,12 @@ function buildCorrelationEvidenceToken(capture, pairedSubagentToolCallIds) {
             latestResultDigest: evidence.latestResultDigest,
         })}\\n`);
     }
-    return { digest: hash.digest("hex"), generation };
+    // Only when present, so historical digests are unchanged.
+    if (capture.asyncCount > 0) {
+        hash.update(`${JSON.stringify({ async: capture.asyncHash.copy().digest("hex") })}\n`);
+        generation += capture.asyncCount;
+    }
+    return { digest: hash.digest("hex"), generation, asyncCount: capture.asyncCount };
 }
 function correlationTimestamp(entry, message) {
     return projectionTimestamp(entry, message);
@@ -1547,7 +1582,13 @@ async function readCorrelationEvidence(filePath, pairedSubagentToolCallIds) {
     const results = new Map();
     const evidenceCapture = createCorrelationEvidenceCapture();
     for await (const parsed of readJsonlLines(filePath)) {
-        if (!isObject(parsed) || parsed.__malformed === true || parsed.type !== "message")
+        if (!isObject(parsed) || parsed.__malformed === true)
+            continue;
+        if (parsed.type === "custom_message") {
+            captureAsyncCompletionEvidence(evidenceCapture, parsed);
+            continue;
+        }
+        if (parsed.type !== "message")
             continue;
         const message = parsed.message;
         if (!isObject(message))
@@ -1600,6 +1641,7 @@ async function readCorrelationEvidence(filePath, pairedSubagentToolCallIds) {
     const token = buildCorrelationEvidenceToken(evidenceCapture, pairedSubagentToolCallIds);
     return {
         evidence,
+        asyncRecords: evidenceCapture.asyncRecords,
         digest: token?.digest ?? null,
         generation: token?.generation ?? 0,
         overflow: evidenceCapture.overflow,
@@ -1614,7 +1656,7 @@ export async function extractSubagentCorrelationsWithStatus(scanResult, sessions
     const pairedSubagentToolCallIds = new Set(scanResult.toolPairs
         .filter((pair) => pair.toolName === "subagent")
         .map((pair) => pair.toolCallId));
-    if (pairedSubagentToolCallIds.size === 0)
+    if (pairedSubagentToolCallIds.size === 0 && scanResult.correlationAsyncCompletionCount === 0)
         return empty;
     if (scanResult.correlationEvidenceCaptureOverflow ||
         scanResult.correlationEvidenceDigest === null)
@@ -1640,36 +1682,10 @@ export async function extractSubagentCorrelationsWithStatus(scanResult, sessions
     if (failureReasons.length > 0)
         return { correlations: [], failureReasons };
     const correlations = [];
+    const resolveChild = (childSessionFile) => resolveChildSession(childSessionFile, sessionsDir, readSessionHeader);
     for (const { toolCallId, details } of rescan.evidence) {
         for (const r of details.results ?? []) {
-            // Resolve child paths only after canonicalizing them beneath sessionsDir.
-            let underSessionsDir = false;
-            if (sessionsDir !== undefined) {
-                try {
-                    const realChild = realpathSync(r.sessionFile);
-                    const realSessions = realpathSync(sessionsDir);
-                    underSessionsDir = realChild.startsWith(realSessions + "/");
-                }
-                catch {
-                    underSessionsDir = false;
-                }
-            }
-            let childResolved = false;
-            let childSessionId;
-            let childStartedAt;
-            if (underSessionsDir) {
-                try {
-                    const header = await readSessionHeader(r.sessionFile);
-                    if (header) {
-                        childResolved = true;
-                        childSessionId = header.id;
-                        childStartedAt = header.timestamp;
-                    }
-                }
-                catch {
-                    // Keep unresolved on missing or unreadable child files.
-                }
-            }
+            const child = await resolveChild(r.sessionFile);
             correlations.push({
                 parentSessionFile: scanResult.filePath,
                 parentSessionId,
@@ -1677,11 +1693,31 @@ export async function extractSubagentCorrelationsWithStatus(scanResult, sessions
                 runId: details.runId,
                 ...(r.agent !== undefined ? { agent: r.agent } : {}),
                 childSessionFile: r.sessionFile,
-                childResolved,
-                ...(childSessionId !== undefined ? { childSessionId } : {}),
-                ...(childStartedAt !== undefined ? { childStartedAt } : {}),
+                childResolved: child.childResolved,
+                ...(child.childSessionId !== undefined ? { childSessionId: child.childSessionId } : {}),
+                ...(child.childStartedAt !== undefined ? { childStartedAt: child.childStartedAt } : {}),
             });
         }
+    }
+    // Async completions: complete per-child records, deduplicated by run + session.
+    const seenAsync = new Set(correlations.map((c) => `${c.runId}\0${c.childSessionFile}`));
+    for (const r of rescan.asyncRecords) {
+        const key = `${r.runId}\0${r.sessionFile}`;
+        if (seenAsync.has(key))
+            continue;
+        seenAsync.add(key);
+        const child = await resolveChild(r.sessionFile);
+        correlations.push({
+            parentSessionFile: scanResult.filePath,
+            parentSessionId,
+            runId: r.runId,
+            ...(r.agent !== undefined ? { agent: r.agent } : {}),
+            ...(r.index !== undefined ? { childIndex: r.index } : {}),
+            childSessionFile: r.sessionFile,
+            childResolved: child.childResolved,
+            ...(child.childSessionId !== undefined ? { childSessionId: child.childSessionId } : {}),
+            ...(child.childStartedAt !== undefined ? { childStartedAt: child.childStartedAt } : {}),
+        });
     }
     return { correlations, failureReasons };
 }

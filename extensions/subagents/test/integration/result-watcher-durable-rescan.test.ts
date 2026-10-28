@@ -15,6 +15,18 @@ function createHarness(root: string) {
   const asyncDir = path.join(root, "async");
   fs.mkdirSync(resultsDir, { recursive: true });
   fs.mkdirSync(asyncDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(asyncDir, "status.json"),
+    JSON.stringify({
+      runId: "run-1",
+      mode: "single",
+      state: "complete",
+      startedAt: 1,
+      endedAt: 2,
+      lastUpdate: 2,
+      steps: [],
+    }),
+  );
   const emitted: unknown[] = [];
   const pi = {
     events: { on: () => () => {}, emit: (_e: string, data: unknown) => emitted.push(data) },
@@ -127,4 +139,27 @@ describe("result watcher durable-before-unlink and safety rescan", () => {
       assert.equal(record?.children[0]?.output, "full output");
     }),
   );
+  for (const [label, mutate] of [
+    ["missing asyncDir", (a: Record<string, unknown>) => ({ ...a, asyncDir: "/nonexistent/x" })],
+    ["no asyncDir field", (a: Record<string, unknown>) => ({ ...a, asyncDir: undefined })],
+    [
+      "unsupported envelope",
+      (a: Record<string, unknown>) => ({ ...a, results: undefined, state: "bogus" }),
+    ],
+  ] as const) {
+    it(
+      `never unlinks the only copy of the output: ${label}`,
+      withHarness(async (h) => {
+        fs.writeFileSync(h.resultPath, JSON.stringify(mutate(h.artifact)));
+        h.watcher.primeExistingResults();
+        await wait();
+        assert.equal(fs.existsSync(h.resultPath), true, "results file must be kept");
+        assert.equal(readTerminalRecord(h.asyncDir, "run-1"), undefined);
+        assert.equal(h.emitted.length, 1, "delivered once");
+        h.watcher.primeExistingResults();
+        await wait();
+        assert.equal(h.emitted.length, 1, "retained claim prevents re-emit");
+      }),
+    );
+  }
 });

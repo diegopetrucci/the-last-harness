@@ -1,10 +1,9 @@
-/** Parent abort must SIGKILL a child that ignores SIGINT and SIGTERM (#809 intent). */
+/** Detached interrupt must SIGKILL a child that ignores SIGINT/SIGTERM, and let cooperative ones flush. */
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  createEventBus,
   createMockPi,
   createTempDir,
   makeAgent,
@@ -13,9 +12,13 @@ import {
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
+  ASYNC_DIR,
+  requestAsyncInterrupt,
+  startedMockPiPids,
+  waitForAsyncResultFile,
+  waitForAsyncState,
   waitForMockPiCall,
   waitForPidsToExit,
-  startedMockPiPids,
 } from "../support/async-execution-helpers.ts";
 import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import { PROCESS_GROUP_CLEANUP_MAX_WAIT_MS } from "../../src/runs/shared/process-group-cleanup.ts";
@@ -32,27 +35,20 @@ const artifactConfig = {
   cleanupDays: 7,
 } as const;
 
-function singleParams(
-  bus: ReturnType<typeof createEventBus>,
-  cwd: string,
-  id: string,
-  overrides: Record<string, unknown> = {},
-) {
-  return {
+function launch(cwd: string, id: string) {
+  executeAsyncSingle(id, {
     agent: "worker",
-    task: "Run the awaited child.",
+    task: "Run the detached child.",
     agentConfig: makeAgent("worker"),
-    ctx: { pi: makeExtensionAPI({ events: bus }), cwd, currentSessionId: "session-awaited" },
+    ctx: { pi: makeExtensionAPI({}), cwd, currentSessionId: "session-detached" },
     artifactConfig,
     shareEnabled: false,
     sessionRoot: path.join(cwd, "sessions", id),
     maxSubagentDepth: 2,
-    ...overrides,
-    awaited: true as const,
-  };
+  });
 }
 
-describe("awaited abort hard-kill", () => {
+describe("detached interrupt hard-kill", () => {
   let tempDir: string;
   let mockPi: MockPi;
   before(() => {
@@ -63,64 +59,55 @@ describe("awaited abort hard-kill", () => {
     mockPi.uninstall();
   });
   beforeEach(() => {
-    tempDir = createTempDir("awaited-abort-kill-");
+    tempDir = createTempDir("detached-interrupt-kill-");
     mockPi.reset();
   });
   afterEach(() => {
     removeTempDir(tempDir);
   });
 
-  it("SIGKILLs a child that ignores SIGINT and SIGTERM on parent abort within the cleanup bound", async () => {
-    const id = `awaited-abort-sigkill-${Date.now().toString(36)}`;
-    const bus = createEventBus();
-    const controller = new AbortController();
+  it("SIGKILLs a child that ignores SIGINT and SIGTERM on interrupt within the cleanup bound", async () => {
+    const id = `detached-interrupt-sigkill-${Date.now().toString(36)}`;
     mockPi.onCall({
       output: "stubborn child",
       ignoreSigint: true,
       ignoreSigterm: true,
       keepAliveAfterFinalMessageMs: 60_000,
     });
-
-    const pending = executeAsyncSingle(
-      id,
-      singleParams(bus, tempDir, id, { signal: controller.signal }),
-    );
+    launch(tempDir, id);
     await waitForMockPiCall(mockPi, 0);
+    await waitForAsyncState(path.join(ASYNC_DIR, id), "running");
     const childPid = startedMockPiPids(mockPi)[0]!;
-    const abortedAt = Date.now();
-    controller.abort();
-    const result = await pending;
+    const interruptedAt = Date.now();
+    requestAsyncInterrupt(path.join(ASYNC_DIR, id), { source: "detached-hard-kill-test" });
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+      results: Array<{ processCleanup?: { terminated?: boolean } }>;
+    };
 
-    // SIGTERM alone cannot stop this child; escalation must be driven by the
-    // observed exit, not by whether a signal was merely delivered.
     await waitForPidsToExit([childPid], "SIGTERM-ignoring mock child");
     assert.ok(
-      Date.now() - abortedAt < PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000,
-      "abort must SIGKILL within the cleanup bound",
+      Date.now() - interruptedAt < PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000,
+      "interrupt must SIGKILL within the cleanup bound",
     );
-    assert.equal(result.details.results[0]?.terminationReason, "cancelled");
-    assert.equal(result.details.results[0]?.processCleanup?.terminated, true);
+    assert.equal(payload.results[0]?.processCleanup?.terminated, true);
   });
 
   it("lets a cooperative child flush on SIGTERM before the runner exits", async () => {
-    const id = `awaited-abort-flush-${Date.now().toString(36)}`;
-    const bus = createEventBus();
-    const controller = new AbortController();
+    const id = `detached-interrupt-flush-${Date.now().toString(36)}`;
     const flushMarker = path.join(tempDir, "flushed-on-sigterm");
     mockPi.onCall({
       output: "cooperative child",
+      ignoreSigint: true,
       flushMarkerOnSigterm: flushMarker,
       keepAliveAfterFinalMessageMs: 60_000,
     });
-
-    const pending = executeAsyncSingle(
-      id,
-      singleParams(bus, tempDir, id, { signal: controller.signal }),
-    );
+    launch(tempDir, id);
     await waitForMockPiCall(mockPi, 0);
+    await waitForAsyncState(path.join(ASYNC_DIR, id), "running");
     const childPid = startedMockPiPids(mockPi)[0]!;
-    controller.abort();
-    await pending;
+    requestAsyncInterrupt(path.join(ASYNC_DIR, id), { source: "detached-hard-kill-test" });
+    await waitForAsyncResultFile(id);
     await waitForPidsToExit([childPid], "cooperative mock child");
     assert.ok(
       fs.existsSync(flushMarker),
@@ -129,39 +116,33 @@ describe("awaited abort hard-kill", () => {
   });
 
   it("SIGKILLs a SIGTERM-ignoring descendant after the cooperative group leader exits", async () => {
-    const id = `awaited-abort-descendant-${Date.now().toString(36)}`;
-    const bus = createEventBus();
-    const controller = new AbortController();
+    const id = `detached-interrupt-descendant-${Date.now().toString(36)}`;
     const flushMarker = path.join(tempDir, "leader-flushed");
     mockPi.onCall({
       output: "cooperative leader",
+      ignoreSigint: true,
       flushMarkerOnSigterm: flushMarker,
       spawnStubbornDescendants: true,
       keepAliveAfterFinalMessageMs: 60_000,
     });
-
-    const pending = executeAsyncSingle(
-      id,
-      singleParams(bus, tempDir, id, { signal: controller.signal }),
-    );
+    launch(tempDir, id);
     await waitForMockPiCall(mockPi, 0);
+    await waitForAsyncState(path.join(ASYNC_DIR, id), "running");
     const leaderPid = startedMockPiPids(mockPi)[0]!;
     const { childPid, grandchildPid } = JSON.parse(
       fs.readFileSync(path.join(mockPi.dir, `descendants-${leaderPid}.json`), "utf-8"),
     ) as { childPid: number; grandchildPid: number };
-    const abortedAt = Date.now();
-    controller.abort();
-    await pending;
+    const interruptedAt = Date.now();
+    requestAsyncInterrupt(path.join(ASYNC_DIR, id), { source: "detached-hard-kill-test" });
+    await waitForAsyncResultFile(id);
 
-    // The leader exits on SIGTERM; the descendants ignore it and share its
-    // process group, so shutdown must keep the group tracked and SIGKILL it.
     await waitForPidsToExit(
       [leaderPid, childPid, grandchildPid],
       "SIGTERM-ignoring descendants of a cooperative leader",
     );
     assert.ok(fs.existsSync(flushMarker), "leader must flush on SIGTERM");
     assert.ok(
-      Date.now() - abortedAt < PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000,
+      Date.now() - interruptedAt < PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000,
       "descendants must be SIGKILLed within the cleanup bound",
     );
   });

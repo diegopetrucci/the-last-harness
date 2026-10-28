@@ -113,7 +113,7 @@ export function buildPausedRunnerTelemetry(input: {
   if (!provenance) return undefined;
   return telemetryFromRunnerResults({
     runId: input.config.id,
-    execution: input.config.awaited ? "foreground" : "async",
+    execution: "async",
     mode: input.plan.kind,
     results: input.results,
     provenance,
@@ -166,7 +166,7 @@ function buildRunnerTelemetry(
 ): SubagentRunTelemetry | undefined {
   return telemetryFromRunnerResults({
     runId: input.config.id,
-    execution: input.config.awaited ? "foreground" : "async",
+    execution: "async",
     mode: input.plan.kind,
     results: input.results,
     provenance: input.config.telemetry?.provenance,
@@ -297,14 +297,6 @@ function resultSummary(
     return input.pausedOutputForIndex(requesterIndex, requesterAgent);
   }
   if (state === "failed") {
-    if (input.config.awaited) {
-      // Awaited runs use the (possibly truncated) run summary so the awaited owner
-      // can reconstruct the per-child display with the Output: section intact.
-      // Non-awaited runs expose statusPayload.error for the result watcher / notify path.
-      return input.statusOwner.supervisorPauseTransitionFailed
-        ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
-        : input.summary;
-    }
     return (
       input.statusPayload.error ??
       (input.statusOwner.supervisorPauseTransitionFailed
@@ -456,7 +448,6 @@ function writeResultArtifact(
     success: state === "complete",
     state,
     summary: resultSummary(input, state, paused),
-    ...(input.config.awaited ? { awaited: true } : {}),
     ...(telemetry ? { telemetry } : {}),
     ...(deadlineAt !== undefined ? { deadlineAt } : {}),
     ...(timedOut ? { timedOut: true } : {}),
@@ -526,7 +517,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
   }));
   const gateTelemetry = telemetryFromRunnerResults({
     runId: input.config.id,
-    execution: input.config.awaited ? "foreground" : "async",
+    execution: "async",
     mode: input.plan.kind,
     results:
       gateResults.length > 0

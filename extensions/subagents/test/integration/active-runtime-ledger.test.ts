@@ -13,7 +13,6 @@ import {
   createBackgroundRunStatusOwner,
   type BackgroundRunStatusOwner,
 } from "../../src/runs/background/run-status-owner.ts";
-import { createAwaitedRunOwner } from "../../src/runs/background/awaited-run-owner.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import {
   ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS,
@@ -21,7 +20,6 @@ import {
 } from "../../src/runs/shared/active-runtime.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
-  createEventBus,
   createMockPi,
   createTempDir,
   makeAgent,
@@ -82,7 +80,7 @@ describe("durable active-runtime ledger", () => {
   }
 
   /** Start a runner, run it for two checkpoint intervals, and checkpoint once. */
-  function checkpointedRun(runId: string, names: string[], awaited: boolean) {
+  function checkpointedRun(runId: string, names: string[]) {
     const asyncDir = path.join(ASYNC_DIR, runId);
     cleanup.push(asyncDir, path.join(RESULTS_DIR, `${runId}.json`));
     const sessions = names.map((name) => path.join(tempDir, `${runId}-${name}.jsonl`));
@@ -103,7 +101,6 @@ describe("durable active-runtime ledger", () => {
       id: runId,
       asyncDir,
       cwd: tempDir,
-      awaited,
       plan:
         names.length === 1
           ? { kind: "single", task: task(names[0]!, 0) }
@@ -181,7 +178,7 @@ describe("durable active-runtime ledger", () => {
 
   it("detached single run: runner death then revival charges the last checkpoint", async () => {
     const runId = `ledger-detached-single-${Date.now()}`;
-    const { asyncDir } = checkpointedRun(runId, ["worker"], false);
+    const { asyncDir } = checkpointedRun(runId, ["worker"]);
     assertPersistedCheckpoint(runId, 1);
     // Runner death: the pid is gone and no terminal artifact was written.
     const statusPath = path.join(asyncDir, "status.json");
@@ -196,7 +193,7 @@ describe("durable active-runtime ledger", () => {
 
   it("detached parallel run: every child keeps its checkpoint through runner death", async () => {
     const runId = `ledger-detached-parallel-${Date.now()}`;
-    const { asyncDir } = checkpointedRun(runId, ["a", "b"], false);
+    const { asyncDir } = checkpointedRun(runId, ["a", "b"]);
     assertPersistedCheckpoint(runId, 2);
     const statusPath = path.join(asyncDir, "status.json");
     const dead = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as Record<string, unknown>;
@@ -204,47 +201,6 @@ describe("durable active-runtime ledger", () => {
     fs.writeFileSync(statusPath, JSON.stringify(dead), "utf-8");
     assert.equal(reconcileAsyncRun(asyncDir, { kill: DEAD_PID_KILL }).repaired, true);
     await assertRevivalCharges(runId, ["a", "b"], 1);
-  });
-
-  it("awaited run: runner death settled by the awaited owner still charges the checkpoint", async () => {
-    const runId = `ledger-awaited-${Date.now()}`;
-    const { asyncDir } = checkpointedRun(runId, ["worker"], true);
-    assertPersistedCheckpoint(runId, 1);
-    assert.equal(readAsyncStatusJson<{ awaited?: boolean }>(runId).awaited, true);
-    const statusPath = path.join(asyncDir, "status.json");
-    const dead = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as Record<string, unknown>;
-    dead.pid = 999_993;
-    fs.writeFileSync(statusPath, JSON.stringify(dead), "utf-8");
-    const events = createEventBus();
-    const owner = createAwaitedRunOwner({
-      id: runId,
-      asyncDir,
-      resultPath: path.join(RESULTS_DIR, `${runId}.json`),
-      mode: "single",
-      plan: {
-        kind: "single",
-        task: {
-          agent: "worker",
-          task: "work",
-          contextWindows: { "mock/test-model": 1_000 },
-          inheritProjectContext: false,
-          inheritSkills: false,
-        },
-      },
-      events,
-      expectedGeneration: 0,
-      pollIntervalMs: 5,
-      cleanupGraceMs: 20,
-      pidLiveness: () => "dead",
-    });
-    owner.markSpawned(999_993);
-    const settled = await owner.promise;
-    owner.dispose();
-    assert.equal(settled.isError, true);
-    // The awaited owner reports failure to the caller; the stale-run reconciler
-    // then settles the durable lifecycle record exactly as for a detached run.
-    assert.equal(reconcileAsyncRun(asyncDir, { kill: DEAD_PID_KILL }).repaired, true);
-    await assertRevivalCharges(runId, ["worker"]);
   });
 
   describe("malformed persisted accounting fails closed", () => {

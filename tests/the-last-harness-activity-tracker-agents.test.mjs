@@ -133,7 +133,7 @@ test("known names are not erased by a later nameless record", () => {
   });
 });
 
-test("awaited runs (run.execution foreground) get no OSC child record or msg count", async () => {
+test("historical foreground records are tracked like any other run (OSC child record and msg count)", async () => {
   await withTemp(async (dir) => {
     writeStatus(dir, "w1", {
       runId: "w1",
@@ -170,8 +170,8 @@ test("awaited runs (run.execution foreground) get no OSC child record or msg cou
       ],
     });
     const snapshot = tracker.getSnapshot();
-    assert.deepEqual(snapshot.awaitedAsyncJobIds, ["w1", "w2"]);
-    assert.ok(snapshot.activeAsyncJobIds.includes("d1"));
+    assert.equal("awaitedAsyncJobIds" in snapshot, false);
+    assert.deepEqual(snapshot.activeAsyncJobIds, ["d1", "d2", "w1", "w2"]);
 
     const writes = [];
     const reporter = createProgramStatusActivityReporter({
@@ -185,8 +185,9 @@ test("awaited runs (run.execution foreground) get no OSC child record or msg cou
     const output = writes.join("");
     assert.match(output, /id=subagent\/d1/);
     assert.match(output, /id=subagent\/d2/);
-    assert.doesNotMatch(output, /subagent\/w[12]/);
-    assert.ok(output.includes(b64("2 subagents running")));
+    assert.match(output, /id=subagent\/w1/);
+    assert.match(output, /id=subagent\/w2/);
+    assert.ok(output.includes(b64("4 subagents running")));
     reporter.dispose();
     tracker.dispose();
   });

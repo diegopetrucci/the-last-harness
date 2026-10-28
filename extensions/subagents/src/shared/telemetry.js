@@ -771,7 +771,7 @@ export function telemetryFromSingleResults(input) {
             : undefined);
     return buildSubagentRunTelemetry({
         ...input,
-        execution: "foreground",
+        execution: "async",
         outcome: runOutcome,
         steps: input.results.map((result, index) => {
             const activityValues = {

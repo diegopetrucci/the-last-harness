@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { truncateWithMarker } from "../../shared/string-utils.js";
+import { readStatus } from "../../shared/utils.js";
 import { RESULTS_DIR, } from "../../shared/types.js";
 import { checkPidLiveness, isCompletedLifecycleStepState, isTerminalLifecycleState, } from "../shared/lifecycle-state.js";
 export const TERMINAL_RECORD_FILE = "terminal-record.json";
@@ -129,6 +130,13 @@ export function ensureTerminalRecordFromArtifact(candidate, runId) {
         return false;
     if (!fs.existsSync(asyncDir))
         return false;
+    try {
+        if (readStatus(asyncDir, { cache: false }) === null)
+            return false;
+    }
+    catch {
+        return false;
+    }
     if (readTerminalRecord(asyncDir, artifact.id))
         return true;
     writeTerminalRecord(asyncDir, terminalRecordFromArtifact(artifact));
@@ -169,15 +177,45 @@ export function readTerminalRecord(asyncDir, runId) {
     }
     return undefined;
 }
-function readResultsDirArtifact(resultsDir, runId) {
+function readResultsFileArtifact(resultPath, runId) {
     try {
-        const parsed = JSON.parse(fs.readFileSync(path.join(resultsDir, `${runId}.json`), "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
         if (isTerminalArtifactFor(parsed, runId))
             return parsed;
     }
     catch {
     }
     return undefined;
+}
+function readResultsDirArtifact(resultsDir, runId) {
+    return readResultsFileArtifact(path.join(resultsDir, `${runId}.json`), runId);
+}
+export function terminalRecordFromResultsFile(resultPath, runId) {
+    const artifact = readResultsFileArtifact(resultPath, runId);
+    return artifact ? terminalRecordFromArtifact(artifact) : undefined;
+}
+function refreshedRecord(existing, status) {
+    const { synthesized: _synthesized, ...fresh } = terminalRecordFromStatus(status);
+    return {
+        ...fresh,
+        ...(existing.synthesized ? { synthesized: true } : {}),
+        children: fresh.children.map((child) => {
+            const prior = existing.children.find((candidate) => candidate.index === child.index);
+            if (!prior)
+                return child;
+            return {
+                ...prior,
+                status: child.status,
+                ...optionalField("error", child.error ?? prior.error),
+            };
+        }),
+    };
+}
+function isStale(existing, status) {
+    if (existing.state === "paused" && status.state !== "paused")
+        return true;
+    return (status.steps ?? []).some((step, index) => step.status === "cancelled" &&
+        existing.children.find((child) => child.index === index)?.status !== "cancelled");
 }
 function finalizedForSynthesis(status, kill) {
     if (!isTerminalLifecycleState(status.state))
@@ -193,8 +231,18 @@ export function ensureTerminalRecord(asyncDir, status, options = {}) {
         return undefined;
     const runId = status.runId || path.basename(asyncDir);
     const existing = readTerminalRecord(asyncDir, runId);
-    if (existing)
-        return existing;
+    if (existing) {
+        if (!isStale(existing, status) || !finalizedForSynthesis(status, options.kill))
+            return existing;
+        try {
+            const refreshed = refreshedRecord(existing, status);
+            writeTerminalRecord(asyncDir, refreshed);
+            return refreshed;
+        }
+        catch {
+            return existing;
+        }
+    }
     const artifact = readResultsDirArtifact(options.resultsDir ?? RESULTS_DIR, runId);
     try {
         if (artifact) {
