@@ -33,7 +33,7 @@ The official release installer verifies SHA-256 checksums for every successfully
 
 ![Illustration of the TLH architect-first workflow: a request passes through approval, tk tickets, scout/build/review child sessions, and returns a judged result.](https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/assets/main-tlh-workflow-illustrations/01-main-tlh-workflow.png)
 
-As a software engineer, you will likely spend most of your time with the **architect** primary agent. The architect does not do any change directly, but its purpose is to help you investigate, find issues, plan the work, and so on. It is banned from making (bigger) direct changes, and it will always propose to encode the plan/work into smaller tickets.
+As a software engineer, you will likely spend most of your time with the **architect** primary agent. In the default workflow, the architect does not do any change directly; its purpose is to help you investigate, find issues, plan the work, and so on. It is banned from making (bigger) direct changes, and it will always propose to encode the plan/work into smaller tickets. The opt-in ticket-free Architect/no-developer workflow is documented in [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode).
 
 At times, the architect might seem eager to ask you to `approve` the plan. Do not feel afraid to push back and continue exploring and understanding the stakes. This is _your_ work, own it, and explore all possibilities. Also feel free to start new sessions, and treat existing ones as throwaways to get a better idea of what's going on. Rarely one is able to come up with the shape of work on the first try.
 

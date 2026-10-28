@@ -2,7 +2,7 @@
 
 Subagent orchestration is part of TLH itself. The runtime entrypoint ships at `extensions/subagents/src/extension/index.js`, the bundled agent definitions ship under `agents/subagents/`, and the TLH package declares the runtime in `package.json` under `pi.extensions`. There is no separate subagent package to install, pin, publish, or update for TLH.
 
-Most users should delegate in natural language to the active primary agent. The architect chooses the appropriate bundled agent, supervises the run, and judges the result. Implementation tickets go to `developer`, while a separate final-validation ticket with explicit ordered shell/MCP steps goes to the execution-only `test-runner`; the latter reports results without editing, installing dependencies, fixing failures, or changing tickets. The runtime details below are mainly useful when diagnosing a run or developing TLH.
+Most users should delegate in natural language to the active primary agent. The architect chooses the appropriate bundled agent, supervises the run, and judges the result. Implementation tickets go to `developer`, while a separate final-validation ticket with explicit ordered shell/MCP steps goes to the execution-only `test-runner`; the latter reports results without editing, installing dependencies, fixing failures, or changing tickets. The opt-in ticket-free Architect/no-developer workflow has separate activation, lifecycle, and validation semantics documented in [Ticket-free Architect mode](commands.md#ticket-free-architect-mode); the normal roster and ticket-backed runtime contract described here remain unchanged. The runtime details below are mainly useful when diagnosing a run or developing TLH.
 
 ## Isolation and discovery
 

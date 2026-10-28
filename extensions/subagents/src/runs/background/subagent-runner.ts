@@ -10,6 +10,7 @@ import {
   type CostSummary,
   type ModelAttempt,
   type SubagentRunMode,
+  isSubagentPromptVariant,
   DEFAULT_MAX_OUTPUT,
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
   truncateOutput,
@@ -267,6 +268,8 @@ function isRunnerSubagentStepValue(value: unknown): value is SubagentStep {
     )
       return false;
   }
+  if (Object.hasOwn(value, "promptVariant") && !isSubagentPromptVariant(value.promptVariant))
+    return false;
   const hasTimeoutMs = Object.hasOwn(value, "timeoutMs");
   if (hasTimeoutMs && !isPositiveSafeInteger(value.timeoutMs)) return false;
   if (
@@ -678,6 +681,16 @@ async function runSubagentWithInput(
         statusOwner.cancelled && !preservedTerminalStep ? statusPayload.cancel : undefined;
       const projectedResult: StepResult = {
         agent: pr.agent,
+        ...((pr.promptVariant ??
+        statusPayload.steps[fi]?.promptVariant ??
+        group.tasks[t]?.promptVariant)
+          ? {
+              promptVariant:
+                pr.promptVariant ??
+                statusPayload.steps[fi]?.promptVariant ??
+                group.tasks[t]?.promptVariant,
+            }
+          : {}),
         ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
         ticketId: pr.ticketId,
         output: cancelProjection
@@ -775,6 +788,16 @@ async function runSubagentWithInput(
     const projectSingleStepResult = (): StepResult => {
       const projectedResult: StepResult = {
         agent: singleResult.agent,
+        ...((singleResult.promptVariant ??
+        statusPayload.steps[flatIndex]?.promptVariant ??
+        seqStep.promptVariant)
+          ? {
+              promptVariant:
+                singleResult.promptVariant ??
+                statusPayload.steps[flatIndex]?.promptVariant ??
+                seqStep.promptVariant,
+            }
+          : {}),
         ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
         ticketId: singleResult.ticketId,
         output: statusOwner.cancelled

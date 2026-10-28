@@ -11,6 +11,7 @@ import { normalizeProjectAgentIdentity } from "../../agents/project-agent-loader
 import { normalizeChildProcessCleanup } from "../shared/process-group-cleanup.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { persistedTicketId } from "../shared/ticket-context.ts";
+import { isSubagentPromptVariant } from "../../shared/types.ts";
 
 export type AsyncStatusReadFailure = "invalid" | "unreadable" | "oversize" | "non_regular";
 
@@ -214,6 +215,12 @@ function validateCoreStatus(
       throw invalidStatus(asyncDir, statusPath, `steps[${index}] must be an object.`);
     if (typeof step.agent !== "string")
       throw invalidStatus(asyncDir, statusPath, `steps[${index}].agent must be a string.`);
+    if (Object.hasOwn(step, "promptVariant") && !isSubagentPromptVariant(step.promptVariant))
+      throw invalidStatus(
+        asyncDir,
+        statusPath,
+        `steps[${index}].promptVariant must be "normal" or "ticket-free".`,
+      );
     validateOptionalFiniteFields(
       asyncDir,
       statusPath,

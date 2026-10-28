@@ -2,6 +2,12 @@
 import * as path from "node:path";
 import { resolveTempRootDir } from "../../../shared/subagent-temp-root.js";
 import { MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.js";
+export function isSubagentPromptVariant(value) {
+    return value === "normal" || value === "ticket-free";
+}
+export function normalizeSubagentPromptVariant(value) {
+    return value === "ticket-free" ? "ticket-free" : "normal";
+}
 export function normalizeSubagentRunMode(value) {
     return value === "parallel" ? "parallel" : "single";
 }

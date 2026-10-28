@@ -99,9 +99,10 @@ test("launch telemetry ignores retired experimental flags and reuses the existin
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.delta-follow-up-reviews"), false);
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.ci-failure-investigation"), false);
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.session-mirror-observer"), false);
+  assert.equal(event.payload["Tlh.Experimental.no-developer"], "off");
   assert.equal(
     Object.keys(event.payload).some((key) => key.startsWith("Tlh.Experimental.")),
-    false,
+    true,
   );
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.embedded-subagents"), false);
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.legacy-flag"), false);

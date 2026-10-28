@@ -83,6 +83,7 @@ export function createBackgroundRunStatusOwner(input) {
         });
         return {
             agent: task.agent,
+            ...(task.promptVariant ? { promptVariant: task.promptVariant } : {}),
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
             ...(ticketId ? { ticketId } : {}),
             status: "pending",
@@ -641,6 +642,7 @@ export function createBackgroundRunStatusOwner(input) {
         const ticketId = validatedTicketId(task);
         return {
             agent: task.agent,
+            ...(task.promptVariant ? { promptVariant: task.promptVariant } : {}),
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
             ...(ticketId ? { ticketId } : {}),
             output: paused

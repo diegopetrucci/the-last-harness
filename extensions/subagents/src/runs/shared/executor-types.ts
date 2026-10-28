@@ -67,6 +67,10 @@ export interface ProjectAgentAccess {
    * Enforced by the executor against the exact persisted child records it acts on.
    */
   controlRestrictedToEmbedded?: boolean;
+  /** Captured host policy: exact bundled developer dispatches are disabled for this session. */
+  noDeveloper?: boolean;
+  /** Internal fail-closed marker for malformed captured no-developer evidence. */
+  noDeveloperPolicyInvalid?: boolean;
   /** Host-supplied rejection texts for restricted resume/steer. */
   resumeRestrictionReason?: string;
   steerRestrictionReason?: string;

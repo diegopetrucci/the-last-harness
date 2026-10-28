@@ -6,6 +6,7 @@ import {
   type SubagentEventBus,
   type SubagentResultChild,
   type SubagentState,
+  isSubagentPromptVariant,
   type SubagentTerminalResult,
 } from "../../shared/types.ts";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.ts";
@@ -52,6 +53,7 @@ type ResultFileChild = {
   interrupted?: boolean;
   sessionFile?: string;
   artifactPaths?: { outputPath?: string };
+  promptVariant?: unknown;
   terminalResult?: SubagentTerminalResult;
 };
 
@@ -461,8 +463,18 @@ export function createResultWatcher(
             const sessionPath =
               result.sessionFile ?? (resultChildren.length === 1 ? data.sessionFile : undefined);
             const terminalResult = parseSubagentTerminalResult(result.terminalResult);
+            if (
+              result.promptVariant !== undefined &&
+              !isSubagentPromptVariant(result.promptVariant)
+            ) {
+              throw new Error(
+                `Invalid subagent result '${resultPath}': child ${arrayIndex} promptVariant must be "normal" or "ticket-free".`,
+              );
+            }
+            const promptVariant = result.promptVariant;
             return {
               agent: result.agent ?? data.agent ?? `step-${arrayIndex + 1}`,
+              ...(promptVariant ? { promptVariant } : {}),
               status: resolveResultFileChildStatus(result, data.state),
               summary,
               index: arrayIndex,
@@ -481,16 +493,21 @@ export function createResultWatcher(
           ...(Array.isArray(data.results)
             ? {
                 results: hasResultChildren
-                  ? normalizedChildren.map((child, index) => ({
-                      ...data.results![index],
-                      agent: child.agent,
-                      status: child.status,
-                      summary: child.summary,
-                      index: child.index,
-                      artifactPath: child.artifactPath,
-                      sessionPath: child.sessionPath,
-                      terminalResult: child.terminalResult,
-                    }))
+                  ? normalizedChildren.map((child, index) => {
+                      const resultWithoutPromptVariant = { ...data.results![index] };
+                      delete resultWithoutPromptVariant.promptVariant;
+                      return {
+                        ...resultWithoutPromptVariant,
+                        agent: child.agent,
+                        ...(child.promptVariant ? { promptVariant: child.promptVariant } : {}),
+                        status: child.status,
+                        summary: child.summary,
+                        index: child.index,
+                        artifactPath: child.artifactPath,
+                        sessionPath: child.sessionPath,
+                        terminalResult: child.terminalResult,
+                      };
+                    })
                   : [],
               }
             : {}),

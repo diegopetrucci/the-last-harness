@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
+import { getTlhProjectAgentAccess } from "../extensions/the-last-harness/project-agent-access.mjs";
 import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 import {
   registerRuntimeHarness,
@@ -14,6 +15,176 @@ import {
   rushLikePrimary,
   createCommandContext,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
+
+test("no-developer captures one session policy across startup reasons, role switches, and preference writes", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const branchEntries = [
+    {
+      type: "custom",
+      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+      data: { selected: "architect" },
+    },
+  ];
+  const subagentMetadata = [
+    { name: "developer", description: "implementation" },
+    { name: "repo-scout", description: "repository mapping" },
+  ];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["no-developer"] } } }, null, 2)}\n`,
+    );
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+    const { applySessionStart, beforeAgentStart, toolCall, pi } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata,
+    });
+
+    for (const reason of ["startup", "restart", "new", "resume", "fork", "reload"]) {
+      await applySessionStart(ctx, reason);
+      assert.equal(getTlhProjectAgentAccess({ cwd: fixture.cwd }).noDeveloper, true, reason);
+    }
+
+    const activePrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.doesNotMatch(activePrompt.systemPrompt, /- developer:/i);
+    assert.match(activePrompt.systemPrompt, /- repo-scout:/i);
+
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`,
+    );
+    const unchangedPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.doesNotMatch(unchangedPrompt.systemPrompt, /- developer:/i);
+
+    const singleDeveloper = {
+      toolName: "subagent",
+      input: { agent: "developer", task: "implement the change" },
+    };
+    assert.match((await toolCall(singleDeveloper, ctx))?.reason ?? "", /developer/);
+
+    const mixedDeveloper = {
+      toolName: "subagent",
+      input: {
+        tasks: [
+          { agent: "repo-scout", task: "map the repository" },
+          { agent: "developer", task: "implement the change" },
+        ],
+      },
+    };
+    assert.match((await toolCall(mixedDeveloper, ctx))?.reason ?? "", /developer/);
+
+    const allowedOtherMinor = {
+      toolName: "subagent",
+      input: { agent: "repo-scout", task: "map the repository" },
+    };
+    assert.equal(await toolCall(allowedOtherMinor, ctx), undefined);
+
+    const trustedEmbeddedDeveloper = {
+      toolName: "subagent",
+      input: { agent: "embedded.developer", task: "use the explicitly requested project agent" },
+    };
+    assert.equal(await toolCall(trustedEmbeddedDeveloper, ctx), undefined);
+
+    for (const selection of ["rush", "product", "bug-hunter", "disabled"]) {
+      branchEntries[0].data.selected = selection;
+      const rolePrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+      assert.doesNotMatch(rolePrompt.systemPrompt, /- developer:/i, selection);
+      const roleDispatch = {
+        toolName: "subagent",
+        input: { agent: "developer", task: "implement the change" },
+      };
+      assert.match((await toolCall(roleDispatch, ctx))?.reason ?? "", /developer/);
+    }
+
+    const shutdown = pi.events.find((event) => event.name === "session_shutdown")?.handler;
+    assert.equal(typeof shutdown, "function");
+    await shutdown({}, ctx);
+    assert.equal(getTlhProjectAgentAccess({ cwd: fixture.cwd })?.noDeveloper, false);
+  });
+});
+
+test("enabling no-developer mid-session waits for the next session", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const branchEntries = [
+    {
+      type: "custom",
+      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+      data: { selected: "architect" },
+    },
+  ];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`,
+    );
+    const first = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+    await first.applySessionStart(ctx, "startup");
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["no-developer"] } } }, null, 2)}\n`,
+    );
+    const stillAllowed = { toolName: "subagent", input: { agent: "developer", task: "implement" } };
+    assert.equal(await first.toolCall(stillAllowed, ctx), undefined);
+
+    const second = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await second.applySessionStart(ctx, "reload");
+    const blocked = { toolName: "subagent", input: { agent: "developer", task: "implement" } };
+    assert.match((await second.toolCall(blocked, ctx))?.reason ?? "", /developer/);
+  });
+});
+
+test("disabled no-developer preference restores developer dispatch in a new session", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const branchEntries = [
+    {
+      type: "custom",
+      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+      data: { selected: "disabled" },
+    },
+  ];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["no-developer"] } } }, null, 2)}\n`,
+    );
+    const first = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+    await first.applySessionStart(ctx, "startup");
+    assert.match(
+      (await first.toolCall({ toolName: "subagent", input: { agent: "developer" } }, ctx))
+        ?.reason ?? "",
+      /developer/,
+    );
+
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`,
+    );
+    const second = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await second.applySessionStart(ctx, "reload");
+    const restored = { toolName: "subagent", input: { agent: "developer", task: "implement" } };
+    assert.equal(await second.toolCall(restored, ctx), undefined);
+  });
+});
 
 test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });

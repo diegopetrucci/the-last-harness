@@ -450,7 +450,7 @@ async function queueLiveAsyncResume(input: {
       content: [
         {
           type: "text",
-          text: `Async run '${input.target.runId}' is not running and cannot accept a live resume follow-up.`,
+          text: `Async run '${input.target.runId}' was running when resume began, but its runner or selected child went stale before the live follow-up could be accepted. No durable revival was started.`,
         },
       ],
       isError: true,
@@ -699,7 +699,9 @@ async function resolveResumeActionTarget(input: {
           { kill: input.deps.kill, resultsDir: RESULTS_DIR, callerKey: input.callerKey },
           {
             requireSessionFile: true,
-            readOnly: preResolutionStatus?.state !== "running",
+            // Do not reconcile or repair a live lifecycle record until the
+            // selected child has passed the host control policy gate below.
+            readOnly: true,
             deferPausedContinuationGate: true,
           },
         ),
@@ -1117,6 +1119,9 @@ export async function resumeAsyncRun(input: {
           }
         : {}),
       ...(resolveTargetTicketId(target) ? { ticketId: resolveTargetTicketId(target) } : {}),
+      ...(target.source === "async" && "promptVariant" in target
+        ? { promptVariant: target.promptVariant }
+        : {}),
       task: buildRevivedAsyncTask(target, followUp),
       modelOverride: input.params.model,
       ...(restoredModelIdentity ? { restoredModelIdentity } : {}),

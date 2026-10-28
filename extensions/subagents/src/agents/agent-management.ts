@@ -12,7 +12,10 @@ import type { Details, SubagentToolResult } from "../shared/types.ts";
 import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 
 type ManagementAction = "list" | "get";
-type ManagementContext = Pick<ExtensionContext, "cwd">;
+type ManagementContext = Pick<ExtensionContext, "cwd"> & {
+  /** Captured host policy; never inferred from model-facing management input. */
+  noDeveloperActive?: boolean;
+};
 
 interface ManagementParams {
   action?: string;
@@ -55,6 +58,21 @@ function allAgents(d: {
   return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
+function isBundledDeveloperName(name: string): boolean {
+  return name === "developer";
+}
+
+function isHiddenByNoDeveloper(
+  entry: { name?: string; filePath?: string },
+  noDeveloperActive: boolean,
+): boolean {
+  if (!noDeveloperActive) return false;
+  if (entry.name === "developer") return true;
+  // A malformed canonical definition has no parsed name, but its diagnostic
+  // still must not advertise the hidden executable role.
+  return isCanonicalPackagedMinorAgent({ name: "developer", filePath: entry.filePath });
+}
+
 function isVisibleInScope(
   entry: { source: AgentDiscoveryDiagnostic["source"]; name?: string; filePath?: string },
   scope: AgentScope,
@@ -75,19 +93,31 @@ function isVisibleInScope(
   return isCanonicalPackagedMinorAgent({ name: role, filePath: entry.filePath });
 }
 
-function availableNames(cwd: string): string[] {
-  return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) =>
-    a.localeCompare(b),
-  );
+function availableNames(cwd: string, noDeveloperActive: boolean): string[] {
+  return [
+    ...new Set(
+      allAgents(discoverAgentsAll(cwd))
+        .filter((agent) => !isHiddenByNoDeveloper(agent, noDeveloperActive))
+        .map((agent) => agent.name),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
 }
 
-function findAgents(name: string, cwd: string, scope: AgentScope = "both"): AgentConfig[] {
+function findAgents(
+  name: string,
+  cwd: string,
+  scope: AgentScope = "both",
+  noDeveloperActive = false,
+): AgentConfig[] {
   const d = discoverAgentsAll(cwd);
   const raw = name.trim();
   const sanitized = sanitizeName(raw);
   return allAgents(d)
     .filter(
-      (a) => (scope === "both" || a.source === scope) && (a.name === raw || a.name === sanitized),
+      (a) =>
+        !isHiddenByNoDeveloper(a, noDeveloperActive) &&
+        (scope === "both" || a.source === scope) &&
+        (a.name === raw || a.name === sanitized),
     )
     .sort((a, b) => a.source.localeCompare(b.source));
 }
@@ -140,15 +170,19 @@ export function handleList(
   const scopedAgents = allAgents(d)
     .filter((a) => isVisibleInScope(a, scope))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const agents = scopedAgents.filter((a) => !a.disabled);
+  const agents = scopedAgents.filter(
+    (a) => !a.disabled && !isHiddenByNoDeveloper(a, ctx.noDeveloperActive === true),
+  );
   const lines = [
     "Executable agents:",
     ...(agents.length
       ? agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`)
       : ["- (none)"]),
   ];
-  const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) =>
-    isVisibleInScope(diagnostic, scope),
+  const visibleDiagnostics = (d.agentDiagnostics ?? []).filter(
+    (diagnostic) =>
+      isVisibleInScope(diagnostic, scope) &&
+      !isHiddenByNoDeveloper(diagnostic, ctx.noDeveloperActive === true),
   );
   if (visibleDiagnostics.length > 0) {
     lines.push(
@@ -164,10 +198,17 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): SubagentTo
   if (params.chainName)
     return unsupportedSavedChainResult("Use 'agent' for action='get'; omit chainName.");
   if (!params.agent) return result("Specify 'agent' for get.", true);
-  const matches = findAgents(params.agent, ctx.cwd, "both");
+  const noDeveloperActive = ctx.noDeveloperActive === true;
+  if (noDeveloperActive && isBundledDeveloperName(sanitizeName(params.agent))) {
+    return result(
+      `The bundled developer agent is unavailable while the host no-developer policy is active. Available: ${availableNames(ctx.cwd, true).join(", ") || "none"}.`,
+      true,
+    );
+  }
+  const matches = findAgents(params.agent, ctx.cwd, "both", noDeveloperActive);
   if (!matches.length) {
     return result(
-      `Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`,
+      `Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd, noDeveloperActive).join(", ") || "none"}.`,
       true,
     );
   }

@@ -203,6 +203,8 @@ export interface ModelAttemptStart {
 
 type SingleStepResultValue = {
   agent: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: import("../../shared/types.ts").SubagentPromptVariant;
   projectAgent?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity;
   output: string;
   finalOutput?: string;
@@ -929,6 +931,7 @@ function buildSingleStepResult(input: {
   const finalResult = state.finalResult;
   return {
     agent: step.agent,
+    ...(step.promptVariant ? { promptVariant: step.promptVariant } : {}),
     ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
     ...(step.ticketId ? { ticketId: step.ticketId } : {}),
     output: output.outputForSummary,

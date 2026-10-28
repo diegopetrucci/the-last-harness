@@ -2,6 +2,7 @@ import type {
   MaxOutputConfig,
   ResolvedArtifactConfig,
   ResolvedControlConfig,
+  SubagentPromptVariant,
 } from "../../shared/types.ts";
 import type { ProjectAgentIdentity } from "../../agents/project-agent-loader.ts";
 import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
@@ -11,6 +12,8 @@ export interface RunnerSubagentStep {
   parentSessionId?: string;
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentIdentity;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
   /** Normalized explicit ticket ID, when assigned. */
   ticketId?: string;
   /** Exact ticket body used only to construct the initial child prompt. */

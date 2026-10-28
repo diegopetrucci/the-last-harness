@@ -97,7 +97,7 @@ TelemetryDeck also receives normal network metadata such as source IP address an
 
 ## Opting out
 
-All signals respect the same opt-outs.
+All signals respect the same opt-outs. The `Tlh.Experimental.no-developer` dimension records the launch-time configured preference as `on` or `off`; it is not a snapshot of later session-policy changes. Opting out suppresses it with the rest of the event and does not change the feature state.
 
 Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`:
 

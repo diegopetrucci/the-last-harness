@@ -13,6 +13,7 @@ import {
   parseExperimentalSlashAction,
   TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT,
   TLH_EXPERIMENTAL_FEATURES,
+  NO_DEVELOPER_FEATURE,
   unknownExperimentalFeatureMessage,
 } from "./experimental.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
@@ -67,6 +68,11 @@ function nextSessionActivationNotice(
   enabled: boolean,
 ): string {
   if (!feature.nextSessionOnly) return "";
+  if (feature.id === NO_DEVELOPER_FEATURE) {
+    return enabled
+      ? " Enabling takes effect at the next session start (including /reload); this session's captured execution policy remains unchanged."
+      : " Disabling takes effect at the next session start (including /reload); a currently active session retains its captured no-developer policy until then (not immediate revocation).";
+  }
   return enabled
     ? " Enabling takes effect on the next session; this session keeps its current activation."
     : " Disabling takes effect on the next session; a currently enabled session retains activation until a new session (not immediate revocation).";
@@ -80,7 +86,14 @@ function formatExperimentalFeatureStatus(
   if (!feature) {
     return unknownExperimentalFeatureMessage(featureId);
   }
-  const enabledLabel = enabled ? "enabled" : "disabled (default)";
+  const enabledLabel =
+    feature.id === NO_DEVELOPER_FEATURE
+      ? enabled
+        ? "preference enabled"
+        : "preference disabled (default)"
+      : enabled
+        ? "enabled"
+        : "disabled (default)";
   const nextStep = enabled
     ? `Disable with /experimental disable ${feature.id}.`
     : `Enable with /experimental enable ${feature.id}.`;
@@ -124,7 +137,14 @@ function experimentalFeaturePickerOption(
   if (!feature) {
     return featureId;
   }
-  const stateLabel = enabled ? "enabled" : "disabled (default)";
+  const stateLabel =
+    feature.id === NO_DEVELOPER_FEATURE
+      ? enabled
+        ? "preference enabled"
+        : "preference disabled (default)"
+      : enabled
+        ? "enabled"
+        : "disabled (default)";
   return `${enabled ? "●" : "○"} ${feature.id} — ${stateLabel} — ${feature.description}`;
 }
 
@@ -137,10 +157,14 @@ function notifyExperimentalWriteResult(
   const changedLabel = result.changed ? "Updated" : "No change to";
   const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
   const stateLabel = result.enabled ? "enabled" : "disabled";
+  const feature = getExperimentalFeature(featureId);
+  const preferenceLabel =
+    feature?.id === NO_DEVELOPER_FEATURE
+      ? ` It is now ${stateLabel} as a next-session preference.`
+      : ` It is now ${stateLabel}.`;
   const undoLabel = result.enabled
     ? `Undo with /experimental disable ${featureId}.`
     : `Undo with /experimental enable ${featureId}.`;
-  const feature = getExperimentalFeature(featureId);
   const description = feature ? ` ${feature.description}` : "";
   const activationNotice = feature ? nextSessionActivationNotice(feature, result.enabled) : "";
   pi.events?.emit?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
@@ -149,7 +173,7 @@ function notifyExperimentalWriteResult(
     featureId,
   });
   ctx.ui.notify(
-    `${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}.${description}${activationNotice} ${undoLabel}${backupLabel}`,
+    `${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}.${preferenceLabel}${description}${activationNotice} ${undoLabel}${backupLabel}`,
     "info",
   );
 }

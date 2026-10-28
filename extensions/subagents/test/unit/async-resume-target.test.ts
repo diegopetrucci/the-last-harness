@@ -56,8 +56,148 @@ describe("async resume lookup", () => {
       assert.equal(target.agent, "worker");
       assert.equal(target.sessionFile, sessionFile);
       assert.equal(target.cwd, root);
+      assert.equal(target.promptVariant, "normal");
       assert.equal(target.terminationReason, undefined);
       assert.deepEqual(target.contextPressureCrossedThresholds, ["warning", "critical"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an explicit ticket-free variant through status and result-only revival", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-prompt-variant-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const resultsDir = path.join(root, "results");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-status-variant", "status.json"), {
+        runId: "run-status-variant",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "complete", sessionFile, promptVariant: "ticket-free" }],
+      });
+      const statusTarget = resolveAsyncResumeTarget(
+        { id: "run-status-variant" },
+        { asyncDirRoot: asyncRoot, resultsDir },
+        { readOnly: true },
+      );
+      assert.equal(statusTarget.promptVariant, "ticket-free");
+
+      writeJson(path.join(resultsDir, "run-result-variant.json"), {
+        id: "run-result-variant",
+        agent: "worker",
+        mode: "single",
+        state: "complete",
+        success: true,
+        summary: "done",
+        results: [{ agent: "worker", sessionFile, promptVariant: "ticket-free" }],
+        exitCode: 0,
+        timestamp: 200,
+        durationMs: 100,
+        asyncDir: path.join(asyncRoot, "run-result-variant"),
+      });
+      const resultTarget = resolveAsyncResumeTarget(
+        { id: "run-result-variant" },
+        { asyncDirRoot: asyncRoot, resultsDir },
+        { readOnly: true },
+      );
+      assert.equal(resultTarget.promptVariant, "ticket-free");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed or conflicting prompt variant evidence before repair", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-prompt-invalid-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const resultsDir = path.join(root, "results");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      const malformedStatusPath = path.join(asyncRoot, "run-malformed", "status.json");
+      writeJson(malformedStatusPath, {
+        runId: "run-malformed",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+            promptVariant: "future" as never,
+          },
+        ],
+      });
+      const beforeMalformed = fs.readFileSync(malformedStatusPath);
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-malformed" },
+            { asyncDirRoot: asyncRoot, resultsDir },
+          ),
+        /promptVariant.*malformed/i,
+      );
+      assert.deepEqual(fs.readFileSync(malformedStatusPath), beforeMalformed);
+
+      const conflictStatusPath = path.join(asyncRoot, "run-conflict", "status.json");
+      writeJson(conflictStatusPath, {
+        runId: "run-conflict",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "complete", sessionFile, promptVariant: "ticket-free" }],
+      });
+      writeJson(path.join(resultsDir, "run-conflict.json"), {
+        id: "run-conflict",
+        agent: "worker",
+        mode: "single",
+        state: "complete",
+        success: true,
+        summary: "done",
+        results: [{ agent: "worker", sessionFile, promptVariant: "normal" }],
+        exitCode: 0,
+        timestamp: 200,
+        durationMs: 100,
+        asyncDir: path.join(asyncRoot, "run-conflict"),
+      });
+      const beforeConflict = fs.readFileSync(conflictStatusPath);
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget({ id: "run-conflict" }, { asyncDirRoot: asyncRoot, resultsDir }),
+        /promptVariant.*conflicts/i,
+      );
+      assert.deepEqual(fs.readFileSync(conflictStatusPath), beforeConflict);
+
+      writeJson(path.join(resultsDir, "run-malformed-result.json"), {
+        id: "run-malformed-result",
+        agent: "worker",
+        mode: "single",
+        state: "complete",
+        success: true,
+        summary: "done",
+        results: [
+          {
+            agent: "worker",
+            sessionFile,
+            promptVariant: { nested: true } as never,
+          },
+        ],
+        exitCode: 0,
+        timestamp: 200,
+        durationMs: 100,
+        asyncDir: path.join(asyncRoot, "run-malformed-result"),
+      });
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-malformed-result" },
+            { asyncDirRoot: asyncRoot, resultsDir },
+          ),
+        /promptVariant.*normal.*ticket-free/i,
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

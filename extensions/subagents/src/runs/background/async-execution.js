@@ -19,10 +19,27 @@ import { buildSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { normalizeTicketId, readTicketBody, ticketLookupKey } from "../shared/ticket-context.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
+import { renderPromptVariant, } from "../../../../the-last-harness/prompts.js";
 import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../../shared/child-location.js";
 import { createAwaitedRunOwner } from "./awaited-run-owner.js";
 import { createOwnedProcessGroupOwner, } from "../shared/process-group-cleanup.js";
 const piPackageRoot = resolvePiPackageRoot();
+class AsyncStartValidationError extends Error {
+}
+function renderCanonicalTestRunnerPrompt(agent, promptVariant) {
+    const source = agent.systemPrompt?.trim() ?? "";
+    if (agent.name !== "test-runner" || !isCanonicalPackagedMinorAgent(agent))
+        return source;
+    try {
+        const variant = promptVariant ?? "normal";
+        return renderPromptVariant(source, variant, {
+            requireSelectedSection: variant === "ticket-free",
+        }).trim();
+    }
+    catch (error) {
+        throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+    }
+}
 function saturatingAsyncDeadlineAt(startedAt, durationMs) {
     return Math.min(Number.MAX_SAFE_INTEGER, startedAt + durationMs);
 }
@@ -186,8 +203,6 @@ function resolveAsyncSingleRuntimePolicy(agent, params) {
 const UNAVAILABLE_SUBAGENT_SKILL_ERROR = "Skills not found: pi-subagents";
 class UnavailableSubagentSkillError extends Error {
 }
-class AsyncStartValidationError extends Error {
-}
 export function buildAsyncRunnerPlan(id, params) {
     const { tasks, agents, ctx, cwd, sessionFilesByFlatIndex, maxSubagentDepth } = params;
     const outputBaseDir = params.artifactsDir
@@ -254,7 +269,7 @@ export function buildAsyncRunnerPlan(id, params) {
         });
         if (toolPolicyError)
             throw new AsyncStartValidationError(toolPolicyError);
-        let systemPrompt = agent.systemPrompt?.trim() ?? "";
+        let systemPrompt = renderCanonicalTestRunnerPrompt(agent, taskSpec.promptVariant);
         if (resolvedSkills.length > 0) {
             const injection = buildSkillInjection(resolvedSkills);
             systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
@@ -294,6 +309,7 @@ export function buildAsyncRunnerPlan(id, params) {
         return {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
             ...(projectAgent ? { projectAgent } : {}),
+            ...(taskSpec.promptVariant ? { promptVariant: taskSpec.promptVariant } : {}),
             ...(ticket?.ticketId ? { ticketId: ticket.ticketId } : {}),
             ...(ticket?.body !== undefined ? { ticketBody: ticket.body } : {}),
             agent: taskSpec.agent,
@@ -619,6 +635,7 @@ export function buildAsyncSingleRunnerPlan(params, inputs) {
             task: {
                 parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
                 ...(projectAgent ? { projectAgent } : {}),
+                ...(params.promptVariant ? { promptVariant: params.promptVariant } : {}),
                 agent,
                 projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
                 ...(ticketId ? { ticketId } : {}),
@@ -692,7 +709,13 @@ export function executeAsyncSingle(id, params) {
     });
     if (toolPolicyError)
         return formatAsyncStartError("single", toolPolicyError);
-    let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
+    let systemPrompt;
+    try {
+        systemPrompt = renderCanonicalTestRunnerPrompt(agentConfig, params.promptVariant);
+    }
+    catch (error) {
+        return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+    }
     if (resolvedSkills.length > 0) {
         const injection = buildSkillInjection(resolvedSkills);
         systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;

@@ -2,13 +2,14 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 import { getArtifactsDir, resolveArtifactConfig } from "../shared/artifacts.js";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.js";
 import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "../runs/background/async-owner-authorization.js";
 import { handleManagementAction } from "../agents/agent-management.js";
 import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "./doctor.js";
 import { authorizeProjectInterruptTarget, authorizeProjectSteerTarget, buildManagementActionParams, buildRunStatusParams, buildResumeModelResolution, cancelPersistedPausedAsyncRun, getRequestedModeLabel, interruptAsyncRun, readModelRegistrySnapshot, requestInterruptAllRunningSubagentRuns, resolveSingleRunOutputBaseDir, selectInterruptTarget, steerAsyncRun, unknownAgentMessage, providerFallbackModelsForTarget, resumeAsyncRun, unsupportedSavedChainInput, unsupportedSavedChainInputResult, } from "../runs/shared/run-control.js";
-import { isRecordValue, normalizeProjectAgentAccess, resolveProjectAgentExecution, } from "../runs/shared/project-agent-control.js";
+import { isNoDeveloperPolicyActive, isRecordValue, normalizeProjectAgentAccess, resolveProjectAgentExecution, } from "../runs/shared/project-agent-control.js";
 export { buildResumeModelResolution, normalizeProjectAgentAccess, requestInterruptAllRunningSubagentRuns, };
 import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.js";
 import { retiredNestedLaunchError } from "../runs/shared/pi-args.js";
@@ -237,7 +238,7 @@ function prepareTicketBodies(params, effectiveCwd) {
     return ticketBodies.size > 0 ? { ticketBodies } : {};
 }
 async function runAsyncPath(data, deps) {
-    const { params, effectiveCwd, agents, ctx, shareEnabled, sessionRoot, sessionFileForTask, artifactConfig, artifactsDir, awaited, controlConfig, ticketBodies, } = data;
+    const { params, effectiveCwd, agents, ctx, shareEnabled, sessionRoot, sessionFileForTask, artifactConfig, artifactsDir, awaited, controlConfig, ticketBodies, ticketFreePromptVariantEnabled, } = data;
     const hasTasks = (params.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(params.agent);
     if (hasTasks && params.tasks) {
@@ -277,27 +278,31 @@ async function runAsyncPath(data, deps) {
             scope: data.modelScope,
             source: modelSources[index],
         }));
-        const parallelTasks = params.tasks.map((task, index) => ({
-            agent: task.agent,
-            task: task.task,
-            ...(task.ticket ? { ticket: task.ticket } : {}),
-            cwd: task.cwd,
-            ...(modelOverrides[index]
-                ? { model: modelOverrides[index], modelSource: modelSources[index] }
-                : {}),
-            ...(providerFallbackModelsForTarget(task)
-                ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
-                : {}),
-            ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
-            ...(task.output === true
-                ? agentConfigs[index]?.output
-                    ? { output: agentConfigs[index].output }
-                    : {}
-                : task.output !== undefined
-                    ? { output: task.output }
+        const parallelTasks = params.tasks.map((task, index) => {
+            const promptVariant = promptVariantForCanonicalTestRunner(agentConfigs[index], ticketFreePromptVariantEnabled);
+            return {
+                agent: task.agent,
+                task: task.task,
+                ...(promptVariant ? { promptVariant } : {}),
+                ...(task.ticket ? { ticket: task.ticket } : {}),
+                cwd: task.cwd,
+                ...(modelOverrides[index]
+                    ? { model: modelOverrides[index], modelSource: modelSources[index] }
                     : {}),
-            ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-        }));
+                ...(providerFallbackModelsForTarget(task)
+                    ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
+                    : {}),
+                ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
+                ...(task.output === true
+                    ? agentConfigs[index]?.output
+                        ? { output: agentConfigs[index].output }
+                        : {}
+                    : task.output !== undefined
+                        ? { output: task.output }
+                        : {}),
+                ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
+            };
+        });
         return (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
             awaited,
             signal: data.signal,
@@ -341,12 +346,14 @@ async function runAsyncPath(data, deps) {
             source: params.model ? "explicit" : "inherited",
         });
         const executeSingle = deps.executeAsyncSingle ?? executeAsyncSingle;
+        const promptVariant = promptVariantForCanonicalTestRunner(a, ticketFreePromptVariantEnabled);
         return executeSingle(id, {
             awaited,
             signal: data.signal,
             onUpdate: data.onUpdate,
             agent: params.agent,
             task: params.task ?? "",
+            ...(promptVariant ? { promptVariant } : {}),
             ...(params.ticket ? { ticket: params.ticket } : {}),
             ...(params.ticket && ticketBodies
                 ? { ticketBody: ticketBodies.get(ticketLookupKey(effectiveCwd, params.ticket)) }
@@ -463,6 +470,49 @@ function projectManagementError(text) {
         isError: true,
         details: { mode: "management", results: [] },
     };
+}
+function capturedNoDeveloperPolicy(ctx, deps) {
+    let raw;
+    try {
+        raw = deps.getProjectAgentAccess?.({
+            cwd: ctx.cwd,
+            sessionId: resolveProjectAgentSessionId(ctx.sessionManager),
+            targetNames: [],
+        });
+    }
+    catch {
+        return { active: true, enabled: false };
+    }
+    try {
+        const access = normalizeProjectAgentAccess(raw);
+        const active = isNoDeveloperPolicyActive(access);
+        if (!isRecordValue(raw) || raw.noDeveloper !== true || access?.noDeveloper !== true) {
+            return { active, enabled: false };
+        }
+        if (access.noDeveloperPolicyInvalid === true)
+            return { active, enabled: false };
+        return {
+            active,
+            enabled: access.architect === true && access.canInitiate === true,
+        };
+    }
+    catch {
+        return { active: true, enabled: false };
+    }
+}
+function promptVariantForCanonicalTestRunner(agent, ticketFreeEnabled) {
+    if (!agent || agent.name !== "test-runner" || !isCanonicalPackagedMinorAgent(agent)) {
+        return undefined;
+    }
+    return ticketFreeEnabled ? "ticket-free" : "normal";
+}
+function targetsBundledDeveloper(params) {
+    if (params.agent === "developer")
+        return true;
+    return (params.tasks ?? []).some((task) => task.agent === "developer");
+}
+function noDeveloperExecutionError() {
+    return "TLH execution rejected: the bundled developer subagent is unavailable while the host no-developer policy is active.";
 }
 function awaitedLifecycleFailure() {
     return {
@@ -652,6 +702,7 @@ export function createSubagentExecutor(deps) {
             }
             return handleManagementAction(action, buildManagementActionParams(paramsWithResolvedCwd), {
                 cwd: requestCwd,
+                noDeveloperActive: capturedNoDeveloperPolicy(ctx, deps).active,
             });
         }
         const { blocked, depth, maxDepth } = checkSubagentDepth(deps.config.maxSubagentDepth);
@@ -677,6 +728,11 @@ export function createSubagentExecutor(deps) {
         if (retiredCountError)
             return retiredCountError;
         let effectiveParams = ticketNormalized.params;
+        const noDeveloperPolicy = capturedNoDeveloperPolicy(ctx, deps);
+        const noDeveloperActive = noDeveloperPolicy.active;
+        if (noDeveloperActive && targetsBundledDeveloper(effectiveParams)) {
+            return toExecutionErrorResult(effectiveParams, new Error(noDeveloperExecutionError()));
+        }
         const scope = resolveExecutionAgentScope(effectiveParams.agentScope);
         const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
         const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
@@ -690,7 +746,9 @@ export function createSubagentExecutor(deps) {
         const discovered = projectResolution.discovered;
         const discoveredAgents = discovered.agents;
         const modelScope = discovered.modelScope;
-        const agents = discoveredAgents;
+        const agents = noDeveloperActive
+            ? discoveredAgents.filter((agent) => agent.name !== "developer")
+            : discoveredAgents;
         const runId = randomUUID().slice(0, 8);
         const shareEnabled = effectiveParams.share === true;
         const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
@@ -754,6 +812,7 @@ export function createSubagentExecutor(deps) {
             controlConfig,
             modelScope,
             ticketBodies,
+            ticketFreePromptVariantEnabled: noDeveloperPolicy.enabled,
         };
         try {
             const asyncResult = await runAsyncPath(execData, deps);

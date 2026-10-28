@@ -5,6 +5,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentDiscoveryDiagnostic, AgentScope } from "../agents/agents.ts";
 
 import type { ProjectAgentIdentity } from "../agents/project-agent-loader.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 import { getArtifactsDir, resolveArtifactConfig } from "../shared/artifacts.ts";
 
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
@@ -35,6 +36,7 @@ import {
   unsupportedSavedChainInputResult,
 } from "../runs/shared/run-control.ts";
 import {
+  isNoDeveloperPolicyActive,
   isRecordValue,
   normalizeProjectAgentAccess,
   resolveProjectAgentExecution,
@@ -81,6 +83,7 @@ import {
   type SubagentToolResult,
   type ResolvedArtifactConfig,
   type ResolvedControlConfig,
+  type SubagentPromptVariant,
   type SubagentRunMode,
   SUBAGENT_ACTIONS,
   checkSubagentDepth,
@@ -137,6 +140,8 @@ interface ExecutionContextData {
   modelScope?: ModelScopeConfig;
   /** Ticket bodies loaded once per normalized cwd and ticket ID for this dispatch. */
   ticketBodies?: ReadonlyMap<string, string>;
+  /** Genuine captured host enablement used only for canonical test-runner prompts. */
+  ticketFreePromptVariantEnabled: boolean;
 }
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
@@ -384,6 +389,7 @@ async function runAsyncPath(
     awaited,
     controlConfig,
     ticketBodies,
+    ticketFreePromptVariantEnabled,
   } = data;
   const hasTasks = (params.tasks?.length ?? 0) > 0;
   const hasSingle = !hasTasks && Boolean(params.agent);
@@ -430,27 +436,34 @@ async function runAsyncPath(
         source: modelSources[index],
       }),
     );
-    const parallelTasks = params.tasks.map((task, index) => ({
-      agent: task.agent,
-      task: task.task,
-      ...(task.ticket ? { ticket: task.ticket } : {}),
-      cwd: task.cwd,
-      ...(modelOverrides[index]
-        ? { model: modelOverrides[index], modelSource: modelSources[index] }
-        : {}),
-      ...(providerFallbackModelsForTarget(task)
-        ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
-        : {}),
-      ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
-      ...(task.output === true
-        ? agentConfigs[index]?.output
-          ? { output: agentConfigs[index]!.output }
-          : {}
-        : task.output !== undefined
-          ? { output: task.output }
+    const parallelTasks = params.tasks.map((task, index) => {
+      const promptVariant = promptVariantForCanonicalTestRunner(
+        agentConfigs[index],
+        ticketFreePromptVariantEnabled,
+      );
+      return {
+        agent: task.agent,
+        task: task.task,
+        ...(promptVariant ? { promptVariant } : {}),
+        ...(task.ticket ? { ticket: task.ticket } : {}),
+        cwd: task.cwd,
+        ...(modelOverrides[index]
+          ? { model: modelOverrides[index], modelSource: modelSources[index] }
           : {}),
-      ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-    }));
+        ...(providerFallbackModelsForTarget(task)
+          ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
+          : {}),
+        ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
+        ...(task.output === true
+          ? agentConfigs[index]?.output
+            ? { output: agentConfigs[index]!.output }
+            : {}
+          : task.output !== undefined
+            ? { output: task.output }
+            : {}),
+        ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
+      };
+    });
     return (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
       awaited,
       signal: data.signal,
@@ -504,12 +517,14 @@ async function runAsyncPath(
       },
     );
     const executeSingle = deps.executeAsyncSingle ?? executeAsyncSingle;
+    const promptVariant = promptVariantForCanonicalTestRunner(a, ticketFreePromptVariantEnabled);
     return executeSingle(id, {
       awaited,
       signal: data.signal,
       onUpdate: data.onUpdate,
       agent: params.agent!,
       task: params.task ?? "",
+      ...(promptVariant ? { promptVariant } : {}),
       ...(params.ticket ? { ticket: params.ticket } : {}),
       ...(params.ticket && ticketBodies
         ? { ticketBody: ticketBodies.get(ticketLookupKey(effectiveCwd, params.ticket)) }
@@ -646,6 +661,75 @@ function projectManagementError(text: string): SubagentToolResult<Details> {
     details: { mode: "management", results: [] },
   };
 }
+
+type CapturedNoDeveloperPolicy = {
+  /** Restriction state is fail-closed for developer execution and management. */
+  active: boolean;
+  /** Positive authority is granted only by a well-formed captured host record. */
+  enabled: boolean;
+};
+
+function capturedNoDeveloperPolicy(
+  ctx: ExtensionContext,
+  deps: ExecutorDeps,
+): CapturedNoDeveloperPolicy {
+  let raw: unknown;
+  try {
+    raw = deps.getProjectAgentAccess?.({
+      // The policy is session-owned; do not derive it from the requested
+      // cwd or any model-facing control field.
+      cwd: ctx.cwd,
+      sessionId: resolveProjectAgentSessionId(ctx.sessionManager),
+      targetNames: [],
+    });
+  } catch {
+    // A throwing bridge is broken, not evidence that the captured restriction
+    // is inactive. Keep new execution fail closed at this boundary, but never
+    // use that fail-closed restriction as positive prompt-variant authority.
+    return { active: true, enabled: false };
+  }
+
+  try {
+    const access = normalizeProjectAgentAccess(raw);
+    const active = isNoDeveloperPolicyActive(access);
+    if (!isRecordValue(raw) || raw.noDeveloper !== true || access?.noDeveloper !== true) {
+      return { active, enabled: false };
+    }
+    if (access.noDeveloperPolicyInvalid === true) return { active, enabled: false };
+
+    // Require normalized positive host permission. In particular, the bridge's
+    // fail-closed fallback after a provider error has canInitiate=false; it must
+    // not become positive authority merely because it retains noDeveloper=true.
+    return {
+      active,
+      enabled: access.architect === true && access.canInitiate === true,
+    };
+  } catch {
+    // Malformed host records, including throwing getters/proxies, are a
+    // restriction signal but never positive prompt-variant authority.
+    return { active: true, enabled: false };
+  }
+}
+
+function promptVariantForCanonicalTestRunner(
+  agent: AgentConfig | undefined,
+  ticketFreeEnabled: boolean,
+): SubagentPromptVariant | undefined {
+  if (!agent || agent.name !== "test-runner" || !isCanonicalPackagedMinorAgent(agent)) {
+    return undefined;
+  }
+  return ticketFreeEnabled ? "ticket-free" : "normal";
+}
+
+function targetsBundledDeveloper(params: SubagentParamsLike): boolean {
+  if (params.agent === "developer") return true;
+  return (params.tasks ?? []).some((task) => task.agent === "developer");
+}
+
+function noDeveloperExecutionError(): string {
+  return "TLH execution rejected: the bundled developer subagent is unavailable while the host no-developer policy is active.";
+}
+
 function awaitedLifecycleFailure(): SubagentToolResult<Details> {
   return {
     content: [
@@ -879,6 +963,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       }
       return handleManagementAction(action, buildManagementActionParams(paramsWithResolvedCwd), {
         cwd: requestCwd,
+        noDeveloperActive: capturedNoDeveloperPolicy(ctx, deps).active,
       });
     }
 
@@ -906,6 +991,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const retiredCountError = rejectRetiredTaskCounts(ticketNormalized.params!);
     if (retiredCountError) return retiredCountError;
     let effectiveParams = ticketNormalized.params!;
+    const noDeveloperPolicy = capturedNoDeveloperPolicy(ctx, deps);
+    const noDeveloperActive = noDeveloperPolicy.active;
+    if (noDeveloperActive && targetsBundledDeveloper(effectiveParams)) {
+      return toExecutionErrorResult(effectiveParams, new Error(noDeveloperExecutionError()));
+    }
     const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
     const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
     const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
@@ -929,7 +1019,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const discovered = projectResolution.discovered;
     const discoveredAgents = discovered.agents;
     const modelScope = discovered.modelScope;
-    const agents = discoveredAgents;
+    // Keep management/error rosters aligned with the captured host policy
+    // without mutating the underlying discovered definitions or settings.
+    const agents = noDeveloperActive
+      ? discoveredAgents.filter((agent) => agent.name !== "developer")
+      : discoveredAgents;
     const runId = randomUUID().slice(0, 8);
     const shareEnabled = effectiveParams.share === true;
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
@@ -1008,6 +1102,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       controlConfig,
       modelScope,
       ticketBodies,
+      ticketFreePromptVariantEnabled: noDeveloperPolicy.enabled,
     };
 
     try {

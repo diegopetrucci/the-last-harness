@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { stepSteerInboxDir } from "./control-channel.js";
 import { resolveArtifactConfig } from "../../shared/artifacts.js";
-import { DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput, } from "../../shared/types.js";
+import { isSubagentPromptVariant, DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput, } from "../../shared/types.js";
 import { DEFAULT_CONTROL_CONFIG } from "../shared/subagent-control.js";
 import { mapConcurrent, MAX_PARALLEL_CONCURRENCY, DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore, } from "../shared/parallel-utils.js";
 import { boundChildError, boundChildStderrError, MAX_CHILD_ERROR_BYTES, } from "../shared/child-protocol.js";
@@ -159,6 +159,8 @@ function isRunnerSubagentStepValue(value) {
             Buffer.byteLength(value.ticketBody, "utf8") > TICKET_LOOKUP_MAX_OUTPUT_BYTES)
             return false;
     }
+    if (Object.hasOwn(value, "promptVariant") && !isSubagentPromptVariant(value.promptVariant))
+        return false;
     const hasTimeoutMs = Object.hasOwn(value, "timeoutMs");
     if (hasTimeoutMs && !isPositiveSafeInteger(value.timeoutMs))
         return false;
@@ -479,6 +481,15 @@ async function runSubagentWithInput(config, plan) {
             const cancelProjection = statusOwner.cancelled && !preservedTerminalStep ? statusPayload.cancel : undefined;
             const projectedResult = {
                 agent: pr.agent,
+                ...((pr.promptVariant ??
+                    statusPayload.steps[fi]?.promptVariant ??
+                    group.tasks[t]?.promptVariant)
+                    ? {
+                        promptVariant: pr.promptVariant ??
+                            statusPayload.steps[fi]?.promptVariant ??
+                            group.tasks[t]?.promptVariant,
+                    }
+                    : {}),
                 ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
                 ticketId: pr.ticketId,
                 output: cancelProjection
@@ -558,6 +569,15 @@ async function runSubagentWithInput(config, plan) {
         const projectSingleStepResult = () => {
             const projectedResult = {
                 agent: singleResult.agent,
+                ...((singleResult.promptVariant ??
+                    statusPayload.steps[flatIndex]?.promptVariant ??
+                    seqStep.promptVariant)
+                    ? {
+                        promptVariant: singleResult.promptVariant ??
+                            statusPayload.steps[flatIndex]?.promptVariant ??
+                            seqStep.promptVariant,
+                    }
+                    : {}),
                 ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
                 ticketId: singleResult.ticketId,
                 output: statusOwner.cancelled

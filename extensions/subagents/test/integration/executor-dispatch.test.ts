@@ -625,7 +625,7 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
   });
 
   it("authorizes project agents with the session UUID, not the session file path", async () => {
-    const requests: Array<{ sessionId: string | null }> = [];
+    const requests: Array<{ sessionId: string | null; targetNames: string[] }> = [];
     const executor = createSubagentExecutor({
       pi: makeExtensionAPI({ events: createEventBus() }),
       state: makeSubagentState({ baseCwd: tempDir }),
@@ -634,8 +634,14 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
       getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
       expandTilde: (value: string) => value,
       discoverAgents: () => ({ agents: [makeAgent("echo")] }),
-      getProjectAgentAccess: (request: { sessionId: string | null }) => {
-        requests.push({ sessionId: request.sessionId });
+      getProjectAgentAccess: (request: {
+        sessionId: string | null;
+        targetNames: readonly string[];
+      }) => {
+        requests.push({
+          sessionId: request.sessionId,
+          targetNames: [...request.targetNames],
+        });
         return { architect: true, canInitiate: false };
       },
     });
@@ -652,7 +658,10 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     );
 
     assert.equal(result.isError, true);
-    assert.deepEqual(requests, [{ sessionId: "session-uuid-1" }]);
+    assert.deepEqual(requests, [
+      { sessionId: "session-uuid-1", targetNames: [] },
+      { sessionId: "session-uuid-1", targetNames: ["embedded.reader"] },
+    ]);
     assert.equal(mockPi.callCount(), 0);
   });
 

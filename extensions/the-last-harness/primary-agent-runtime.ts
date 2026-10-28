@@ -55,6 +55,8 @@ import {
   subagentCallTargetsAgent,
 } from "./primary-agent-runtime-delegation.js";
 import {
+  createTlhNoDeveloperPolicyRuntime,
+  isTlhNoDeveloperSessionActive,
   noteSubagentToolExecutionEnd,
   noteSubagentToolExecutionStart,
   getTlhProjectAgentAccess,
@@ -74,7 +76,12 @@ import {
   TLH_NAME,
   TLH_PACKAGE_NAME,
 } from "./constants.js";
-import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
+import {
+  buildChildExperimentalPrompt,
+  buildPrimaryExperimentalPrompt,
+  isTlhExperimentalFeatureEnabled,
+  NO_DEVELOPER_FEATURE,
+} from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   followsOpenrouterSession,
@@ -130,6 +137,8 @@ import type {
   TlhSettings,
 } from "./types.js";
 
+type TlhNoDeveloperPolicyRuntime = ReturnType<typeof createTlhNoDeveloperPolicyRuntime>;
+
 type TlhPrimaryAgentRuntimeOptions = {
   env?: Record<string, string | undefined>;
   primaryAgents?: Map<TlhPrimaryAgentSelection, AgentPrompt>;
@@ -156,6 +165,7 @@ type TlhPrimaryAgentRuntimeOptions = {
    * published bundle path when this optional route is unavailable.
    */
   bundledAgentSessionConstructor?: unknown;
+  noDeveloperPolicyRuntime?: TlhNoDeveloperPolicyRuntime;
 };
 
 type ActiveModel = NonNullable<ExtensionContext["model"]>;
@@ -206,9 +216,18 @@ function registerChildSubagentRuntime(
   pi: ExtensionAPI,
   buildChildPrompt: () => string,
   env: Record<string, string | undefined>,
+  noDeveloperPolicyRuntime: TlhNoDeveloperPolicyRuntime,
 ): void {
   pi.on("session_start", async (_event, ctx) => {
+    const settings = getTlhGlobalSettings(ctx.cwd);
+    noDeveloperPolicyRuntime.capture(
+      isTlhExperimentalFeatureEnabled(settings.tlh?.experimental, NO_DEVELOPER_FEATURE),
+    );
     activateTlhTicketSessionScope(ctx.cwd);
+  });
+
+  pi.on("session_shutdown", () => {
+    noDeveloperPolicyRuntime.clear();
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
@@ -255,9 +274,14 @@ function createTlhPrimaryAgentRuntime(
     getProviderAuthHealthStore?: () => ProviderAuthHealthStore | undefined;
     now?: () => number;
     argv?: string[];
+    noDeveloperPolicyRuntime?: TlhNoDeveloperPolicyRuntime;
   } = {},
 ): TlhPrimaryAgentRuntime & { registerCommands(): void; registerLifecycleHooks(): void } {
-  const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
+  const {
+    getProviderAuthHealthStore,
+    now: nowFn = Date.now,
+    noDeveloperPolicyRuntime = createTlhNoDeveloperPolicyRuntime(),
+  } = runtimeOptions;
   const argv = runtimeOptions.argv ?? process.argv;
   const parsedLaunchArgs = parseArgs(argv.slice(2));
   const warned = new Set<string>();
@@ -533,6 +557,7 @@ function createTlhPrimaryAgentRuntime(
         subagentMetadata,
         primaryEnabled,
         projectAgentLifecycle.projectAgentGuidanceSnapshot(),
+        isTlhNoDeveloperSessionActive(),
       ),
       // Experimental guidance reads settings fresh to preserve its existing mid-session behavior.
       buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
@@ -1231,6 +1256,10 @@ function createTlhPrimaryAgentRuntime(
   }
 
   async function applySessionStart(ctx: ExtensionContext, reason?: string): Promise<void> {
+    const settings = getTlhGlobalSettings(ctx.cwd);
+    noDeveloperPolicyRuntime.capture(
+      isTlhExperimentalFeatureEnabled(settings.tlh?.experimental, NO_DEVELOPER_FEATURE),
+    );
     const sessionStartOperation = projectAgentLifecycle.beginSessionStart();
     // Session-only model intent does not cross session_start. This includes
     // /reload: a replacement runtime cannot safely prove that an older
@@ -1384,6 +1413,7 @@ function createTlhPrimaryAgentRuntime(
         // Keep the facade continuation inside the lifecycle owner's final
         // currentness guard. This callback runs synchronously when shutdown
         // has no reference cleanup to await, preserving the original order.
+        noDeveloperPolicyRuntime.clear();
         endModelSelectionSession();
         lastObservedModel = undefined;
         updateSessionOnlyModel(undefined);
@@ -1637,6 +1667,7 @@ export function registerTlhPrimaryAgentRuntime(
   // bridge and active-generation reference immediately so no stale generation
   // can reach the new executor while run references remain protected.
   retireTlhPrimaryAgentResourceRuntime();
+  const noDeveloperPolicyRuntime = createTlhNoDeveloperPolicyRuntime();
   const env = options.env ?? process.env;
   const childPromptBuilder = (): string => buildChildSubagentSystemPrompt();
   if (
@@ -1644,7 +1675,7 @@ export function registerTlhPrimaryAgentRuntime(
       env,
       buildChildSubagentSystemPrompt: childPromptBuilder,
       registerChild: () => {
-        registerChildSubagentRuntime(pi, childPromptBuilder, env);
+        registerChildSubagentRuntime(pi, childPromptBuilder, env, noDeveloperPolicyRuntime);
       },
     }) === "child"
   ) {
@@ -1659,6 +1690,7 @@ export function registerTlhPrimaryAgentRuntime(
       getProviderAuthHealthStore: options.getProviderAuthHealthStore,
       now: options.now,
       argv: options.argv,
+      noDeveloperPolicyRuntime,
     },
   );
   runtime.registerCommands();

@@ -185,6 +185,16 @@ export interface ControlEvent {
 
 export type SubagentResultStatus = "completed" | "failed" | "paused";
 export type SubagentRunMode = "single" | "parallel";
+/** Internal prompt policy captured per child and carried through durable runs. */
+export type SubagentPromptVariant = "normal" | "ticket-free";
+
+export function isSubagentPromptVariant(value: unknown): value is SubagentPromptVariant {
+  return value === "normal" || value === "ticket-free";
+}
+
+export function normalizeSubagentPromptVariant(value: unknown): SubagentPromptVariant {
+  return value === "ticket-free" ? "ticket-free" : "normal";
+}
 
 /**
  * Normalize a persisted run mode for supported runtime projections.
@@ -309,6 +319,8 @@ export type CostSummary = {
 
 export interface SubagentResultChild {
   agent: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
   status: SubagentResultStatus;
   summary: string;
   index?: number;
@@ -403,6 +415,8 @@ export interface ChildProcessCleanupResult {
 export interface SingleResult {
   agent: string;
   task: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentIdentity;
   exitCode: number;
@@ -661,6 +675,8 @@ export interface AsyncStatus {
     activeRuntimeCheckpointAt?: number;
     /** Normalized ticket ID, when assigned. */
     ticketId?: string;
+    /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+    promptVariant?: SubagentPromptVariant;
     /** Per-child terminal state and evidence-only facts, when persisted. */
     terminalResult?: SubagentTerminalResult;
     timeoutMs?: number;
@@ -732,6 +748,8 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
  */
 export interface AsyncResultArtifactResultItem {
   agent: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentIdentity;
   success: boolean;

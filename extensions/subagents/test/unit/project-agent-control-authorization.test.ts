@@ -24,6 +24,15 @@ import { makeAgent, makeMinimalCtx, makeSubagentState } from "../support/helpers
 const OWNER = "OWNER-A";
 const NON_OWNER = "NONOWNER-B";
 
+type MalformedAccessFixture = {
+  architect: false;
+  canManage: true;
+  canInitiate: true;
+  noDeveloper: "true";
+};
+
+type AccessFixture = ProjectAgentAccess | MalformedAccessFixture;
+
 let root: string;
 const runIds: string[] = [];
 
@@ -79,7 +88,12 @@ function writeRun(state: "complete" | "running"): string {
   return runId;
 }
 
-function makeExecutor(access: ProjectAgentAccess | undefined, dispatched: string[]) {
+function makeExecutor(
+  access: ProjectAgentAccess | undefined,
+  dispatched: string[],
+  discoveredAgents = [makeAgent("code-reviewer")],
+  accessProvider?: () => AccessFixture | undefined,
+) {
   const state: SubagentState = makeSubagentState({ baseCwd: root });
   return createSubagentExecutor({
     pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" } as any,
@@ -88,14 +102,21 @@ function makeExecutor(access: ProjectAgentAccess | undefined, dispatched: string
     tempArtifactsDir: root,
     getSubagentSessionRoot: () => path.join(root, "sessions"),
     expandTilde: (value) => value,
-    discoverAgents: () => ({ agents: [makeAgent("code-reviewer")] }),
-    getProjectAgentAccess: () => access,
+    discoverAgents: () => ({ agents: discoveredAgents }),
+    getProjectAgentAccess: (() => (accessProvider ? accessProvider() : access)) as any,
     kill: () => true,
     executeAsyncSingle: ((runId: string) => {
       dispatched.push(runId);
       return {
         content: [{ type: "text", text: "dispatched" }],
         details: { mode: "single", results: [], asyncId: runId },
+      };
+    }) as any,
+    executeAsyncParallel: ((runId: string) => {
+      dispatched.push(runId);
+      return {
+        content: [{ type: "text", text: "dispatched" }],
+        details: { mode: "parallel", results: [], asyncId: runId },
       };
     }) as any,
   });
@@ -230,6 +251,184 @@ describe("persisted project-agent control authorization", () => {
     } finally {
       fs.rmSync(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe("captured no-developer policy is enforced at the executor boundary", () => {
+  const noDeveloperAccess = () => trustedAccess({ noDeveloper: true });
+
+  it("rejects new bundled developer execution before dispatch and preserves other roles", async () => {
+    const dispatched: string[] = [];
+    const executor = makeExecutor(noDeveloperAccess(), dispatched, [
+      makeAgent("developer"),
+      makeAgent("code-reviewer"),
+    ]);
+
+    const blocked = await run(executor, { agent: "developer", task: "implement" }, OWNER);
+    assert.equal(blocked.isError, true, text(blocked));
+    assert.match(text(blocked), /bundled developer.*no-developer policy/i);
+    assert.deepEqual(dispatched, []);
+
+    const modeError = await run(executor, {}, OWNER);
+    assert.equal(modeError.isError, true, text(modeError));
+    assert.doesNotMatch(text(modeError), /Agents:.*developer/);
+  });
+
+  it("routes management list and get through the captured no-developer policy", async () => {
+    const executor = makeExecutor(
+      noDeveloperAccess(),
+      [],
+      [makeAgent("developer"), makeAgent("code-reviewer")],
+    );
+
+    const listed = await run(executor, { action: "list" }, OWNER);
+    assert.equal(listed.isError, false, text(listed));
+    assert.doesNotMatch(text(listed), /\bdeveloper\b/);
+
+    const got = await run(executor, { action: "get", agent: "developer" }, OWNER);
+    assert.equal(got.isError, true, text(got));
+    assert.match(text(got), /unavailable.*no-developer policy/i);
+    assert.doesNotMatch(text(got), /Available:.*developer/i);
+  });
+
+  it("rejects developer dispatch through malformed and throwing access providers", async () => {
+    const providers: Array<() => AccessFixture | undefined> = [
+      () => ({
+        architect: false,
+        canManage: true,
+        canInitiate: true,
+        noDeveloper: "true",
+      }),
+      () => {
+        throw new Error("bridge broken");
+      },
+    ];
+    for (const provider of providers) {
+      const dispatched: string[] = [];
+      const executor = makeExecutor(undefined, dispatched, [makeAgent("developer")], provider);
+      const result = await run(executor, { agent: "developer", task: "implement" }, OWNER);
+      assert.equal(result.isError, true, text(result));
+      assert.match(text(result), /bundled developer.*no-developer policy/i);
+      assert.deepEqual(dispatched, []);
+    }
+  });
+
+  it("rejects a parallel developer dispatch before any child is started", async () => {
+    const dispatched: string[] = [];
+    const executor = makeExecutor(noDeveloperAccess(), dispatched, [
+      makeAgent("developer"),
+      makeAgent("code-reviewer"),
+    ]);
+    const result = await run(
+      executor,
+      {
+        tasks: [
+          { agent: "code-reviewer", task: "review" },
+          { agent: "developer", task: "implement" },
+        ],
+      },
+      OWNER,
+    );
+    assert.equal(result.isError, true, text(result));
+    assert.match(text(result), /bundled developer.*no-developer policy/i);
+    assert.deepEqual(dispatched, []);
+  });
+
+  it("resume: rejects a live running developer child before queueing", async () => {
+    const runId = writeRunWith({ state: "running", steps: [{ agent: "developer" }] });
+    const dispatched: string[] = [];
+    const executor = makeExecutor(noDeveloperAccess(), dispatched);
+    const result = await run(
+      executor,
+      { action: "resume", id: runId, message: "Continue." },
+      OWNER,
+    );
+    assert.equal(result.isError, true, text(result));
+    assert.match(text(result), /bundled developer.*no-developer policy/i);
+    assert.deepEqual(dispatched, []);
+    assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)), []);
+  });
+
+  it("preserves developer dispatch and durable resume when the policy is off", async () => {
+    const previousChildFlag = process.env.PI_SUBAGENT_CHILD;
+    delete process.env.PI_SUBAGENT_CHILD;
+    try {
+      const dispatched: string[] = [];
+      const executor = makeExecutor(trustedAccess({ noDeveloper: false }), dispatched, [
+        makeAgent("developer"),
+      ]);
+
+      const launch = await run(executor, { agent: "developer", task: "implement" }, OWNER);
+      assert.equal(launch.isError, undefined, text(launch));
+      assert.equal(dispatched.length, 1);
+
+      const runId = writeRunWith({ state: "complete", steps: [{ agent: "developer" }] });
+      const resumed = await run(
+        executor,
+        { action: "resume", id: runId, message: "Continue." },
+        OWNER,
+      );
+      assert.equal(resumed.isError, undefined, text(resumed));
+      assert.equal(dispatched.length, 2);
+    } finally {
+      if (previousChildFlag === undefined) delete process.env.PI_SUBAGENT_CHILD;
+      else process.env.PI_SUBAGENT_CHILD = previousChildFlag;
+    }
+  });
+
+  for (const action of ["resume", "steer"] as const) {
+    const state = action === "resume" ? "complete" : "running";
+
+    it(`${action}: rejects a persisted bundled developer child before side effects`, async () => {
+      const runId = writeRunWith({ state, steps: [{ agent: "developer" }] });
+      const dispatched: string[] = [];
+      const executor = makeExecutor(noDeveloperAccess(), dispatched);
+      const result = await run(executor, { action, id: runId, message: "Continue." }, OWNER);
+      assert.equal(result.isError, true, text(result));
+      assert.match(text(result), /bundled developer.*no-developer policy/i);
+      assert.deepEqual(dispatched, []);
+      assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)), []);
+    });
+
+    it(`${action}: preserves a selected non-developer child`, async () => {
+      const runId = writeRunWith({ state, steps: [{ agent: "code-reviewer" }] });
+      const dispatched: string[] = [];
+      const executor = makeExecutor(noDeveloperAccess(), dispatched);
+      const result = await run(executor, { action, id: runId, message: "Continue." }, OWNER);
+      assert.equal(result.isError, undefined, text(result));
+      if (action === "resume") assert.equal(dispatched.length, 1);
+      else assert.equal(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)).length, 1);
+    });
+  }
+
+  it("rejects an unindexed mixed steer atomically", async () => {
+    const runId = writeRunWith({
+      state: "running",
+      steps: [{ agent: "code-reviewer" }, { agent: "developer" }],
+    });
+    const executor = makeExecutor(noDeveloperAccess(), []);
+    const result = await run(executor, { action: "steer", id: runId, message: "Continue." }, OWNER);
+    assert.equal(result.isError, true, text(result));
+    assert.match(text(result), /bundled developer.*no-developer policy/i);
+    assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runId)), []);
+  });
+
+  it("rejects conflicting status/result role evidence before durable revival", async () => {
+    const runId = writeRunWith({
+      state: "complete",
+      steps: [{ agent: "code-reviewer" }],
+      results: [{ agent: "developer" }],
+    });
+    const dispatched: string[] = [];
+    const executor = makeExecutor(noDeveloperAccess(), dispatched);
+    const result = await run(
+      executor,
+      { action: "resume", id: runId, message: "Continue." },
+      OWNER,
+    );
+    assert.equal(result.isError, true, text(result));
+    assert.match(text(result), /bundled developer.*no-developer policy/i);
+    assert.deepEqual(dispatched, []);
   });
 });
 

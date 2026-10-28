@@ -21,13 +21,16 @@ import {
   sanitizeSubagentModelIdentity,
   sanitizeSubagentModelResolution,
 } from "../shared/model-fallback.ts";
-import type {
-  ContextPressureProjection,
-  ContextUsageDiagnostics,
-  SubagentModelIdentity,
-  SubagentModelResolution,
-  SubagentTerminationReason,
-  SubagentTerminalResult,
+import {
+  isSubagentPromptVariant,
+  normalizeSubagentPromptVariant,
+  type ContextPressureProjection,
+  type ContextUsageDiagnostics,
+  type SubagentModelIdentity,
+  type SubagentModelResolution,
+  type SubagentPromptVariant,
+  type SubagentTerminationReason,
+  type SubagentTerminalResult,
 } from "../../shared/types.ts";
 import {
   parseContextPressureCrossedThresholds,
@@ -87,6 +90,8 @@ type AsyncResumeTarget = {
   ownerSessionId?: string;
   /** Persisted per-child ticket assignment, when applicable. */
   ticketId?: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
   contextUsage?: ContextUsageDiagnostics;
@@ -263,6 +268,19 @@ function validateOptionalString(
   return fieldValue;
 }
 
+function validatePromptVariant(
+  value: unknown,
+  source: string,
+  field: string,
+): SubagentPromptVariant | undefined {
+  if (value === undefined) return undefined;
+  if (!isSubagentPromptVariant(value))
+    throw new Error(
+      `Invalid async result file '${source}': ${field} must be "normal" or "ticket-free".`,
+    );
+  return value;
+}
+
 function validateModelIdentity(
   value: unknown,
   source: string,
@@ -338,6 +356,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         typeof rawStepCwd === "string" && rawStepCwd.length > 0 ? rawStepCwd : undefined;
       const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
       const ticketId = persistedTicketId(child.ticketId);
+      const promptVariant = validatePromptVariant(
+        child.promptVariant,
+        resultPath,
+        `results[${index}].promptVariant`,
+      );
       const thinking = parseThinkingLevel(child.thinking);
       const modelIdentity = parseResultModelIdentity(
         child.modelIdentity,
@@ -406,6 +429,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(model ? { model } : {}),
         ...(ticketId ? { ticketId } : {}),
+        ...(promptVariant ? { promptVariant } : {}),
         ...(thinking ? { thinking } : {}),
         ...(modelIdentity ? { modelIdentity } : {}),
         ...(modelResolution ? { modelResolution } : {}),
@@ -872,9 +896,16 @@ function resolveProjectAgentMetadata(
   const resultChild = context.resultSteps[index];
   const statusIdentity = normalizeProjectAgentIdentity(statusStep?.projectAgent);
   const resultIdentity = normalizeProjectAgentIdentity(resultChild?.projectAgent);
+  const resultHasChildRecords = context.result?.results !== undefined;
+  const roleEvidenceConflict = resultHasChildRecords
+    ? resultChild === undefined || typeof resultChild.agent !== "string"
+    : statusStep !== undefined &&
+      context.result !== undefined &&
+      (typeof context.result.agent !== "string" || statusStep.agent !== context.result.agent);
   const childIdentityConflict =
     (statusStep?.projectAgent !== undefined && !statusIdentity) ||
     (resultChild?.projectAgent !== undefined && !resultIdentity) ||
+    roleEvidenceConflict ||
     (statusStep !== undefined &&
       resultChild !== undefined &&
       statusStep.agent !== resultChild.agent) ||
@@ -929,8 +960,10 @@ function buildLiveAsyncResumeTarget(
   );
   const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
   const ticketId = resolvePersistedTicketId(context, index, statusStep);
+  const promptVariant = resolvePromptVariant(context, index, statusStep);
   return {
     ...target,
+    promptVariant,
     ...(ticketId ? { ticketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
@@ -999,6 +1032,88 @@ export function resolvePersistedOwner(
     owners.add(candidate);
   }
   return owners.size === 1 ? [...owners][0] : undefined;
+}
+
+/**
+ * Compare the selected status child with the corresponding result evidence.
+ * Steer normally reads a live status only, but a stale result artifact may
+ * still disagree about which role the selected child ran as. A malformed
+ * result is a conflict rather than permission to continue under an active
+ * host policy.
+ */
+export function persistedChildAgentConflict(input: {
+  status: AsyncStatus | null | undefined;
+  resultPath?: string | null;
+  index: number;
+}): boolean {
+  if (!input.resultPath) return false;
+  let result: AsyncResultFile;
+  try {
+    result = readResultFile(input.resultPath);
+  } catch {
+    return true;
+  }
+  const statusStep = input.status?.steps?.[input.index];
+  if (result.results !== undefined) {
+    const resultStep = result.results[input.index];
+    if (!resultStep || typeof resultStep.agent !== "string") return true;
+    return statusStep !== undefined && statusStep.agent !== resultStep.agent;
+  }
+  if (!statusStep) return false;
+  return typeof result.agent !== "string" || statusStep.agent !== result.agent;
+}
+
+function assertPersistedPromptVariantEvidence(
+  runId: string,
+  rawStatus: Record<string, unknown> | undefined,
+  result: AsyncResultFile | undefined,
+): void {
+  const statusSteps = Array.isArray(rawStatus?.steps) ? rawStatus.steps : [];
+  const resultSteps = result?.results ?? [];
+  for (let index = 0; index < Math.max(statusSteps.length, resultSteps.length); index++) {
+    const statusStep = statusSteps[index];
+    const resultStep = resultSteps[index];
+    const statusRecord =
+      typeof statusStep === "object" && statusStep !== null && !Array.isArray(statusStep)
+        ? (statusStep as Record<string, unknown>)
+        : undefined;
+    if (statusRecord && Object.hasOwn(statusRecord, "promptVariant")) {
+      if (!isSubagentPromptVariant(statusRecord.promptVariant)) {
+        throw new Error(
+          `Async run '${runId}' cannot be resumed: persisted status promptVariant for child ${index} is malformed (expected "normal" or "ticket-free"). Repair or remove it to continue; no artifacts were changed.`,
+        );
+      }
+    }
+    if (!statusRecord || !resultStep) continue;
+    const statusHasVariant = Object.hasOwn(statusRecord, "promptVariant");
+    const resultHasVariant = resultStep.promptVariant !== undefined;
+    if (!statusHasVariant && !resultHasVariant) continue;
+    const statusVariant = normalizeSubagentPromptVariant(statusRecord.promptVariant);
+    const resultVariant = normalizeSubagentPromptVariant(resultStep.promptVariant);
+    if (statusVariant !== resultVariant) {
+      throw new Error(
+        `Async run '${runId}' cannot be resumed: persisted promptVariant for child ${index} conflicts between status and result artifacts (expected matching "normal" or "ticket-free"). Repair or remove it to continue; no artifacts were changed.`,
+      );
+    }
+  }
+}
+
+function resolvePromptVariant(
+  context: AsyncResumeResolutionContext,
+  index: number,
+  statusStep: AsyncStatusStep | undefined,
+): SubagentPromptVariant {
+  const resultStep = context.resultSteps[index];
+  if (statusStep && resultStep) {
+    const statusVariant = normalizeSubagentPromptVariant(statusStep.promptVariant);
+    const resultVariant = normalizeSubagentPromptVariant(resultStep.promptVariant);
+    if (statusVariant !== resultVariant) {
+      throw new Error(
+        `Async run '${context.runId}' cannot be resumed: persisted promptVariant for child ${index} conflicts between status and result artifacts (expected matching "normal" or "ticket-free"). Repair or remove it to continue; no artifacts were changed.`,
+      );
+    }
+  }
+  return normalizeSubagentPromptVariant(statusStep?.promptVariant ?? resultStep?.promptVariant);
 }
 
 /** Raw owner field: absent (undefined/null), a string, or a malformed marker. */
@@ -1106,8 +1221,10 @@ function buildTerminalAsyncResumeTarget(
   );
   const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
   const ticketId = resolvePersistedTicketId(context, index, selectedStatusStep);
+  const promptVariant = resolvePromptVariant(context, index, selectedStatusStep);
   const targetWithModelMetadata: AsyncResumeTarget = {
     ...target,
+    promptVariant,
     ...(ticketId ? { ticketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
@@ -1375,6 +1492,9 @@ export function resolveAsyncResumeTarget(
   // Validate the original raw accounting before stale repair can rewrite it.
   const rawStatus = readRawStatusRecord(location.asyncDir);
   const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
+  const preflightRunId =
+    location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
+  assertPersistedPromptVariantEvidence(preflightRunId, rawStatus, result);
   const preIndex = params.index ?? 0;
   if (Number.isInteger(preIndex)) {
     const preRawSteps = rawStatus?.steps;

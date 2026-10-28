@@ -198,6 +198,7 @@ function canonicalStatusValue(input, value, fallback) {
 function resultItems(results, clearPauseOwnerPids = false) {
     return results.map((result) => ({
         agent: result.agent,
+        ...(result.promptVariant ? { promptVariant: result.promptVariant } : {}),
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
         ticketId: result.ticketId,
         output: result.output,
@@ -373,6 +374,7 @@ export function persistContinuationGateRejection(input) {
             results: [
                 {
                     agent,
+                    ...(firstStep?.promptVariant ? { promptVariant: firstStep.promptVariant } : {}),
                     ...(firstStep?.projectAgent ? { projectAgent: firstStep.projectAgent } : {}),
                     ticketId: firstStep?.ticketId,
                     output: statusPayload.error,

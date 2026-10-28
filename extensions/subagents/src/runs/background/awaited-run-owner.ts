@@ -18,8 +18,11 @@ import {
   type Details,
   type SingleResult,
   type SubagentEventBus,
+  type SubagentPromptVariant,
   type SubagentRunMode,
   type SubagentResultStatus,
+  isSubagentPromptVariant,
+  normalizeSubagentPromptVariant,
   type SubagentTerminationReason,
   type Usage,
   type SubagentTerminalResult,
@@ -84,7 +87,7 @@ const TERMINAL_STATES = new Set<AsyncStatus["state"]>([
 ]);
 
 type RecordValue = Record<string, unknown>;
-
+type ChildFields = RecordValue & { agent: string };
 type AwaitedArtifact = RecordValue & {
   id: string;
   state: AsyncStatus["state"];
@@ -92,7 +95,6 @@ type AwaitedArtifact = RecordValue & {
   sessionId?: string | null;
   generation?: number;
 };
-
 export interface AwaitedRunOwnerOptions {
   id: string;
   asyncDir: string;
@@ -218,13 +220,13 @@ function resultStatusForChild(
   });
 }
 
-function rawChildren(artifact: RecordValue): RecordValue[] {
+function rawChildren(artifact: RecordValue, plan: SubagentRunPlan): RecordValue[] {
   const children = Array.isArray(artifact.results) ? artifact.results.filter(isRecord) : [];
   return children.length > 0
     ? children
     : [
         {
-          agent: artifact.agent,
+          ...syntheticChildFields(plan, 0, nonEmptyString(artifact.agent)),
           output: artifact.summary,
           success: artifact.success,
           state: artifact.state,
@@ -245,6 +247,15 @@ function agentForIndex(plan: SubagentRunPlan, index: number): string {
 function planStepForIndex(plan: SubagentRunPlan, index: number): RunnerSubagentStep | undefined {
   const tasks = plan.kind === "single" ? [plan.task] : plan.tasks;
   return tasks[index];
+}
+
+function syntheticChildFields(p: SubagentRunPlan, i: number, a?: string, s?: unknown): ChildFields {
+  const v =
+    isRecord(s) && Object.hasOwn(s, "promptVariant")
+      ? s.promptVariant
+      : planStepForIndex(p, i)?.promptVariant;
+  const agent = a ?? agentForIndex(p, i);
+  return v === undefined ? { agent } : { agent, promptVariant: v };
 }
 
 function usageFromArtifact(artifact: RecordValue): Usage {
@@ -380,7 +391,6 @@ function pausedSyntheticOutput(
     ...(parallel ? { index } : {}),
   });
 }
-
 function statusSyntheticArtifact(
   input: AwaitedRunOwnerOptions,
   status: AsyncStatus | null,
@@ -392,12 +402,11 @@ function statusSyntheticArtifact(
   // A persisted child timeout belongs to that role, not to the awaited run.
   // Keep it on the synthetic child result without promoting it to the
   // top-level artifact timeout marker, which is reserved for maxRunTimeMs.
-
   const steps = status?.steps?.length
     ? status.steps.map((step, index) => {
         const completed = isCompletedLifecycleStepState(step.status);
         return {
-          agent: step.agent,
+          ...syntheticChildFields(input.plan, index, step.agent, step),
           output:
             state === "paused"
               ? pausedSyntheticOutput(input, status, step, index)
@@ -440,7 +449,7 @@ function statusSyntheticArtifact(
       })
     : [
         {
-          agent: agentForIndex(input.plan, 0),
+          ...syntheticChildFields(input.plan, 0, agentForIndex(input.plan, 0)),
           output:
             state === "cancelled"
               ? "Cancelled by parent abort."
@@ -485,8 +494,9 @@ function statusSyntheticArtifact(
           : timedOut
             ? "timed_out"
             : terminationReasonForLifecycleState(state);
+      const agent = agentForIndex(input.plan, index);
       return {
-        agent: agentForIndex(input.plan, index),
+        ...syntheticChildFields(input.plan, index, agent, status?.steps?.[index]),
         output:
           state === "cancelled"
             ? "Cancelled by parent abort."
@@ -548,11 +558,36 @@ function statusSyntheticArtifact(
     ...(input.deadlineAt !== undefined ? { deadlineAt: input.deadlineAt } : {}),
   };
 }
-
 function childProcessCleanup(value: unknown): ChildProcessCleanupResult | undefined {
   return normalizeChildProcessCleanup(value);
 }
-
+function promptVariantForChild(input: {
+  runId: string;
+  index: number;
+  child: RecordValue;
+  statusStep?: RecordValue;
+  plannedStep?: RunnerSubagentStep;
+}): SubagentPromptVariant {
+  const evidence: Array<[string, unknown]> = [
+    ["result", input.child.promptVariant],
+    ...(input.statusStep ? [["status", input.statusStep.promptVariant] as [string, unknown]] : []),
+    ...(input.plannedStep ? [["plan", input.plannedStep.promptVariant] as [string, unknown]] : []),
+  ];
+  for (const [source, value] of evidence) {
+    if (value !== undefined && !isSubagentPromptVariant(value)) {
+      throw new Error(
+        `Awaited run '${input.runId}' child ${input.index} has malformed ${source} promptVariant (expected "normal" or "ticket-free").`,
+      );
+    }
+  }
+  const variants = new Set(evidence.map(([, value]) => normalizeSubagentPromptVariant(value)));
+  if (variants.size > 1) {
+    throw new Error(
+      `Awaited run '${input.runId}' child ${input.index} has conflicting promptVariant evidence.`,
+    );
+  }
+  return normalizeSubagentPromptVariant(evidence[0]?.[1]);
+}
 function resultFromRawChild(
   input: AwaitedRunOwnerOptions,
   artifact: AwaitedArtifact,
@@ -570,6 +605,13 @@ function resultFromRawChild(
   const plannedStep = planStepForIndex(input.plan, index);
   const agent = nonEmptyString(child.agent) ?? agentForIndex(input.plan, index);
   const statusStep = isRecord(persistedSteps?.[index]) ? persistedSteps[index] : undefined;
+  const promptVariant = promptVariantForChild({
+    runId: input.id,
+    index,
+    child,
+    statusStep,
+    plannedStep,
+  });
   const pause = (child.pause ?? artifact.pause ?? statusStep?.pause) as SingleResult["pause"];
   const output =
     pause?.kind === "awaiting_supervisor"
@@ -601,6 +643,7 @@ function resultFromRawChild(
   const childResult: SingleResult = {
     agent,
     task,
+    promptVariant,
     projectAgent: (child.projectAgent ?? plannedStep?.projectAgent) as SingleResult["projectAgent"],
     exitCode: childCancelled
       ? 1
@@ -667,18 +710,19 @@ function resultFromRawChild(
   };
   return childResult;
 }
-
 function buildAwaitedResult(
   input: AwaitedRunOwnerOptions,
   artifact: AwaitedArtifact,
   ownerCleanup?: ChildProcessCleanupResult,
 ): AwaitedRunResult {
-  const rawResultChildren = rawChildren(artifact);
+  const rawResultChildren = rawChildren(artifact, input.plan);
   const expectedChildCount = input.plan.kind === "parallel" ? input.plan.tasks.length : 1;
   while (rawResultChildren.length < expectedChildCount) {
+    const index = rawResultChildren.length;
+    const agent = agentForIndex(input.plan, index);
     const timedOut = artifact.timedOut === true;
     rawResultChildren.push({
-      agent: agentForIndex(input.plan, rawResultChildren.length),
+      ...syntheticChildFields(input.plan, index, agent),
       state: artifact.state,
       success: isCompletedLifecycleState(artifact.state),
       output:

@@ -12,6 +12,66 @@ const SAFE_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SAFE_MODEL_ID = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
 const LEGACY_OPENAI_PROVIDERS = new Set(["openai", "openai-codex"]);
 const LEGACY_ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
+const PROMPT_VARIANT_MARKER = /^\s*<!-- tlh:prompt-variant:(normal|ticket-free):(start|end) -->\s*$/;
+const PROMPT_VARIANT_MARKER_PREFIX = /<!--\s*tlh:prompt-variant\b/;
+export function renderPromptVariant(source, variant = "normal", options = {}) {
+    if (variant !== "normal" && variant !== "ticket-free") {
+        throw new Error("Unknown TLH prompt-variant selection.");
+    }
+    const lines = source.split("\n");
+    const hasTicketFreeSection = lines.some((line) => line.match(PROMPT_VARIANT_MARKER)?.[1] === "ticket-free");
+    const seen = new Set();
+    const rendered = [];
+    let active;
+    let activeLines;
+    for (const line of lines) {
+        const marker = line.match(PROMPT_VARIANT_MARKER);
+        if (!marker) {
+            if (PROMPT_VARIANT_MARKER_PREFIX.test(line)) {
+                throw new Error("Malformed TLH prompt-variant marker.");
+            }
+            if (activeLines) {
+                activeLines.push(line);
+            }
+            else {
+                rendered.push(line);
+            }
+            continue;
+        }
+        const markerVariant = marker[1];
+        const markerKind = marker[2];
+        if (markerKind === "start") {
+            if (active !== undefined) {
+                throw new Error("Nested TLH prompt-variant section.");
+            }
+            active = markerVariant;
+            activeLines = [];
+            seen.add(markerVariant);
+            continue;
+        }
+        if (active === undefined || activeLines === undefined || active !== markerVariant) {
+            throw new Error("Unmatched TLH prompt-variant section end marker.");
+        }
+        if (active === variant ||
+            (variant === "ticket-free" && !hasTicketFreeSection && active === "normal")) {
+            rendered.push(...activeLines);
+        }
+        active = undefined;
+        activeLines = undefined;
+    }
+    if (active !== undefined || activeLines !== undefined) {
+        throw new Error("Unclosed TLH prompt-variant section.");
+    }
+    if (options.requireSelectedSection && !seen.has(variant)) {
+        throw new Error("TLH prompt source is missing a validated ticket-free section; run a full `tlh update` and retry.");
+    }
+    if (seen.size === 0)
+        return source;
+    if (!seen.has("normal")) {
+        throw new Error("TLH prompt-variant source must define a normal section.");
+    }
+    return rendered.join("\n");
+}
 function parseScalarValue(value) {
     const trimmed = value.trim();
     if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
@@ -386,7 +446,7 @@ export function loadSubagentMetadata() {
         .sort((a, b) => a.name.localeCompare(b.name));
 }
 function formatAllowedSubagents(primary, subagents, options = {}) {
-    const allowed = new Set(allowedSubagentsForExperimentalConfig());
+    const allowed = new Set(allowedSubagentsForExperimentalConfig(options.noDeveloperActive));
     const lines = subagents
         .filter((agent) => allowed.has(agent.name))
         .map((agent) => `- ${agent.name}: ${agent.description}`);
@@ -400,17 +460,18 @@ function formatAllowedSubagents(primary, subagents, options = {}) {
     const projectAgentGuidance = "Trusted `embedded.<slug>` project agents are intentionally omitted from management `list`/`get` output. After the user asks for the `xyz` project subagent, map it to `embedded.xyz`; enabled primary roles may start and manage this trusted project-agent exception, while disabled mode may start a fresh run. Use it only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves project agents only from `.tlh/agents/custom/<UPPERCASE-SLUG>.md`.";
     return `## TLH Allowed Minor Subagents\n\nYou may delegate${primary ? " only" : ""} to these bundled TLH minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} ${projectAgentGuidance}\n\nDo not delegate outside this bundled TLH minor-agent list except for the explicitly requested trusted project-agent exception.`;
 }
-export function buildTlhSystemPrompt(primary, subagents, primaryEnabled, projectAgentGuidanceInventory) {
+export function buildTlhSystemPrompt(primary, subagents, primaryEnabled, projectAgentGuidanceInventory, noDeveloperActive) {
     const prompts = [HARNESS_PROMPT.trim()];
     if (primaryEnabled) {
         if (primary) {
-            prompts.push(primary.systemPrompt.trim());
+            const promptVariant = primary.name === "architect" && noDeveloperActive ? "ticket-free" : "normal";
+            prompts.push(renderPromptVariant(primary.systemPrompt, promptVariant).trim());
             prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
         }
-        prompts.push(formatAllowedSubagents(primary, subagents));
+        prompts.push(formatAllowedSubagents(primary, subagents, { noDeveloperActive }));
     }
     else {
-        prompts.push(formatAllowedSubagents(undefined, subagents, { neutral: true }));
+        prompts.push(formatAllowedSubagents(undefined, subagents, { neutral: true, noDeveloperActive }));
     }
     return prompts.filter(Boolean).join("\n\n");
 }

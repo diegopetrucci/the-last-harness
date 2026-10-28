@@ -6,6 +6,7 @@ import { normalizeProjectAgentIdentity } from "../../agents/project-agent-loader
 import { normalizeChildProcessCleanup } from "../shared/process-group-cleanup.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { persistedTicketId } from "../shared/ticket-context.js";
+import { isSubagentPromptVariant } from "../../shared/types.js";
 function safeStatusReadCause(cause) {
     if (typeof cause !== "object" || cause === null || Array.isArray(cause))
         return undefined;
@@ -147,6 +148,8 @@ function validateCoreStatus(asyncDir, statusPath, value) {
             throw invalidStatus(asyncDir, statusPath, `steps[${index}] must be an object.`);
         if (typeof step.agent !== "string")
             throw invalidStatus(asyncDir, statusPath, `steps[${index}].agent must be a string.`);
+        if (Object.hasOwn(step, "promptVariant") && !isSubagentPromptVariant(step.promptVariant))
+            throw invalidStatus(asyncDir, statusPath, `steps[${index}].promptVariant must be "normal" or "ticket-free".`);
         validateOptionalFiniteFields(asyncDir, statusPath, step, STEP_FINITE_FIELDS, `steps[${index}].`);
         if (typeof step.status !== "string" || !STEP_STATES.has(step.status))
             throw invalidStatus(asyncDir, statusPath, `steps[${index}].status is invalid.`);

@@ -49,6 +49,9 @@ export function normalizeFailedSupervisorPauseResults(results, steps, requesterI
     if (results.length === 0) {
         results.push({
             agent: steps[requesterIndex]?.agent ?? fallbackAgent,
+            ...(steps[requesterIndex]?.promptVariant
+                ? { promptVariant: steps[requesterIndex].promptVariant }
+                : {}),
             ...(steps[requesterIndex]?.projectAgent
                 ? { projectAgent: steps[requesterIndex].projectAgent }
                 : {}),
