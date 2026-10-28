@@ -121,9 +121,10 @@ interface SessionRecord {
 
 interface SubagentCorrelationRecord {
   parentSessionId: string;
-  toolCallId: string;
+  toolCallId?: string;
   runId: string;
   agent?: string;
+  childIndex?: number;
   parentSessionFile?: string;
   childSessionFile?: string;
   childResolved?: boolean;
@@ -349,9 +350,10 @@ async function buildSessionRecord(
       // Aliases apply only to correlation fields; the established raw top-level
       // sessionId compatibility field remains unchanged in per-session records.
       parentSessionId: publicCorrelationId(c.parentSessionId),
-      toolCallId: publicCorrelationId(c.toolCallId),
+      ...(c.toolCallId !== undefined ? { toolCallId: publicCorrelationId(c.toolCallId) } : {}),
       runId: publicCorrelationId(c.runId),
       ...(c.agent !== undefined ? { agent: c.agent } : {}),
+      ...(c.childIndex !== undefined ? { childIndex: c.childIndex } : {}),
       parentSessionFile: c.parentSessionFile,
       childSessionFile: c.childSessionFile,
       childResolved: c.childResolved,

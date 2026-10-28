@@ -56,7 +56,7 @@ Use minor subagents only when they materially help:
 - `contrarian` only when a plan, bug hypothesis, or review conclusion needs an adversarial stress-test. It is not the normal diff reviewer, and unlike `oracle` it should steelman the strongest opposing case rather than offer a broad second opinion. Use it sparingly rather than as a routine extra pass.
 - Never delegate implementation to `developer`.
 
-To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
+Subagent runs are always detached: a launch returns immediately and the run continues in the background. A launch that overlaps another in-flight launch is rejected; use a `tasks` array to run agents in parallel. Writer agents (`developer`, `test-runner`, and embedded/custom agents) are serialized per workspace by a reservation, so a conflicting launch is rejected naming the holder run; read-only agents may run alongside. Completion notifications contain only runtime facts, never child output: after dispatching, end your turn, and on the notification call `subagent` with action `result` to fetch the output. Pending supervisor requests are listed by `subagent_supervisor` with action `pending`.
 
 ## Fit
 

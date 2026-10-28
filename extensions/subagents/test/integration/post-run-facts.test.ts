@@ -21,7 +21,6 @@ import {
   buildCompletionDetails,
   formatSingleCompletion,
 } from "../../src/runs/background/notify.ts";
-import { formatAwaitedNativeSubagentResult } from "../../src/shared/result-formatting.ts";
 
 function artifactConfig() {
   return {
@@ -179,28 +178,6 @@ describe("async post-run facts", () => {
       assert.deepEqual(metadata.terminalResult, resultFacts);
 
       const child = payload.results[0]!;
-      const rendered = formatAwaitedNativeSubagentResult({
-        runId: id,
-        mode: "single",
-        children: [
-          {
-            agent: child.agent,
-            status: child.success ? "completed" : "failed",
-            summary: child.output,
-            index: 0,
-            artifactPath: child.artifactPaths?.outputPath,
-            sessionPath: child.sessionFile,
-            terminalResult: resultFacts,
-          },
-        ],
-      });
-      const artifactIndex = rendered.text.indexOf("Output artifact:");
-      const factsIndex = rendered.text.indexOf("Facts:");
-      const sessionIndex = rendered.text.indexOf("Session:");
-      assert.ok(artifactIndex >= 0, "rendered result should include the output artifact path");
-      assert.ok(factsIndex > artifactIndex, "rendered facts should follow the artifact path");
-      assert.ok(sessionIndex > factsIndex, "rendered session path should follow the facts");
-
       const notificationDetails = buildCompletionDetails({
         id,
         agent: child.agent,
@@ -220,11 +197,11 @@ describe("async post-run facts", () => {
         ],
       });
       const notification = formatSingleCompletion(notificationDetails);
-      assert.ok(
-        notification.indexOf("Facts:") > notification.indexOf("Output artifact:"),
-        "notification facts should follow the artifact path",
-      );
-      assert.match(notification, /tools=1\/1\/1/);
+      // Runtime-measured facts appear on the child line; no `Facts:` label or child text.
+      assert.match(notificationDetails.factsPreview ?? "", /tools=1\/1\/1/);
+      assert.match(notification, /^- #0 .*: (?:completed|failed) \| #1 .*tools=1\/1\/1/m);
+      assert.doesNotMatch(notification, /Facts:/);
+      assert.match(notification, /Output artifact:/);
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
       fs.rmSync(asyncDir, { recursive: true, force: true });

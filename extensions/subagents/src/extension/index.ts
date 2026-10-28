@@ -1,12 +1,10 @@
 /**
  * Subagent Tool
  *
- * Full-featured subagent with sync and async modes.
- * - Sync (default): Streams output, renders markdown, tracks usage
- * - Async: Background execution, emits events when done
+ * Full-featured subagent with detached background execution only.
+ * Runs emit events when done; output is fetched with the result action.
  *
  * Modes: single (agent + task), parallel (tasks[]), and management/control actions
- * Toggle: async parameter (default: false)
  *
  * Config file: <getAgentDir()>/extensions/subagent/config.json (isolated TLH profile)
  */
@@ -61,11 +59,7 @@ import {
   SUBAGENT_LIVE_DETAIL_SHORTCUT,
   SUBAGENT_PAUSE_ALL_SHORTCUT,
 } from "../shared/subagent-shortcuts.ts";
-import {
-  clearLegacyResultAnimationTimer,
-  renderWidget,
-  renderSubagentResult,
-} from "../tui/render.ts";
+import { renderWidget, renderSubagentResult } from "../tui/render.ts";
 import { SubagentParams } from "./schemas.ts";
 import {
   createSubagentExecutor,
@@ -74,12 +68,12 @@ import {
 } from "./subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
-import { disposeAwaitedRuns } from "../runs/background/awaited-run-registry.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.ts";
 import registerSubagentNotify, {
   boundedReference,
   MAX_DISPLAY_SUMMARY_CHARS,
+  MAX_TOTAL_PREVIEW_CHARS,
   type SubagentNotifyDetails,
 } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
@@ -271,40 +265,6 @@ export function scheduleDetachedRuntimeCleanup(deps: DetachedRuntimeCleanupDeps 
   } catch {
     // Sync spawn failure: silently swallow so registration never throws.
   }
-}
-
-// Drives the inline running-indicator braille animation for awaited subagent
-// results. Awaited runs receive progress only on child events, so the glyph
-// (derived from progress fields) would freeze between events. While a result is
-// running we tick a frame counter + invalidate() every 80ms so renderSubagentResult
-// can blend the frame into runningGlyph and produce a smooth spinner.
-function subagentResultIsRunning(result: { details?: Details }): boolean {
-  return (
-    result.details?.progress?.some((entry) => entry.status === "running") ||
-    result.details?.results.some((entry) => entry.progress?.status === "running") ||
-    false
-  );
-}
-
-function ensureSubagentResultAnimation(context: {
-  state: Record<string, unknown>;
-  invalidate?: () => void;
-}): void {
-  const state = context.state as {
-    subagentResultAnimationTimer?: ReturnType<typeof setInterval>;
-    frame?: number;
-  };
-  if (state.subagentResultAnimationTimer) return;
-  if (typeof context.invalidate !== "function") return;
-  if (state.frame === undefined) state.frame = 0;
-  state.subagentResultAnimationTimer = setInterval(() => {
-    state.frame = ((state.frame ?? 0) + 1) % 10;
-    try {
-      context.invalidate?.();
-    } catch {
-      void 0;
-    }
-  }, 80);
 }
 
 function isStaleExtensionContextError(error: unknown): boolean {
@@ -664,11 +624,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   primeExistingResults();
 
   const runtimeCleanup = () => {
-    // Extension reload must release any awaited tool calls and request cleanup
-    // for their still-owned child processes before stopping the watcher.
-    disposeAwaitedRuns();
     removeLiveDetailTerminalInput();
-    liveDetailController.clearToolRows();
     toolResultBridge.clear();
     stopResultWatcher();
     supervisorChannel.dispose();
@@ -726,9 +682,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
           : undefined;
       const boundStructuredPreview = (value: unknown): string => {
         const preview = typeof value === "string" ? value : "(no output)";
-        return preview.length <= MAX_DISPLAY_SUMMARY_CHARS
+        // Structured previews are already bounded per child; this is only a ceiling.
+        return preview.length <= MAX_TOTAL_PREVIEW_CHARS
           ? preview
-          : `${preview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
+          : `${preview.slice(0, MAX_TOTAL_PREVIEW_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
       };
       const details = structuredDetails
         ? {
@@ -836,42 +793,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
         );
       }
       const isParallel = (args.tasks?.length ?? 0) > 0;
-      const asyncLabel = args.async === true ? theme.fg("warning", " [async]") : "";
-      if (isParallel)
-        return new Text(`${theme.fg("toolTitle", theme.bold("subagent"))}${asyncLabel}`, 0, 0);
+      if (isParallel) return new Text(theme.fg("toolTitle", theme.bold("subagent")), 0, 0);
       return new Text(
-        `${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
+        `${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}`,
         0,
         0,
       );
     },
 
     renderResult(result, options, theme, context) {
-      // Pi gives the live ToolExecutionComponent and the HTML exporter separate,
-      // stable renderer-state objects. Unknown states remain non-live for this render
-      // and get one deferred probe: live rows re-enter and claim the controller after
-      // container composition finishes, while export no-ops keep using expanded.
-      const rendererState = context.state as unknown;
-      const isLiveToolRow =
-        state.lastUiContext?.hasUI === true &&
-        Boolean(context.toolCallId) &&
-        typeof rendererState === "object" &&
-        rendererState !== null &&
-        typeof context.invalidate === "function" &&
-        liveDetailController.registerToolRow(context.toolCallId, rendererState, context.invalidate);
-      if (subagentResultIsRunning(result) && isLiveToolRow) {
-        ensureSubagentResultAnimation(context);
-      } else {
-        clearLegacyResultAnimationTimer(context);
-      }
-      const frame = (context.state as { frame?: number } | undefined)?.frame ?? 0;
-      const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
       return renderSubagentResult(
         { ...result, ...(context.isError ? { isError: true } : {}) },
-        { expanded },
+        { expanded: options.expanded },
         theme,
-        frame,
-        Date.now(),
       );
     },
   });
@@ -999,7 +933,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       }
       state.lastUiContext = ctx;
       cleanupSessionArtifacts(ctx);
-      liveDetailController.clearToolRows();
       resetJobs(ctx);
       restoreAttempted = true;
       restoreActiveJobs(ctx);
@@ -1023,17 +956,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   // Tree navigation and compaction rebuild ToolExecutionComponents with fresh
   // renderer state. Release old row identities before Pi renders the new chat.
-  pi.on("session_tree", () => {
-    liveDetailController.clearToolRows();
-  });
-  pi.on("session_compact", () => {
-    liveDetailController.clearToolRows();
-  });
+  pi.on("session_tree", () => {});
+  pi.on("session_compact", () => {});
 
   pi.on("session_shutdown", () => {
-    // Session teardown uses the same owner disposer as extension reload so an
-    // awaited call cannot remain pending or orphan its child process.
-    disposeAwaitedRuns();
     removeLiveDetailTerminalInput();
     toolResultBridge.clear();
     delete process.env[SUBAGENT_PARENT_SESSION_ENV];
@@ -1055,7 +981,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     }
     state.cleanupTimers.clear();
     state.asyncJobs.clear();
-    liveDetailController.clearToolRows();
     supervisorChannel.dispose();
     if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
       delete globalStore[runtimeCleanupStoreKey];

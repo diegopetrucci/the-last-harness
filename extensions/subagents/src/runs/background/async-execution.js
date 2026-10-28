@@ -20,7 +20,6 @@ import { parseContextPressureCrossedThresholds, parseContextPressureProjection, 
 import { normalizeTicketId, readTicketBody, ticketLookupKey } from "../shared/ticket-context.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../../shared/child-location.js";
-import { createAwaitedRunOwner } from "./awaited-run-owner.js";
 import { createOwnedProcessGroupOwner, } from "../shared/process-group-cleanup.js";
 const piPackageRoot = resolvePiPackageRoot();
 function saturatingAsyncDeadlineAt(startedAt, durationMs) {
@@ -28,6 +27,10 @@ function saturatingAsyncDeadlineAt(startedAt, durationMs) {
 }
 export function formatAsyncStartedMessage(headline) {
     return headline;
+}
+export function formatAsyncLaunchMessage(headline) {
+    return (`${formatAsyncStartedMessage(headline)}\n` +
+        'Esc does not stop detached children. Stop them with subagent({ action: "interrupt" }) or the pause-all shortcut (ctrl+shift+u).');
 }
 export function resolveRunnerModulePath(moduleUrl, runnerName) {
     const modulePath = fileURLToPath(moduleUrl);
@@ -444,7 +447,7 @@ export function executeAsyncParallel(id, params) {
     const { plan, runnerCwd } = built;
     const telemetry = initialAsyncTelemetry({
         id,
-        execution: params.awaited ? "foreground" : "async",
+        execution: "async",
         mode: "parallel",
         plan,
         provenance: params.telemetryProvenance,
@@ -460,31 +463,10 @@ export function executeAsyncParallel(id, params) {
     ];
     const flatAgents = plan.kind === "parallel" ? plan.tasks.map((task) => task.agent) : [];
     const firstTask = plan.kind === "parallel" ? plan.tasks[0] : undefined;
-    const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-    const awaitedOwner = params.awaited === true
-        ? createAwaitedRunOwner({
-            id,
-            asyncDir,
-            resultPath,
-            mode: "parallel",
-            plan,
-            events: ctx.pi.events,
-            sessionId: ctx.currentSessionId,
-            cwd: runnerCwd,
-            expectedGeneration: 0,
-            signal: params.signal,
-            onUpdate: params.onUpdate,
-        })
-        : undefined;
-    if (awaitedOwner && params.signal?.aborted) {
-        void awaitedOwner.cancel();
-        return awaitedOwner.promise;
-    }
     let spawnResult;
     try {
         spawnResult = spawnRunner({
             id,
-            ...(params.awaited === true ? { awaited: true } : {}),
             ...(telemetry ? { telemetry } : {}),
             plan,
             resultPath: path.join(RESULTS_DIR, `${id}.json`),
@@ -503,16 +485,13 @@ export function executeAsyncParallel(id, params) {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return awaitedOwner
-            ? awaitedOwner.fail(`Failed to start async parallel '${id}': ${message}`)
-            : formatAsyncStartError("parallel", `Failed to start async parallel '${id}': ${message}`);
+        return formatAsyncStartError("parallel", `Failed to start async parallel '${id}': ${message}`);
     }
     if (spawnResult.error) {
         const message = `Failed to start async parallel '${id}': ${spawnResult.error}`;
-        return awaitedOwner ? awaitedOwner.fail(message) : formatAsyncStartError("parallel", message);
+        return formatAsyncStartError("parallel", message);
     }
     if (spawnResult.pid) {
-        awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
         ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
             lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
             id,
@@ -528,13 +507,11 @@ export function executeAsyncParallel(id, params) {
             ...(projectAgents.length > 0 ? { projectAgents } : {}),
         });
     }
-    if (awaitedOwner)
-        return awaitedOwner.promise;
     return {
         content: [
             {
                 type: "text",
-                text: formatAsyncStartedMessage(`Async parallel: [${flatAgents.join("+")}] [${id}]`),
+                text: formatAsyncLaunchMessage(`Async parallel: [${flatAgents.join("+")}] [${id}]`),
             },
         ],
         details: {
@@ -744,7 +721,7 @@ export function executeAsyncSingle(id, params) {
     const plan = buildPlan();
     const telemetry = initialAsyncTelemetry({
         id,
-        execution: params.awaited ? "foreground" : "async",
+        execution: "async",
         mode: "single",
         plan,
         provenance: params.telemetryProvenance,
@@ -752,31 +729,10 @@ export function executeAsyncSingle(id, params) {
         startedAt: runStartedAt,
         lineage: params.telemetryLineage,
     });
-    const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-    const awaitedOwner = params.awaited === true
-        ? createAwaitedRunOwner({
-            id,
-            asyncDir,
-            resultPath,
-            mode: "single",
-            plan,
-            events: ctx.pi.events,
-            sessionId: ctx.currentSessionId,
-            cwd: runnerCwd,
-            expectedGeneration: 0,
-            signal: params.signal,
-            onUpdate: params.onUpdate,
-        })
-        : undefined;
-    if (awaitedOwner && params.signal?.aborted) {
-        void awaitedOwner.cancel();
-        return awaitedOwner.promise;
-    }
     let spawnResult;
     try {
         spawnResult = spawnRunner({
             id,
-            ...(params.awaited === true ? { awaited: true } : {}),
             ...(telemetry ? { telemetry } : {}),
             plan,
             resultPath: path.join(RESULTS_DIR, `${id}.json`),
@@ -797,16 +753,13 @@ export function executeAsyncSingle(id, params) {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return awaitedOwner
-            ? awaitedOwner.fail(`Failed to start async run '${id}': ${message}`)
-            : formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
+        return formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
     }
     if (spawnResult.error) {
         const message = `Failed to start async run '${id}': ${spawnResult.error}`;
-        return awaitedOwner ? awaitedOwner.fail(message) : formatAsyncStartError("single", message);
+        return formatAsyncStartError("single", message);
     }
     if (spawnResult.pid) {
-        awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
         ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
             lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
             id,
@@ -824,10 +777,8 @@ export function executeAsyncSingle(id, params) {
                 : {}),
         });
     }
-    if (awaitedOwner)
-        return awaitedOwner.promise;
     return {
-        content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
+        content: [{ type: "text", text: formatAsyncLaunchMessage(`Async: ${agent} [${id}]`) }],
         details: {
             mode: "single",
             runId: id,

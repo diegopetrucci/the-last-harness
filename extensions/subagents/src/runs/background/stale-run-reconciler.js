@@ -7,6 +7,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { checkPidLiveness, isCompletedLifecycleStepState, isTerminalLifecycleState, lifecycleGeneration, transitionLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { terminalResultForStatusStep } from "../../shared/terminal-result.js";
 import { boundChildError } from "../shared/child-protocol.js";
+import { ensureTerminalRecord } from "./terminal-record.js";
 import { isAsyncStatusReadError } from "./async-status-boundary.js";
 import { finalizeSubagentRunTelemetry, mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, resolveSubagentTelemetryOutcome, resolveParallelSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
 const STALE_MESSAGE_PREFIX = "Async runner process";
@@ -303,6 +304,11 @@ export function reconcileAsyncRun(asyncDir, options = {}) {
             if (resultRepair)
                 return resultRepair;
         }
+        if (isTerminalLifecycleState(observed.state))
+            ensureTerminalRecord(asyncDir, observed, {
+                resultsDir: options.resultsDir,
+                kill: options.kill,
+            });
         return { status: observed, repaired: false, resultPath };
     }
     const liveness = checkPidLiveness(observed.pid, options.kill);

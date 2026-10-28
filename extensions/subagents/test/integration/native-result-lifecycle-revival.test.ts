@@ -11,6 +11,7 @@ import {
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
+import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
@@ -27,6 +28,13 @@ import {
   waitForRevivedAsyncResult,
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
+
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 describe("completed-run revival", () => {
   let tempDir: string;
@@ -1297,7 +1305,7 @@ describe("completed-run revival", () => {
     }
   });
 
-  it("resume action revives a completed awaited child by index", async () => {
+  it("resume action revives a completed detached child by index", async () => {
     mockPi.onCall({ output: "first child done" });
     mockPi.onCall({ output: "second child done" });
     mockPi.onCall({ output: "revived awaited answer" });
@@ -1309,19 +1317,20 @@ describe("completed-run revival", () => {
       "awaited-resume-original",
       {
         tasks: [
-          { agent: "a", task: "task-a" },
-          { agent: "b", task: "task-b" },
+          { agent: "a", task: "task-a", cwd: taskDir(tempDir, "a") },
+          { agent: "b", task: "task-b", cwd: taskDir(tempDir, "b") },
         ],
       },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
-    const runId = original.details?.runId;
-    assert.ok(runId, "expected awaited run id");
+    const runId = original.details?.asyncId;
+    assert.ok(runId, "expected detached run id");
+    const originalPayload = await readAsyncPayload(runId);
 
     const revived = await executor.execute(
-      "awaited-resume",
+      "detached-resume",
       { action: "resume", id: runId, index: 1, message: "Follow up with b" },
       new AbortController().signal,
       undefined,
@@ -1332,7 +1341,7 @@ describe("completed-run revival", () => {
     assert.match(revived.content[0]?.text ?? "", /Revived async subagent from/);
     assert.match(revived.content[0]?.text ?? "", /Agent: b/);
     const reviveArgs = await readMockCallArgs(2);
-    const selectedSession = original.details?.results?.[1]?.sessionFile;
+    const selectedSession = originalPayload.results[1]?.sessionFile;
     assert.ok(selectedSession, "expected selected child session file");
     assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
     const revivedId = revived.details?.asyncId;

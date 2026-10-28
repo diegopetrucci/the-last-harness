@@ -3,22 +3,33 @@
  *
  * The result watcher owns detached completion delivery. Every detached result
  * produces one message immediately; there is no batching window and no
- * notification-level replay/dedupe. A live awaited owner consumes its result
- * privately; an awaited marker without that owner is eligible for recovery.
+ * notification-level replay/dedupe.
+ *
+ * Trust boundary: the model-visible message content is built only from
+ * runtime-generated facts (run id, agent names, per-child status and
+ * runtime-measured post-run facts, counts, artifact/session paths, next-step hints). Child-authored text never enters
+ * it; the model fetches output through the `result` action, which returns it
+ * as a genuine tool result. Bounded child previews live only in `details`
+ * (TUI/persisted), each child bounded independently.
  *
  * Notification shape:
  *
  *   Background task <status>: **<agent>**
  *
- *   Output artifact: <bounded path>       (when one exists)
- *   Summary:                              (bounded child-derived text)
- *   Facts: <bounded A1c facts>             (when validated facts exist)
- *   ... recovery/session references ...
+ *   Children: <n> (<count> <status>, ...)
+ *   - #<index> <agent>: <status> | <runtime post-run facts>
  *
- * Artifact and session references are bounded independently so a long child
- * result cannot crowd the recovery pointers out of the message.
+ *   Output artifact: <bounded path>       (when one exists)
+ *   Session: <bounded path>
+ *
+ *   Async id: <id>
+ *   Fetch output: subagent({ action: "result", id: "<id>" })
+ *
+ * Every field is bounded independently, so no input size can crowd the
+ * artifact/session references out of the message.
  */
 
+import { sendWakeAwareMessage, wakeFor } from "./wake-message.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -34,10 +45,13 @@ import {
 } from "../../shared/telemetry.ts";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.ts";
-import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
 
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
+/** Children whose status/preview are listed individually. */
+export const MAX_NOTIFY_CHILDREN = 64;
+/** Ceiling for the joined per-child preview text (each child is bounded separately). */
+export const MAX_TOTAL_PREVIEW_CHARS = MAX_NOTIFY_CHILDREN * (MAX_DISPLAY_SUMMARY_CHARS + 200);
 const MAX_REFERENCE_CHARS = 500;
 const MAX_ARTIFACT_REFERENCES = 8;
 const MAX_SESSION_REFERENCES = 8;
@@ -50,6 +64,10 @@ export const BUDGET_EXHAUSTION_GUIDANCE =
 
 interface SubagentChildResult {
   agent: string;
+  sessionFile?: string;
+  model?: string;
+  modelAttempts?: Array<{ usage?: unknown }>;
+  totalCost?: { inputTokens?: unknown; outputTokens?: unknown; costUsd?: unknown };
   output?: string;
   success?: boolean;
   status?: "completed" | "failed" | "paused";
@@ -69,15 +87,69 @@ interface ResumeTarget {
   childCount?: number;
 }
 
+/** Runtime-generated per-child outcome; `preview` is child-derived and details-only. */
+export interface SubagentNotifyChild {
+  index: number;
+  agent: string;
+  status: "completed" | "failed" | "paused";
+  budgetExhausted?: boolean;
+  /** Bounded (per child) child-derived preview; never placed in model-visible content. */
+  preview?: string;
+  /**
+   * Runtime-measured post-run facts (exit/signal, duration, tokens, tool counts,
+   * workspace attribution), bounded per child. Safe for model-visible content.
+   */
+  facts?: string;
+}
+
+/** Machine-readable usage in the shape analyzers already normalize. */
+export interface SubagentChildRecordUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  cost: number;
+  turns: number;
+}
+
+/**
+ * Complete per-child machine record for session/usage analyzers (epic contract
+ * C8). Persisted in `details` only; every field is runtime-measured or a
+ * bounded identifier — never child-authored text — and none reaches `content`.
+ */
+export interface SubagentChildRecord {
+  runId: string;
+  index: number;
+  agent: string;
+  /** Runtime-resolved terminal state, shaped like the telemetry outcome envelope. */
+  outcome: { state: "completed" | "failed" | "paused" | "cancelled" };
+  /** Full (unabbreviated) child session path; omitted when absent or over the path bound. */
+  sessionFile?: string;
+  model?: string;
+  usage?: SubagentChildRecordUsage;
+}
+
 export interface SubagentNotifyDetails {
   agent: string;
   status: "completed" | "failed" | "paused";
   taskInfo?: string;
-  /** Bounded child-derived summary text. */
+  /**
+   * Child-derived summary text for TUI display only. Each child's portion is
+   * bounded independently; the model-visible content never includes it.
+   */
   resultPreview: string;
+  /** Per-child outcomes in index order; absent for single results without child entries. */
+  children?: SubagentNotifyChild[];
+  /** Complete per-child machine records (lineage/usage), capped at MAX_NOTIFY_CHILDREN. */
+  childRecords?: SubagentChildRecord[];
+  /** Number of children beyond the cap that have no record. */
+  childRecordsOmitted?: number;
+  /** True when lifecycle privacy hides child details. */
+  privacySafe?: boolean;
   /** Set at send time on the persisted completion message. */
   triggersTurn?: boolean;
-  /** Bounded child-derived A1c facts body (without the Facts: label). */
+  /** Bounded child-derived A1c facts body (TUI/details only; each child bounded independently). */
   factsPreview?: string;
   /** Bounded output artifact paths, in display order. */
   artifactPaths?: string[];
@@ -115,7 +187,6 @@ interface SubagentResult {
   totalTasks?: number;
   sessionId?: string | null;
   generation?: number;
-  awaited?: boolean;
   pause?: { kind?: string };
   terminalResult?: SubagentTerminalResult;
   telemetry?: SubagentRunTelemetry | Record<string, unknown>;
@@ -346,29 +417,128 @@ function childSummarySource(child: SubagentChildResult): string {
   return typeof summary === "string" ? summary : "";
 }
 
+function childPreview(child: SubagentChildResult): string {
+  return boundedSummary(
+    safeTerminalDocumentLeaf(childSummarySource(child)).trim() || "(no output)",
+  );
+}
+
 function buildSummary(result: SubagentResult, children: SubagentChildResult[]): string {
   if (isProtectedPausedLifecycle(result)) return "Paused awaiting supervisor.";
-  const pieces = children.length
-    ? children.map((child) => {
-        const label = boundedLabel(child.agent || "worker");
-        const summary = safeTerminalDocumentLeaf(childSummarySource(child)).trim() || "(no output)";
-        return children.length === 1 ? summary : `${label}: ${summary}`;
-      })
-    : [typeof result.summary === "string" ? result.summary : ""];
-  const summary = pieces.join("\n").trim();
-  return boundedSummary(summary || "(no output)");
+  if (children.length === 0)
+    return boundedSummary(
+      (typeof result.summary === "string" ? result.summary : "").trim() || "(no output)",
+    );
+  // Each child is bounded on its own so one long child cannot crowd out the rest.
+  return children
+    .slice(0, MAX_NOTIFY_CHILDREN)
+    .map((child) => {
+      const preview = childPreview(child);
+      return children.length === 1
+        ? preview
+        : `${boundedLabel(child.agent || "worker")}: ${preview}`;
+    })
+    .join("\n");
+}
+
+function buildChildren(children: SubagentChildResult[]): SubagentNotifyChild[] | undefined {
+  if (children.length === 0) return undefined;
+  return children.slice(0, MAX_NOTIFY_CHILDREN).map((child, position) => {
+    const factsBody = formatTerminalFactsBody(child.terminalResult);
+    return {
+      index: isValidChildIndex(child.index, children.length) ? child.index : position,
+      agent: boundedLabel(child.agent || "worker"),
+      status: resolveChildStatus(child),
+      ...(isRoleBudgetExhausted(child) ? { budgetExhausted: true } : {}),
+      preview: childPreview(child),
+      ...(factsBody ? { facts: boundedFacts(factsBody) } : {}),
+    };
+  });
+}
+
+function finiteNonNegative(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function childRecordUsage(child: SubagentChildResult): SubagentChildRecordUsage | undefined {
+  const attempts = (Array.isArray(child.modelAttempts) ? child.modelAttempts : []).filter(
+    (attempt): attempt is { usage: Record<string, unknown> } =>
+      typeof attempt?.usage === "object" && attempt.usage !== null,
+  );
+  let usage: Omit<SubagentChildRecordUsage, "total"> | undefined;
+  if (attempts.length > 0) {
+    usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+    for (const { usage: u } of attempts) {
+      usage.input += finiteNonNegative(u.input);
+      usage.output += finiteNonNegative(u.output);
+      usage.cacheRead += finiteNonNegative(u.cacheRead);
+      usage.cacheWrite += finiteNonNegative(u.cacheWrite);
+      usage.cost += finiteNonNegative(u.cost);
+      usage.turns += finiteNonNegative(u.turns);
+    }
+  } else if (child.totalCost) {
+    usage = {
+      input: finiteNonNegative(child.totalCost.inputTokens),
+      output: finiteNonNegative(child.totalCost.outputTokens),
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: finiteNonNegative(child.totalCost.costUsd),
+      turns: 0,
+    };
+  } else {
+    // Fall back to provider-reported per-attempt tokens when nothing richer exists.
+    let input = 0;
+    let output = 0;
+    let found = false;
+    for (const attempt of child.terminalResult?.facts.attempts ?? []) {
+      if (attempt.providerTokens.status !== "available") continue;
+      found = true;
+      input += finiteNonNegative(attempt.providerTokens.usage.input);
+      output += finiteNonNegative(attempt.providerTokens.usage.output);
+    }
+    if (found) usage = { input, output, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+  }
+  if (!usage) return undefined;
+  return { ...usage, total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite };
+}
+
+function buildChildRecords(
+  runId: string | undefined,
+  children: SubagentChildResult[],
+): SubagentChildRecord[] | undefined {
+  if (!runId || children.length === 0) return undefined;
+  return children.slice(0, MAX_NOTIFY_CHILDREN).map((child, position) => {
+    const sessionFile =
+      typeof child.sessionFile === "string" ? child.sessionFile : child.sessionPath;
+    const usage = childRecordUsage(child);
+    return {
+      runId,
+      index: isValidChildIndex(child.index, children.length) ? child.index : position,
+      agent: boundedLabel(child.agent || "worker"),
+      outcome: { state: child.terminalResult?.state ?? resolveChildStatus(child) },
+      ...(sessionFile && sessionFile.length <= MAX_SESSION_PATH_CHARS ? { sessionFile } : {}),
+      ...(typeof child.model === "string" && child.model
+        ? { model: boundedLabel(child.model) }
+        : {}),
+      ...(usage ? { usage } : {}),
+    };
+  });
 }
 
 function buildFacts(children: SubagentChildResult[]): string | undefined {
   const facts = children
+    .slice(0, MAX_NOTIFY_CHILDREN)
     .map((child) => {
       const body = formatTerminalFactsBody(child.terminalResult);
       if (!body) return undefined;
-      return children.length === 1 ? body : `${boundedLabel(child.agent || "worker")}: ${body}`;
+      const bounded = boundedFacts(body);
+      return children.length === 1
+        ? bounded
+        : `${boundedLabel(child.agent || "worker")}: ${bounded}`;
     })
     .filter((value): value is string => Boolean(value))
     .join("; ");
-  return facts ? boundedFacts(facts) : undefined;
+  return facts || undefined;
 }
 
 function boundedReferenceList(values: unknown[], maxEntries: number): string[] | undefined {
@@ -443,6 +613,29 @@ function collectSessionPaths(
   );
 }
 
+function formatChildrenLines(details: SubagentNotifyDetails): string[] {
+  const children = details.children;
+  if (!children || children.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const child of children) counts.set(child.status, (counts.get(child.status) ?? 0) + 1);
+  const summary = [...counts].map(([status, count]) => `${count} ${status}`).join(", ");
+  const lines = [`Children: ${children.length} (${summary})`];
+  for (const child of children.slice(0, MAX_NOTIFY_CHILDREN)) {
+    const index = Number.isInteger(child.index) ? child.index : 0;
+    // Facts are runtime-measured only (see formatTerminalFactsBody); never child text.
+    const facts = child.facts ? ` | ${boundedFacts(child.facts)}` : "";
+    lines.push(
+      `- #${index} ${boundedLabel(child.agent)}: ${child.status}${child.budgetExhausted ? " (budget exhausted)" : ""}${facts}`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * Model-visible completion text. Built exclusively from runtime-generated
+ * facts; `details.resultPreview` and `children[].preview` are child-derived
+ * and intentionally never read here. `children[].facts` are runtime-measured.
+ */
 export function formatSingleCompletion(details: SubagentNotifyDetails): string {
   const artifactLines = (details.artifactPaths ?? [])
     .slice(0, MAX_ARTIFACT_REFERENCES)
@@ -450,26 +643,25 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
   const sessionPathLines = (details.sessionPaths ?? [])
     .slice(0, MAX_SESSION_REFERENCES)
     .map((value) => `Session: ${boundedReference(value)}`);
-  const summary = boundedSummary(details.resultPreview.trim() || "(no output)");
-  const indentedSummary = summary
-    .split("\n")
-    .map((line) => `  ${line}`)
-    .join("\n");
-  const facts = details.factsPreview ? boundedFacts(details.factsPreview) : undefined;
+  const asyncId = normalizeAsyncIdentifier(details.asyncId);
   const asyncIdLine = formatAsyncIdLine(details);
   const resumeLine = formatResumeLine(details);
   const pausedSupervisorActionLines = formatPausedSupervisorActionLines(details);
   const sessionLine = formatSessionLine(details);
+  const childrenLines = formatChildrenLines(details);
   const lines: string[] = [
     `Background task ${details.status}: **${boundedLabel(details.agent)}**${details.taskInfo ?? ""}`,
     "",
-    ...artifactLines,
   ];
-  if (artifactLines.length > 0) lines.push("");
-  lines.push("Summary:", indentedSummary);
-  if (facts) lines.push("", `Facts: ${facts}`);
-  if (sessionPathLines.length > 0) lines.push("", ...sessionPathLines);
-  if (asyncIdLine) lines.push("", asyncIdLine);
+  if (details.privacySafe) lines.push("Paused awaiting supervisor.", "");
+  if (childrenLines.length > 0) lines.push(...childrenLines, "");
+  if (artifactLines.length > 0) lines.push(...artifactLines, "");
+  if (sessionPathLines.length > 0) lines.push(...sessionPathLines, "");
+  if (asyncIdLine) lines.push(asyncIdLine);
+  if (asyncId && !details.privacySafe)
+    lines.push(
+      `Fetch output (bounded per child): subagent({ action: "result", id: ${JSON.stringify(asyncId)} })`,
+    );
   if (details.budgetExhausted) lines.push("", BUDGET_EXHAUSTION_GUIDANCE);
   if (pausedSupervisorActionLines.length > 0) {
     lines.push("", ...pausedSupervisorActionLines);
@@ -477,6 +669,7 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
     lines.push("", resumeLine);
   }
   if (sessionLine) lines.push("", sessionLine);
+  while (lines.at(-1) === "") lines.pop();
   return lines.join("\n");
 }
 
@@ -507,8 +700,34 @@ function serializableDetails(details: SubagentNotifyDetails): Record<string, unk
   return {
     ...details,
     agent: boundedLabel(details.agent),
-    resultPreview: boundedSummary(details.resultPreview),
-    ...(details.factsPreview ? { factsPreview: boundedFacts(details.factsPreview) } : {}),
+    // Each child's portion is already bounded independently; this is only a ceiling.
+    resultPreview: truncateWithMarker(
+      details.resultPreview,
+      MAX_TOTAL_PREVIEW_CHARS,
+      "… [summary truncated]",
+    ),
+    ...(details.children
+      ? {
+          children: details.children.slice(0, MAX_NOTIFY_CHILDREN).map((child) => ({
+            ...child,
+            agent: boundedLabel(child.agent),
+            ...(child.preview ? { preview: boundedSummary(child.preview) } : {}),
+            ...(child.facts ? { facts: boundedFacts(child.facts) } : {}),
+          })),
+        }
+      : {}),
+    ...(details.childRecords
+      ? { childRecords: details.childRecords.slice(0, MAX_NOTIFY_CHILDREN) }
+      : {}),
+    ...(details.factsPreview
+      ? {
+          factsPreview: truncateWithMarker(
+            details.factsPreview,
+            MAX_NOTIFY_CHILDREN * (MAX_COMPLETION_FACTS_CHARS + 200),
+            "… [facts truncated]",
+          ),
+        }
+      : {}),
     ...(details.artifactPaths
       ? {
           artifactPaths: details.artifactPaths
@@ -537,13 +756,9 @@ function sendCompletion(
   options: { triggerTurn: boolean; isIdle?: () => boolean } = { triggerTurn: true },
 ): void {
   const serializable = serializableDetails(details);
-  // Idleness is read live at send time; when no session context has been captured yet,
-  // assume idle. { triggerTurn: true } is safe either way: Pi starts a run from the custom
-  // message when idle (before_agent_start fires, so the TLH system prompt applies) and
-  // steers the active turn when streaming. Never pass triggerTurn:false: while streaming it
-  // defers delivery instead of steering.
-  const wake = options.triggerTurn && (options.isIdle?.() ?? true);
-  pi.sendMessage(
+  const wake = wakeFor(options);
+  sendWakeAwareMessage(
+    pi,
     {
       customType: "subagent-notify",
       content: formatSingleCompletion(details),
@@ -551,7 +766,7 @@ function sendCompletion(
       // Persisted so session analysis can tell a wake from a steer.
       details: { ...serializable, triggersTurn: wake },
     },
-    wake ? { triggerTurn: true } : undefined,
+    wake,
   );
 }
 
@@ -587,12 +802,21 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
   const artifactPaths = collectArtifactPaths(result, children);
   const sessionPaths = collectSessionPaths(result, children);
   const factsPreview = privacySafe ? undefined : buildFacts(children);
+  const childDetails = privacySafe ? undefined : buildChildren(children);
+  // Machine lineage stays in persisted (non-model-visible) details even when protected.
+  const childRecords = buildChildRecords(asyncId, children);
 
   return {
     agent,
     status,
     ...(taskInfo ? { taskInfo } : {}),
     resultPreview: privacySafe ? "Paused awaiting supervisor." : buildSummary(result, children),
+    ...(childDetails ? { children: childDetails } : {}),
+    ...(childRecords ? { childRecords } : {}),
+    ...(childRecords && children.length > childRecords.length
+      ? { childRecordsOmitted: children.length - childRecords.length }
+      : {}),
+    ...(privacySafe ? { privacySafe: true } : {}),
     ...(factsPreview ? { factsPreview } : {}),
     ...(artifactPaths ? { artifactPaths } : {}),
     ...(sessionPaths ? { sessionPaths } : {}),
@@ -641,17 +865,6 @@ export default function registerSubagentNotify(
   const handleComplete = (data: unknown) => {
     const result = data as SubagentResult;
     if (typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId) return;
-    // Let the live owner validate and privately consume the completion before
-    // projecting a detached notification. A persisted `awaited` flag alone
-    // cannot prove that an owner still exists after a reload, so those
-    // artifacts remain eligible for recovery notifications.
-    const completionRunId =
-      typeof result.id === "string"
-        ? result.id
-        : typeof result.runId === "string"
-          ? result.runId
-          : undefined;
-    if (completionRunId && dispatchAwaitedRunCompletion(completionRunId, result)) return;
     sendCompletion(pi, buildCompletionDetails(result), { triggerTurn: true, isIdle });
   };
 

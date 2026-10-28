@@ -19,11 +19,12 @@ const SKIP_DISCOVERY_KEYS = new Set([
     "displayOutput",
 ]);
 const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAttempts"]);
-const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"];
+const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps", "childRecords"];
 const SUBAGENT_DUPLICATE_VIEW_KEYS = new Set([
     ...PREFERRED_SUBAGENT_CHILD_KEYS,
     "telemetry",
     "run",
+    "children",
 ]);
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;

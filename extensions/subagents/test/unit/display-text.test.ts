@@ -15,7 +15,6 @@ import {
 } from "../../src/runs/background/async-status.ts";
 import { ownerState, OWNER_SESSION } from "../support/run-status-fixtures.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
-import { formatAwaitedNativeSubagentResult } from "../../src/shared/result-formatting.ts";
 
 const unsafe = "visible \x1b[31mred\x1b[0m\x07tail";
 
@@ -133,45 +132,5 @@ describe("background display boundaries", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-});
-
-describe("immediate awaited diagnostics", () => {
-  it("preserves binary placeholders in multiline native summaries", () => {
-    const binary = "\x01\x02A".repeat(30) + "\x00";
-    const result = formatAwaitedNativeSubagentResult({
-      runId: "awaited-binary-display",
-      mode: "single",
-      children: [
-        {
-          agent: "worker",
-          status: "completed",
-          summary: binary,
-          index: 0,
-        },
-      ],
-    });
-
-    assert.ok(result.text.includes(BINARY_CONTENT_PLACEHOLDER));
-    assert.doesNotMatch(result.text, /A A A/);
-  });
-
-  it("sanitizes the returned diagnostic text while retaining child payload objects", () => {
-    const child = {
-      agent: unsafe,
-      status: "failed" as const,
-      summary: unsafe,
-      index: 0,
-      artifactPath: `/tmp/${unsafe}.log`,
-    };
-    const result = formatAwaitedNativeSubagentResult({
-      runId: "awaited-display",
-      mode: "single",
-      children: [child],
-    });
-
-    assertTerminalSafe(result.text);
-    assert.equal(child.summary, unsafe);
-    assert.equal(child.agent, unsafe);
   });
 });

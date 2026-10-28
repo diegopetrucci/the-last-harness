@@ -61,7 +61,6 @@ type StatusTask = Pick<
 
 interface BackgroundStatusOwnerInput {
   id: string;
-  awaited?: boolean;
   asyncDir: string;
   cwd: string;
   plan: SubagentRunPlan;
@@ -366,7 +365,6 @@ export function createBackgroundRunStatusOwner(
   const sessionEnabled = Boolean(sessionDir) || flatSteps.some((step) => Boolean(step.sessionFile));
   const statusPayload: RunnerStatusPayload = {
     lifecycleArtifactVersion: 1,
-    ...(input.awaited ? { awaited: true } : {}),
     runId: id,
     ...(sessionId ? { sessionId } : {}),
     mode: plan.kind,

@@ -1,6 +1,7 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { MockPi } from "../support/helpers.ts";
+import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 import {
   createMockPi,
   createTempDir,
@@ -27,6 +28,7 @@ interface ExecutorResult {
   content: ResultContent[];
   details?: {
     mode?: string;
+    asyncId?: string;
     results?: SingleResultLike[];
     progress?: unknown;
   };
@@ -109,7 +111,7 @@ function buildDockerNoiseChunk(step: number): string {
   return lines.join("\n");
 }
 
-describe("awaited result payload compaction", () => {
+describe("detached result payload compaction", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -131,7 +133,7 @@ describe("awaited result payload compaction", () => {
     removeTempDir(tempDir);
   });
 
-  it("keeps awaited single-run payloads compact after tool-heavy runs", async () => {
+  it("keeps detached terminal artifacts compact after tool-heavy runs", async () => {
     const jsonl: unknown[] = [];
     jsonl.push({
       type: "message_end",
@@ -183,30 +185,21 @@ describe("awaited result payload compaction", () => {
 
     assert.equal(result.isError, undefined);
     assert.equal(result.details?.mode, "single");
-    assert.equal(result.details?.results?.length, 1);
-    assert.equal(
-      result.details?.progress,
-      undefined,
-      "terminal awaited details should keep the concise default and omit aggregate progress",
-    );
-
     const displayText = result.content[0]?.text ?? "";
     assert.ok(
       displayText.length < 2_000,
-      `expected small visible output, got ${displayText.length} bytes`,
+      `expected small launch output, got ${displayText.length} bytes`,
     );
 
-    const step = result.details?.results?.[0];
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected a detached run id");
+    const payload = await readAsyncPayload(asyncId);
+    assert.equal(payload.results.length, 1);
+    const step = payload.results[0] as SingleResultLike | undefined;
     assert.equal(step?.exitCode, 0);
-    assert.ok(
-      step?.messages === undefined,
-      "completed awaited results should not inline raw messages",
-    );
-    assert.ok(
-      step?.progress === undefined,
-      "completed awaited results should not inline full progress objects",
-    );
-    const payloadSize = JSON.stringify(result).length;
-    assert.ok(payloadSize < 80_000, `expected compact awaited payload, got ${payloadSize} bytes`);
+    assert.ok(step?.messages === undefined, "terminal artifacts should not inline raw messages");
+    assert.ok(step?.progress === undefined, "terminal artifacts should not inline progress");
+    const payloadSize = JSON.stringify(payload).length;
+    assert.ok(payloadSize < 80_000, `expected compact terminal artifact, got ${payloadSize} bytes`);
   });
 });

@@ -1261,6 +1261,7 @@ test("subagent analysis: legacy details retain bounded usage, model, outcome, an
   ]);
 
   const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
+  assert.equal(output.coverage.totalProjectionGaps, 0);
   const run = output.runs[0];
   assert.equal(output.operations.launches.foreground, 1);
   assert.equal(run?.execution, "foreground");
@@ -1848,4 +1849,56 @@ test("subagent analysis: nested sibling runs retain opaque child identity", asyn
   assert.ok(!serialized.includes("child/two"));
   assert.ok(!serialized.includes("root /opaque"));
   assert.ok(!serialized.includes("parent/opaque"));
+});
+
+test("subagent analysis: async completion childRecords provide per-step usage, role, and outcome", async (t) => {
+  const usage = (input) => ({
+    input,
+    output: 2,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: input + 2,
+    cost: 0.5,
+    turns: 1,
+  });
+  const filePath = writeFixture(t, [
+    sessionHeader("subagent-child-records"),
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent-notify",
+      content: "Background task completed",
+      timestamp: "2026-01-01T00:00:02.000Z",
+      details: {
+        agent: "worker",
+        status: "completed",
+        asyncId: "records-run",
+        childRecords: [
+          {
+            runId: "records-run",
+            index: 0,
+            agent: "worker-a",
+            outcome: { state: "completed" },
+            usage: usage(10),
+          },
+          {
+            runId: "records-run",
+            index: 1,
+            agent: "worker-b",
+            outcome: { state: "failed" },
+            usage: usage(20),
+          },
+        ],
+      },
+    }),
+  ]);
+  const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
+  const run = output.runs[0];
+  assert.ok(run, "run must be reported");
+  assert.deepEqual(
+    run.steps.map((step) => [step.index, step.role, step.outcome?.state, step.usage?.inputTokens]),
+    [
+      [0, "worker-a", "completed", 10],
+      [1, "worker-b", "failed", 20],
+    ],
+  );
 });

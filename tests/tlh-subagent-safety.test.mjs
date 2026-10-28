@@ -210,7 +210,7 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
   assertAllowed(resumeBoth);
   assert.equal(resumeBoth.agentScope, "user");
 
-  for (const action of ["status", "interrupt", "doctor"]) {
+  for (const action of ["status", "interrupt", "doctor", "result"]) {
     assertAllowed({ action });
   }
 });

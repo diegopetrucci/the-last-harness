@@ -89,6 +89,7 @@ import {
   embeddedControlRestrictionError,
 } from "../shared/project-agent-control.ts";
 import type { ExecutorDeps, SubagentParamsLike } from "../shared/executor-types.ts";
+import { acquireWorkspaceReservations } from "../shared/workspace-reservation.ts";
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
 type ResumeSourceTarget = AsyncResumeSourceTarget;
 
@@ -869,13 +870,35 @@ function preflightResumeContextPolicy(
   return { kind: "ready", modelContextWindow };
 }
 
+function resolveFollowUp(requested: string, target: ResumeSourceTarget): string {
+  if (requested) return requested;
+  return target.kind === "revive" &&
+    target.state === "paused" &&
+    target.pauseKind === "awaiting_supervisor"
+    ? UNCHANGED_SUPERVISOR_RESUME_MESSAGE
+    : "";
+}
+
+const RESUME_ABORT_REJECTION =
+  "Subagent resume rejected: the tool call was already aborted before any run was started. No subagent was spawned.";
+
+function abortedResumeResult(): SubagentToolResult<Details> {
+  return {
+    content: [{ type: "text", text: RESUME_ABORT_REJECTION }],
+    isError: true,
+    details: { mode: "management", results: [] },
+  };
+}
+
 export async function resumeAsyncRun(input: {
+  signal?: AbortSignal;
   params: SubagentParamsLike;
   requestCwd: string;
   ctx: ExtensionContext;
   deps: ExecutorDeps;
   artifactConfig: ResolvedArtifactConfig;
 }): Promise<SubagentToolResult<Details>> {
+  if (input.signal?.aborted) return abortedResumeResult();
   const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
   // Capture the session-file-or-id ownership key once for this invocation.
   const callerKey = resolveCurrentSessionId(input.ctx.sessionManager);
@@ -899,7 +922,7 @@ export async function resumeAsyncRun(input: {
         content: [
           {
             type: "text",
-            text: "Awaited supervisor lifecycle update failed. The run was stopped safely and marked failed.",
+            text: "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.",
           },
         ],
         isError: true,
@@ -928,13 +951,7 @@ export async function resumeAsyncRun(input: {
     };
   }
 
-  const followUp =
-    requestedFollowUp ||
-    (target.kind === "revive" &&
-    target.state === "paused" &&
-    target.pauseKind === "awaiting_supervisor"
-      ? UNCHANGED_SUPERVISOR_RESUME_MESSAGE
-      : "");
+  const followUp = resolveFollowUp(requestedFollowUp, target);
   if (!followUp) {
     return {
       content: [{ type: "text", text: "action='resume' requires message." }],
@@ -958,7 +975,7 @@ export async function resumeAsyncRun(input: {
           content: [
             {
               type: "text",
-              text: "Awaited supervisor lifecycle update failed. The run was stopped safely and marked failed.",
+              text: "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.",
             },
           ],
           isError: true,
@@ -1047,7 +1064,24 @@ export async function resumeAsyncRun(input: {
   }
   const { modelContextWindow } = contextPolicy;
 
+  // Recheck after all asynchronous resolution/authorization, before any reservation.
+  if (input.signal?.aborted) return abortedResumeResult();
   const continuationRunId = randomUUID().slice(0, 8);
+  // Revival is a writer launch like any other: reserve before any claim mutation.
+  const reservation = acquireWorkspaceReservations(continuationRunId, callerKey, [
+    {
+      agent: target.agent,
+      childIndex: "index" in target ? (target.index ?? 0) : 0,
+      cwd: effectiveCwd,
+    },
+  ]);
+  if (!reservation.ok) {
+    return {
+      content: [{ type: "text", text: reservation.message }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
   let claimedPause: PausedContinuationClaim | undefined;
   try {
     const claimDecision = claimPausedAwaitingSupervisorTarget(
@@ -1058,6 +1092,7 @@ export async function resumeAsyncRun(input: {
       { kill: input.deps.kill },
     );
     if (claimDecision && "blockedMessage" in claimDecision) {
+      reservation.release();
       return {
         content: [{ type: "text", text: claimDecision.blockedMessage }],
         isError: true,
@@ -1066,6 +1101,7 @@ export async function resumeAsyncRun(input: {
     }
     claimedPause = claimDecision;
   } catch (error) {
+    reservation.release();
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text", text: message }],
@@ -1094,7 +1130,13 @@ export async function resumeAsyncRun(input: {
     continuationTelemetry.provenance ?? input.deps.telemetryProvenance;
   const continuationTelemetryLineage: SubagentTelemetryLineage | undefined =
     continuationTelemetry.lineage;
-  persistContinuationTelemetry(target, runId);
+  try {
+    persistContinuationTelemetry(target, runId);
+  } catch (error) {
+    reservation.release();
+    claimedPause?.rollbackReserved();
+    throw error;
+  }
   let result: {
     content: Array<{ type: "text"; text: string }>;
     details: Details;
@@ -1158,10 +1200,12 @@ export async function resumeAsyncRun(input: {
       ...(continuationTelemetryLineage ? { telemetryLineage: continuationTelemetryLineage } : {}),
     }) as typeof result;
   } catch (error) {
+    reservation.release();
     claimedPause?.rollbackReserved();
     throw error;
   }
   if (result.isError) {
+    reservation.release();
     claimedPause?.rollbackReserved();
     return result;
   }

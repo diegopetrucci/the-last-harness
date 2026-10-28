@@ -28,7 +28,21 @@ import {
 import type { MockPi } from "../support/helpers.ts";
 import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 type DiscoverAgents = typeof discoverAgents;
+
+/** Launches are detached: wait for the run's terminal result artifact. */
+async function settled(result: { details?: { asyncId?: string } }) {
+  const asyncId = result.details?.asyncId;
+  assert.ok(asyncId, "expected a detached run id");
+  return readAsyncPayload(asyncId);
+}
 
 interface ExecutorResult {
   content: Array<{ text?: string }>;
@@ -294,50 +308,103 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     );
 
     assert.equal(result.isError, undefined);
-    assert.ok(result.details?.asyncDir, "ordinary single dispatch should await the async runner");
+    assert.ok(result.details?.asyncDir, "ordinary single dispatch should launch detached");
+    const payload = await settled(result);
+    assert.equal(payload.awaited, undefined);
     const status = JSON.parse(
       fs.readFileSync(path.join(result.details.asyncDir, "status.json"), "utf-8"),
     ) as { awaited?: boolean };
-    assert.equal(status.awaited, true);
+    assert.notEqual(status.awaited, true);
     assert.ok((readCallArgs().at(-1) ?? "").startsWith("Task: "));
   });
 
-  it("rejects duplicate concurrent calls while the default awaited runner is active", async () => {
-    mockPi.reset();
-    mockPi.onCall({ delay: 10_000, output: "first call eventually stopped" });
-    const executor = makeExecutor();
-    const controller = new AbortController();
-    const firstPromise = executor.execute(
-      "awaited-duplicate-first",
-      { agent: "echo", task: "Keep the first awaited call active." },
-      controller.signal,
+  it("rejects a second launch call while one is still being dispatched", async () => {
+    let releaseFirst: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let launches = 0;
+    const executor = createSubagentExecutor({
+      pi: makeExtensionAPI({ events: createEventBus() }),
+      state: makeSubagentState({ baseCwd: tempDir }),
+      config: {},
+      tempArtifactsDir: tempDir,
+      getSubagentSessionRoot: () => tempDir,
+      expandTilde: (value: string) => value,
+      discoverAgents: () => ({ agents: [makeAgent("echo")], projectAgentsDir: null }),
+      executeAsyncSingle: async () => {
+        launches += 1;
+        await gate;
+        return { content: [{ type: "text", text: "launched" }], details: { mode: "single" } };
+      },
+    });
+    const ctx = makeMinimalCtx(tempDir);
+    const first = executor.execute(
+      "dispatch-first",
+      { agent: "echo", task: "first" },
+      new AbortController().signal,
       undefined,
-      makeMinimalCtx(tempDir),
+      ctx,
     );
-
     try {
-      await waitForCondition(() => mockPi.callCount() === 1, "first awaited child launch");
+      await waitForCondition(() => launches === 1, "first launch to reach the dispatcher");
       const duplicate = await executor.execute(
-        "awaited-duplicate-second",
-        { agent: "echo", task: "This concurrent call must be rejected." },
+        "dispatch-second",
+        { agent: "echo", task: "second" },
         new AbortController().signal,
         undefined,
-        makeMinimalCtx(tempDir),
+        ctx,
       );
-
       assert.equal(duplicate.isError, true);
       assert.match(
         duplicate.content[0]?.text ?? "",
-        /a subagent call is already in progress.*exactly ONE subagent call per turn/i,
+        /a subagent call is already in progress.*use tasks\[\] to run agents in parallel/i,
       );
-      assert.equal(mockPi.callCount(), 1, "duplicate dispatch must not launch another child");
+      assert.equal(launches, 1, "duplicate dispatch must not launch another run");
     } finally {
-      controller.abort();
-      await firstPromise;
+      releaseFirst?.();
+      await first;
     }
   });
 
-  it("awaits the default runner through a durable pause and executor resume", async () => {
+  it("rejects async:false before any side effect and ignores async:true", async () => {
+    const rejected = await makeExecutor().execute(
+      "async-false",
+      { agent: "echo", task: "must not launch", async: false },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(tempDir),
+    );
+    assert.equal(rejected.isError, true);
+    assert.match(rejected.content[0]?.text ?? "", /async:false is no longer supported/);
+    assert.match(rejected.content[0]?.text ?? "", /action 'result'/);
+    assert.equal(rejected.details?.asyncId, undefined);
+    assert.equal(mockPi.callCount(), 0);
+
+    const parallelRejected = await makeExecutor().execute(
+      "async-false-parallel",
+      { tasks: [{ agent: "echo", task: "must not launch" }], async: false },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(tempDir),
+    );
+    assert.equal(parallelRejected.isError, true);
+    assert.equal(mockPi.callCount(), 0);
+
+    const accepted = await makeExecutor().execute(
+      "async-true",
+      { agent: "echo", task: "launch detached", async: true },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(tempDir),
+    );
+    assert.equal(accepted.isError, undefined);
+    const payload = await settled(accepted);
+    assert.equal(payload.success, true);
+    assert.equal(payload.awaited, undefined);
+  });
+
+  it("returns immediately for a detached launch and supports durable pause and executor resume", async () => {
     mockPi.reset();
     mockPi.onCall({
       steps: [
@@ -356,28 +423,35 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     mockPi.onCall({ output: "continued after supervisor guidance" });
 
     const executor = makeExecutor();
-    const paused = await executor.execute(
-      "awaited-pause",
+    const launched = await executor.execute(
+      "detached-pause",
       { agent: "echo", task: "Ask for a decision" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
 
-    assert.equal(paused.isError, undefined);
-    const runId = paused.details?.asyncId;
-    const asyncDir = paused.details?.asyncDir;
-    assert.ok(runId, "expected an awaited run id");
-    assert.ok(asyncDir, "expected an awaited run directory");
-    assert.equal(paused.details?.results?.[0]?.pause?.kind, "awaiting_supervisor");
-    const pausedStatus = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    ) as { awaited?: boolean; state?: string };
-    assert.equal(pausedStatus.awaited, true);
-    assert.equal(pausedStatus.state, "paused");
+    assert.equal(launched.isError, undefined);
+    const runId = launched.details?.asyncId;
+    const asyncDir = launched.details?.asyncDir;
+    assert.ok(runId, "expected a run id");
+    assert.ok(asyncDir, "expected a run directory");
+    const readStatusFile = () =>
+      JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as {
+        awaited?: boolean;
+        state?: string;
+      };
+    await waitForCondition(() => {
+      try {
+        return readStatusFile().state === "paused";
+      } catch {
+        return false;
+      }
+    }, "durable supervisor pause");
+    assert.notEqual(readStatusFile().awaited, true);
 
     const resumed = await executor.execute(
-      "awaited-resume",
+      "detached-resume",
       { action: "resume", id: runId, message: "Continue with the supervisor decision." },
       new AbortController().signal,
       undefined,
@@ -389,43 +463,28 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     assert.ok(continuationId, "expected the resumed continuation id");
     const payload = await readAsyncPayload(continuationId);
     assert.match(payload.results[0]?.output ?? "", /continued after supervisor guidance/);
-    const continuedStatus = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    ) as { awaited?: boolean; state?: string };
-    assert.equal(continuedStatus.awaited, true);
-    assert.equal(continuedStatus.state, "complete");
+    await waitForCondition(() => readStatusFile().state === "complete", "completed status");
   });
 
-  it("routes steer, interrupt, and cancellation through the default awaited owner", async () => {
+  it("routes steer, interrupt, and cancellation to detached runs", async () => {
     mockPi.reset();
     mockPi.onCall({
       steps: [{ delay: 10_000, jsonl: [events.assistantMessage("late completion")] }],
     });
     const executor = makeExecutor();
-    const updates: ExecutorResult[] = [];
-    const controlController = new AbortController();
-    const runPromise = executor.execute(
-      "awaited-controls",
+    const launched = await executor.execute(
+      "detached-controls",
       { agent: "echo", task: "Keep working until controlled" },
-      controlController.signal,
-      (update) => updates.push(update),
+      new AbortController().signal,
+      undefined,
       makeMinimalCtx(tempDir),
     );
-
-    await waitForCondition(
-      () =>
-        updates.some((update) =>
-          update.details?.progress?.some((step) => step.status === "running"),
-        ),
-      "awaited running progress",
-    );
-    const liveUpdate = updates.find((update) => update.details?.asyncId);
-    const runId = liveUpdate?.details?.asyncId;
-    assert.ok(runId, "expected the live update to identify the run");
-    await waitForCondition(() => mockPi.callCount() === 1, "controlled awaited child launch");
+    const runId = launched.details?.asyncId;
+    assert.ok(runId, "expected the launch to identify the run");
+    await waitForCondition(() => mockPi.callCount() === 1, "controlled child launch");
 
     const steer = await executor.execute(
-      "awaited-steer",
+      "detached-steer",
       { action: "steer", id: runId, message: "Use the safer implementation." },
       new AbortController().signal,
       undefined,
@@ -435,7 +494,7 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     assert.match(steer.content[0]?.text ?? "", /Steering queued for async run/);
 
     const interrupt = await executor.execute(
-      "awaited-interrupt",
+      "detached-interrupt",
       { action: "interrupt", id: runId },
       new AbortController().signal,
       undefined,
@@ -443,10 +502,8 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     );
     assert.equal(interrupt.isError, undefined, interrupt.content[0]?.text ?? "");
     assert.match(interrupt.content[0]?.text ?? "", /Interrupt requested for async run/);
-    controlController.abort();
-    const interrupted = await runPromise;
-    assert.equal(interrupted.isError, true);
-    assert.equal(interrupted.details?.results?.[0]?.terminationReason, "cancelled");
+    const interrupted = await readAsyncPayload(runId);
+    assert.equal(interrupted.success, false);
 
     mockPi.onCall({
       steps: [
@@ -462,69 +519,63 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
       ],
       keepAliveAfterFinalMessageMs: 10_000,
     });
-    const paused = await executor.execute(
-      "awaited-pause-for-cancel",
+    const pausedLaunch = await executor.execute(
+      "detached-pause-for-cancel",
       { agent: "echo", task: "Pause before cancellation" },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
-    assert.equal(paused.isError, undefined, paused.content[0]?.text ?? "");
-    const pausedId = paused.details?.asyncId;
-    const pausedDir = paused.details?.asyncDir;
+    assert.equal(pausedLaunch.isError, undefined, pausedLaunch.content[0]?.text ?? "");
+    const pausedId = pausedLaunch.details?.asyncId;
+    const pausedDir = pausedLaunch.details?.asyncDir;
     assert.ok(pausedId, "expected a paused run id");
     assert.ok(pausedDir, "expected a paused run directory");
-    assert.equal(paused.details?.results?.[0]?.terminationReason, "paused");
+    const readPaused = () =>
+      JSON.parse(fs.readFileSync(path.join(pausedDir, "status.json"), "utf-8")) as {
+        awaited?: boolean;
+        state?: string;
+      };
+    await waitForCondition(() => {
+      try {
+        return readPaused().state === "paused";
+      } catch {
+        return false;
+      }
+    }, "durable pause before cancellation");
 
     const cancelled = await executor.execute(
-      "awaited-cancel",
+      "detached-cancel",
       { action: "interrupt", id: pausedId, dir: pausedDir },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.equal(cancelled.isError, undefined, cancelled.content[0]?.text ?? "");
-    assert.match(cancelled.content[0]?.text ?? "", /Cancelled paused awaited run/);
-    const cancelledStatus = JSON.parse(
-      fs.readFileSync(path.join(pausedDir, "status.json"), "utf-8"),
-    ) as { awaited?: boolean; state?: string };
-    assert.equal(cancelledStatus.awaited, true);
-    assert.equal(cancelledStatus.state, "cancelled");
+    assert.match(cancelled.content[0]?.text ?? "", /Cancelled paused/);
+    assert.equal(readPaused().state, "cancelled");
   });
 
-  it("propagates an executor abort to the awaited owner and keeps live updates", async () => {
+  it("does not stop a launched child when the parent abort signal fires", async () => {
     mockPi.reset();
-    mockPi.onCall({ output: "abort this run", keepAliveAfterFinalMessageMs: 10_000 });
+    mockPi.onCall({
+      steps: [{ delay: 1_500, jsonl: [events.assistantMessage("survived abort")] }],
+    });
     const executor = makeExecutor();
     const controller = new AbortController();
-    const updates: ExecutorResult[] = [];
-    const runPromise = executor.execute(
-      "awaited-abort",
-      { agent: "echo", task: "Abort this task" },
+    const launched = await executor.execute(
+      "detached-abort",
+      { agent: "echo", task: "Survive the parent abort" },
       controller.signal,
-      (update) => updates.push(update),
+      undefined,
       makeMinimalCtx(tempDir),
     );
-    await waitForCondition(
-      () =>
-        updates.some((update) =>
-          update.details?.progress?.some((step) => step.status === "running"),
-        ),
-      "awaited abort progress",
-    );
-    const liveUpdate = updates.find((update) => update.details?.asyncDir);
-    assert.ok(liveUpdate?.details?.asyncDir, "expected an awaited directory in live updates");
+    assert.equal(launched.isError, undefined);
+    await waitForCondition(() => mockPi.callCount() === 1, "child launch");
     controller.abort();
-
-    const result = await runPromise;
-    assert.equal(result.isError, true);
-    assert.equal(result.details?.results?.[0]?.terminationReason, "cancelled");
-    assert.ok(updates.length >= 1, "expected a live awaited update");
-    const status = JSON.parse(
-      fs.readFileSync(path.join(liveUpdate.details.asyncDir, "status.json"), "utf-8"),
-    ) as { awaited?: boolean; state?: string };
-    assert.equal(status.awaited, true);
-    assert.equal(status.state, "cancelled");
+    const payload = await settled(launched);
+    assert.equal(payload.success, true);
+    assert.match(payload.results[0]?.output ?? "", /survived abort/);
   });
 
   it("preserves mixed embedded/user agents while enforcing trusted cwd containment", async () => {
@@ -592,10 +643,10 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
         makeMinimalCtx(projectRoot),
       );
       assert.equal(valid.isError, undefined, valid.content[0]?.text ?? "");
-      assert.equal(valid.details?.results?.length, 2);
       assert.equal(discoveredScope, "project");
       assert.ok(valid.details?.asyncDir);
       validRunId = valid.details?.asyncId;
+      assert.equal((await settled(valid)).results.length, 2);
       const status = JSON.parse(
         fs.readFileSync(path.join(valid.details.asyncDir, "status.json"), "utf-8"),
       ) as {
@@ -603,7 +654,7 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
         cwd?: string;
         steps?: Array<{ agent?: string; cwd?: string; projectAgent?: unknown }>;
       };
-      assert.equal(status.awaited, true);
+      assert.notEqual(status.awaited, true);
       assert.deepEqual(
         status.steps?.map((step) => step.agent),
         ["embedded.reader", "code-reviewer"],
@@ -667,6 +718,7 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
 
     assert.equal(result.isError, undefined);
     assert.equal(result.details?.mode, "parallel");
+    await settled(result);
     assert.ok((readCallArgs().at(-1) ?? "").startsWith("Task: parallel task"));
   });
 
@@ -780,12 +832,14 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
     const binDir = path.join(ticketRoot, "bin");
     const firstCwd = path.join(ticketRoot, "first");
     const secondCwd = path.join(ticketRoot, "second");
+    const thirdCwd = path.join(ticketRoot, "third");
     const lookupLog = path.join(ticketRoot, "lookups.log");
     const previousPath = process.env.PATH;
     try {
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(firstCwd, { recursive: true });
       fs.mkdirSync(secondCwd, { recursive: true });
+      fs.mkdirSync(thirdCwd, { recursive: true });
       fs.writeFileSync(
         path.join(binDir, "tk"),
         `#!/usr/bin/env node
@@ -795,7 +849,7 @@ const expected = {
     { cwd: ${JSON.stringify(firstCwd)}, body: "# Count ticket\\n" },
     { cwd: ${JSON.stringify(secondCwd)}, body: "# Count ticket in a second cwd\\n" },
   ],
-  "tlhm-other": [{ cwd: ${JSON.stringify(firstCwd)}, body: "# Other ticket\\n" }],
+  "tlhm-other": [{ cwd: ${JSON.stringify(thirdCwd)}, body: "# Other ticket\\n" }],
 };
 const candidates = expected[process.argv[3]] ?? [];
 const ticket = candidates.find((candidate) => fs.realpathSync(process.cwd()) === fs.realpathSync(candidate.cwd));
@@ -819,7 +873,7 @@ process.stdout.write(ticket.body);
               ticket: "tlhm-count",
               cwd: secondCwd,
             },
-            { agent: "echo", task: "different ticket", ticket: "tlhm-other", cwd: firstCwd },
+            { agent: "echo", task: "different ticket", ticket: "tlhm-other", cwd: thirdCwd },
           ],
         },
         new AbortController().signal,
@@ -829,7 +883,7 @@ process.stdout.write(ticket.body);
 
       assert.equal(result.isError, undefined);
       assert.equal(result.details?.mode, "parallel");
-      assert.equal(result.details?.results?.length, 3);
+      assert.equal((await settled(result)).results.length, 3);
       assert.equal(mockPi.callCount(), 3);
       const lookups = fs.readFileSync(lookupLog, "utf8").trim().split("\n");
       assert.equal(lookups.length, 3, "same normalized cwd and ticket ID should be loaded once");
@@ -867,7 +921,7 @@ process.stdout.write(ticket.body);
     assert.equal(mockPi.callCount(), 0);
   });
 
-  it("rejects retired execution controls before awaited or async child launch", async () => {
+  it("rejects retired execution controls before child launch", async () => {
     const cases: Array<{
       label: string;
       params: Record<string, unknown>;
@@ -940,7 +994,7 @@ process.stdout.write(ticket.body);
     );
 
     assert.equal(result.isError, undefined);
-    assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
+    assert.deepEqual((await settled(result)).results[0]?.attemptedModels, [
       "openai-codex/primary:high",
       "anthropic/fallback:high",
     ]);
@@ -964,7 +1018,7 @@ process.stdout.write(ticket.body);
     );
 
     assert.equal(result.isError, undefined);
-    assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
+    assert.deepEqual((await settled(result)).results[0]?.attemptedModels, [
       "openai-codex/primary:high",
       "anthropic/fallback:high",
     ]);
@@ -986,7 +1040,7 @@ process.stdout.write(ticket.body);
     );
 
     assert.equal(result.isError, undefined);
-    assert.equal(result.details?.results?.[0]?.attemptedModels?.length, 1);
+    assert.equal((await settled(result)).results[0]?.attemptedModels?.length, 1);
     assert.equal(mockPi.callCount(), 1);
   });
 
@@ -1003,9 +1057,10 @@ process.stdout.write(ticket.body);
       }).execute(
         testCase.name,
         {
-          tasks: Array.from({ length: testCase.count }, () => ({
+          tasks: Array.from({ length: testCase.count }, (_, index) => ({
             agent: "echo",
             task: "task one",
+            cwd: taskDir(tempDir, `bound-${index}`),
           })),
         },
         new AbortController().signal,
@@ -1015,7 +1070,7 @@ process.stdout.write(ticket.body);
 
       if (testCase.accepted) {
         assert.equal(result.isError, undefined, testCase.name);
-        assert.equal(result.details?.results?.length, testCase.count, testCase.name);
+        assert.equal((await settled(result)).results.length, testCase.count, testCase.name);
         assert.equal(mockPi.callCount(), testCase.count, testCase.name);
       } else {
         assert.equal(result.isError, true, testCase.name);
@@ -1045,9 +1100,9 @@ process.stdout.write(ticket.body);
         "id",
         {
           tasks: [
-            { agent: "echo", task: "task one" },
-            { agent: "second", task: "task two" },
-            { agent: "echo", task: "task three" },
+            { agent: "echo", task: "task one", cwd: taskDir(tempDir, `${testCase.name}-0`) },
+            { agent: "second", task: "task two", cwd: taskDir(tempDir, `${testCase.name}-1`) },
+            { agent: "echo", task: "task three", cwd: taskDir(tempDir, `${testCase.name}-2`) },
           ],
         },
         new AbortController().signal,
@@ -1056,11 +1111,12 @@ process.stdout.write(ticket.body);
       );
 
       assert.equal(result.isError, undefined, testCase.name);
-      assert.ok(result.details?.asyncDir, `${testCase.name}: expected awaited run directory`);
+      assert.ok(result.details?.asyncDir, `${testCase.name}: expected run directory`);
+      await settled(result);
       const status = JSON.parse(
         fs.readFileSync(path.join(result.details.asyncDir, "status.json"), "utf-8"),
       ) as { awaited?: boolean };
-      assert.equal(status.awaited, true, testCase.name);
+      assert.notEqual(status.awaited, true, testCase.name);
       assert.equal(
         readMaxParallelRunning(result.details.asyncDir),
         testCase.expectedMaxRunning,
@@ -1074,8 +1130,8 @@ process.stdout.write(ticket.body);
       "id",
       {
         tasks: [
-          { agent: "echo", task: "task one" },
-          { agent: "second", task: "task two" },
+          { agent: "echo", task: "task one", cwd: taskDir(tempDir, "bg-one") },
+          { agent: "second", task: "task two", cwd: taskDir(tempDir, "bg-two") },
         ],
         async: true,
       },
@@ -1200,7 +1256,7 @@ process.stdout.write(ticket.body);
     );
 
     assert.equal(result.isError, undefined);
-    assert.deepEqual(result.details?.results?.[0]?.skills, ["parallel-step-skill"]);
+    assert.deepEqual((await settled(result)).results[0]?.skills, ["parallel-step-skill"]);
   });
 
   it("keeps request cwd custom-agent definitions out of management", async () => {

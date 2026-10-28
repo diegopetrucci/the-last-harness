@@ -3,11 +3,10 @@
  *
  * Spawns an actual child `pi` subprocess (a repo-local child CLI that runs a
  * real `AgentSession` backed by a faux provider) and exercises the extension's
- * default awaited execution path: the parent session calls the `subagent` tool,
- * the tool spawns the child, the awaited owner waits for terminal completion,
- * the child streams jsonl events, the extension's real stdout parser extracts
- * the result, and the marker flows back as a tool result that the parent
- * relays. No real API keys are used.
+ * detached-only execution path: the parent session calls the `subagent` tool,
+ * the launch returns immediately, the detached runner spawns the child and
+ * persists a terminal record that the result action can read. Headless (print)
+ * sessions fail closed before launch. No real API keys are used.
  *
  * Pi runtime packages are required test dependencies; import failures fail the suite.
  */
@@ -51,14 +50,9 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
     run = undefined;
   });
 
-  it("uses the default awaited route in a real parent session", async () => {
-    const {
-      routeParentThroughSubagent,
-      runRealSubagentSession,
-      subagentToolResults,
-      subagentToolResultDetails,
-    } = await import("../support/real-session-runner.ts");
-
+  async function setupEnvAndRun(mode: "print" | "rpc") {
+    const { routeParentThroughSubagent, runRealSubagentSession } =
+      await import("../support/real-session-runner.ts");
     const previousEnv = new Map(ISOLATED_ENV_KEYS.map((key) => [key, process.env[key]]));
     process.env.PI_SUBAGENT_CHILD = "1";
     process.env.PI_SUBAGENT_DEPTH = "1";
@@ -67,11 +61,11 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
     process.env.PI_SUBAGENT_PARENT_SESSION = "polluted-parent";
     process.env.PI_SUBAGENT_PI_BINARY = BOGUS_PI_BINARY;
     process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT = BOGUS_PI_PACKAGE_ROOT;
-
     try {
       run = await runRealSubagentSession({
         prompt: "Delegate to a helper and report its exact result.",
         childText: CHILD_MARKER,
+        mode,
         setup({ home }) {
           const developerPath = path.join(home, "tlh", "agents", "subagents", "developer.md");
           fs.mkdirSync(path.dirname(developerPath), { recursive: true });
@@ -90,46 +84,44 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
           },
         }),
       });
-
-      const toolResults = subagentToolResults(run.parentSession);
-      assert.equal(toolResults.length, 1);
-      assert.match(toolResults[0]!, new RegExp(CHILD_MARKER));
-      const details = subagentToolResultDetails(run.parentSession)[0] as {
-        telemetry?: {
-          schemaVersion?: number;
-          run?: { execution?: string; mode?: string };
-          provenance?: Record<string, unknown>;
-          steps?: Array<Record<string, unknown>>;
-        };
-        asyncDir?: unknown;
-        awaited?: boolean;
-      };
-      // Awaited runs carry telemetry with execution="foreground" in the tool result.
-      assert.equal(details.telemetry?.run?.execution, "foreground");
-      assert.equal(details.telemetry?.run?.mode, "single");
-      assert.ok(details.telemetry?.provenance);
-      assert.ok(details.telemetry?.schemaVersion);
-      assert.doesNotMatch(JSON.stringify(details.telemetry), /CHILD_REAL_SESSION_OK/);
-      // The run directory is exposed in structured details.
-      assert.equal(
-        typeof details.asyncDir,
-        "string",
-        "awaited dispatch should expose its run directory",
-      );
-      assert.equal(details.awaited, true, "awaited dispatch should persist awaited ownership");
-      assert.match(run.responseText, new RegExp(CHILD_MARKER));
-      assert.doesNotMatch(run.responseText, /CHILD_MISSING/);
-      assert.ok(
-        run.modelCalls >= 2,
-        `expected parent tool-call and final turns, got ${run.modelCalls}`,
-      );
+      return run;
     } finally {
-      await run?.dispose();
-      run = undefined;
       for (const [key, value] of previousEnv) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
     }
+  }
+
+  it("fails closed before launch in a headless (print) parent session", async () => {
+    const { subagentToolResults } = await import("../support/real-session-runner.ts");
+    const started = await setupEnvAndRun("print");
+    const toolResults = subagentToolResults(started.parentSession);
+    assert.equal(toolResults.length, 1);
+    assert.match(toolResults[0]!, /unavailable in print\/json mode/);
+    assert.doesNotMatch(toolResults[0]!, new RegExp(CHILD_MARKER));
+  });
+
+  it("launches detached in an rpc parent session and returns without waiting", async () => {
+    const { subagentToolResults, subagentToolResultDetails } =
+      await import("../support/real-session-runner.ts");
+    const started = await setupEnvAndRun("rpc");
+    const toolResults = subagentToolResults(started.parentSession);
+    assert.equal(toolResults.length, 1);
+    const details = subagentToolResultDetails(started.parentSession)[0] as {
+      telemetry?: { run?: { execution?: string; mode?: string } };
+      asyncDir?: unknown;
+      awaited?: boolean;
+    };
+    assert.equal(details.telemetry?.run?.execution, "async");
+    assert.equal(details.telemetry?.run?.mode, "single");
+    assert.equal(typeof details.asyncDir, "string", "detached dispatch exposes its run directory");
+    assert.notEqual(details.awaited, true);
+    // The launch result carries no child-authored output; output is fetched with the result action.
+    assert.doesNotMatch(toolResults[0]!, new RegExp(CHILD_MARKER));
+    assert.ok(
+      started.modelCalls >= 2,
+      `expected parent tool-call and final turns, got ${started.modelCalls}`,
+    );
   });
 });

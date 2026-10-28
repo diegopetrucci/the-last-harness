@@ -226,6 +226,7 @@ function validateCoreStatus(
   }
   if (value.sessionId !== undefined && typeof value.sessionId !== "string")
     throw invalidStatus(asyncDir, statusPath, "sessionId must be a string.");
+  // Historical synchronous runs persisted this marker; keep accepting it.
   if (value.awaited !== undefined && typeof value.awaited !== "boolean")
     throw invalidStatus(asyncDir, statusPath, "awaited must be a boolean.");
 }

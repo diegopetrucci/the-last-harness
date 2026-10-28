@@ -8,7 +8,6 @@ export function normalizeSubagentRunMode(value) {
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
-export const SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT = "subagent:async-owner-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_ASYNC_RESTORED_EVENT = "subagent:async-restored";
 export const DEFAULT_MAX_OUTPUT = {
@@ -45,6 +44,7 @@ export const SUBAGENT_ACTIONS = [
     "interrupt",
     "resume",
     "steer",
+    "result",
     "doctor",
 ];
 function normalizeTopLevelParallelValue(value) {

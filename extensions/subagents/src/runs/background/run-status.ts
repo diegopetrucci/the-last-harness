@@ -24,6 +24,13 @@ import {
 import { continuationResumeBlock, resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
+import {
+  hasUnretrievedTerminalRecord,
+  readTerminalRecord,
+  unretrievedChildIndices,
+} from "./terminal-record.ts";
+import { formatUnretrievedRuns, type UnretrievedRunEntry } from "./result-action.ts";
+import { isTerminalLifecycleState } from "../shared/lifecycle-state.ts";
 import { formatOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.ts";
 import { formatUnreadableStatus, isAsyncStatusReadError } from "./async-status-boundary.ts";
 import type { AsyncStatusReadOptions } from "../../shared/utils.ts";
@@ -349,7 +356,6 @@ function formatDetailedAsyncStatus(
       : undefined,
     statusActivityText ? `Activity: ${statusActivityText}` : undefined,
     steeringText ? `Steering: ${steeringText}` : undefined,
-    status.awaited ? "Awaited: true" : undefined,
     `Mode: ${safeTerminalText(normalizeSubagentRunMode(status.mode))}`,
     !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
       ? `PID: ${status.pid}`
@@ -512,8 +518,7 @@ export function inspectSubagentStatus(
         asyncDir: string;
         statusPath: string;
       }> = [];
-      const runs = listAsyncRuns(asyncDirRoot, {
-        states: ["queued", "running"],
+      const listed = listAsyncRuns(asyncDirRoot, {
         sessionId: currentSessionId,
         resultsDir,
         kill: deps.kill,
@@ -521,9 +526,30 @@ export function inspectSubagentStatus(
         statusRead: deps.statusRead,
         onUnreadable: (issue) => unreadableStatuses.push(issue),
       });
+      const runs = listed.filter((run) => run.state === "queued" || run.state === "running");
+      // Terminal runs stay discoverable until their output is fetched with
+      // `result`, even if the completion notification was consumed or lost.
+      const unretrieved: UnretrievedRunEntry[] = [];
+      for (const run of listed) {
+        if (!isTerminalLifecycleState(run.state)) continue;
+        const record = readTerminalRecord(run.asyncDir, run.id);
+        if (!record || !hasUnretrievedTerminalRecord(run.asyncDir, record)) continue;
+        unretrieved.push({
+          record,
+          unretrievedIndices: unretrievedChildIndices(run.asyncDir, record),
+        });
+      }
+      unretrieved.sort((a, b) => b.record.endedAt - a.record.endedAt);
+      const activeText = formatAsyncRunList(runs, "Active async runs", unreadableStatuses);
+      const unretrievedText = formatUnretrievedRuns(unretrieved);
       return {
         content: [
-          { type: "text", text: formatAsyncRunList(runs, "Active async runs", unreadableStatuses) },
+          {
+            type: "text",
+            text: unretrievedText
+              ? safeTerminalDocument(`${activeText}\n\n${unretrievedText}`)
+              : activeText,
+          },
         ],
         details: { mode: "single", results: [] },
       };

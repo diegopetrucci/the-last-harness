@@ -16,7 +16,7 @@ import {
   withLifecycleStatusLock,
 } from "../shared/lifecycle-state.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
-import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
+import { ensureTerminalRecordFromArtifact } from "./terminal-record.ts";
 import {
   claimResultArtifact,
   resultArtifactClaimCleanupDelayMs,
@@ -26,6 +26,8 @@ import {
 } from "./result-artifact-consumer.ts";
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
+/** Safety rescan while fs.watch is healthy: events can be missed (observed 2026-10-26). */
+const SAFETY_RESCAN_INTERVAL_MS = 20_000;
 const RESULT_RETRY_MAX_ATTEMPTS = RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS;
 
 type ResultWatcherFs = ResultArtifactFs &
@@ -70,7 +72,6 @@ type ResultFileData = {
   asyncDir?: string;
   lifecycleArtifactVersion?: number;
   generation?: number;
-  awaited?: boolean;
   telemetry?: unknown;
 };
 
@@ -211,6 +212,7 @@ export function createResultWatcher(
   const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
 
   let stopped = false;
+  let safetyRescanTimer: ReturnType<ResultWatcherTimers["setInterval"]> | undefined;
   const resultRetryStates = new Map<string, ResultRetryState>();
   const resultRetryDiagnostics = new Set<string>();
   const claimCleanupTimers = new Map<
@@ -439,6 +441,16 @@ export function createResultWatcher(
           return;
         }
 
+        // Durable-before-unlink: the results file may be the only full copy of the
+        // output, so it is only emitted/unlinked once the terminal record exists.
+        let durable: boolean;
+        try {
+          durable = ensureTerminalRecordFromArtifact(data, runId);
+        } catch (error) {
+          diagnoseAndRetry(file, "persist terminal record for", error);
+          return;
+        }
+
         const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
         const resultChildren = hasResultChildren
           ? data.results!
@@ -495,20 +507,18 @@ export function createResultWatcher(
               }
             : {}),
         };
-        // The result watcher owns delivery. Give every claimed artifact to the
-        // live owner first; the owner validates the artifact's run identity and
-        // current lifecycle generation while holding the claim. This keeps an
-        // owner registered at generation N alive through ordinary generation-
-        // bumping transitions without allowing a stale/replacement artifact to
-        // be suppressed by a marker that only knows the run id.
-        const consumedByAwaitedOwner = dispatchAwaitedRunCompletion(runId, completionEvent);
         // From this point a listener may have received the completion. Keep
         // the sidecar even if later cleanup fails because delivery outcome is
         // no longer knowable and replay would duplicate the notification.
         deliveryDecided = true;
         resetResultRetry(resultPath);
-        if (!consumedByAwaitedOwner) {
-          pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionEvent);
+        pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionEvent);
+        if (!durable) {
+          // No durable record could be written (missing asyncDir or unsupported
+          // envelope), so the results file is the only copy: keep it, and keep
+          // the claim as the delivered marker so a rescan cannot re-emit it.
+          // `result` falls back to reading this file.
+          return;
         }
         try {
           fsApi.unlinkSync(resultPath);
@@ -617,10 +627,22 @@ export function createResultWatcher(
       .forEach((file) => state.resultFileCoalescer.schedule(file, 0));
   };
 
+  const clearSafetyRescan = (): void => {
+    if (safetyRescanTimer) timers.clearInterval(safetyRescanTimer);
+    safetyRescanTimer = undefined;
+  };
+
+  const startSafetyRescan = (): void => {
+    clearSafetyRescan();
+    safetyRescanTimer = timers.setInterval(primeExistingResults, SAFETY_RESCAN_INTERVAL_MS);
+    safetyRescanTimer.unref?.();
+  };
+
   const startPollingFallback = (reason: unknown) => {
     if (stopped) return;
     state.watcher?.close();
     state.watcher = null;
+    clearSafetyRescan();
     if (state.watcherRestartTimer) return;
 
     console.error(
@@ -681,9 +703,11 @@ export function createResultWatcher(
         console.error(`Subagent result watcher failed for '${resultsDir}':`, error);
         state.watcher?.close();
         state.watcher = null;
+        clearSafetyRescan();
         scheduleRestart();
       });
       state.watcher.unref?.();
+      startSafetyRescan();
     } catch (error) {
       if (stopped) return;
       if (shouldFallBackToPolling(error)) {
@@ -692,12 +716,14 @@ export function createResultWatcher(
       }
       console.error(`Failed to start subagent result watcher for '${resultsDir}':`, error);
       state.watcher = null;
+      clearSafetyRescan();
       scheduleRestart();
     }
   };
 
   const stopResultWatcher = () => {
     stopped = true;
+    clearSafetyRescan();
     state.watcher?.close();
     state.watcher = null;
     if (state.watcherRestartTimer) {

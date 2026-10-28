@@ -125,7 +125,6 @@ export function createBackgroundRunStatusOwner(input) {
     const sessionEnabled = Boolean(sessionDir) || flatSteps.some((step) => Boolean(step.sessionFile));
     const statusPayload = {
         lifecycleArtifactVersion: 1,
-        ...(input.awaited ? { awaited: true } : {}),
         runId: id,
         ...(sessionId ? { sessionId } : {}),
         mode: plan.kind,

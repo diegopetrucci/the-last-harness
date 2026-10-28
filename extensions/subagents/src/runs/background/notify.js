@@ -1,4 +1,5 @@
 // Generated from extensions/subagents/src/runs/background/notify.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
+import { sendWakeAwareMessage, wakeFor } from "./wake-message.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
@@ -6,9 +7,10 @@ import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
 import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.js";
-import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.js";
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
+export const MAX_NOTIFY_CHILDREN = 64;
+export const MAX_TOTAL_PREVIEW_CHARS = MAX_NOTIFY_CHILDREN * (MAX_DISPLAY_SUMMARY_CHARS + 200);
 const MAX_REFERENCE_CHARS = 500;
 const MAX_ARTIFACT_REFERENCES = 8;
 const MAX_SESSION_REFERENCES = 8;
@@ -192,30 +194,118 @@ function childSummarySource(child) {
     const summary = child.summary ?? child.output ?? "";
     return typeof summary === "string" ? summary : "";
 }
+function childPreview(child) {
+    return boundedSummary(safeTerminalDocumentLeaf(childSummarySource(child)).trim() || "(no output)");
+}
 function buildSummary(result, children) {
     if (isProtectedPausedLifecycle(result))
         return "Paused awaiting supervisor.";
-    const pieces = children.length
-        ? children.map((child) => {
-            const label = boundedLabel(child.agent || "worker");
-            const summary = safeTerminalDocumentLeaf(childSummarySource(child)).trim() || "(no output)";
-            return children.length === 1 ? summary : `${label}: ${summary}`;
-        })
-        : [typeof result.summary === "string" ? result.summary : ""];
-    const summary = pieces.join("\n").trim();
-    return boundedSummary(summary || "(no output)");
+    if (children.length === 0)
+        return boundedSummary((typeof result.summary === "string" ? result.summary : "").trim() || "(no output)");
+    return children
+        .slice(0, MAX_NOTIFY_CHILDREN)
+        .map((child) => {
+        const preview = childPreview(child);
+        return children.length === 1
+            ? preview
+            : `${boundedLabel(child.agent || "worker")}: ${preview}`;
+    })
+        .join("\n");
+}
+function buildChildren(children) {
+    if (children.length === 0)
+        return undefined;
+    return children.slice(0, MAX_NOTIFY_CHILDREN).map((child, position) => {
+        const factsBody = formatTerminalFactsBody(child.terminalResult);
+        return {
+            index: isValidChildIndex(child.index, children.length) ? child.index : position,
+            agent: boundedLabel(child.agent || "worker"),
+            status: resolveChildStatus(child),
+            ...(isRoleBudgetExhausted(child) ? { budgetExhausted: true } : {}),
+            preview: childPreview(child),
+            ...(factsBody ? { facts: boundedFacts(factsBody) } : {}),
+        };
+    });
+}
+function finiteNonNegative(value) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+function childRecordUsage(child) {
+    const attempts = (Array.isArray(child.modelAttempts) ? child.modelAttempts : []).filter((attempt) => typeof attempt?.usage === "object" && attempt.usage !== null);
+    let usage;
+    if (attempts.length > 0) {
+        usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+        for (const { usage: u } of attempts) {
+            usage.input += finiteNonNegative(u.input);
+            usage.output += finiteNonNegative(u.output);
+            usage.cacheRead += finiteNonNegative(u.cacheRead);
+            usage.cacheWrite += finiteNonNegative(u.cacheWrite);
+            usage.cost += finiteNonNegative(u.cost);
+            usage.turns += finiteNonNegative(u.turns);
+        }
+    }
+    else if (child.totalCost) {
+        usage = {
+            input: finiteNonNegative(child.totalCost.inputTokens),
+            output: finiteNonNegative(child.totalCost.outputTokens),
+            cacheRead: 0,
+            cacheWrite: 0,
+            cost: finiteNonNegative(child.totalCost.costUsd),
+            turns: 0,
+        };
+    }
+    else {
+        let input = 0;
+        let output = 0;
+        let found = false;
+        for (const attempt of child.terminalResult?.facts.attempts ?? []) {
+            if (attempt.providerTokens.status !== "available")
+                continue;
+            found = true;
+            input += finiteNonNegative(attempt.providerTokens.usage.input);
+            output += finiteNonNegative(attempt.providerTokens.usage.output);
+        }
+        if (found)
+            usage = { input, output, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+    }
+    if (!usage)
+        return undefined;
+    return { ...usage, total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite };
+}
+function buildChildRecords(runId, children) {
+    if (!runId || children.length === 0)
+        return undefined;
+    return children.slice(0, MAX_NOTIFY_CHILDREN).map((child, position) => {
+        const sessionFile = typeof child.sessionFile === "string" ? child.sessionFile : child.sessionPath;
+        const usage = childRecordUsage(child);
+        return {
+            runId,
+            index: isValidChildIndex(child.index, children.length) ? child.index : position,
+            agent: boundedLabel(child.agent || "worker"),
+            outcome: { state: child.terminalResult?.state ?? resolveChildStatus(child) },
+            ...(sessionFile && sessionFile.length <= MAX_SESSION_PATH_CHARS ? { sessionFile } : {}),
+            ...(typeof child.model === "string" && child.model
+                ? { model: boundedLabel(child.model) }
+                : {}),
+            ...(usage ? { usage } : {}),
+        };
+    });
 }
 function buildFacts(children) {
     const facts = children
+        .slice(0, MAX_NOTIFY_CHILDREN)
         .map((child) => {
         const body = formatTerminalFactsBody(child.terminalResult);
         if (!body)
             return undefined;
-        return children.length === 1 ? body : `${boundedLabel(child.agent || "worker")}: ${body}`;
+        const bounded = boundedFacts(body);
+        return children.length === 1
+            ? bounded
+            : `${boundedLabel(child.agent || "worker")}: ${bounded}`;
     })
         .filter((value) => Boolean(value))
         .join("; ");
-    return facts ? boundedFacts(facts) : undefined;
+    return facts || undefined;
 }
 function boundedReferenceList(values, maxEntries) {
     const references = values
@@ -268,6 +358,22 @@ function collectSessionPaths(result, children) {
         return undefined;
     return boundedReferenceList(children.map((child) => child.sessionPath), MAX_SESSION_REFERENCES);
 }
+function formatChildrenLines(details) {
+    const children = details.children;
+    if (!children || children.length === 0)
+        return [];
+    const counts = new Map();
+    for (const child of children)
+        counts.set(child.status, (counts.get(child.status) ?? 0) + 1);
+    const summary = [...counts].map(([status, count]) => `${count} ${status}`).join(", ");
+    const lines = [`Children: ${children.length} (${summary})`];
+    for (const child of children.slice(0, MAX_NOTIFY_CHILDREN)) {
+        const index = Number.isInteger(child.index) ? child.index : 0;
+        const facts = child.facts ? ` | ${boundedFacts(child.facts)}` : "";
+        lines.push(`- #${index} ${boundedLabel(child.agent)}: ${child.status}${child.budgetExhausted ? " (budget exhausted)" : ""}${facts}`);
+    }
+    return lines;
+}
 export function formatSingleCompletion(details) {
     const artifactLines = (details.artifactPaths ?? [])
         .slice(0, MAX_ARTIFACT_REFERENCES)
@@ -275,30 +381,28 @@ export function formatSingleCompletion(details) {
     const sessionPathLines = (details.sessionPaths ?? [])
         .slice(0, MAX_SESSION_REFERENCES)
         .map((value) => `Session: ${boundedReference(value)}`);
-    const summary = boundedSummary(details.resultPreview.trim() || "(no output)");
-    const indentedSummary = summary
-        .split("\n")
-        .map((line) => `  ${line}`)
-        .join("\n");
-    const facts = details.factsPreview ? boundedFacts(details.factsPreview) : undefined;
+    const asyncId = normalizeAsyncIdentifier(details.asyncId);
     const asyncIdLine = formatAsyncIdLine(details);
     const resumeLine = formatResumeLine(details);
     const pausedSupervisorActionLines = formatPausedSupervisorActionLines(details);
     const sessionLine = formatSessionLine(details);
+    const childrenLines = formatChildrenLines(details);
     const lines = [
         `Background task ${details.status}: **${boundedLabel(details.agent)}**${details.taskInfo ?? ""}`,
         "",
-        ...artifactLines,
     ];
+    if (details.privacySafe)
+        lines.push("Paused awaiting supervisor.", "");
+    if (childrenLines.length > 0)
+        lines.push(...childrenLines, "");
     if (artifactLines.length > 0)
-        lines.push("");
-    lines.push("Summary:", indentedSummary);
-    if (facts)
-        lines.push("", `Facts: ${facts}`);
+        lines.push(...artifactLines, "");
     if (sessionPathLines.length > 0)
-        lines.push("", ...sessionPathLines);
+        lines.push(...sessionPathLines, "");
     if (asyncIdLine)
-        lines.push("", asyncIdLine);
+        lines.push(asyncIdLine);
+    if (asyncId && !details.privacySafe)
+        lines.push(`Fetch output (bounded per child): subagent({ action: "result", id: ${JSON.stringify(asyncId)} })`);
     if (details.budgetExhausted)
         lines.push("", BUDGET_EXHAUSTION_GUIDANCE);
     if (pausedSupervisorActionLines.length > 0) {
@@ -309,6 +413,8 @@ export function formatSingleCompletion(details) {
     }
     if (sessionLine)
         lines.push("", sessionLine);
+    while (lines.at(-1) === "")
+        lines.pop();
     return lines.join("\n");
 }
 function serializableDetails(details) {
@@ -338,8 +444,25 @@ function serializableDetails(details) {
     return {
         ...details,
         agent: boundedLabel(details.agent),
-        resultPreview: boundedSummary(details.resultPreview),
-        ...(details.factsPreview ? { factsPreview: boundedFacts(details.factsPreview) } : {}),
+        resultPreview: truncateWithMarker(details.resultPreview, MAX_TOTAL_PREVIEW_CHARS, "… [summary truncated]"),
+        ...(details.children
+            ? {
+                children: details.children.slice(0, MAX_NOTIFY_CHILDREN).map((child) => ({
+                    ...child,
+                    agent: boundedLabel(child.agent),
+                    ...(child.preview ? { preview: boundedSummary(child.preview) } : {}),
+                    ...(child.facts ? { facts: boundedFacts(child.facts) } : {}),
+                })),
+            }
+            : {}),
+        ...(details.childRecords
+            ? { childRecords: details.childRecords.slice(0, MAX_NOTIFY_CHILDREN) }
+            : {}),
+        ...(details.factsPreview
+            ? {
+                factsPreview: truncateWithMarker(details.factsPreview, MAX_NOTIFY_CHILDREN * (MAX_COMPLETION_FACTS_CHARS + 200), "… [facts truncated]"),
+            }
+            : {}),
         ...(details.artifactPaths
             ? {
                 artifactPaths: details.artifactPaths
@@ -363,13 +486,13 @@ function serializableDetails(details) {
 }
 function sendCompletion(pi, details, options = { triggerTurn: true }) {
     const serializable = serializableDetails(details);
-    const wake = options.triggerTurn && (options.isIdle?.() ?? true);
-    pi.sendMessage({
+    const wake = wakeFor(options);
+    sendWakeAwareMessage(pi, {
         customType: "subagent-notify",
         content: formatSingleCompletion(details),
         display: true,
         details: { ...serializable, triggersTurn: wake },
-    }, wake ? { triggerTurn: true } : undefined);
+    }, wake);
 }
 export function buildCompletionDetails(result) {
     const children = Array.isArray(result.results) ? result.results : [];
@@ -399,11 +522,19 @@ export function buildCompletionDetails(result) {
     const artifactPaths = collectArtifactPaths(result, children);
     const sessionPaths = collectSessionPaths(result, children);
     const factsPreview = privacySafe ? undefined : buildFacts(children);
+    const childDetails = privacySafe ? undefined : buildChildren(children);
+    const childRecords = buildChildRecords(asyncId, children);
     return {
         agent,
         status,
         ...(taskInfo ? { taskInfo } : {}),
         resultPreview: privacySafe ? "Paused awaiting supervisor." : buildSummary(result, children),
+        ...(childDetails ? { children: childDetails } : {}),
+        ...(childRecords ? { childRecords } : {}),
+        ...(childRecords && children.length > childRecords.length
+            ? { childRecordsOmitted: children.length - childRecords.length }
+            : {}),
+        ...(privacySafe ? { privacySafe: true } : {}),
         ...(factsPreview ? { factsPreview } : {}),
         ...(artifactPaths ? { artifactPaths } : {}),
         ...(sessionPaths ? { sessionPaths } : {}),
@@ -443,13 +574,6 @@ export default function registerSubagentNotify(pi, state) {
     const handleComplete = (data) => {
         const result = data;
         if (typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId)
-            return;
-        const completionRunId = typeof result.id === "string"
-            ? result.id
-            : typeof result.runId === "string"
-                ? result.runId
-                : undefined;
-        if (completionRunId && dispatchAwaitedRunCompletion(completionRunId, result))
             return;
         sendCompletion(pi, buildCompletionDetails(result), { triggerTurn: true, isIdle });
     };

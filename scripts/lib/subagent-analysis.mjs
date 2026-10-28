@@ -42,6 +42,7 @@ function addLegacyDetailsToRun(run, details, sourceKind) {
                 : {}),
         };
     }
+    addChildRecordsToRun(run, details.childRecords);
     if (!Array.isArray(details.results))
         return;
     const limit = Math.min(details.results.length, 64);
@@ -69,6 +70,39 @@ function addLegacyDetailsToRun(run, details, sourceKind) {
             ...(timing ? { timing } : {}),
         };
         run.legacySteps.set(stepIndex, next);
+        if (role)
+            run.roles.add(role);
+        if (model)
+            run.models.set(modelKey(model), model);
+    }
+}
+/**
+ * Async completion messages persist complete per-child machine records
+ * (`childRecords`: index, agent, outcome, usage, model) so step fidelity does
+ * not depend on the display-only `children` projection.
+ */
+function addChildRecordsToRun(run, records) {
+    if (!Array.isArray(records))
+        return;
+    const limit = Math.min(records.length, 64);
+    for (let position = 0; position < limit; position++) {
+        const raw = records[position];
+        if (!isObject(raw))
+            continue;
+        const stepIndex = safeStepIndex(raw.index) ?? position;
+        const role = safeMetadataString(raw.agent);
+        const model = parseLegacyModel(raw);
+        const usage = parseLegacyUsage(raw.usage);
+        const outcome = parseLegacyOutcome(raw);
+        const previous = run.legacySteps.get(stepIndex);
+        run.legacySteps.set(stepIndex, {
+            ...(previous ?? { index: stepIndex }),
+            index: stepIndex,
+            ...(role ? { role } : {}),
+            ...(model ? { model } : {}),
+            ...(usage ? { usage } : {}),
+            ...(outcome ? { outcome } : {}),
+        });
         if (role)
             run.roles.add(role);
         if (model)

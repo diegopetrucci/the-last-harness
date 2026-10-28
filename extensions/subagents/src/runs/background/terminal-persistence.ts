@@ -21,6 +21,7 @@ import type {
   RunnerStatusStep,
 } from "./run-status-owner.ts";
 import { writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.ts";
+import { tryWriteTerminalRecordFromArtifact } from "./terminal-record.ts";
 
 /**
  * The detached runner's per-child result, kept separate from terminal writing.
@@ -112,7 +113,7 @@ export function buildPausedRunnerTelemetry(input: {
   if (!provenance) return undefined;
   return telemetryFromRunnerResults({
     runId: input.config.id,
-    execution: input.config.awaited ? "foreground" : "async",
+    execution: "async",
     mode: input.plan.kind,
     results: input.results,
     provenance,
@@ -165,7 +166,7 @@ function buildRunnerTelemetry(
 ): SubagentRunTelemetry | undefined {
   return telemetryFromRunnerResults({
     runId: input.config.id,
-    execution: input.config.awaited ? "foreground" : "async",
+    execution: "async",
     mode: input.plan.kind,
     results: input.results,
     provenance: input.config.telemetry?.provenance,
@@ -296,14 +297,6 @@ function resultSummary(
     return input.pausedOutputForIndex(requesterIndex, requesterAgent);
   }
   if (state === "failed") {
-    if (input.config.awaited) {
-      // Awaited runs use the (possibly truncated) run summary so the awaited owner
-      // can reconstruct the per-child display with the Output: section intact.
-      // Non-awaited runs expose statusPayload.error for the result watcher / notify path.
-      return input.statusOwner.supervisorPauseTransitionFailed
-        ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
-        : input.summary;
-    }
     return (
       input.statusPayload.error ??
       (input.statusOwner.supervisorPauseTransitionFailed
@@ -455,7 +448,6 @@ function writeResultArtifact(
     success: state === "complete",
     state,
     summary: resultSummary(input, state, paused),
-    ...(input.config.awaited ? { awaited: true } : {}),
     ...(telemetry ? { telemetry } : {}),
     ...(deadlineAt !== undefined ? { deadlineAt } : {}),
     ...(timedOut ? { timedOut: true } : {}),
@@ -487,6 +479,8 @@ function writeResultArtifact(
     ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
     ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
   };
+  // Durable record first: any delivered results-dir notification implies it exists.
+  tryWriteTerminalRecordFromArtifact(input.asyncDir, result);
   try {
     writeAtomicJson(input.resultPath, result);
   } catch (error) {
@@ -523,7 +517,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
   }));
   const gateTelemetry = telemetryFromRunnerResults({
     runId: input.config.id,
-    execution: input.config.awaited ? "foreground" : "async",
+    execution: "async",
     mode: input.plan.kind,
     results:
       gateResults.length > 0
@@ -548,7 +542,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
   writeNormalizedLifecycleStatus(input.asyncDir, statusPayload);
   const agent = firstStep?.agent ?? "subagent";
   try {
-    writeAtomicJson(input.resultPath, {
+    const gateArtifact = {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id: input.config.id,
       generation: lifecycleGeneration(statusPayload),
@@ -576,7 +570,9 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
       asyncDir: input.asyncDir,
       sessionId: input.config.sessionId,
       ...(input.config.projectAgents ? { projectAgents: input.config.projectAgents } : {}),
-    } satisfies AsyncResultArtifact);
+    } satisfies AsyncResultArtifact;
+    tryWriteTerminalRecordFromArtifact(input.asyncDir, gateArtifact);
+    writeAtomicJson(input.resultPath, gateArtifact);
   } catch (error) {
     console.error(`Failed to write gate-rejection result file ${input.resultPath}:`, error);
   }

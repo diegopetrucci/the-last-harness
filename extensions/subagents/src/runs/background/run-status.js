@@ -9,6 +9,9 @@ import { asyncRunOwnerRejectionMessage, authorizeAsyncRunOwner, } from "./async-
 import { continuationResumeBlock, resolveAsyncRunLocation } from "./async-resume.js";
 import { resolveSubagentRunId } from "./run-id-resolver.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
+import { hasUnretrievedTerminalRecord, readTerminalRecord, unretrievedChildIndices, } from "./terminal-record.js";
+import { formatUnretrievedRuns } from "./result-action.js";
+import { isTerminalLifecycleState } from "../shared/lifecycle-state.js";
 import { formatOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.js";
 import { formatUnreadableStatus, isAsyncStatusReadError } from "./async-status-boundary.js";
 import { formatSupervisorPauseMessage } from "../../shared/pause-messages.js";
@@ -183,7 +186,6 @@ function formatDetailedAsyncStatus(status, asyncDir, outputPath, reconciliation,
             : undefined,
         statusActivityText ? `Activity: ${statusActivityText}` : undefined,
         steeringText ? `Steering: ${steeringText}` : undefined,
-        status.awaited ? "Awaited: true" : undefined,
         `Mode: ${safeTerminalText(normalizeSubagentRunMode(status.mode))}`,
         !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
             ? `PID: ${status.pid}`
@@ -308,8 +310,7 @@ export function inspectSubagentStatus(params, deps = {}) {
     if (!params.id && !params.dir) {
         try {
             const unreadableStatuses = [];
-            const runs = listAsyncRuns(asyncDirRoot, {
-                states: ["queued", "running"],
+            const listed = listAsyncRuns(asyncDirRoot, {
                 sessionId: currentSessionId,
                 resultsDir,
                 kill: deps.kill,
@@ -317,9 +318,30 @@ export function inspectSubagentStatus(params, deps = {}) {
                 statusRead: deps.statusRead,
                 onUnreadable: (issue) => unreadableStatuses.push(issue),
             });
+            const runs = listed.filter((run) => run.state === "queued" || run.state === "running");
+            const unretrieved = [];
+            for (const run of listed) {
+                if (!isTerminalLifecycleState(run.state))
+                    continue;
+                const record = readTerminalRecord(run.asyncDir, run.id);
+                if (!record || !hasUnretrievedTerminalRecord(run.asyncDir, record))
+                    continue;
+                unretrieved.push({
+                    record,
+                    unretrievedIndices: unretrievedChildIndices(run.asyncDir, record),
+                });
+            }
+            unretrieved.sort((a, b) => b.record.endedAt - a.record.endedAt);
+            const activeText = formatAsyncRunList(runs, "Active async runs", unreadableStatuses);
+            const unretrievedText = formatUnretrievedRuns(unretrieved);
             return {
                 content: [
-                    { type: "text", text: formatAsyncRunList(runs, "Active async runs", unreadableStatuses) },
+                    {
+                        type: "text",
+                        text: unretrievedText
+                            ? safeTerminalDocument(`${activeText}\n\n${unretrievedText}`)
+                            : activeText,
+                    },
                 ],
                 details: { mode: "single", results: [] },
             };

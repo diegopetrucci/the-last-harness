@@ -26,13 +26,16 @@ const SKIP_DISCOVERY_KEYS = new Set([
   "displayOutput",
 ]);
 const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAttempts"]);
-const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"] as const;
+// "childRecords" is the complete machine view persisted on async completion messages.
+const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps", "childRecords"] as const;
 // Once a node yields runs from results/steps, its telemetry/run siblings describe the same
 // children, so run discovery is skipped beneath them (refs are still collected).
 const SUBAGENT_DUPLICATE_VIEW_KEYS = new Set<string>([
   ...PREFERRED_SUBAGENT_CHILD_KEYS,
   "telemetry",
   "run",
+  // Bounded display view of the same children as `childRecords`.
+  "children",
 ]);
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
@@ -1286,7 +1289,7 @@ function collectStructuredDiscoveries(
       return;
     }
 
-    // The preferred results/steps fast path is independently capped at two arrays of
+    // The preferred results/steps fast path is independently capped at three arrays of
     // MAX_DISCOVERY_ARRAY_ITEMS. It does not recurse, so cycles cannot amplify its work.
     const nestedRuns =
       !skipNestedRuns && canDescend ? collectPreferredNestedSubagentRuns(current, context) : [];

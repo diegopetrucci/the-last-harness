@@ -450,7 +450,7 @@ function singleWidgetStepDisplayStatus(job, step) {
         return job.status;
     return projectedStep.status;
 }
-function awaitedStyleWidgetStepLines(job, theme, step, itemTitle, index, total, expanded, width, displayStatus, phraseNow) {
+function asyncStyleWidgetStepLines(job, theme, step, itemTitle, index, total, expanded, width, displayStatus, phraseNow) {
     const displayStep = projectContinuedWidgetStep(job, step);
     const resolvedDisplayStatus = displayStatus ?? displayStep.status;
     const status = widgetStepStatus(resolvedDisplayStatus, theme, resolvedDisplayStatus === "running" ? displayStep.interruptRequestedAt : undefined);
@@ -493,14 +493,14 @@ function awaitedStyleWidgetStepLines(job, theme, step, itemTitle, index, total, 
     }
     return lines;
 }
-function awaitedStyleWidgetDetails(job, theme, expanded, width, phraseNow) {
+function asyncStyleWidgetDetails(job, theme, expanded, width, phraseNow) {
     if (!job.steps?.length)
         return [...widgetActivityDetailLines(job, theme, expanded, phraseNow)];
     const total = job.stepsTotal ?? job.steps.length;
     const itemTitle = job.mode === "parallel" ? "Agent" : "Step";
     const lines = [];
     for (const [index, step] of job.steps.entries()) {
-        lines.push(...awaitedStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, undefined, phraseNow));
+        lines.push(...asyncStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, undefined, phraseNow));
     }
     if (!expanded && widgetHasRunningStep(job))
         lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
@@ -509,7 +509,7 @@ function awaitedStyleWidgetDetails(job, theme, expanded, width, phraseNow) {
 function singleWidgetAgentDetails(job, theme, expanded, width, phraseNow) {
     const step = job.steps?.[0];
     if (step) {
-        const stepLines = awaitedStyleWidgetStepLines(job, theme, step, undefined, 1, 1, expanded, width, singleWidgetStepDisplayStatus(job, step), phraseNow);
+        const stepLines = asyncStyleWidgetStepLines(job, theme, step, undefined, 1, 1, expanded, width, singleWidgetStepDisplayStatus(job, step), phraseNow);
         if (!expanded && singleWidgetStepDisplayStatus(job, step) === "running")
             return [...stepLines, `${WIDGET_DETAIL_INDENT}${theme.fg("dim", liveDetailHintText())}`];
         return stepLines;
@@ -598,7 +598,7 @@ function buildSingleWidgetLines(job, theme, contentWidth, expanded, phraseNow) {
             ...details.slice(1),
         ], contentWidth);
     }
-    const details = awaitedStyleWidgetDetails(job, theme, expanded, contentWidth, phraseNow);
+    const details = asyncStyleWidgetDetails(job, theme, expanded, contentWidth, phraseNow);
     return wrapDisplayLines([
         ...singleWidgetHeaderLines(job, theme, expanded),
         ...jobHealthWarningLines(job, theme),
@@ -1114,7 +1114,6 @@ function buildWidgetListParts(jobs, theme, width, expanded, phraseNow) {
     return { lines, footerLines };
 }
 export function renderWidget(ctx, jobs, controller, now) {
-    jobs = jobs.filter((job) => job.awaited !== true);
     if (jobs.length === 0) {
         resetWidgetLayoutSession();
         if (ctx.hasUI)

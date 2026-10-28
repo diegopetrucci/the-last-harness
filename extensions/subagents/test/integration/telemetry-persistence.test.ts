@@ -25,6 +25,14 @@ import type {
 } from "../../src/shared/telemetry.ts";
 import { buildCompletionDetails } from "../../src/runs/background/notify.ts";
 import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
+import { readAsyncPayload } from "../support/async-execution-helpers.ts";
+
+/** Distinct per-task workspace: same-workspace writers are rejected by the reservation policy. */
+function taskDir(root: string, name: string): string {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 const controls: ResolvedControlConfig = {
   enabled: true,
@@ -133,7 +141,7 @@ describe("subagent telemetry persistence", () => {
     assert.deepEqual(completion.telemetry, result.telemetry);
   });
 
-  it("persists the same provenance envelope through the real foreground executor", async () => {
+  it("persists the same provenance envelope through the real detached executor", async () => {
     mockPi.onCall({ output: "foreground one done" });
     mockPi.onCall({ output: "foreground two done" });
     const state = makeSubagentState({ baseCwd: tempDir });
@@ -150,13 +158,21 @@ describe("subagent telemetry persistence", () => {
       telemetryProvenance: provenance,
     });
     const ctx = makeMinimalCtx(tempDir);
-    ctx.sessionManager.getSessionFile = () => path.join(tempDir, "foreground-parent.jsonl");
+    ctx.sessionManager.getSessionFile = () => path.join(tempDir, "detached-parent.jsonl");
     const result = await executor.execute(
       "foreground-telemetry",
       {
         tasks: [
-          { agent: "foreground-one", task: "Run the first foreground telemetry fixture." },
-          { agent: "foreground-two", task: "Run the second foreground telemetry fixture." },
+          {
+            agent: "foreground-one",
+            task: "Run the first foreground telemetry fixture.",
+            cwd: taskDir(tempDir, "one"),
+          },
+          {
+            agent: "foreground-two",
+            task: "Run the second foreground telemetry fixture.",
+            cwd: taskDir(tempDir, "two"),
+          },
         ],
       },
       new AbortController().signal,
@@ -173,7 +189,7 @@ describe("subagent telemetry persistence", () => {
     assert.deepEqual(telemetry.provenance, provenance);
     assert.deepEqual(telemetry.run, {
       id: telemetry.run.id,
-      execution: "foreground",
+      execution: "async",
       mode: "parallel",
     });
     assert.deepEqual(
@@ -183,15 +199,13 @@ describe("subagent telemetry persistence", () => {
         [1, "foreground-two"],
       ],
     );
-    const results = details.results;
-    assert.ok(results);
+    const asyncId = (details as { asyncId?: string }).asyncId;
+    assert.ok(asyncId, "expected a detached run id");
+    const results = (await readAsyncPayload(asyncId)).results;
     assert.equal(results.length, 2);
 
     for (const [expectedIndex, child] of results.entries()) {
-      assert.ok(
-        child.artifactPaths,
-        `expected artifact paths for foreground child ${expectedIndex}`,
-      );
+      assert.ok(child.artifactPaths, `expected artifact paths for detached child ${expectedIndex}`);
       const metadata = JSON.parse(fs.readFileSync(child.artifactPaths.metadataPath, "utf8")) as {
         telemetry?: {
           run?: { id?: string; execution?: string; mode?: string };

@@ -255,7 +255,7 @@ export interface AsyncPauseMetadata {
   requestedAt?: number;
   pausedAt?: number;
   ownerPid?: number;
-  request?: AwaitedSupervisorRequestMetadata;
+  request?: SupervisorRequestMetadata;
 }
 
 export interface AsyncCancellationMetadata {
@@ -263,15 +263,11 @@ export interface AsyncCancellationMetadata {
   cancelledAt?: number;
 }
 
-export interface AwaitedSupervisorRequestMetadata {
+export interface SupervisorRequestMetadata {
   tool: "contact_supervisor";
   reason?: "need_decision" | "interview_request";
   requestId?: string;
   summary?: string;
-}
-
-interface AwaitedPauseMetadata extends AsyncPauseMetadata {
-  request?: AwaitedSupervisorRequestMetadata;
 }
 
 export type AsyncLifecycleContinuationPhase =
@@ -428,7 +424,7 @@ export interface SingleResult {
   error?: string;
   /**
    * Bounded stderr tail retained for diagnostics. Raw stderr is durable in
-   * output-N.log for both awaited and detached runs and, when enabled, in the
+   * output-N.log for detached runs and, when enabled, in the
    * debug child transcript.
    */
   stderr?: string;
@@ -450,7 +446,7 @@ export interface SingleResult {
   outputSaveError?: string;
   /** Per-child terminal state and evidence-only facts, when persisted. */
   terminalResult?: SubagentTerminalResult;
-  pause?: AwaitedPauseMetadata;
+  pause?: AsyncPauseMetadata;
   cancel?: AsyncCancellationMetadata;
   transcriptPath?: string;
   transcriptError?: string;
@@ -498,8 +494,6 @@ export interface Details {
   totalChildUsage?: Usage;
   // Aggregated cost across all agents in the run
   totalCost?: CostSummary;
-  /** True when the parent blocked on this run (awaited path). Absent on detached runs. */
-  awaited?: boolean;
 }
 
 // ============================================================================
@@ -582,7 +576,7 @@ export interface AsyncStartedEvent {
 
 export interface AsyncStatus {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
-  /** Internal-only marker for a caller that owns terminal settlement. */
+  /** Historical marker written by removed synchronous runs; read-only, never produced. */
   awaited?: boolean;
   /** Optional privacy-safe run-level telemetry envelope. */
   telemetry?: SubagentRunTelemetry;
@@ -804,7 +798,7 @@ export interface AsyncResultArtifactResultItem {
  */
 export interface AsyncResultArtifact {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
-  /** Internal-only marker for an awaited caller; detached runs omit it. */
+  /** Historical marker written by removed synchronous runs; read-only, never produced. */
   awaited?: boolean;
   generation?: number;
   /** Optional privacy-safe run-level telemetry envelope. */
@@ -847,8 +841,6 @@ export interface AsyncJobState {
   telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   asyncId: string;
   asyncDir: string;
-  /** Internal-only marker retained while an awaited run is visible. */
-  awaited?: boolean;
   status: AsyncLifecycleState;
   /** Continuation metadata projects launch semantics without a legacy status label. */
   lifecycle?: AsyncStatus["lifecycle"];
@@ -932,8 +924,6 @@ export interface SubagentEventBus {
 
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
-/** Internal lifecycle event emitted when an awaited run owner settles. */
-export const SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT = "subagent:async-owner-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 // Keep this literal local to the subagents shared types module so detached
 // runtime imports never cross out of the generated subagents source root.
@@ -1009,6 +999,7 @@ export const SUBAGENT_ACTIONS = [
   "interrupt",
   "resume",
   "steer",
+  "result",
   "doctor",
 ] as const;
 

@@ -11,14 +11,14 @@ All notable changes to The Last Harness will be documented in this file.
 ### What's new
 
 - Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume and cancel for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
-- Ordinary single and parallel subagent calls now use the TLH-tracked awaited runner by default: the parent waits for the terminal result, while `async: true` preserves detached background execution.
+- Subagent runs are now always detached and fetched with the `result` action; `async: true` is deprecated and `async: false` is rejected. See [docs/subagents.md](docs/subagents.md).
 - `parallel.maxTasks` now supports values from 1 through 8; larger configured values are bounded to 8 to preserve the 16 MiB status/terminal-evidence envelope.
 - Single and parallel subagent tasks accept explicit `ticket` IDs. TLH validates and prefetches each ticket in the child cwd, injects its exact body under `## Ticket <id>`, and persists only the per-child ID across status, results, pause, and resume.
-- Every subagent instance now has its own role budget measured as active time, for awaited and detached runs alike. Pauses (supervisor, interrupt, human or architect intervention) keep the same lineage and remaining budget, resume preserves consumed runtime even after successful completion, and a budget-exhausted instance is poisoned: it cannot be resumed and its result and status omit resume hints. There is no shared dispatch ceiling; `execution.maxRunTimeMs` is preserved in config but ignored with a one-time warning, and `maxExecutionTimeMs: false` is diagnosed and replaced by the bounded default without rewriting user config. Active runtime is checkpointed durably about every 30 seconds, so recovery after a hard runner kill can undercount by at most one interval, and malformed persisted accounting rejects the continuation instead of resetting the budget. Historical run-ceiling metadata remains readable.
+- Every subagent instance now has its own role budget measured as active time. Pauses (supervisor, interrupt, human or architect intervention) keep the same lineage and remaining budget, resume preserves consumed runtime even after successful completion, and a budget-exhausted instance is poisoned: it cannot be resumed and its result and status omit resume hints. There is no shared dispatch ceiling; `execution.maxRunTimeMs` is preserved in config but ignored with a one-time warning, and `maxExecutionTimeMs: false` is diagnosed and replaced by the bounded default without rewriting user config. Active runtime is checkpointed durably about every 30 seconds, so recovery after a hard runner kill can undercount by at most one interval, and malformed persisted accounting rejects the continuation instead of resetting the budget. Historical run-ceiling metadata remains readable.
 - Subagent model fallback now dispatches exact ordered candidates and retries only classified transient provider failures; model identity, thinking suffixes, and fallback history remain visible across runs and resumes.
 - Recognized stored subagent effort is forwarded unchanged by TLH's defaults layer, including for unavailable or capability-unknown models. Pi validates the suffix and surfaces unsupported model arguments as non-transient failures; only syntactically invalid effort values are omitted with truthful warnings. Effective argv attempts are deduplicated and recorded precisely.
 - Removed fuzzy, catalog, and availability-based model resolution/filtering from subagent fallback dispatch. Candidates are forwarded deterministically, and invalid model arguments stop as non-transient failures instead of triggering another candidate.
-- Detached async completions now deliver one fixed-shape notification immediately per run, with artifact paths before bounded summaries and A1c facts; live awaited owners consume their completions privately, while artifacts left without an owner remain recoverable.
+- Detached async completions now deliver one fixed-shape notification immediately per run, carrying runtime facts and artifact/session references; fetch child output with the `result` action.
 - Unreadable, invalid, or oversized async `status.json` files are retried once and then reported without automatic remediation; inspect and explicitly repair or undo the file and its sibling artifacts manually. Existing `<tempRoot>/quarantined-async-subagent-runs/` directories are no longer scanned; after preserving needed evidence, remove them manually if desired, and note that the new runtime never auto-deletes them.
 - All thirteen packaged agents (four primaries and nine minor roles) now include explicit MCP gateway policy text. Primary agents and `developer` may use the generic `mcp` gateway within their authorized scope; `test-runner` is the intentional exception — it may invoke assigned MCP validation steps that change external server state, but only in the exact order and shape supplied by its final-validation ticket; all other minor agents restrict MCP to read-only research or inspection and must escalate uncertain side effects to the architect.
 - In RPC mode, TLH now publishes its subscription usage footer segment as the `tlh-usage` extension UI status (cleared with `undefined`) so hosts such as tlh-gui can render it; the docs also list the existing `fast` status key; see [docs/commands.md](docs/commands.md#usage-and-rpc-status-for-hosts).
@@ -27,11 +27,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
-- Subagent runners now keep a child's process group tracked until post-exit cleanup settles, so an abort after the leader exits no longer leaves SIGINT/SIGTERM-ignoring descendants alive (#828).
+- Subagent runners now keep a child's process group tracked until post-exit cleanup settles, so an interrupt after the leader exits no longer leaves SIGINT/SIGTERM-ignoring descendants alive (#828).
 - Async subagent completions are no longer stranded when another tlh session's result watcher briefly holds the shared result claim: foreign-session watchers skip artifacts they do not own, and the owner retries a contended claim. (#851)
-- Awaited (default) subagent runs no longer appear a second time in the async subagent widget; only detached async runs are listed there (#848).
 - Explicit subagent interrupt, steer, resume, and status by id now require the owning parent session and fail closed; id-prefix lookup and interrupt-all are scoped to the caller's own runs (#826).
-- Aborting an awaited subagent right after it starts could leave its run permanently `running`; the runner now installs its signal handler before its first status write.
 - Durable subagent revival now requires the owning parent session; ownerless, foreign or conflicting-owner runs are rejected before any side effect (#822).
 - A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped; a project-scoped agent list includes load warnings for canonical packaged roles.
 - `/toggle-context-cap` now refuses to write when `settings.json`, `tlh`, or `tlh.contextCap` is not a JSON object, instead of throwing or saving a corrupted settings file.
@@ -44,7 +42,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Subagent thinking phrases no longer flicker on fast-turning agents; they now rotate on a steady 8-second cadence instead of changing every turn.
 - Trusted embedded project-agent tool declarations now reject `.ts`/`.js` extension-path aliases at load and execution boundaries while ordinary agent extension tools remain supported.
 - The result watcher now rescans existing results after a restart, since results written while it was down emit no events.
-- Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
+- Interrupting a detached run now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
 
 ### Changed
@@ -93,6 +91,8 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 - Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
+- Awaited subagent runs no longer appeared a second time in the async widget (#848); superseded by async-only subagents.
+- Aborting an awaited subagent right after it started could leave its run `running`; superseded by async-only subagents.
 
 ## [0.46.0] - 2026-10-20
 

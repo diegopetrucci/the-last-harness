@@ -59,7 +59,7 @@ A user explicitly naming or asking for a trusted project custom agent is an exce
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list except for the explicitly requested trusted embedded project-agent exception.
 
-To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
+Subagent runs are always detached: a launch returns immediately and the run continues in the background. A launch that overlaps another in-flight launch is rejected; use a `tasks` array to run agents in parallel. Writer agents (`developer`, `test-runner`, and embedded/custom agents) are serialized per workspace by a reservation, so a conflicting launch is rejected naming the holder run; read-only agents may run alongside. Completion notifications contain only runtime facts, never child output: after dispatching, end your turn, and on the notification call `subagent` with action `result` to fetch the output. Pending supervisor requests are listed by `subagent_supervisor` with action `pending`.
 
 ## Investigation process
 

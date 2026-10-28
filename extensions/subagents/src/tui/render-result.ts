@@ -3,16 +3,8 @@
  */
 
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import {
-  Container,
-  Markdown,
-  Spacer,
-  Text,
-  stripTerminalSequences,
-  visibleWidth,
-  type Component,
-} from "@earendil-works/pi-tui";
-import { type AgentProgress, type Details, type SubagentToolResult } from "../shared/types.ts";
+import { Container, Markdown, Spacer, Text, type Component } from "@earendil-works/pi-tui";
+import { type Details, type SubagentToolResult } from "../shared/types.ts";
 import { parsePersistedChildLocationSnapshot } from "../shared/child-location.ts";
 import {
   formatDuration,
@@ -25,19 +17,10 @@ import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
 import { extractSingleOutputInstructionTarget } from "../runs/shared/single-output.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../shared/display-text.ts";
 import {
-  buildLiveStatusLine,
   childLocationLine,
-  compactThinkingPhrase,
-  fitCompactToolStatus,
-  formatCurrentToolLines,
   getTermWidth,
-  liveDetailHintText,
   liveDetailKeyText,
   modelThinkingBadge,
-  progressRunningSeed,
-  runningGlyph,
-  runningSeed,
-  snapshotNowForProgress,
   statJoin,
   themeBold,
   type Theme,
@@ -45,23 +28,12 @@ import {
   wrapDisplayLines,
 } from "./render-primitives.ts";
 
-interface LegacyResultAnimationContext {
-  state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> };
-}
-
 // Detail column = agent-name column + 2. Single results start at column 0
 // ("<glyph> <agent>"), so details sit at 4; multi rows are indented under the
 // header ("  <glyph> <label>"), so collapsed details sit at 6. Expanded multi
 // rows start at column 0, so they use the single-result column.
-const AWAITED_DETAIL_INDENT = "    ";
+const RESULT_DETAIL_INDENT = "    ";
 const MULTI_DETAIL_INDENT = "      ";
-
-export function clearLegacyResultAnimationTimer(context: LegacyResultAnimationContext): void {
-  const timer = context.state.subagentResultAnimationTimer;
-  if (!timer) return;
-  clearInterval(timer);
-  context.state.subagentResultAnimationTimer = undefined;
-}
 
 function extractOutputTarget(task: string): string | undefined {
   const writeToMatch = task.match(/\[Write to:\s*([^\]\n]+)\]/i);
@@ -99,12 +71,12 @@ function addWrappedText(container: Container, text: string, maxWidth: number): v
   for (const line of wrapDisplayLine(text, maxWidth)) container.addChild(new Text(line, 0, 0));
 }
 
-function collapsedAwaitedLineBudget(): number {
+function collapsedResultLineBudget(): number {
   const rows = process.stdout.rows || 30;
   return Math.max(5, Math.min(14, Math.floor(rows * 0.4)));
 }
 
-function collapsedAwaitedSummaryLines(
+function collapsedResultSummaryLines(
   hiddenCount: number,
   theme: Theme,
   width: number,
@@ -126,24 +98,12 @@ function collapsedAwaitedSummaryLines(
   return firstLines;
 }
 
-function fitCollapsedAwaitedLines(
-  contentLines: string[],
-  theme: Theme,
-  width: number,
-  footerLines: readonly string[] = [],
-): string[] {
-  const budget = collapsedAwaitedLineBudget();
-  if (footerLines.length > budget) {
-    const summaryLines = collapsedAwaitedSummaryLines(contentLines.length, theme, width, budget);
-    return summaryLines.slice(0, budget);
-  }
-  if (contentLines.length + footerLines.length <= budget) {
-    return [...contentLines, ...footerLines];
-  }
+function fitCollapsedResultLines(contentLines: string[], theme: Theme, width: number): string[] {
+  const budget = collapsedResultLineBudget();
+  if (contentLines.length <= budget) return contentLines;
 
-  const contentBudget = budget - footerLines.length;
   for (
-    let visibleCount = Math.min(contentLines.length, contentBudget - 1);
+    let visibleCount = Math.min(contentLines.length, budget - 1);
     visibleCount >= 0;
     visibleCount--
   ) {
@@ -152,32 +112,23 @@ function fitCollapsedAwaitedLines(
       theme.fg("dim", `… ${hiddenCount} lines hidden · ${liveDetailKeyText()} expands`),
       width,
     );
-    if (visibleCount + summaryLines.length <= contentBudget) {
-      return [...contentLines.slice(0, visibleCount), ...summaryLines, ...footerLines];
+    if (visibleCount + summaryLines.length <= budget) {
+      return [...contentLines.slice(0, visibleCount), ...summaryLines];
     }
   }
 
-  const summaryLines =
-    contentBudget > 0
-      ? collapsedAwaitedSummaryLines(contentLines.length, theme, width, contentBudget)
-      : [];
-  return [...summaryLines.slice(0, contentBudget), ...footerLines];
+  return collapsedResultSummaryLines(contentLines.length, theme, width, budget).slice(0, budget);
 }
 
-function collapsedAwaitedComponent(logicalLines: readonly string[], theme: Theme): Component {
+function collapsedResultComponent(logicalLines: readonly string[], theme: Theme): Component {
   return {
     render(width: number): string[] {
       const contentWidth = Math.max(1, width);
-      const trailingLiveDetailFooter = logicalLines.at(-1);
-      const hasLiveDetailFooter =
-        trailingLiveDetailFooter !== undefined &&
-        stripTerminalSequences(trailingLiveDetailFooter).trim() === liveDetailHintText();
-      const contentLogicalLines = hasLiveDetailFooter ? logicalLines.slice(0, -1) : logicalLines;
-      const contentLines = wrapDisplayLines(contentLogicalLines, contentWidth);
-      const footerLines = hasLiveDetailFooter
-        ? wrapDisplayLine(trailingLiveDetailFooter!, contentWidth)
-        : [];
-      return fitCollapsedAwaitedLines(contentLines, theme, contentWidth, footerLines);
+      return fitCollapsedResultLines(
+        wrapDisplayLines(logicalLines, contentWidth),
+        theme,
+        contentWidth,
+      );
     },
     invalidate(): void {},
   };
@@ -240,67 +191,11 @@ function resultStatusLine(result: Details["results"][number], output: string): s
   return "Done";
 }
 
-function resultGlyph(
-  result: Details["results"][number],
-  output: string,
-  theme: Theme,
-  running = result.progress?.status === "running",
-  seed = progressRunningSeed(result.progress ?? result.progressSummary),
-  frame?: number,
-): string {
-  if (running) {
-    if (frame !== undefined) return theme.fg("accent", runningGlyph((seed ?? 0) + frame));
-    return theme.fg("accent", runningGlyph(seed));
-  }
+function resultGlyph(result: Details["results"][number], output: string, theme: Theme): string {
   if (result.interrupted) return theme.fg("warning", "■");
   if (result.exitCode !== 0) return theme.fg("error", "✗");
   if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return theme.fg("warning", "✓");
   return theme.fg("success", "✓");
-}
-const AWAITED_ACTIVITY_PREFIX = AWAITED_DETAIL_INDENT;
-const AWAITED_ACTIVITY_CONTINUATION_PREFIX = AWAITED_DETAIL_INDENT;
-
-function compactProgressActivityLines(
-  progress: AgentProgress,
-  width: number,
-  firstPrefix: string,
-  continuationPrefix: string,
-  now?: number,
-): string[] {
-  const snapshotNow = snapshotNowForProgress(progress);
-  const toolLines = formatCurrentToolLines(
-    progress,
-    width - visibleWidth(firstPrefix),
-    width - visibleWidth(continuationPrefix),
-    false,
-    snapshotNow,
-  );
-  const liveStatus = buildLiveStatusLine(progress, snapshotNow);
-  if (toolLines) {
-    return fitCompactToolStatus(
-      toolLines,
-      liveStatus,
-      width - visibleWidth(firstPrefix),
-      width - visibleWidth(continuationPrefix),
-    );
-  }
-  const elapsedMs =
-    now !== undefined &&
-    Number.isFinite(now) &&
-    progress.startedAt !== undefined &&
-    Number.isFinite(progress.startedAt)
-      ? now - progress.startedAt
-      : progress.durationMs !== undefined && Number.isFinite(progress.durationMs)
-        ? progress.durationMs
-        : undefined;
-  const phrase = compactThinkingPhrase(
-    progress.activityState,
-    progress.turnCount,
-    snapshotNow,
-    undefined,
-    elapsedMs,
-  );
-  return [phrase, liveStatus].filter((line): line is string => Boolean(line));
 }
 type RenderResult = Details["results"][number];
 
@@ -356,7 +251,6 @@ interface MultiProgressLabel {
 function buildMultiProgressLabel(
   details: Pick<Details, "mode" | "progress" | "totalSteps">,
   entries: IndexedResultEntry[],
-  hasRunning: boolean,
 ): MultiProgressLabel {
   const itemTitle: "Step" | "Agent" = details.mode === "parallel" ? "Agent" : "Step";
   const totalCount = Math.max(1, details.totalSteps ?? entries.length);
@@ -393,9 +287,8 @@ function buildMultiProgressLabel(
       (status !== "running" && status !== "pending" && !result.interrupted && result.exitCode === 0)
     );
   }).length;
-  const currentStep = Math.min(totalCount, done + (hasRunning ? 1 : 0));
   return {
-    headerLabel: `${hasRunning ? currentStep : done}/${totalCount}`,
+    headerLabel: `${done}/${totalCount}`,
     itemTitle,
     totalCount,
   };
@@ -406,112 +299,51 @@ function resultRowLabel(label: MultiProgressLabel, stepNumber: number): string {
     ? `Agent ${stepNumber}/${label.totalCount}`
     : `Step ${stepNumber}`;
 }
-function renderSingleCompact(
-  d: Details,
-  r: Details["results"][number],
-  theme: Theme,
-  frame?: number,
-  now?: number,
-): Component {
+function renderSingleCompact(d: Details, r: Details["results"][number], theme: Theme): Component {
   const rawOutput = r.truncation?.text || getSingleResultOutput(r);
   const output = safeTerminalText(rawOutput);
-  const isRunning = r.progress?.status === "running";
   const lines: string[] = [];
-  const width = getTermWidth() - 4;
   const modelDisplay = modelThinkingBadge(theme, r.model);
   lines.push(
-    `${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${modelDisplay}`,
+    `${resultGlyph(r, output, theme)} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${modelDisplay}`,
   );
-  const childLocLine = childLocationLine(r.childLocation, theme, AWAITED_DETAIL_INDENT);
+  const childLocLine = childLocationLine(r.childLocation, theme, RESULT_DETAIL_INDENT);
   if (childLocLine) lines.push(childLocLine);
 
-  if (isRunning && r.progress) {
-    for (const [activityIndex, activity] of compactProgressActivityLines(
-      r.progress,
-      width,
-      AWAITED_ACTIVITY_PREFIX,
-      AWAITED_ACTIVITY_CONTINUATION_PREFIX,
-      now,
-    ).entries()) {
-      const prefix =
-        activityIndex === 0 ? AWAITED_ACTIVITY_PREFIX : AWAITED_ACTIVITY_CONTINUATION_PREFIX;
-      lines.push(theme.fg("dim", `${prefix}${activity}`));
-    }
-    lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
-    return collapsedAwaitedComponent(lines, theme);
-  }
-
   const preview = compactOutputPreview(rawOutput);
-  lines.push(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${resultStatusLine(r, preview)}`));
+  lines.push(theme.fg("dim", `${RESULT_DETAIL_INDENT}${resultStatusLine(r, preview)}`));
   if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
-    lines.push(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${preview}`));
+    lines.push(theme.fg("dim", `${RESULT_DETAIL_INDENT}${preview}`));
   }
   if (r.sessionFile)
     lines.push(
       theme.fg(
         "dim",
-        `${AWAITED_DETAIL_INDENT}session: ${safeTerminalText(shortenPath(r.sessionFile))}`,
+        `${RESULT_DETAIL_INDENT}session: ${safeTerminalText(shortenPath(r.sessionFile))}`,
       ),
     );
-  return collapsedAwaitedComponent(lines, theme);
+  return collapsedResultComponent(lines, theme);
 }
 
-function renderMultiCompact(
-  d: Details,
-  entries: IndexedResultEntry[],
-  theme: Theme,
-  frame?: number,
-  now?: number,
-): Component {
-  const hasRunning =
-    d.progress?.some((p) => p.status === "running") ||
-    entries.some(({ result }) => result.progress?.status === "running");
+function renderMultiCompact(d: Details, entries: IndexedResultEntry[], theme: Theme): Component {
   const failed =
     d.progress?.some((p) => p.status === "failed") ||
     entries.some(
       ({ result: r }) =>
-        r.progress?.status === "failed" ||
-        (r.exitCode !== 0 && r.progress?.status !== "running" && r.progress?.status !== "pending"),
+        r.progress?.status === "failed" || (r.exitCode !== 0 && r.progress?.status !== "pending"),
     );
-  const paused = entries.some(
-    ({ result: r }) => Boolean(r.interrupted || r.pause) && r.progress?.status !== "running",
-  );
-  let totalSummary = d.progressSummary;
-  if (!totalSummary) {
-    let sawProgress = false;
-    const summary = { toolCount: 0, tokens: 0, durationMs: 0 };
-    for (const { result: r } of entries) {
-      const prog = r.progress || r.progressSummary;
-      if (!prog) continue;
-      sawProgress = true;
-      summary.toolCount += prog.toolCount;
-      summary.tokens += prog.tokens;
-      summary.durationMs = Math.max(summary.durationMs, prog.durationMs);
-    }
-    if (sawProgress) totalSummary = summary;
-  }
-  const multiLabel = buildMultiProgressLabel(d, entries, hasRunning);
+  const paused = entries.some(({ result: r }) => Boolean(r.interrupted || r.pause));
+  const multiLabel = buildMultiProgressLabel(d, entries);
   const stats = statJoin(theme, [multiLabel.headerLabel, formatTotalCostStat(d.totalCost, false)]);
-  const glyph = hasRunning
-    ? theme.fg(
-        "accent",
-        runningGlyph(
-          frame !== undefined
-            ? (runningSeed(progressRunningSeed(totalSummary)) ?? 0) + frame
-            : runningSeed(progressRunningSeed(totalSummary)),
-        ),
-      )
-    : failed
-      ? theme.fg("error", "✗")
-      : paused
-        ? theme.fg("warning", "■")
-        : theme.fg("success", "✓");
+  const glyph = failed
+    ? theme.fg("error", "✗")
+    : paused
+      ? theme.fg("warning", "■")
+      : theme.fg("success", "✓");
   const lines: string[] = [];
-  const width = getTermWidth() - 4;
   lines.push(
     `${glyph} ${theme.fg("toolTitle", theme.bold(safeTerminalText(d.mode)))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
   );
-  let hasRunningResult = false;
   for (const { index: resultIndex, result: r } of entries) {
     const agentName = safeTerminalText(r.agent);
     const rawOutput = getSingleResultOutput(r);
@@ -520,38 +352,24 @@ function renderMultiCompact(
       d.progress?.find((p) => p.index === resultIndex) ||
       d.progress?.find((p) => p.agent === r.agent && p.status === "running");
     const liveProgress = r.progress ?? progressFromArray;
-    const summaryProgress = liveProgress ?? r.progressSummary;
-    const rRunning = liveProgress?.status === "running";
     const rPending = liveProgress?.status === "pending";
     const stepNumber = liveProgress?.index !== undefined ? liveProgress.index + 1 : resultIndex + 1;
-    const rFailed =
-      liveProgress?.status === "failed" || (r.exitCode !== 0 && !rRunning && !rPending);
-    const rPaused = Boolean(r.interrupted || r.pause) && !rRunning;
+    const rFailed = liveProgress?.status === "failed" || (r.exitCode !== 0 && !rPending);
+    const rPaused = Boolean(r.interrupted || r.pause);
     const glyph = rPending
       ? theme.fg("dim", "◦")
       : rFailed
         ? theme.fg("error", "✗")
         : rPaused
           ? theme.fg("warning", "■")
-          : resultGlyph(r, output, theme, rRunning, progressRunningSeed(summaryProgress), frame);
+          : resultGlyph(r, output, theme);
     const pendingLabel = rPending ? ` ${theme.fg("dim", "· pending")}` : "";
     const stepLabel = resultRowLabel(multiLabel, stepNumber);
     const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${pendingLabel}`;
     lines.push(`  ${line}`);
     const childLocLineMulti = childLocationLine(r.childLocation, theme, MULTI_DETAIL_INDENT);
     if (childLocLineMulti) lines.push(childLocLineMulti);
-    if (rRunning && liveProgress) {
-      hasRunningResult = true;
-      for (const activity of compactProgressActivityLines(
-        liveProgress,
-        width,
-        MULTI_DETAIL_INDENT,
-        MULTI_DETAIL_INDENT,
-        now,
-      )) {
-        lines.push(theme.fg("dim", `${MULTI_DETAIL_INDENT}${activity}`));
-      }
-    } else if (
+    if (
       !rPending &&
       (rFailed || rPaused || hasEmptyTextOutputWithoutOutputTarget(r.task, output))
     ) {
@@ -565,8 +383,7 @@ function renderMultiCompact(
   }
   if (d.artifacts)
     lines.push(theme.fg("dim", `  artifacts: ${safeTerminalText(shortenPath(d.artifacts.dir))}`));
-  if (hasRunningResult) lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
-  return collapsedAwaitedComponent(lines, theme);
+  return collapsedResultComponent(lines, theme);
 }
 
 function renderZeroResult(
@@ -601,34 +418,20 @@ function renderExpandedSingleResult(
   r: Details["results"][number],
   theme: Theme,
   mdTheme: ReturnType<typeof getMarkdownTheme>,
-  frame?: number,
 ): Component {
-  const isRunning = r.progress?.status === "running";
   const rawOutput = r.truncation?.text || getSingleResultOutput(r);
   const output = safeTerminalText(rawOutput);
-  const icon = isRunning
-    ? resultGlyph(
-        r,
-        output,
-        theme,
-        true,
-        progressRunningSeed(r.progress ?? r.progressSummary),
-        frame,
-      )
-    : r.pause?.kind === "awaiting_supervisor" || r.interrupted
+  const icon =
+    r.pause?.kind === "awaiting_supervisor" || r.interrupted
       ? theme.fg("warning", "paused")
       : r.exitCode === 0
         ? theme.fg("success", "ok")
         : theme.fg("error", "failed");
 
-  const progressInfo =
-    isRunning && r.progress
-      ? ` | ${r.progress.toolCount} tools, ${formatTokens(r.progress.tokens)} tok, ${formatDuration(r.progress.durationMs)}`
-      : r.progressSummary
-        ? ` | ${r.progressSummary.toolCount} tools, ${formatTokens(r.progressSummary.tokens)} tok, ${formatDuration(r.progressSummary.durationMs)}`
-        : "";
+  const progressInfo = r.progressSummary
+    ? ` | ${r.progressSummary.toolCount} tools, ${formatTokens(r.progressSummary.tokens)} tok, ${formatDuration(r.progressSummary.durationMs)}`
+    : "";
 
-  const w = getTermWidth() - 4;
   const toolCallLines = getToolCallLines(r);
   const c = new Container();
   c.addChild(
@@ -638,7 +441,7 @@ function renderExpandedSingleResult(
       0,
     ),
   );
-  const childLocLineSingle = childLocationLine(r.childLocation, theme, AWAITED_DETAIL_INDENT);
+  const childLocLineSingle = childLocationLine(r.childLocation, theme, RESULT_DETAIL_INDENT);
   if (childLocLineSingle) c.addChild(new Text(childLocLineSingle, 0, 0));
   c.addChild(new Spacer(1));
   c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalDocumentLeaf(r.task)}`), 0, 0));
@@ -647,67 +450,6 @@ function renderExpandedSingleResult(
   const outputTarget = extractOutputTarget(r.task);
   if (outputTarget) {
     c.addChild(new Text(theme.fg("dim", `Output: ${safeTerminalText(outputTarget)}`), 0, 0));
-  }
-
-  if (isRunning && r.progress) {
-    const progressSnapshotNow = snapshotNowForProgress(r.progress);
-    const toolLines = formatCurrentToolLines(
-      r.progress,
-      w - visibleWidth(`${AWAITED_DETAIL_INDENT}> `),
-      w - visibleWidth(`${AWAITED_DETAIL_INDENT}  `),
-      true,
-      progressSnapshotNow,
-    );
-    for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
-      const prefix =
-        toolLineIndex === 0 ? `${AWAITED_DETAIL_INDENT}> ` : `${AWAITED_DETAIL_INDENT}  `;
-      c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
-    }
-    const liveStatusLine = buildLiveStatusLine(r.progress, progressSnapshotNow);
-    if (liveStatusLine) {
-      c.addChild(new Text(theme.fg("accent", `${AWAITED_DETAIL_INDENT}${liveStatusLine}`), 0, 0));
-    }
-    c.addChild(new Text(theme.fg("dim", `${AWAITED_DETAIL_INDENT}${liveDetailHintText()}`), 0, 0));
-    if (r.artifactPaths) {
-      c.addChild(
-        new Text(
-          theme.fg(
-            "dim",
-            `Artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`,
-          ),
-          0,
-          0,
-        ),
-      );
-    }
-    if (r.progress.recentTools?.length) {
-      for (const t of r.progress.recentTools.slice(-3)) {
-        c.addChild(
-          new Text(
-            theme.fg(
-              "dim",
-              `${AWAITED_DETAIL_INDENT}  ${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`,
-            ),
-            0,
-            0,
-          ),
-        );
-      }
-    }
-    for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
-      c.addChild(
-        new Text(theme.fg("dim", `${AWAITED_DETAIL_INDENT}  ${safeTerminalText(line)}`), 0, 0),
-      );
-    }
-    if (
-      toolLines?.length ||
-      liveStatusLine ||
-      r.progress.recentTools?.length ||
-      r.progress.recentOutput?.length ||
-      r.artifactPaths
-    ) {
-      c.addChild(new Spacer(1));
-    }
   }
 
   for (const line of toolCallLines) {
@@ -762,9 +504,9 @@ function renderExpandedSingleResult(
     );
   }
 
-  if ((!isRunning && r.artifactPaths) || r.truncation?.artifactPath) {
+  if (r.artifactPaths || r.truncation?.artifactPath) {
     c.addChild(new Spacer(1));
-    if (!isRunning && r.artifactPaths) {
+    if (r.artifactPaths) {
       c.addChild(
         new Text(
           theme.fg(
@@ -796,42 +538,30 @@ function renderExpandedMultiResult(
   d: Details,
   entries: IndexedResultEntry[],
   theme: Theme,
-  frame?: number,
 ): Component {
-  const hasRunning =
-    d.progress?.some((p) => p.status === "running") ||
-    entries.some(({ result }) => result.progress?.status === "running");
   const ok = entries.filter(
-    ({ result: r }) =>
-      r.progress?.status === "completed" || (r.exitCode === 0 && r.progress?.status !== "running"),
+    ({ result: r }) => r.progress?.status === "completed" || r.exitCode === 0,
   ).length;
   const hasEmptyWithoutTarget = entries.some(
     ({ result: r }) =>
-      r.exitCode === 0 &&
-      r.progress?.status !== "running" &&
-      hasEmptyTextOutputWithoutOutputTarget(r.task, getSingleResultOutput(r)),
+      r.exitCode === 0 && hasEmptyTextOutputWithoutOutputTarget(r.task, getSingleResultOutput(r)),
   );
   const hasFailure =
     d.progress?.some((p) => p.status === "failed") ||
     entries.some(
       ({ result: r }) =>
-        r.progress?.status === "failed" ||
-        (r.exitCode !== 0 && r.progress?.status !== "running" && r.progress?.status !== "pending"),
+        r.progress?.status === "failed" || (r.exitCode !== 0 && r.progress?.status !== "pending"),
     );
-  const hasPause = entries.some(
-    ({ result: r }) => Boolean(r.interrupted || r.pause) && r.progress?.status !== "running",
-  );
-  const icon = hasRunning
-    ? theme.fg("accent", runningGlyph(frame))
-    : hasEmptyWithoutTarget
-      ? theme.fg("warning", "warning")
-      : hasFailure
-        ? theme.fg("error", "failed")
-        : hasPause
-          ? theme.fg("warning", "paused")
-          : ok === entries.length
-            ? theme.fg("success", "ok")
-            : theme.fg("error", "failed");
+  const hasPause = entries.some(({ result: r }) => Boolean(r.interrupted || r.pause));
+  const icon = hasEmptyWithoutTarget
+    ? theme.fg("warning", "warning")
+    : hasFailure
+      ? theme.fg("error", "failed")
+      : hasPause
+        ? theme.fg("warning", "paused")
+        : ok === entries.length
+          ? theme.fg("success", "ok")
+          : theme.fg("error", "failed");
 
   const totalSummary =
     d.progressSummary ||
@@ -862,9 +592,8 @@ function renderExpandedMultiResult(
   const summaryStr = summaryParts.length ? ` | ${summaryParts.join(", ")}` : "";
 
   const modeLabel = safeTerminalText(d.mode);
-  const multiLabel = buildMultiProgressLabel(d, entries, hasRunning);
+  const multiLabel = buildMultiProgressLabel(d, entries);
 
-  const w = getTermWidth() - 4;
   const c = new Container();
   c.addChild(
     new Text(
@@ -876,42 +605,35 @@ function renderExpandedMultiResult(
 
   c.addChild(new Spacer(1));
 
-  let hintShown = false;
   for (const { index: resultIndex, result: r } of entries) {
     const progressFromArray =
       d.progress?.find((p) => p.index === resultIndex) ||
       d.progress?.find((p) => p.agent === r.agent && p.status === "running");
     const liveProgress = r.progress ?? progressFromArray;
     const summaryProgress = liveProgress ?? r.progressSummary;
-    const rRunning = liveProgress?.status === "running";
     const rPending = liveProgress?.status === "pending";
     const stepNumber =
       typeof liveProgress?.index === "number" ? liveProgress.index + 1 : resultIndex + 1;
 
     const resultOutput = safeTerminalText(getSingleResultOutput(r));
-    const rFailed =
-      liveProgress?.status === "failed" || (r.exitCode !== 0 && !rRunning && !rPending);
-    const rPaused = Boolean(r.interrupted || r.pause) && !rRunning;
-    const statusIcon = rRunning
-      ? resultGlyph(r, resultOutput, theme, true, progressRunningSeed(summaryProgress), frame)
-      : rFailed
-        ? theme.fg("error", "failed")
-        : rPaused
-          ? theme.fg("warning", "paused")
-          : hasEmptyTextOutputWithoutOutputTarget(r.task, resultOutput)
-            ? theme.fg("warning", "warning")
-            : theme.fg("success", "done");
+    const rFailed = liveProgress?.status === "failed" || (r.exitCode !== 0 && !rPending);
+    const rPaused = Boolean(r.interrupted || r.pause);
+    const statusIcon = rFailed
+      ? theme.fg("error", "failed")
+      : rPaused
+        ? theme.fg("warning", "paused")
+        : hasEmptyTextOutputWithoutOutputTarget(r.task, resultOutput)
+          ? theme.fg("warning", "warning")
+          : theme.fg("success", "done");
     const stats = summaryProgress
       ? ` | ${summaryProgress.toolCount} tools, ${formatDuration(summaryProgress.durationMs)}`
       : "";
     const modelDisplay = modelThinkingBadge(theme, r.model);
     const stepLabel = resultRowLabel(multiLabel, stepNumber);
-    const stepHeader = rRunning
-      ? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", safeTerminalText(r.agent)))}${modelDisplay}${stats}`
-      : `${statusIcon} ${stepLabel}: ${theme.bold(safeTerminalText(r.agent))}${modelDisplay}${stats}`;
+    const stepHeader = `${statusIcon} ${stepLabel}: ${theme.bold(safeTerminalText(r.agent))}${modelDisplay}${stats}`;
     const toolCallLines = getToolCallLines(r);
     c.addChild(new Text(stepHeader, 0, 0));
-    const childLocLineExpanded = childLocationLine(r.childLocation, theme, AWAITED_DETAIL_INDENT);
+    const childLocLineExpanded = childLocationLine(r.childLocation, theme, RESULT_DETAIL_INDENT);
     if (childLocLineExpanded) c.addChild(new Text(childLocLineExpanded, 0, 0));
 
     c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalDocumentLeaf(r.task)}`), 0, 0));
@@ -951,69 +673,7 @@ function renderExpandedMultiResult(
       );
     }
 
-    if (rRunning && liveProgress) {
-      if (liveProgress.skills?.length) {
-        c.addChild(
-          new Text(
-            theme.fg(
-              "accent",
-              `    skills: ${liveProgress.skills.map((skill) => safeTerminalText(skill)).join(", ")}`,
-            ),
-            0,
-            0,
-          ),
-        );
-      }
-      const progressSnapshotNow = snapshotNowForProgress(liveProgress);
-      const toolLines = formatCurrentToolLines(
-        liveProgress,
-        w - visibleWidth("    > "),
-        w - visibleWidth("      "),
-        true,
-        progressSnapshotNow,
-      );
-      for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
-        const prefix = toolLineIndex === 0 ? "    > " : "      ";
-        c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
-      }
-      const liveStatusLine = buildLiveStatusLine(liveProgress, progressSnapshotNow);
-      if (liveStatusLine) {
-        c.addChild(new Text(theme.fg("accent", `    ${liveStatusLine}`), 0, 0));
-      }
-      if (!hintShown) {
-        hintShown = true;
-        c.addChild(new Text(theme.fg("dim", `    ${liveDetailHintText()}`), 0, 0));
-      }
-      if (r.artifactPaths) {
-        c.addChild(
-          new Text(
-            theme.fg(
-              "dim",
-              `    artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`,
-            ),
-            0,
-            0,
-          ),
-        );
-      }
-      if (liveProgress.recentTools.length) {
-        for (const t of liveProgress.recentTools.slice(-3)) {
-          c.addChild(
-            new Text(
-              theme.fg("dim", `      ${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`),
-              0,
-              0,
-            ),
-          );
-        }
-      }
-      const recentLines = liveProgress.recentOutput.slice(-5);
-      for (const line of recentLines) {
-        c.addChild(new Text(theme.fg("dim", `      ${safeTerminalText(line)}`), 0, 0));
-      }
-    }
-
-    if (!rRunning && r.artifactPaths) {
+    if (r.artifactPaths) {
       c.addChild(
         new Text(
           theme.fg(
@@ -1038,12 +698,10 @@ function renderExpandedMultiResult(
       );
     }
 
-    if (!rRunning) {
-      for (const line of toolCallLines) {
-        c.addChild(new Text(theme.fg("muted", `      ${line}`), 0, 0));
-      }
-      if (toolCallLines.length) c.addChild(new Spacer(1));
+    for (const line of toolCallLines) {
+      c.addChild(new Text(theme.fg("muted", `      ${line}`), 0, 0));
     }
+    if (toolCallLines.length) c.addChild(new Spacer(1));
 
     c.addChild(new Spacer(1));
   }
@@ -1068,8 +726,6 @@ export function renderSubagentResult(
   result: SubagentToolResult<Details>,
   options: { expanded: boolean },
   theme: Theme,
-  frame?: number,
-  now?: number,
 ): Component {
   const d = result.details;
   const entries = indexedRenderableResults(d?.results);
@@ -1084,10 +740,10 @@ export function renderSubagentResult(
 
   if (d.mode === "single" && entries.length === 1) {
     const r = entries[0]!.result;
-    if (!expanded) return renderSingleCompact(d, r, theme, frame, now);
-    return renderExpandedSingleResult(d, r, theme, mdTheme, frame);
+    if (!expanded) return renderSingleCompact(d, r, theme);
+    return renderExpandedSingleResult(d, r, theme, mdTheme);
   }
 
-  if (!expanded) return renderMultiCompact(d, entries, theme, frame, now);
-  return renderExpandedMultiResult(d, entries, theme, frame);
+  if (!expanded) return renderMultiCompact(d, entries, theme);
+  return renderExpandedMultiResult(d, entries, theme);
 }

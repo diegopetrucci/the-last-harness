@@ -592,6 +592,15 @@ describe("terminal persistence", () => {
     assert.equal(artifact.timedOut, true);
     assert.equal(artifact.summary, timeoutError);
     assert.equal(artifact.error, timeoutError);
+    // The durable terminal record is written alongside (before) the notification file.
+    const record = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "terminal-record.json"), "utf8"),
+    ) as { state: string; children: Array<{ index: number; status: string }> };
+    assert.equal(record.state, "failed");
+    assert.deepEqual(
+      record.children.map((child) => child.status),
+      ["failed", "failed"],
+    );
     assert.deepEqual(
       artifact.results.map((result) => result.error),
       [ordinaryError, timeoutError],
@@ -795,54 +804,10 @@ describe("runner result item carries per-child cwd (BUG-02)", () => {
 });
 
 describe("buildPausedRunnerTelemetry execution label", () => {
-  it("sets execution to 'foreground' for the first committed paused status of an awaited run", () => {
-    // Regression for P2: buildPausedRunnerTelemetry omitted the execution field, so
-    // awaited runs produced an atomic paused snapshot with execution='async'.
-    const config = {
-      id: "paused-awaited",
-      awaited: true,
-      plan: terminalPlan,
-      resultPath: "/tmp/paused-awaited.json",
-      cwd: "/tmp",
-      asyncDir: "/tmp",
-      artifactConfig: terminalArtifactConfig,
-      controlConfig: controls,
-      telemetry: {
-        schemaVersion: 1 as const,
-        run: { id: "paused-awaited", execution: "foreground" as const, mode: "single" as const },
-        steps: [],
-        provenance,
-        controls: {
-          needsAttentionAfterMs: 2_000,
-          failedToolAttemptsBeforeAttention: 3,
-          notifyOn: ["needs_attention" as const],
-          notifyChannels: ["event" as const, "async" as const],
-        },
-      },
-    };
-    const result = buildPausedRunnerTelemetry({
-      config,
-      plan: terminalPlan,
-      results: [],
-      controlConfig: controls,
-      overallStartTime: 100,
-      endedAt: 200,
-      statusSteps: [],
-    });
-    assert.ok(result, "paused telemetry must be produced when provenance is present");
-    assert.equal(
-      result.run.execution,
-      "foreground",
-      "first committed paused status of an awaited run must carry execution='foreground'",
-    );
-    assert.equal(result.outcome?.state, "paused");
-  });
-
-  it("sets execution to 'async' for the first committed paused status of a non-awaited run", () => {
-    // Complement: a detached (non-awaited) run must still produce execution='async'.
+  it("sets execution to 'async' for the first committed paused status of a run", () => {
+    // New runs only ever emit execution='async'.
     const config = {
       id: "paused-async",
-      awaited: false,
       plan: terminalPlan,
       resultPath: "/tmp/paused-async.json",
       cwd: "/tmp",

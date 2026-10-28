@@ -146,7 +146,7 @@ function widgetActivityState(
   runningStep?: AsyncJobStep,
 ): ActivityState | undefined {
   // Job summaries use the aggregate projection. Per-child rows read each step's
-  // own projection in widgetParallelAgentDetails and awaitedStyleWidgetDetails.
+  // own projection in widgetParallelAgentDetails and asyncStyleWidgetDetails.
   return (
     job.activityState ??
     job.steps?.find(
@@ -619,7 +619,7 @@ function singleWidgetStepDisplayStatus(
   return projectedStep.status;
 }
 
-function awaitedStyleWidgetStepLines(
+function asyncStyleWidgetStepLines(
   job: AsyncJobState,
   theme: Theme,
   step: NonNullable<AsyncJobState["steps"]>[number],
@@ -695,7 +695,7 @@ function awaitedStyleWidgetStepLines(
   return lines;
 }
 
-function awaitedStyleWidgetDetails(
+function asyncStyleWidgetDetails(
   job: AsyncJobState,
   theme: Theme,
   expanded: boolean,
@@ -708,7 +708,7 @@ function awaitedStyleWidgetDetails(
   const lines: string[] = [];
   for (const [index, step] of job.steps.entries()) {
     lines.push(
-      ...awaitedStyleWidgetStepLines(
+      ...asyncStyleWidgetStepLines(
         job,
         theme,
         step,
@@ -737,7 +737,7 @@ function singleWidgetAgentDetails(
 ): string[] {
   const step = job.steps?.[0];
   if (step) {
-    const stepLines = awaitedStyleWidgetStepLines(
+    const stepLines = asyncStyleWidgetStepLines(
       job,
       theme,
       step,
@@ -870,7 +870,7 @@ function buildSingleWidgetLines(
       contentWidth,
     );
   }
-  const details = awaitedStyleWidgetDetails(job, theme, expanded, contentWidth, phraseNow);
+  const details = asyncStyleWidgetDetails(job, theme, expanded, contentWidth, phraseNow);
   return wrapDisplayLines(
     [
       ...singleWidgetHeaderLines(job, theme, expanded),
@@ -1584,8 +1584,6 @@ export function renderWidget(
   controller?: SubagentLiveDetailController,
   now?: number,
 ): void {
-  // Awaited runs already show a live tool card; keep them out of the widget.
-  jobs = jobs.filter((job) => job.awaited !== true);
   if (jobs.length === 0) {
     resetWidgetLayoutSession();
     if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);

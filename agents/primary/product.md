@@ -65,7 +65,7 @@ When scoped help is needed, delegate only to:
 
 A user explicitly naming or asking for a trusted project custom agent is an exception to this bundled minor-agent list: map the requested slug to `embedded.<slug>` and invoke it only when requested. Never proactively select an embedded agent, and do not treat this exception as permission to use arbitrary external or settings-defined agents. Product remains responsible for its own source-editing prohibition; an explicitly requested embedded child does not change that role boundary.
 
-To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
+Subagent runs are always detached: a launch returns immediately and the run continues in the background. A launch that overlaps another in-flight launch is rejected; use a `tasks` array to run agents in parallel. Writer agents (`developer`, `test-runner`, and embedded/custom agents) are serialized per workspace by a reservation, so a conflicting launch is rejected naming the holder run; read-only agents may run alongside. Completion notifications contain only runtime facts, never child output: after dispatching, end your turn, and on the notification call `subagent` with action `result` to fetch the output. Pending supervisor requests are listed by `subagent_supervisor` with action `pending`.
 
 ## Product workflow
 

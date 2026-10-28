@@ -61,9 +61,9 @@ For any ticket-backed dispatch, pass the approved ticket ID through the subagent
 
 Do not create, update, or delete subagent definitions at runtime. Delegate only to targets permitted by the TLH Allowed Minor Subagents prompt section.
 
-To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
+Subagent runs are always detached: a launch returns immediately and the run continues in the background. A launch that overlaps another in-flight launch is rejected; use a `tasks` array to run agents in parallel. Writer agents (`developer`, `test-runner`, and embedded/custom agents) are serialized per workspace by a reservation, so a conflicting launch is rejected naming the holder run; read-only agents may run alongside. Completion notifications contain only runtime facts, never child output: after dispatching, end your turn, and on the notification call `subagent` with action `result` to fetch the output. Pending supervisor requests are listed by `subagent_supervisor` with action `pending`.
 
-Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
+Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
 
 ## Session startup
 
@@ -131,7 +131,7 @@ For each ready task:
    - final-validation tickets go to `test-runner`, who treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it, then executes only the exact ordered shell/MCP steps listed in the ticket.
 3. Do not send a final-validation ticket to `developer`, and do not send an implementation ticket to `test-runner`.
 4. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
-5. Evaluate the worker report against the ticket and overall plan.
+5. Dispatch the worker (detached), then end your turn. On the completion notification, call `subagent` with action `result` (and inspect status facts if needed) to retrieve the worker report, then evaluate it against the ticket and overall plan. Apply the same dispatch, end turn, fetch result, evaluate sequence to final reviews, checkpoint reviews, and validation steps.
 6. If needed, send focused corrections back to the matching worker.
 7. Close the `tk` ticket only when its intent is met.
 8. Use `code-reviewer` checkpoints for high-risk changes.
@@ -140,7 +140,7 @@ For each ready task:
 
 - Let healthy async children continue; use status or steer as needed, and do not pause or interrupt them without a real decision, blocker, or safety concern.
 - If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
-- Treat cumulative role budgets as continuous across awaited, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime. A timeout from an older run-owned deadline is compatibility metadata, not proof that the role budget is exhausted.
+- Treat cumulative role budgets as continuous across async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime. A timeout from an older run-owned deadline is compatibility metadata, not proof that the role budget is exhausted.
 - When a child is budget-exhausted, inspect partial output, artifacts, and files before making any new dispatch. Narrow or split the remaining scope when possible, and make a fresh dispatch only as an explicit decision; do not offer unchanged-task replacement or rollback as an automatic recovery.
 
 ## Final review
@@ -148,7 +148,7 @@ For each ready task:
 After all planned tickets are complete:
 
 1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets. For multi-ticket final reviews, run `tk show <id>` for each completed ticket and embed the full outputs in the self-contained brief sent to `code-reviewer` alongside the diff; do not rely on `code-reviewer` to infer ticket IDs from prose. For single-ticket checkpoint reviews, use the `ticket` parameter instead. If any 'tk' tickets were accidentally deleted, recreate them before embedding.
-2. Evaluate findings; delegate fixes to `developer` if needed.
+2. End your turn after dispatching the review; on its completion notification, fetch the report with action `result`, then evaluate findings; delegate fixes to `developer` if needed.
 3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 
 ## Cleanup

@@ -5,11 +5,8 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { makeSubagentState } from "../support/helpers.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
+import { durableArtifact } from "../support/durable-artifact.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
-import {
-  registerAwaitedRun,
-  unregisterAwaitedRun,
-} from "../../src/runs/background/awaited-run-registry.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
@@ -69,7 +66,7 @@ function createHarness(sessionId = "session-owner") {
 
 function writeResult(resultsDir: string, file: string, data: Record<string, unknown>): string {
   const resultPath = path.join(resultsDir, file);
-  fs.writeFileSync(resultPath, JSON.stringify(data), "utf8");
+  fs.writeFileSync(resultPath, JSON.stringify(durableArtifact(data)), "utf8");
   return resultPath;
 }
 
@@ -240,7 +237,8 @@ describe("result watcher to native notify", () => {
       await waitUntil(() => sent.length === 1);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
       assert.equal(sent.length, 1, "notify must project the watcher event exactly once");
-      assert.match(sent[0]!.content, /Summary:\n  failure summary/);
+      assert.doesNotMatch(sent[0]!.content, /failure summary|Summary:/);
+      assert.match(sent[0]!.content, /action: "result", id: "/);
       assert.doesNotMatch(sent[0]!.content, /raw body|private status/);
       assert.equal(fs.existsSync(resultPath), false);
     } finally {
@@ -267,7 +265,7 @@ describe("result watcher to native notify", () => {
       });
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.match(sent[0]!.content, /Summary:\n  share failed after completion/);
+      assert.doesNotMatch(sent[0]!.content, /share failed after completion/);
       assert.match(sent[0]!.content, /Session share error: share failed:/);
       assert.doesNotMatch(sent[0]!.content, /share-tail/);
       assert.equal(fs.existsSync(resultPath), false);
@@ -316,41 +314,9 @@ describe("result watcher to native notify", () => {
     }
   });
 
-  it("consumes awaited results privately without emitting detached completion notifications", async () => {
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-"));
-    const { pi, state, sent, wakes, emitted } = createHarness();
-    const runId = "awaited-run";
-    registerAwaitedRun(runId, () => true, 1);
-    const watcher = createResultWatcher(pi, state, resultsDir);
-    try {
-      const resultPath = writeResult(resultsDir, "awaited.json", {
-        id: runId,
-        runId,
-        agent: "worker",
-        success: true,
-        state: "complete",
-        generation: 1,
-        awaited: true,
-        summary: "private awaited result",
-        sessionId: "session-owner",
-      });
-      watcher.primeExistingResults();
-      await waitUntil(() => !fs.existsSync(resultPath));
-      assert.deepEqual(sent, []);
-      assert.deepEqual(wakes, []);
-      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
-    } finally {
-      watcher.stopResultWatcher();
-      unregisterAwaitedRun(runId, 1);
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("delivers persisted-awaited recovery after the live owner is gone", async () => {
+  it("delivers a historical awaited-marked artifact as an ordinary detached completion", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-recovery-"));
     const runId = "awaited-recovery";
-    registerAwaitedRun(runId, () => true, 4);
-    unregisterAwaitedRun(runId, 4);
     const { pi, state, sent, wakes, emitted } = createHarness();
     const watcher = createResultWatcher(pi, state, resultsDir);
     try {
@@ -367,7 +333,11 @@ describe("result watcher to native notify", () => {
       });
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.match(sent[0]!.content, /recovered awaited result/);
+      assert.doesNotMatch(sent[0]!.content, /recovered awaited result/);
+      assert.match(
+        (sent[0]!.details as { resultPreview: string }).resultPreview,
+        /recovered awaited result/,
+      );
       assert.equal(wakes.length, 1);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
       assert.equal(fs.existsSync(resultPath), false);
@@ -380,286 +350,7 @@ describe("result watcher to native notify", () => {
     }
   });
 
-  it("lets a watcher-first owner consume later-generation timeout, abort, and pause artifacts once", async () => {
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-generations-"));
-    const cases = [
-      {
-        id: "awaited-timeout-generation",
-        state: "failed",
-        summary: "timed out",
-        extra: { timedOut: true },
-      },
-      {
-        id: "awaited-abort-generation",
-        state: "cancelled",
-        summary: "cancelled",
-        extra: { error: "Cancelled by parent abort." },
-      },
-      {
-        id: "awaited-pause-generation",
-        state: "paused",
-        summary: "Paused awaiting supervisor.",
-        extra: { lifecycleArtifactVersion: 1 },
-      },
-    ] as const;
-    const deliveries: unknown[] = [];
-    const { pi, state, sent, wakes, emitted } = createHarness();
-    for (const testCase of cases) {
-      registerAwaitedRun(
-        testCase.id,
-        (data) => {
-          deliveries.push(data);
-          return true;
-        },
-        0,
-        undefined,
-        (data) => (data as { generation?: unknown }).generation === 1,
-      );
-    }
-    const watcher = createResultWatcher(pi, state, resultsDir);
-    try {
-      for (const testCase of cases) {
-        const asyncDir = path.join(resultsDir, `${testCase.id}-async`);
-        const sessionPath = path.join(asyncDir, "worker.jsonl");
-        if (testCase.state === "paused") {
-          fs.mkdirSync(asyncDir, { recursive: true });
-          fs.writeFileSync(sessionPath, "session\n", "utf8");
-          fs.writeFileSync(
-            path.join(asyncDir, "status.json"),
-            JSON.stringify({
-              runId: testCase.id,
-              mode: "single",
-              state: "paused",
-              startedAt: 100,
-              sessionId: "session-owner",
-              lifecycle: { generation: 1 },
-              pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-              steps: [{ agent: "worker", status: "paused", sessionFile: sessionPath }],
-            }),
-            "utf8",
-          );
-        }
-        writeResult(resultsDir, `${testCase.id}.json`, {
-          lifecycleArtifactVersion: 1,
-          id: testCase.id,
-          runId: testCase.id,
-          agent: "worker",
-          success: false,
-          state: testCase.state,
-          generation: 1,
-          awaited: true,
-          summary: testCase.summary,
-          asyncDir,
-          sessionId: "session-owner",
-          ...(testCase.state === "paused"
-            ? {
-                pause: { kind: "awaiting_supervisor" },
-                results: [
-                  {
-                    agent: "worker",
-                    success: false,
-                    interrupted: true,
-                    output: testCase.summary,
-                    sessionFile: sessionPath,
-                  },
-                ],
-              }
-            : {}),
-          ...testCase.extra,
-        });
-        watcher.primeExistingResults();
-      }
-
-      await waitUntil(() => deliveries.length === cases.length);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      watcher.primeExistingResults();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      assert.equal(deliveries.length, cases.length);
-      assert.deepEqual(
-        (deliveries as Array<{ state?: string; generation?: number }>).map((data) => ({
-          state: data.state,
-          generation: data.generation,
-        })),
-        cases.map((testCase) => ({ state: testCase.state, generation: 1 })),
-      );
-      assert.deepEqual(sent, []);
-      assert.deepEqual(wakes, []);
-      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
-      for (const testCase of cases)
-        assert.equal(fs.existsSync(path.join(resultsDir, `${testCase.id}.json`)), false);
-    } finally {
-      watcher.stopResultWatcher();
-      for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not privately consume generationless result artifacts", async () => {
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-generationless-"));
-    const runId = "awaited-generationless-artifact";
-    const deliveries: unknown[] = [];
-    const { pi, state, sent, wakes, emitted } = createHarness();
-    registerAwaitedRun(
-      runId,
-      (data) => {
-        deliveries.push(data);
-        return true;
-      },
-      0,
-      undefined,
-      () => true,
-    );
-    const watcher = createResultWatcher(pi, state, resultsDir);
-    try {
-      const resultPath = writeResult(resultsDir, "generationless.json", {
-        id: runId,
-        runId,
-        agent: "worker",
-        success: false,
-        state: "failed",
-        awaited: true,
-        summary: "generationless stale result",
-        sessionId: "session-owner",
-      });
-      watcher.primeExistingResults();
-      await waitUntil(() => sent.length === 1);
-      assert.deepEqual(deliveries, []);
-      assert.equal(wakes.length, 1);
-      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
-      assert.equal(fs.existsSync(resultPath), false);
-    } finally {
-      watcher.stopResultWatcher();
-      unregisterAwaitedRun(runId, 0);
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("arbitrates malformed child arrays after safe watcher normalization", async () => {
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-malformed-children-"));
-    const runId = "awaited-malformed-child-array";
-    const deliveries: unknown[] = [];
-    const { pi, state, sent, wakes, emitted } = createHarness();
-    registerAwaitedRun(
-      runId,
-      (data) => {
-        deliveries.push(data);
-        return true;
-      },
-      1,
-    );
-    const watcher = createResultWatcher(pi, state, resultsDir);
-    try {
-      const resultPath = writeResult(resultsDir, "malformed-children.json", {
-        id: runId,
-        runId,
-        agent: "worker",
-        success: false,
-        state: "failed",
-        generation: 1,
-        awaited: true,
-        summary: "malformed child array",
-        results: [null],
-        sessionId: "session-owner",
-      });
-      watcher.primeExistingResults();
-      await waitUntil(() => deliveries.length === 1);
-      assert.equal(sent.length, 0);
-      assert.equal(wakes.length, 0);
-      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
-      assert.equal(fs.existsSync(resultPath), false);
-      const child = (deliveries[0] as { results?: Array<Record<string, unknown>> }).results?.[0];
-      assert.equal(child?.agent, "worker");
-      assert.equal(child?.status, "failed");
-      assert.equal(child?.summary, "malformed child array");
-      assert.equal(child?.index, 0);
-    } finally {
-      watcher.stopResultWatcher();
-      unregisterAwaitedRun(runId, 1);
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not suppress stale artifacts or a replacement owner's generation", async () => {
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-replacement-"));
-    const runId = "awaited-replacement-generation";
-    const delivered: number[] = [];
-    const { pi, state, sent, wakes, emitted } = createHarness();
-    registerAwaitedRun(
-      runId,
-      (data) => {
-        const generation = (data as { generation?: unknown }).generation;
-        if (generation !== 2) return false;
-        delivered.push(2);
-        return true;
-      },
-      2,
-    );
-    const watcher = createResultWatcher(pi, state, resultsDir);
-    try {
-      writeResult(resultsDir, "stale.json", {
-        id: runId,
-        runId,
-        agent: "worker",
-        success: true,
-        state: "complete",
-        generation: 1,
-        summary: "stale generation",
-        sessionId: "session-owner",
-      });
-      watcher.primeExistingResults();
-      await waitUntil(() => sent.length === 1);
-
-      unregisterAwaitedRun(runId, 2);
-      registerAwaitedRun(
-        runId,
-        (data) => {
-          const generation = (data as { generation?: unknown }).generation;
-          if (generation !== 3) return false;
-          delivered.push(3);
-          return true;
-        },
-        3,
-      );
-      writeResult(resultsDir, "replacement-stale.json", {
-        id: runId,
-        runId,
-        agent: "worker",
-        success: true,
-        state: "complete",
-        generation: 2,
-        summary: "replacement owner's stale generation",
-        sessionId: "session-owner",
-      });
-      watcher.primeExistingResults();
-      await waitUntil(() => sent.length === 2);
-
-      writeResult(resultsDir, "replacement-current.json", {
-        id: runId,
-        runId,
-        agent: "worker",
-        success: true,
-        state: "complete",
-        generation: 3,
-        summary: "replacement generation",
-        sessionId: "session-owner",
-      });
-      watcher.primeExistingResults();
-      await waitUntil(() => delivered.length === 1);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      assert.deepEqual(delivered, [3]);
-      assert.equal(sent.length, 2);
-      assert.equal(wakes.length, 2);
-      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 2);
-    } finally {
-      watcher.stopResultWatcher();
-      unregisterAwaitedRun(runId, 3);
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("routes generation-stamped repair artifacts to a live owner and recovers after owner loss", async () => {
+  it("delivers generation-stamped repair artifacts as detached completions", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-generation-repair-"));
     const sessionId = "session-owner";
     const cases = [
@@ -713,30 +404,10 @@ describe("result watcher to native notify", () => {
       },
     ] as const;
     const { pi, state, sent, wakes, emitted } = createHarness(sessionId);
-    const ownerDeliveries: unknown[] = [];
-    for (const testCase of cases)
-      registerAwaitedRun(
-        testCase.id,
-        (data) => {
-          ownerDeliveries.push(data);
-          return true;
-        },
-        0,
-      );
     const watcher = createResultWatcher(pi, state, resultsDir);
     try {
       for (const testCase of cases) {
         writeResult(resultsDir, `${testCase.label}.json`, testCase.artifact);
-        watcher.primeExistingResults();
-      }
-      await waitUntil(() => ownerDeliveries.length === cases.length);
-      assert.equal(sent.length, 0);
-      assert.equal(wakes.length, 0);
-      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
-
-      for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
-      for (const testCase of cases) {
-        writeResult(resultsDir, `${testCase.label}-recovery.json`, testCase.artifact);
         watcher.primeExistingResults();
       }
       await waitUntil(() => sent.length === cases.length);
@@ -745,11 +416,17 @@ describe("result watcher to native notify", () => {
         cases.length,
       );
       assert.equal(wakes.length, cases.length);
-      assert.match(sent[0]!.content, /stale runner repaired/);
-      assert.match(sent[1]!.content, /Async runner plan was missing/);
+      assert.match(
+        (sent[0]!.details as { resultPreview: string }).resultPreview,
+        /stale runner repaired/,
+      );
+      assert.doesNotMatch(sent[0]!.content, /stale runner repaired/);
+      assert.match(
+        (sent[1]!.details as { resultPreview: string }).resultPreview,
+        /Async runner plan was missing/,
+      );
     } finally {
       watcher.stopResultWatcher();
-      for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
       fs.rmSync(resultsDir, { recursive: true, force: true });
     }
   });
@@ -969,7 +646,11 @@ describe("result watcher to native notify", () => {
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
       assert.equal(claimFailures, 0);
-      assert.match(sent[0]!.content, /retried delivery/);
+      assert.match(
+        (sent[0]!.details as { resultPreview: string }).resultPreview,
+        /retried delivery/,
+      );
+      assert.doesNotMatch(sent[0]!.content, /retried delivery/);
       assert.equal(fs.existsSync(fixture.resultPath), false);
     } finally {
       watcher.stopResultWatcher();

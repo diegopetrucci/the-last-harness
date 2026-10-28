@@ -92,7 +92,6 @@ import {
   makeParentGitFactsAccessor,
   type ChildLocationSnapshot,
 } from "../../shared/child-location.ts";
-import { createAwaitedRunOwner, type AwaitedRunResult } from "./awaited-run-owner.ts";
 import {
   createOwnedProcessGroupOwner,
   type OwnedProcessGroupOwner,
@@ -112,10 +111,6 @@ interface AsyncExecutionContext {
 }
 
 interface AsyncSingleParams {
-  /** Internal-only opt-in; public schemas intentionally do not expose this. */
-  awaited?: boolean;
-  signal?: AbortSignal;
-  onUpdate?: (result: AwaitedRunResult) => void;
   agent: string;
   task?: string;
   telemetryProvenance?: SubagentTelemetryProvenance;
@@ -190,10 +185,6 @@ interface AsyncParallelTaskParams {
 }
 
 interface AsyncParallelParams {
-  /** Internal-only opt-in; public schemas intentionally do not expose this. */
-  awaited?: boolean;
-  signal?: AbortSignal;
-  onUpdate?: (result: AwaitedRunResult) => void;
   tasks: AsyncParallelTaskParams[];
   telemetryProvenance?: SubagentTelemetryProvenance;
   telemetryLineage?: SubagentTelemetryLineage;
@@ -228,6 +219,14 @@ function saturatingAsyncDeadlineAt(startedAt: number, durationMs: number): numbe
 
 export function formatAsyncStartedMessage(headline: string): string {
   return headline;
+}
+
+/** Launch text for detached runs: Esc never reaches them, so say how to stop them. */
+export function formatAsyncLaunchMessage(headline: string): string {
+  return (
+    `${formatAsyncStartedMessage(headline)}\n` +
+    'Esc does not stop detached children. Stop them with subagent({ action: "interrupt" }) or the pause-all shortcut (ctrl+shift+u).'
+  );
 }
 
 /**
@@ -746,7 +745,7 @@ function initialAsyncTelemetry(input: {
 export function executeAsyncParallel<T extends AsyncParallelParams>(
   id: string,
   params: T,
-): AsyncExecutionResult | Promise<AwaitedRunResult> {
+): AsyncExecutionResult {
   const {
     tasks,
     agents,
@@ -818,7 +817,7 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
   const { plan, runnerCwd } = built;
   const telemetry = initialAsyncTelemetry({
     id,
-    execution: params.awaited ? "foreground" : "async",
+    execution: "async",
     mode: "parallel",
     plan,
     provenance: params.telemetryProvenance,
@@ -836,35 +835,11 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
   ];
   const flatAgents = plan.kind === "parallel" ? plan.tasks.map((task) => task.agent) : [];
   const firstTask = plan.kind === "parallel" ? plan.tasks[0] : undefined;
-  const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-  const awaitedOwner =
-    params.awaited === true
-      ? createAwaitedRunOwner({
-          id,
-          asyncDir,
-          resultPath,
-          mode: "parallel",
-          plan,
-          events: ctx.pi.events,
-          sessionId: ctx.currentSessionId,
-          cwd: runnerCwd,
-          expectedGeneration: 0,
-          signal: params.signal,
-          onUpdate: params.onUpdate,
-        })
-      : undefined;
-
-  if (awaitedOwner && params.signal?.aborted) {
-    void awaitedOwner.cancel();
-    return awaitedOwner.promise;
-  }
-
   let spawnResult: { pid?: number; error?: string; ownership?: OwnedProcessGroupOwner };
   try {
     spawnResult = spawnRunner(
       {
         id,
-        ...(params.awaited === true ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         plan,
         resultPath: path.join(RESULTS_DIR, `${id}.json`),
@@ -885,18 +860,15 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return awaitedOwner
-      ? awaitedOwner.fail(`Failed to start async parallel '${id}': ${message}`)
-      : formatAsyncStartError("parallel", `Failed to start async parallel '${id}': ${message}`);
+    return formatAsyncStartError("parallel", `Failed to start async parallel '${id}': ${message}`);
   }
 
   if (spawnResult.error) {
     const message = `Failed to start async parallel '${id}': ${spawnResult.error}`;
-    return awaitedOwner ? awaitedOwner.fail(message) : formatAsyncStartError("parallel", message);
+    return formatAsyncStartError("parallel", message);
   }
 
   if (spawnResult.pid) {
-    awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
     ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id,
@@ -913,13 +885,11 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
     });
   }
 
-  if (awaitedOwner) return awaitedOwner.promise;
-
   return {
     content: [
       {
         type: "text",
-        text: formatAsyncStartedMessage(`Async parallel: [${flatAgents.join("+")}] [${id}]`),
+        text: formatAsyncLaunchMessage(`Async parallel: [${flatAgents.join("+")}] [${id}]`),
       },
     ],
     details: {
@@ -1149,7 +1119,7 @@ export function buildAsyncSingleRunnerPlan(
 export function executeAsyncSingle<T extends AsyncSingleParams>(
   id: string,
   params: T,
-): AsyncExecutionResult | Promise<AwaitedRunResult> {
+): AsyncExecutionResult {
   const {
     agent,
     agentConfig,
@@ -1241,7 +1211,7 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
   const plan = buildPlan();
   const telemetry = initialAsyncTelemetry({
     id,
-    execution: params.awaited ? "foreground" : "async",
+    execution: "async",
     mode: "single",
     plan,
     provenance: params.telemetryProvenance,
@@ -1249,35 +1219,11 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     startedAt: runStartedAt,
     lineage: params.telemetryLineage,
   });
-  const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-  const awaitedOwner =
-    params.awaited === true
-      ? createAwaitedRunOwner({
-          id,
-          asyncDir,
-          resultPath,
-          mode: "single",
-          plan,
-          events: ctx.pi.events,
-          sessionId: ctx.currentSessionId,
-          cwd: runnerCwd,
-          expectedGeneration: 0,
-          signal: params.signal,
-          onUpdate: params.onUpdate,
-        })
-      : undefined;
-
-  if (awaitedOwner && params.signal?.aborted) {
-    void awaitedOwner.cancel();
-    return awaitedOwner.promise;
-  }
-
   let spawnResult: { pid?: number; error?: string; ownership?: OwnedProcessGroupOwner };
   try {
     spawnResult = spawnRunner(
       {
         id,
-        ...(params.awaited === true ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         plan,
         resultPath: path.join(RESULTS_DIR, `${id}.json`),
@@ -1302,18 +1248,15 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return awaitedOwner
-      ? awaitedOwner.fail(`Failed to start async run '${id}': ${message}`)
-      : formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
+    return formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
   }
 
   if (spawnResult.error) {
     const message = `Failed to start async run '${id}': ${spawnResult.error}`;
-    return awaitedOwner ? awaitedOwner.fail(message) : formatAsyncStartError("single", message);
+    return formatAsyncStartError("single", message);
   }
 
   if (spawnResult.pid) {
-    awaitedOwner?.markSpawned(spawnResult.pid, spawnResult.ownership);
     ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id,
@@ -1332,10 +1275,8 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     });
   }
 
-  if (awaitedOwner) return awaitedOwner.promise;
-
   return {
-    content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
+    content: [{ type: "text", text: formatAsyncLaunchMessage(`Async: ${agent} [${id}]`) }],
     details: {
       mode: "single",
       runId: id,

@@ -98,6 +98,7 @@ describe("SubagentParams schema", () => {
       "interrupt",
       "resume",
       "steer",
+      "result",
       "doctor",
     ]);
     const description = String(actionSchema.description ?? "");
@@ -126,7 +127,7 @@ describe("SubagentParams schema", () => {
     assert.match(String(idSchema.description ?? ""), /resume/i);
     assert.match(String(idSchema.description ?? ""), /durable paused-awaiting-supervisor/i);
     const asyncSchema = getPropertySchema(SubagentParams, ["async"]);
-    assert.match(String(asyncSchema?.description ?? ""), /detached background work/i);
+    assert.match(String(asyncSchema?.description ?? ""), /deprecated and ignored/i);
     const messageSchema = getPropertySchema(SubagentParams, ["message"]);
     assert.match(String(messageSchema?.description ?? ""), /omit for unchanged resume/i);
   });
@@ -433,7 +434,7 @@ describe("SubagentParams schema", () => {
     const actionEnum = getPropertySchema(schema, ["action"])?.enum;
     assert.deepEqual(
       actionEnum,
-      ["list", "get", "status", "interrupt", "resume", "steer", "doctor"],
+      ["list", "get", "status", "interrupt", "resume", "steer", "result", "doctor"],
       "action enum mismatch",
     );
     assert.equal(schema.additionalProperties, false, "root must have additionalProperties: false");

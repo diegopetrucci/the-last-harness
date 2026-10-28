@@ -12,6 +12,7 @@ import {
 } from "../shared/lifecycle-state.ts";
 import { terminalResultForStatusStep } from "../../shared/terminal-result.ts";
 import { boundChildError } from "../shared/child-protocol.ts";
+import { ensureTerminalRecord } from "./terminal-record.ts";
 import { isAsyncStatusReadError } from "./async-status-boundary.ts";
 import {
   finalizeSubagentRunTelemetry,
@@ -447,6 +448,13 @@ export function reconcileAsyncRun(
       );
       if (resultRepair) return resultRepair;
     }
+    // A finalized terminal status whose result artifact is missing still gets a
+    // bounded durable record so `result` can retrieve it.
+    if (isTerminalLifecycleState(observed.state))
+      ensureTerminalRecord(asyncDir, observed, {
+        resultsDir: options.resultsDir,
+        kill: options.kill,
+      });
     return { status: observed, repaired: false, resultPath };
   }
 

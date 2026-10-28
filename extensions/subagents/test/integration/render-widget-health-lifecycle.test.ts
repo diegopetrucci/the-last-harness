@@ -4,7 +4,6 @@ import type { AsyncJobState, AsyncJobStep } from "../support/render-widget-fixtu
 import {
   assertWrappedSource,
   buildWidgetLines,
-  clearLegacyResultAnimationTimer,
   createUiContext,
   createWidgetTestIsolation,
   createWidgetTheme,
@@ -1324,26 +1323,6 @@ describe("subagent async widget rendering", () => {
       "static queued widget should not refresh at animation cadence",
     );
     assert.equal(ui.renderRequests, 0);
-  });
-
-  it("clears legacy result row animation timers", async () => {
-    let ticks = 0;
-    const context = {
-      state: {
-        subagentResultAnimationTimer: setInterval(() => {
-          ticks += 1;
-        }, 10),
-      },
-    };
-    try {
-      clearLegacyResultAnimationTimer(context);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      assert.equal(context.state.subagentResultAnimationTimer, undefined);
-      assert.equal(ticks, 0, "legacy timer should be cleared before it can tick");
-    } finally {
-      if (context.state.subagentResultAnimationTimer)
-        clearInterval(context.state.subagentResultAnimationTimer);
-    }
   });
 
   it("does not refresh running widgets at animation cadence", async () => {

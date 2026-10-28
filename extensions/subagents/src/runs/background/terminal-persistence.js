@@ -4,13 +4,14 @@ import { lifecycleGeneration } from "../shared/lifecycle-state.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { resolveSubagentTelemetryOutcome, telemetryFromRunnerResults, } from "../../shared/telemetry.js";
 import { writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.js";
+import { tryWriteTerminalRecordFromArtifact } from "./terminal-record.js";
 export function buildPausedRunnerTelemetry(input) {
     const provenance = input.config.telemetry?.provenance;
     if (!provenance)
         return undefined;
     return telemetryFromRunnerResults({
         runId: input.config.id,
-        execution: input.config.awaited ? "foreground" : "async",
+        execution: "async",
         mode: input.plan.kind,
         results: input.results,
         provenance,
@@ -47,7 +48,7 @@ function timeoutWonRun(input) {
 function buildRunnerTelemetry(input, state, endedAt, success) {
     return telemetryFromRunnerResults({
         runId: input.config.id,
-        execution: input.config.awaited ? "foreground" : "async",
+        execution: "async",
         mode: input.plan.kind,
         results: input.results,
         provenance: input.config.telemetry?.provenance,
@@ -164,11 +165,6 @@ function resultSummary(input, state, paused) {
         return input.pausedOutputForIndex(requesterIndex, requesterAgent);
     }
     if (state === "failed") {
-        if (input.config.awaited) {
-            return input.statusOwner.supervisorPauseTransitionFailed
-                ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
-                : input.summary;
-        }
         return (input.statusPayload.error ??
             (input.statusOwner.supervisorPauseTransitionFailed
                 ? "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."
@@ -269,7 +265,6 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
         success: state === "complete",
         state,
         summary: resultSummary(input, state, paused),
-        ...(input.config.awaited ? { awaited: true } : {}),
         ...(telemetry ? { telemetry } : {}),
         ...(deadlineAt !== undefined ? { deadlineAt } : {}),
         ...(timedOut ? { timedOut: true } : {}),
@@ -301,6 +296,7 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
         ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
         ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
     };
+    tryWriteTerminalRecordFromArtifact(input.asyncDir, result);
     try {
         writeAtomicJson(input.resultPath, result);
     }
@@ -334,7 +330,7 @@ export function persistContinuationGateRejection(input) {
     }));
     const gateTelemetry = telemetryFromRunnerResults({
         runId: input.config.id,
-        execution: input.config.awaited ? "foreground" : "async",
+        execution: "async",
         mode: input.plan.kind,
         results: gateResults.length > 0
             ? gateResults
@@ -359,7 +355,7 @@ export function persistContinuationGateRejection(input) {
     writeNormalizedLifecycleStatus(input.asyncDir, statusPayload);
     const agent = firstStep?.agent ?? "subagent";
     try {
-        writeAtomicJson(input.resultPath, {
+        const gateArtifact = {
             lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
             id: input.config.id,
             generation: lifecycleGeneration(statusPayload),
@@ -387,7 +383,9 @@ export function persistContinuationGateRejection(input) {
             asyncDir: input.asyncDir,
             sessionId: input.config.sessionId,
             ...(input.config.projectAgents ? { projectAgents: input.config.projectAgents } : {}),
-        });
+        };
+        tryWriteTerminalRecordFromArtifact(input.asyncDir, gateArtifact);
+        writeAtomicJson(input.resultPath, gateArtifact);
     }
     catch (error) {
         console.error(`Failed to write gate-rejection result file ${input.resultPath}:`, error);
