@@ -20,6 +20,7 @@ import {
 import type { MockPi } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { PROCESS_GROUP_CLEANUP_MAX_WAIT_MS } from "../../src/runs/shared/process-group-cleanup.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import type { ProjectAgentIdentity } from "../../src/agents/project-agent-loader.ts";
@@ -934,7 +935,6 @@ describe("async execution supervisor", () => {
         spawnStubbornDescendants: true,
         keepAliveAfterFinalMessageMs: 30_000,
       });
-      const startedAt = Date.now();
       executeAsyncSingle!(id, {
         agent: "worker",
         task: "Ask for a supervisor decision and stop there.",
@@ -976,15 +976,22 @@ describe("async execution supervisor", () => {
           typeof (status as AsyncStatusPayload & { pid?: number }).pid === "number",
         "pausing before interrupt hard kill",
       );
+      // Spawn, mock delay and pause delivery are excluded: the bound covers only
+      // the hard-kill/cleanup window that begins once `pausing` is observed.
+      const cleanupStartedAt = Date.now();
       await waitForMockPiCall(mockPi, 0);
       const childPids = startedMockPiPids(mockPi);
       assert.equal(childPids.length, 1);
       await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM");
       const payload = await readAsyncPayload(id);
-      const elapsedMs = Date.now() - startedAt;
+      const cleanupElapsedMs = Date.now() - cleanupStartedAt;
+      const cleanupBoundMs = PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + scaleTestTimeout(5_000);
       assert.equal(payload.state, "paused");
       assert.equal(payload.pause?.kind, "awaiting_supervisor");
-      assert.ok(elapsedMs < 10_000, `expected bounded interrupt hard kill, took ${elapsedMs}ms`);
+      assert.ok(
+        cleanupElapsedMs < cleanupBoundMs,
+        `expected bounded interrupt hard kill within ${cleanupBoundMs}ms, took ${cleanupElapsedMs}ms`,
+      );
       const descendants = JSON.parse(
         fs.readFileSync(path.join(mockPi.dir, `descendants-${childPids[0]}.json`), "utf-8"),
       ) as { childPid: number; grandchildPid: number };
