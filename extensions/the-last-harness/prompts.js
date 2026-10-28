@@ -14,7 +14,7 @@ const LEGACY_OPENAI_PROVIDERS = new Set(["openai", "openai-codex"]);
 const LEGACY_ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 const PROMPT_VARIANT_MARKER = /^\s*<!-- tlh:prompt-variant:(normal|ticket-free):(start|end) -->\s*$/;
 const PROMPT_VARIANT_MARKER_PREFIX = /<!--\s*tlh:prompt-variant\b/;
-export function renderPromptVariant(source, variant = "normal") {
+export function renderPromptVariant(source, variant = "normal", options = {}) {
     if (variant !== "normal" && variant !== "ticket-free") {
         throw new Error("Unknown TLH prompt-variant selection.");
     }
@@ -61,6 +61,9 @@ export function renderPromptVariant(source, variant = "normal") {
     }
     if (active !== undefined || activeLines !== undefined) {
         throw new Error("Unclosed TLH prompt-variant section.");
+    }
+    if (options.requireSelectedSection && !seen.has(variant)) {
+        throw new Error("TLH prompt source is missing a validated ticket-free section; run a full `tlh update` and retry.");
     }
     if (seen.size === 0)
         return source;

@@ -10,7 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
-- Added the opt-in ticket-free Architect/no-developer workflow; see [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode).
+- Added the opt-in ticket-free Architect/no-developer workflow; see [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode) ([#854](https://github.com/diegopetrucci/the-last-harness/pull/854)).
 - Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume and cancel for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
 - Ordinary single and parallel subagent calls now use the TLH-tracked awaited runner by default: the parent waits for the terminal result, while `async: true` preserves detached background execution.
 - `parallel.maxTasks` now supports values from 1 through 8; larger configured values are bounded to 8 to preserve the 16 MiB status/terminal-evidence envelope.

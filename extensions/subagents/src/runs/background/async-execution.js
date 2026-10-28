@@ -24,11 +24,21 @@ import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../..
 import { createAwaitedRunOwner } from "./awaited-run-owner.js";
 import { createOwnedProcessGroupOwner, } from "../shared/process-group-cleanup.js";
 const piPackageRoot = resolvePiPackageRoot();
+class AsyncStartValidationError extends Error {
+}
 function renderCanonicalTestRunnerPrompt(agent, promptVariant) {
     const source = agent.systemPrompt?.trim() ?? "";
     if (agent.name !== "test-runner" || !isCanonicalPackagedMinorAgent(agent))
         return source;
-    return renderPromptVariant(source, promptVariant ?? "normal").trim();
+    try {
+        const variant = promptVariant ?? "normal";
+        return renderPromptVariant(source, variant, {
+            requireSelectedSection: variant === "ticket-free",
+        }).trim();
+    }
+    catch (error) {
+        throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+    }
 }
 function saturatingAsyncDeadlineAt(startedAt, durationMs) {
     return Math.min(Number.MAX_SAFE_INTEGER, startedAt + durationMs);
@@ -192,8 +202,6 @@ function resolveAsyncSingleRuntimePolicy(agent, params) {
 }
 const UNAVAILABLE_SUBAGENT_SKILL_ERROR = "Skills not found: pi-subagents";
 class UnavailableSubagentSkillError extends Error {
-}
-class AsyncStartValidationError extends Error {
 }
 export function buildAsyncRunnerPlan(id, params) {
     const { tasks, agents, ctx, cwd, sessionFilesByFlatIndex, maxSubagentDepth } = params;
@@ -701,7 +709,13 @@ export function executeAsyncSingle(id, params) {
     });
     if (toolPolicyError)
         return formatAsyncStartError("single", toolPolicyError);
-    let systemPrompt = renderCanonicalTestRunnerPrompt(agentConfig, params.promptVariant);
+    let systemPrompt;
+    try {
+        systemPrompt = renderCanonicalTestRunnerPrompt(agentConfig, params.promptVariant);
+    }
+    catch (error) {
+        return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+    }
     if (resolvedSkills.length > 0) {
         const injection = buildSkillInjection(resolvedSkills);
         systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;

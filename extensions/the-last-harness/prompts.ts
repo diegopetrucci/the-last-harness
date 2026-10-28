@@ -37,8 +37,14 @@ const PROMPT_VARIANT_MARKER_PREFIX = /<!--\s*tlh:prompt-variant\b/;
  * Render the narrow conditional sections used by the packaged Architect and
  * test-runner prompts. Markers are deliberately line-oriented so malformed or
  * nested sections fail closed instead of leaking control text into a child.
+ * The strict option is used only by callers that cannot safely use the normal
+ * legacy fallback when a selected section is absent.
  */
-export function renderPromptVariant(source: string, variant: TlhPromptVariant = "normal"): string {
+export function renderPromptVariant(
+  source: string,
+  variant: TlhPromptVariant = "normal",
+  options: { requireSelectedSection?: boolean } = {},
+): string {
   if (variant !== "normal" && variant !== "ticket-free") {
     throw new Error("Unknown TLH prompt-variant selection.");
   }
@@ -92,6 +98,11 @@ export function renderPromptVariant(source: string, variant: TlhPromptVariant = 
 
   if (active !== undefined || activeLines !== undefined) {
     throw new Error("Unclosed TLH prompt-variant section.");
+  }
+  if (options.requireSelectedSection && !seen.has(variant)) {
+    throw new Error(
+      "TLH prompt source is missing a validated ticket-free section; run a full `tlh update` and retry.",
+    );
   }
   if (seen.size === 0) return source;
   if (!seen.has("normal")) {

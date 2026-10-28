@@ -105,13 +105,23 @@ import {
 
 const piPackageRoot = resolvePiPackageRoot();
 
+class AsyncStartValidationError extends Error {}
+
 function renderCanonicalTestRunnerPrompt(
   agent: AgentConfig,
   promptVariant: TlhPromptVariant | undefined,
 ): string {
   const source = agent.systemPrompt?.trim() ?? "";
   if (agent.name !== "test-runner" || !isCanonicalPackagedMinorAgent(agent)) return source;
-  return renderPromptVariant(source, promptVariant ?? "normal").trim();
+
+  try {
+    const variant = promptVariant ?? "normal";
+    return renderPromptVariant(source, variant, {
+      requireSelectedSection: variant === "ticket-free",
+    }).trim();
+  } catch (error) {
+    throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+  }
 }
 
 interface AsyncExecutionContext {
@@ -461,7 +471,6 @@ function resolveAsyncSingleRuntimePolicy(
 const UNAVAILABLE_SUBAGENT_SKILL_ERROR = "Skills not found: pi-subagents";
 
 class UnavailableSubagentSkillError extends Error {}
-class AsyncStartValidationError extends Error {}
 
 interface AsyncRunnerPlanBuildResult {
   plan: Extract<SubagentRunPlan, { kind: "parallel" }>;
@@ -1200,7 +1209,12 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     requireReadTool: agentConfig.inheritSkills || resolvedSkills.length > 0,
   });
   if (toolPolicyError) return formatAsyncStartError("single", toolPolicyError);
-  let systemPrompt = renderCanonicalTestRunnerPrompt(agentConfig, params.promptVariant);
+  let systemPrompt: string;
+  try {
+    systemPrompt = renderCanonicalTestRunnerPrompt(agentConfig, params.promptVariant);
+  } catch (error) {
+    return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+  }
   if (resolvedSkills.length > 0) {
     const injection = buildSkillInjection(resolvedSkills);
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
