@@ -7,6 +7,10 @@ import { defaultExtensionPackageIdentities, packageIdentity, packageSourceOf, re
 import { criticalGitSourceSpec, parseGitSource, packageSourceInstallDir, } from "./tlh-install-package-source.mjs";
 export const MCP_ADAPTER_CUTOVER_EXTENSION_ID = "mcporter";
 export const MCP_ADAPTER_NATIVE_MAJOR = 5;
+// Last pre-v5 adapter release. It moved host packages (@earendil-works/*,
+// typebox) from dependencies to optional peers, so held profiles on older
+// TLH-managed pins are advanced here without crossing the v5 cutover.
+export const MCP_ADAPTER_LEGACY_PIN_FLOOR = "2.36.0";
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -681,4 +685,41 @@ export function cloneMcpAdapterEntries(settings, extension) {
 }
 export function sameMcpAdapterEntries(settings, extension, expected) {
     return JSON.stringify(cloneMcpAdapterEntries(settings, extension)) === JSON.stringify(expected);
+}
+/**
+ * For a held pre-v5 decision with exactly one plain-string exact npm pin of the
+ * manifest identity below the legacy floor, return the replacement source.
+ * Ownership (managed provenance / --force) is the caller's decision.
+ */
+export function mcpAdapterLegacyFloorSource(extension, decision, settings) {
+    if (!isMcpAdapterExtension(extension))
+        return undefined;
+    if (decision?.action !== "hold" || decision.reason !== "selected-pre-v5")
+        return undefined;
+    if (decision.selected.length !== 1)
+        return undefined;
+    const selection = decision.selected[0];
+    const manifestIdentity = packageIdentity(extension.source);
+    if (!selection || !manifestIdentity || selection.identity !== manifestIdentity)
+        return undefined;
+    if (!manifestIdentity.startsWith("npm:") || selection.versionSource !== "declared") {
+        return undefined;
+    }
+    const version = selection.version;
+    const floor = parseReleaseVersion(MCP_ADAPTER_LEGACY_PIN_FLOOR);
+    if (!version || !floor || compareVersions(version, floor) >= 0)
+        return undefined;
+    const packages = selectedPackages(settings);
+    const entry = packages?.[selection.index];
+    // Plain strings only: object entries carry user filters we must not rewrite.
+    if (typeof entry !== "string" || entry !== selection.source)
+        return undefined;
+    if (exactSourceVersion(entry) === undefined)
+        return undefined;
+    return {
+        index: selection.index,
+        from: entry,
+        to: `${manifestIdentity}@${MCP_ADAPTER_LEGACY_PIN_FLOOR}`,
+        identity: manifestIdentity,
+    };
 }

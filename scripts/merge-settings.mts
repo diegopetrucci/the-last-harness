@@ -25,6 +25,7 @@ import {
   cloneMcpAdapterEntries,
   evaluateMcpAdapterCutover,
   mcpAdapterCutoverNotice,
+  mcpAdapterLegacyFloorSource,
   mcpAdapterManagedIdentityPreservation,
   mcpAdapterMigrationFrozen,
   mcpAdapterPackageIdentities,
@@ -1193,6 +1194,23 @@ function writeSettings(
   });
 }
 
+/**
+ * Advance a held, TLH-owned exact pre-v5 adapter pin to the legacy floor. The
+ * decision is always the one computed from the original settings.
+ */
+function applyMcpAdapterLegacyFloor(
+  settings: JsonObject,
+  extension: DefaultExtensionEntry | undefined,
+  decision: McpAdapterCutoverDecision,
+  { force, managedPackageIdentities }: { force: boolean; managedPackageIdentities: Set<string> },
+): string | undefined {
+  const floor = mcpAdapterLegacyFloorSource(extension, decision, settings);
+  if (!floor || !Array.isArray(settings.packages)) return undefined;
+  if (!force && !managedPackageIdentities.has(floor.identity)) return undefined;
+  settings.packages[floor.index] = floor.to;
+  return `update ${floor.identity} pin: ${floor.from} -> ${floor.to} (last pre-v5 adapter; v5 cutover still held)`;
+}
+
 function log(args: CliArgs, message: string): void {
   if (!args.quiet) console.log(message);
 }
@@ -1232,9 +1250,17 @@ function main(): void {
   });
   const mcpNotice = mcpAdapterCutoverNotice(mcpCutover);
   if (mcpNotice) console.error(mcpNotice);
+  const floorOptions = {
+    force: args.force,
+    managedPackageIdentities: readDefaultExtensionProvenance(existing).managedPackageIdentities,
+  };
+  // Snapshot after the floor rewrite so the invariant below still guards every
+  // other change to a held adapter entry.
+  const flooredExisting = clone(existing);
+  applyMcpAdapterLegacyFloor(flooredExisting, mcporterEntry, mcpCutover, floorOptions);
   const heldMcpState =
     mcpCutover.freeze && mcporterEntry
-      ? { packageEntries: cloneMcpAdapterEntries(existing, mcporterEntry) }
+      ? { packageEntries: cloneMcpAdapterEntries(flooredExisting, mcporterEntry) }
       : undefined;
   const profileDir = dirname(settingsPath);
   const homeDir = process.env.HOME || homedir();
@@ -1254,6 +1280,8 @@ function main(): void {
     },
   );
   const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
+  const floorChange = applyMcpAdapterLegacyFloor(next, mcporterEntry, mcpCutover, floorOptions);
+  if (floorChange) changes.push(floorChange);
   applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
   // Omitted sources are inferred from the existing TLH registration above, but
   // only an explicit override authorizes switching between canonical and local

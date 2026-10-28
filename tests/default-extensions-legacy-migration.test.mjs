@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { packageIdentity } from "../scripts/lib/default-extensions.mjs";
+import { MCP_ADAPTER_LEGACY_PIN_FLOOR } from "../scripts/lib/mcp-adapter-cutover.mjs";
 
 import {
   bundledExtension,
@@ -748,7 +749,10 @@ test("mcporter migration holds prior TLH-managed and manual installs until v5 is
   ]);
 
   const managedPinnedSettings = readJson(managedPinnedFixture.settings);
-  assert.deepEqual(managedPinnedSettings.packages, [previousBundledMcporterSource, harnessPackage]);
+  // A TLH-managed exact pre-floor pin advances to the last pre-v5 adapter, never to v5.
+  const flooredMcporterSource = `npm:@diegopetrucci/pi-mcp-adapter@${MCP_ADAPTER_LEGACY_PIN_FLOOR}`;
+  assert.deepEqual(managedPinnedSettings.packages, [flooredMcporterSource, harnessPackage]);
+  assert.equal(managedPinnedSettings.packages.includes(bundledSource("mcporter")), false);
   assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
     "npm:@diegopetrucci/pi-mcp-adapter",
   ]);
