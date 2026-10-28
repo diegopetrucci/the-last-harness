@@ -20,6 +20,7 @@ import {
   waitForMockPiCall,
   waitForPidsToExit,
 } from "../support/async-execution-helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import { PROCESS_GROUP_CLEANUP_MAX_WAIT_MS } from "../../src/runs/shared/process-group-cleanup.ts";
 
@@ -157,7 +158,7 @@ describe("detached interrupt hard-kill", () => {
   }
 
   async function waitForLeaderExit(leaderPid: number): Promise<void> {
-    const deadline = Date.now() + 15_000;
+    const deadline = Date.now() + scaleTestTimeout(15_000);
     while (isAlive(leaderPid)) {
       if (Date.now() > deadline) throw new Error("leader did not exit normally");
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -174,60 +175,69 @@ describe("detached interrupt hard-kill", () => {
     }
   }
 
-  it("SIGKILLs stubborn descendants when aborted after the leader exited normally (#828)", async () => {
-    const id = `awaited-abort-after-exit-${Date.now().toString(36)}`;
-    const bus = createEventBus();
-    const controller = new AbortController();
-    mockPi.onCall({ output: "leader exits normally", spawnStubbornDescendants: true });
+  function readDescendants(leaderPid: number): number[] {
+    const { childPid, grandchildPid } = JSON.parse(
+      fs.readFileSync(path.join(mockPi.dir, `descendants-${leaderPid}.json`), "utf-8"),
+    ) as { childPid: number; grandchildPid: number };
+    return [childPid, grandchildPid];
+  }
 
-    const pending = executeAsyncSingle(
-      id,
-      singleParams(bus, tempDir, id, { signal: controller.signal }),
-    );
+  it("SIGKILLs stubborn descendants when interrupted after the leader exited normally (#828)", async () => {
+    const id = `detached-interrupt-after-exit-${Date.now().toString(36)}`;
+    mockPi.onCall({ output: "leader exits normally", spawnStubbornDescendants: true });
+    launch(tempDir, id);
     let pids: number[] = [];
     try {
       await waitForMockPiCall(mockPi, 0);
       const leaderPid = startedMockPiPids(mockPi)[0]!;
-      const { childPid, grandchildPid } = JSON.parse(
-        fs.readFileSync(path.join(mockPi.dir, `descendants-${leaderPid}.json`), "utf-8"),
-      ) as { childPid: number; grandchildPid: number };
-      pids = [childPid, grandchildPid];
+      pids = readDescendants(leaderPid);
       await waitForLeaderExit(leaderPid);
       assert.ok(pids.every(isAlive), "descendants must outlive the leader");
-      const abortedAt = Date.now();
-      controller.abort();
-      const result = await pending;
-      await waitForPidsToExit(pids, "stubborn descendants after normal leader exit");
+      const interruptedAt = Date.now();
+      requestAsyncInterrupt(path.join(ASYNC_DIR, id), { source: "detached-hard-kill-test" });
+      const resultPath = await waitForAsyncResultFile(id);
+      await waitForPidsToExit(
+        pids,
+        "stubborn descendants after normal leader exit",
+        scaleTestTimeout(PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000),
+      );
       assert.ok(
-        Date.now() - abortedAt < PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000,
+        Date.now() - interruptedAt < scaleTestTimeout(PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000),
         "descendants must be SIGKILLed within the cleanup bound",
       );
-      assert.equal(result.details.results[0]?.terminationReason, "cancelled");
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+        state?: string;
+        results: Array<{
+          terminationReason?: string;
+          processCleanup?: { terminated?: boolean; escalatedToSigkill?: boolean };
+        }>;
+      };
+      assert.equal(payload.state, "paused");
+      assert.equal(payload.results[0]?.terminationReason, "paused");
+      assert.equal(payload.results[0]?.processCleanup?.terminated, true);
+      assert.equal(payload.results[0]?.processCleanup?.escalatedToSigkill, true);
     } finally {
       killQuietly(pids);
-      await Promise.resolve(pending).catch(() => undefined);
     }
   });
 
-  it("cleans up stubborn descendants after a normal leader exit without abort", async () => {
-    const id = `awaited-no-abort-descendant-${Date.now().toString(36)}`;
-    const bus = createEventBus();
+  it("cleans up stubborn descendants after a normal leader exit without interrupt", async () => {
+    const id = `detached-no-interrupt-descendant-${Date.now().toString(36)}`;
     mockPi.onCall({ output: "leader exits normally", spawnStubbornDescendants: true });
-
-    const pending = executeAsyncSingle(id, singleParams(bus, tempDir, id));
+    launch(tempDir, id);
     let pids: number[] = [];
     try {
       await waitForMockPiCall(mockPi, 0);
       const leaderPid = startedMockPiPids(mockPi)[0]!;
-      const { childPid, grandchildPid } = JSON.parse(
-        fs.readFileSync(path.join(mockPi.dir, `descendants-${leaderPid}.json`), "utf-8"),
-      ) as { childPid: number; grandchildPid: number };
-      pids = [childPid, grandchildPid];
-      await pending;
-      await waitForPidsToExit(pids, "stubborn descendants without abort");
+      pids = readDescendants(leaderPid);
+      await waitForAsyncResultFile(id);
+      await waitForPidsToExit(
+        pids,
+        "stubborn descendants without interrupt",
+        scaleTestTimeout(PROCESS_GROUP_CLEANUP_MAX_WAIT_MS + 5_000),
+      );
     } finally {
       killQuietly(pids);
-      await Promise.resolve(pending).catch(() => undefined);
     }
   });
 });
