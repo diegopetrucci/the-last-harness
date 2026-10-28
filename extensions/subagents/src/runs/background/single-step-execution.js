@@ -549,6 +549,7 @@ function buildSingleStepResult(input) {
     const finalResult = state.finalResult;
     return {
         agent: step.agent,
+        ...(step.promptVariant ? { promptVariant: step.promptVariant } : {}),
         ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
         ...(step.ticketId ? { ticketId: step.ticketId } : {}),
         output: output.outputForSummary,

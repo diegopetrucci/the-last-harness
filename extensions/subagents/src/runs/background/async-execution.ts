@@ -64,6 +64,7 @@ import {
   type ResolvedControlConfig,
   type SubagentModelIdentity,
   type SubagentModelResolution,
+  type SubagentPromptVariant,
   type SubagentRunMode,
   type SubagentTerminalResult,
   ASYNC_DIR,
@@ -88,6 +89,10 @@ import {
 import { normalizeTicketId, readTicketBody, ticketLookupKey } from "../shared/ticket-context.ts";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 import {
+  renderPromptVariant,
+  type TlhPromptVariant,
+} from "../../../../the-last-harness/prompts.ts";
+import {
   captureChildLocationSnapshot,
   makeParentGitFactsAccessor,
   type ChildLocationSnapshot,
@@ -99,6 +104,15 @@ import {
 } from "../shared/process-group-cleanup.ts";
 
 const piPackageRoot = resolvePiPackageRoot();
+
+function renderCanonicalTestRunnerPrompt(
+  agent: AgentConfig,
+  promptVariant: TlhPromptVariant | undefined,
+): string {
+  const source = agent.systemPrompt?.trim() ?? "";
+  if (agent.name !== "test-runner" || !isCanonicalPackagedMinorAgent(agent)) return source;
+  return renderPromptVariant(source, promptVariant ?? "normal").trim();
+}
 
 interface AsyncExecutionContext {
   pi: ExtensionAPI;
@@ -136,6 +150,8 @@ interface AsyncSingleParams {
   ticketBody?: string;
   /** Persisted ticket identity for a continuation; intentionally does not re-read the body. */
   ticketId?: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
   /** Exact approved project-agent config/provenance for this child. */
   projectAgent?: ProjectAgentIdentity;
   maxOutput?: MaxOutputConfig;
@@ -187,6 +203,8 @@ interface AsyncParallelTaskParams {
   modelFallbackNotice?: string;
   /** Explicit ticket assignment; normalized by the model-facing boundary. */
   ticket?: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
 }
 
 interface AsyncParallelParams {
@@ -550,7 +568,7 @@ export function buildAsyncRunnerPlan(
     });
     if (toolPolicyError) throw new AsyncStartValidationError(toolPolicyError);
 
-    let systemPrompt = agent.systemPrompt?.trim() ?? "";
+    let systemPrompt = renderCanonicalTestRunnerPrompt(agent, taskSpec.promptVariant);
     if (resolvedSkills.length > 0) {
       const injection = buildSkillInjection(resolvedSkills);
       systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
@@ -621,6 +639,7 @@ export function buildAsyncRunnerPlan(
     return {
       parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
       ...(projectAgent ? { projectAgent } : {}),
+      ...(taskSpec.promptVariant ? { promptVariant: taskSpec.promptVariant } : {}),
       ...(ticket?.ticketId ? { ticketId: ticket.ticketId } : {}),
       ...(ticket?.body !== undefined ? { ticketBody: ticket.body } : {}),
       agent: taskSpec.agent,
@@ -1079,6 +1098,7 @@ export function buildAsyncSingleRunnerPlan(
       task: {
         parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
         ...(projectAgent ? { projectAgent } : {}),
+        ...(params.promptVariant ? { promptVariant: params.promptVariant } : {}),
         agent,
         projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
         ...(ticketId ? { ticketId } : {}),
@@ -1180,7 +1200,7 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     requireReadTool: agentConfig.inheritSkills || resolvedSkills.length > 0,
   });
   if (toolPolicyError) return formatAsyncStartError("single", toolPolicyError);
-  let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
+  let systemPrompt = renderCanonicalTestRunnerPrompt(agentConfig, params.promptVariant);
   if (resolvedSkills.length > 0) {
     const injection = buildSkillInjection(resolvedSkills);
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;

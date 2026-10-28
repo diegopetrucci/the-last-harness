@@ -2,7 +2,7 @@
 import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { DISABLED_PRIMARY_AGENT, isEnabledPrimaryAgentSelection, } from "../the-last-harness-primary-agent.mjs";
 import { rushResumeDelegationReason, rushSteerDelegationReason, } from "./primary-agent-runtime-delegation.js";
-import { setTlhProjectAgentAccessProvider } from "./project-agent-access.mjs";
+import { isTlhNoDeveloperSessionActive, retireTlhNoDeveloperPolicyRuntime, setTlhProjectAgentAccessProvider, } from "./project-agent-access.mjs";
 import { inventoryProjectAgentGuidance, } from "../shared/project-agent-guidance.js";
 let runtimeEpoch = 0;
 let activeRuntimeEpoch = 0;
@@ -11,6 +11,7 @@ function createTrustStore(agentDir) {
 }
 export function retireTlhPrimaryAgentResourceRuntime() {
     activeRuntimeEpoch = ++runtimeEpoch;
+    retireTlhNoDeveloperPolicyRuntime();
     setTlhProjectAgentAccessProvider(undefined);
 }
 export function createTlhPrimaryAgentResourceLifecycle(options) {
@@ -26,6 +27,7 @@ export function createTlhPrimaryAgentResourceLifecycle(options) {
             canManage,
             canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
             controlRestrictedToEmbedded: selection === "rush",
+            noDeveloper: isTlhNoDeveloperSessionActive(),
             resumeRestrictionReason: rushResumeDelegationReason(),
             steerRestrictionReason: rushSteerDelegationReason(),
             agentDir: getAgentDir(),

@@ -134,6 +134,32 @@ describe("agent management config parsing", () => {
     assert.doesNotMatch(text, /embedded\.helper|HELPER\.md/);
   });
 
+  it("hides bundled developer from management discovery under the captured host policy", () => {
+    writeCanonicalRole("developer");
+    writeCanonicalRole("code-reviewer");
+
+    const listed = handleManagementAction(
+      "list",
+      { agentScope: "user" },
+      { cwd: tempDir, noDeveloperActive: true },
+    );
+    assert.equal(listed.isError, false);
+    const listText = readText(listed);
+    assert.doesNotMatch(listText, /- developer \(user\)/);
+    assert.match(listText, /- code-reviewer \(user\)/);
+
+    const got = handleManagementAction(
+      "get",
+      { agent: "developer" },
+      { cwd: tempDir, noDeveloperActive: true },
+    );
+    assert.equal(got.isError, true);
+    const getText = readText(got);
+    assert.match(getText, /unavailable.*no-developer policy/i);
+    assert.doesNotMatch(getText, /Available:.*developer/i);
+    assert.match(getText, /code-reviewer/);
+  });
+
   it("does not expose project-custom definitions through management get", () => {
     trustProject();
     writeCustom("OMITTED.md", "omitted");

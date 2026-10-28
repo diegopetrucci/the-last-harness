@@ -5,6 +5,7 @@ import {
   CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION,
   setStructuredChildPromptRuntime,
 } from "./shared/subagent-child-boundary.js";
+import { isTlhNoDeveloperSessionActive } from "./the-last-harness/project-agent-access.mjs";
 
 /**
  * @typedef {object} TlhStartupModeOptions
@@ -43,6 +44,9 @@ export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 export const PROVIDER_AWARE_FALLBACK_MODELS = Symbol.for("tlh.providerAwareFallbackModels");
 
 const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
+const NO_DEVELOPER_ALLOWED_SUBAGENTS = Object.freeze(
+  ALLOWED_SUBAGENTS.filter((agent) => agent !== "developer"),
+);
 const ALLOWED_SUBAGENTS_BY_ID = new Map(
   ALLOWED_SUBAGENTS.map((agent) => [agent.toLowerCase(), agent]),
 );
@@ -105,8 +109,10 @@ export function readEnabledExperimentalFeatures(config) {
   return normalizeEnabledExperimentalFeatures(config.enabledFeatures);
 }
 
-export function allowedSubagentsForExperimentalConfig(_config) {
-  return DEFAULT_ALLOWED_SUBAGENTS;
+export function allowedSubagentsForExperimentalConfig(noDeveloperActive) {
+  const active =
+    typeof noDeveloperActive === "boolean" ? noDeveloperActive : isTlhNoDeveloperSessionActive();
+  return active ? NO_DEVELOPER_ALLOWED_SUBAGENTS : DEFAULT_ALLOWED_SUBAGENTS;
 }
 
 function normalizeAllowedSubagent(agent) {
@@ -223,7 +229,9 @@ function validateSteerAction(input) {
 }
 
 export function validateSubagentToolInput(input, options = {}) {
-  const allowedSubagents = normalizeAllowedSubagents(options.allowedSubagents);
+  const allowedSubagents = normalizeAllowedSubagents(
+    options.allowedSubagents ?? allowedSubagentsForExperimentalConfig(options.noDeveloperActive),
+  );
   const allowedSubagentSet = new Set(allowedSubagents);
 
   if (!isRecord(input)) {

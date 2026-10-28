@@ -120,6 +120,8 @@ function applyProgressLifecycle(result, status, flags, step, planned) {
         result.pause = step.pause;
     if (step?.cancel)
         result.cancel = step.cancel;
+    if (step?.promptVariant ?? planned?.promptVariant)
+        result.promptVariant = step?.promptVariant ?? planned?.promptVariant;
     if (step?.projectAgent ?? planned?.projectAgent)
         result.projectAgent = step?.projectAgent ?? planned?.projectAgent;
     if (step?.childLocation ?? planned?.childLocation)

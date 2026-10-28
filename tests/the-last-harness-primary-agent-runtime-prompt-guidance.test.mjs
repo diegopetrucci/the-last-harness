@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -33,9 +33,14 @@ const RETIRED_EXPERIMENTAL_FEATURES = [
   RETIRED_CI_FAILURE_INVESTIGATION_FEATURE,
 ];
 const jiti = createJiti(import.meta.url);
-const { formatProjectAgentGuidance } = await jiti.import(
-  "../extensions/the-last-harness/prompts.ts",
-);
+const {
+  buildTlhSystemPrompt,
+  formatProjectAgentGuidance,
+  loadPrimaryAgents,
+  loadSubagentMetadata,
+  parseFrontmatter,
+  renderPromptVariant,
+} = await jiti.import("../extensions/the-last-harness/prompts.ts");
 const { buildPrimaryExperimentalPrompt, buildChildExperimentalPrompt } = await jiti.import(
   "../extensions/the-last-harness/experimental.ts",
 );
@@ -96,6 +101,117 @@ function guidancePrimaryAgents() {
     ]),
   );
 }
+
+test("prompt variants preserve normal parity and isolate ticket-free protocols", () => {
+  const primary = loadPrimaryAgents().get("architect");
+  assert.ok(primary, "packaged architect prompt must load");
+  const subagents = loadSubagentMetadata();
+  const normal = buildTlhSystemPrompt(primary, subagents, true, undefined, false);
+  const ticketFree = buildTlhSystemPrompt(primary, subagents, true, undefined, true);
+  const architectTicketFree = renderPromptVariant(primary.systemPrompt, "ticket-free");
+
+  assert.match(
+    normal,
+    /Do not directly edit source files\. Implementation belongs to `developer`\./,
+  );
+  assert.match(normal, /For any ticket-backed dispatch, pass the approved ticket ID/);
+  assert.doesNotMatch(normal, /edit source files directly in bounded steps/);
+  assert.match(ticketFree, /edit source files directly in bounded steps/);
+  assert.doesNotMatch(
+    ticketFree,
+    /Do not directly edit source files\. Implementation belongs to `developer`\./,
+  );
+  assert.doesNotMatch(ticketFree, /tk show/);
+  assert.doesNotMatch(ticketFree, /tlh:prompt-variant/);
+  assert.match(
+    architectTicketFree,
+    /Before the first edit, if still on `main`\/`master`, create a new branch for the work\. If on a fresh worktree, do not create branches\./,
+  );
+  assert.match(architectTicketFree, /Keep one writer per cwd/);
+  assert.match(architectTicketFree, /When opening PRs, if a PR template is present/);
+  assert.match(
+    architectTicketFree,
+    /After opening a PR, monitor CI\/status checks: check immediately/,
+  );
+  assert.match(
+    architectTicketFree,
+    /Child agents with a supervisor bridge may use `contact_supervisor`/,
+  );
+  assert.doesNotMatch(architectTicketFree, /Use `contact_supervisor` only when/);
+  assert.match(architectTicketFree, /trusted project custom agent.*embedded\.<slug>/s);
+  assert.match(architectTicketFree, /read-only boundaries of bundled minor roles/);
+
+  const runnerSource = parseFrontmatter(
+    readFileSync(new URL("../agents/subagents/test-runner.md", import.meta.url), "utf8"),
+  ).body;
+  const runnerNormal = renderPromptVariant(runnerSource, "normal");
+  const runnerTicketFree = renderPromptVariant(runnerSource, "ticket-free");
+  assert.match(runnerNormal, /injected `## Ticket <id>` body/);
+  assert.match(runnerTicketFree, /self-contained inline brief/);
+  assert.doesNotMatch(runnerTicketFree, /injected `## Ticket <id>` body|Report the ticket ID/);
+  assert.doesNotMatch(runnerTicketFree, /tlh:prompt-variant/);
+
+  assert.throws(
+    () =>
+      renderPromptVariant(
+        "<!-- tlh:prompt-variant:normal:start -->\n<!-- tlh:prompt-variant:ticket-free:start -->",
+      ),
+    /Nested TLH prompt-variant section/,
+  );
+  assert.throws(
+    () => renderPromptVariant("<!-- tlh:prompt-variant:normal:end -->"),
+    /Unmatched TLH prompt-variant section end marker/,
+  );
+  assert.throws(
+    () => renderPromptVariant("<!-- tlh:prompt-variant:future:start -->"),
+    /Malformed TLH prompt-variant marker/,
+  );
+});
+
+test("captured no-developer sessions render the ticket-free Architect prompt", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-prompt-variant-", {
+    cwd: true,
+    test: t,
+  });
+  writeFileSync(
+    join(fixture.agent, "settings.json"),
+    `${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["no-developer"] } } }, null, 2)}\n`,
+  );
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const branchEntries = [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "architect" },
+      },
+    ];
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+    const { applySessionStart, beforeAgentStart, pi } = registerRuntimeHarness({
+      primaryAgents: loadPrimaryAgents(),
+      subagentMetadata: loadSubagentMetadata(),
+    });
+    await applySessionStart(ctx, "startup");
+
+    const ticketFree = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(ticketFree.systemPrompt, /edit source files directly in bounded steps/);
+    assert.doesNotMatch(
+      ticketFree.systemPrompt,
+      /Do not directly edit source files\. Implementation belongs to `developer`\./,
+    );
+    assert.doesNotMatch(ticketFree.systemPrompt, /tlh:prompt-variant/);
+
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`,
+    );
+    const unchanged = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(unchanged.systemPrompt, /edit source files directly in bounded steps/);
+
+    const shutdown = pi.events.find((event) => event.name === "session_shutdown")?.handler;
+    if (shutdown) await shutdown({}, ctx);
+  });
+});
 
 test("packaged primaries receive only their matching trusted project guidance", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
@@ -1187,7 +1303,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
     assert.deepEqual([...pi.shortcuts.keys()], []);
     assert.deepEqual(
       pi.events.map((event) => event.name),
-      ["session_start", "before_agent_start", "tool_call"],
+      ["session_start", "session_shutdown", "before_agent_start", "tool_call"],
     );
 
     const beforeAgentStart = pi.events.find(

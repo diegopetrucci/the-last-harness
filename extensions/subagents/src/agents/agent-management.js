@@ -26,6 +26,16 @@ function sanitizeName(name) {
 function allAgents(d) {
     return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
+function isBundledDeveloperName(name) {
+    return name === "developer";
+}
+function isHiddenByNoDeveloper(entry, noDeveloperActive) {
+    if (!noDeveloperActive)
+        return false;
+    if (entry.name === "developer")
+        return true;
+    return isCanonicalPackagedMinorAgent({ name: "developer", filePath: entry.filePath });
+}
 function isVisibleInScope(entry, scope) {
     if (scope === "both" ||
         entry.source === "builtin" ||
@@ -44,15 +54,21 @@ function isVisibleInScope(entry, scope) {
         return false;
     return isCanonicalPackagedMinorAgent({ name: role, filePath: entry.filePath });
 }
-function availableNames(cwd) {
-    return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) => a.localeCompare(b));
+function availableNames(cwd, noDeveloperActive) {
+    return [
+        ...new Set(allAgents(discoverAgentsAll(cwd))
+            .filter((agent) => !isHiddenByNoDeveloper(agent, noDeveloperActive))
+            .map((agent) => agent.name)),
+    ].sort((a, b) => a.localeCompare(b));
 }
-function findAgents(name, cwd, scope = "both") {
+function findAgents(name, cwd, scope = "both", noDeveloperActive = false) {
     const d = discoverAgentsAll(cwd);
     const raw = name.trim();
     const sanitized = sanitizeName(raw);
     return allAgents(d)
-        .filter((a) => (scope === "both" || a.source === scope) && (a.name === raw || a.name === sanitized))
+        .filter((a) => !isHiddenByNoDeveloper(a, noDeveloperActive) &&
+        (scope === "both" || a.source === scope) &&
+        (a.name === raw || a.name === sanitized))
         .sort((a, b) => a.source.localeCompare(b.source));
 }
 function formatAgentDetail(agent) {
@@ -106,14 +122,15 @@ export function handleList(params, ctx) {
     const scopedAgents = allAgents(d)
         .filter((a) => isVisibleInScope(a, scope))
         .sort((a, b) => a.name.localeCompare(b.name));
-    const agents = scopedAgents.filter((a) => !a.disabled);
+    const agents = scopedAgents.filter((a) => !a.disabled && !isHiddenByNoDeveloper(a, ctx.noDeveloperActive === true));
     const lines = [
         "Executable agents:",
         ...(agents.length
             ? agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`)
             : ["- (none)"]),
     ];
-    const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => isVisibleInScope(diagnostic, scope));
+    const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => isVisibleInScope(diagnostic, scope) &&
+        !isHiddenByNoDeveloper(diagnostic, ctx.noDeveloperActive === true));
     if (visibleDiagnostics.length > 0) {
         lines.push("", "Agent load warnings:", ...visibleDiagnostics.map((diagnostic) => `- ${diagnostic.filePath}: ${diagnostic.error}`));
     }
@@ -124,9 +141,13 @@ function handleGet(params, ctx) {
         return unsupportedSavedChainResult("Use 'agent' for action='get'; omit chainName.");
     if (!params.agent)
         return result("Specify 'agent' for get.", true);
-    const matches = findAgents(params.agent, ctx.cwd, "both");
+    const noDeveloperActive = ctx.noDeveloperActive === true;
+    if (noDeveloperActive && isBundledDeveloperName(sanitizeName(params.agent))) {
+        return result(`The bundled developer agent is unavailable while the host no-developer policy is active. Available: ${availableNames(ctx.cwd, true).join(", ") || "none"}.`, true);
+    }
+    const matches = findAgents(params.agent, ctx.cwd, "both", noDeveloperActive);
     if (!matches.length) {
-        return result(`Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`, true);
+        return result(`Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd, noDeveloperActive).join(", ") || "none"}.`, true);
     }
     return result(matches.map(formatAgentDetail).join("\n\n"));
 }

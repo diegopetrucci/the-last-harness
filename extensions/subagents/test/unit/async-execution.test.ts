@@ -65,6 +65,100 @@ describe("async runner execution", () => {
     assert.equal(JSON.stringify(step).includes("capability"), false);
   });
 
+  it("carries the internal ticket-free prompt variant through parallel plans", () => {
+    const result = buildAsyncRunnerPlan("run-prompt-variant", {
+      tasks: [{ agent: "worker", task: "validate the carrier", promptVariant: "ticket-free" }],
+      agents: [agent("worker")],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+      ctx,
+      maxSubagentDepth: 2,
+    });
+    assert.ok("plan" in result, "expected successful plan build");
+    if ("error" in result) return;
+    const step = result.plan.tasks[0];
+    assert.equal(step?.promptVariant, "ticket-free");
+    assert.equal(
+      (JSON.parse(JSON.stringify(result.plan)) as typeof result.plan).tasks[0]?.promptVariant,
+      "ticket-free",
+    );
+  });
+
+  it("renders canonical test-runner prompt variants before runner task guidance", () => {
+    const previousProfile = process.env.PI_CODING_AGENT_DIR;
+    const profile = path.join(os.tmpdir(), `tlh-prompt-profile-${process.pid}-${Date.now()}`);
+    process.env.PI_CODING_AGENT_DIR = profile;
+    try {
+      const selected = agent("test-runner");
+      selected.filePath = path.join(profile, "tlh", "agents", "subagents", "test-runner.md");
+      selected.systemPrompt = [
+        "Common test-runner guidance.",
+        "<!-- tlh:prompt-variant:normal:start -->",
+        "Normal ticket protocol.",
+        "<!-- tlh:prompt-variant:normal:end -->",
+        "<!-- tlh:prompt-variant:ticket-free:start -->",
+        "Ticket-free inline protocol.",
+        "<!-- tlh:prompt-variant:ticket-free:end -->",
+      ].join("\n");
+
+      const free = buildAsyncRunnerPlan("run-rendered-ticket-free", {
+        tasks: [{ agent: selected.name, task: "validate", promptVariant: "ticket-free" }],
+        agents: [selected],
+        artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+        ctx,
+        maxSubagentDepth: 2,
+      });
+      assert.ok("plan" in free, "expected ticket-free plan build");
+      if ("error" in free) return;
+      const freePrompt = free.plan.tasks[0]?.systemPrompt ?? "";
+      assert.match(freePrompt, /Common test-runner guidance/);
+      assert.match(freePrompt, /Ticket-free inline protocol/);
+      assert.doesNotMatch(freePrompt, /Normal ticket protocol|tlh:prompt-variant/);
+
+      const normal = buildAsyncRunnerPlan("run-rendered-normal", {
+        tasks: [{ agent: selected.name, task: "validate" }],
+        agents: [selected],
+        artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+        ctx,
+        maxSubagentDepth: 2,
+      });
+      assert.ok("plan" in normal, "expected normal plan build");
+      if ("error" in normal) return;
+      const normalPrompt = normal.plan.tasks[0]?.systemPrompt ?? "";
+      assert.match(normalPrompt, /Normal ticket protocol/);
+      assert.doesNotMatch(normalPrompt, /Ticket-free inline protocol|tlh:prompt-variant/);
+    } finally {
+      if (previousProfile === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousProfile;
+    }
+  });
+
+  it("carries the internal ticket-free prompt variant through single plans", () => {
+    const result = buildAsyncSingleRunnerPlan(
+      {
+        agent: "worker",
+        agentConfig: agent("worker"),
+        ctx,
+        maxSubagentDepth: 2,
+        artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+        shareEnabled: false,
+        sessionRoot: os.tmpdir(),
+        sessionFile: path.join(os.tmpdir(), "session.jsonl"),
+        promptVariant: "ticket-free",
+      } as any,
+      {
+        task: "validate the carrier",
+        taskWithOutputInstruction: "validate the carrier",
+        runnerCwd: process.cwd(),
+        systemPrompt: "You are a test agent.",
+        resolvedSkillNames: [],
+        outputMode: "inline",
+      },
+    );
+    assert.ok(!("error" in result), "plan build must succeed");
+    if ("error" in result) return;
+    assert.equal(result.buildPlan().task.promptVariant, "ticket-free");
+  });
+
   it("carries omitted, explicit-empty, and named tool policies through runner serialization", () => {
     const policies: Array<AgentConfig["tools"]> = [undefined, null, ["read"]];
     const agents = policies.map((tools, index) => ({

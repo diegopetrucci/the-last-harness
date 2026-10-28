@@ -8,10 +8,10 @@ import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason,
 import { formatHomePath, isRecord } from "./common.js";
 import { clearPrimaryAgentModelOverrideByName, isTlhPrimaryAgentSelection, getTlhDurableThinkingLevel, getTlhGlobalSettings, getTlhPrimaryAgentConfig, getTlhSubagentOverrides, resolvePrimaryAutoApplySetting, writeTlhPrimaryAgentDefault, writeTlhPrimaryAgentModelOverride, } from "./primary-agent-runtime-settings.js";
 import { applyOpenRouterModelToProjectTargets, applyProviderAwareModelsToNonProjectTargets, collectSubagentCallTargetsMatching, primaryToolAllowlist, rushDeveloperDelegationReason, rushResumeDelegationReason, rushSteerDelegationReason, subagentCallTargetsAgent, } from "./primary-agent-runtime-delegation.js";
-import { noteSubagentToolExecutionEnd, noteSubagentToolExecutionStart, getTlhProjectAgentAccess, markEmbeddedOnlyToolCall, } from "./project-agent-access.mjs";
+import { createTlhNoDeveloperPolicyRuntime, isTlhNoDeveloperSessionActive, noteSubagentToolExecutionEnd, noteSubagentToolExecutionStart, getTlhProjectAgentAccess, markEmbeddedOnlyToolCall, } from "./project-agent-access.mjs";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, dispatchPreflightBackoffMs, extractDispatchProviders, isHighConfidenceAuthSignatureInAttemptError, processSubagentRunDetails, } from "./primary-agent-runtime-auth.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
-import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
+import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt, isTlhExperimentalFeatureEnabled, NO_DEVELOPER_FEATURE, } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { followsOpenrouterSession, formatProviderModelReference, listAgentModelDefaultReferences, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
@@ -33,9 +33,14 @@ function primaryAgentLabel(selection) {
 function primaryAgentOverrideLabel(selection) {
     return selection ?? "none";
 }
-function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
+function registerChildSubagentRuntime(pi, buildChildPrompt, env, noDeveloperPolicyRuntime) {
     pi.on("session_start", async (_event, ctx) => {
+        const settings = getTlhGlobalSettings(ctx.cwd);
+        noDeveloperPolicyRuntime.capture(isTlhExperimentalFeatureEnabled(settings.tlh?.experimental, NO_DEVELOPER_FEATURE));
         activateTlhTicketSessionScope(ctx.cwd);
+    });
+    pi.on("session_shutdown", () => {
+        noDeveloperPolicyRuntime.clear();
     });
     pi.on("before_agent_start", async (event, ctx) => {
         blockForcedSystemPrompt(event.systemPromptOptions);
@@ -65,7 +70,7 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
     });
 }
 function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runtimeOptions = {}) {
-    const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
+    const { getProviderAuthHealthStore, now: nowFn = Date.now, noDeveloperPolicyRuntime = createTlhNoDeveloperPolicyRuntime(), } = runtimeOptions;
     const argv = runtimeOptions.argv ?? process.argv;
     const parsedLaunchArgs = parseArgs(argv.slice(2));
     const warned = new Set();
@@ -199,7 +204,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
         const prompts = [
             baseSystemPrompt,
-            buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, projectAgentLifecycle.projectAgentGuidanceSnapshot()),
+            buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, projectAgentLifecycle.projectAgentGuidanceSnapshot(), isTlhNoDeveloperSessionActive()),
             buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
             buildTlhCommitAttributionPrompt(commitAttributionState),
         ];
@@ -692,6 +697,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         });
     }
     async function applySessionStart(ctx, reason) {
+        const settings = getTlhGlobalSettings(ctx.cwd);
+        noDeveloperPolicyRuntime.capture(isTlhExperimentalFeatureEnabled(settings.tlh?.experimental, NO_DEVELOPER_FEATURE));
         const sessionStartOperation = projectAgentLifecycle.beginSessionStart();
         beginModelSelectionSession(ctx);
         updateSessionOnlyModel(undefined);
@@ -792,6 +799,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         });
         pi.on("session_shutdown", async (_event, _ctx) => {
             await projectAgentLifecycle.shutdown(() => {
+                noDeveloperPolicyRuntime.clear();
                 endModelSelectionSession();
                 lastObservedModel = undefined;
                 updateSessionOnlyModel(undefined);
@@ -944,13 +952,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
 export { clearPrimaryAgentModelOverrideByName, extractDispatchProviders, isHighConfidenceAuthSignatureInAttemptError, processSubagentRunDetails, };
 export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     retireTlhPrimaryAgentResourceRuntime();
+    const noDeveloperPolicyRuntime = createTlhNoDeveloperPolicyRuntime();
     const env = options.env ?? process.env;
     const childPromptBuilder = () => buildChildSubagentSystemPrompt();
     if (registerTlhStartupMode(pi, {
         env,
         buildChildSubagentSystemPrompt: childPromptBuilder,
         registerChild: () => {
-            registerChildSubagentRuntime(pi, childPromptBuilder, env);
+            registerChildSubagentRuntime(pi, childPromptBuilder, env, noDeveloperPolicyRuntime);
         },
     }) === "child") {
         return undefined;
@@ -959,6 +968,7 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
         getProviderAuthHealthStore: options.getProviderAuthHealthStore,
         now: options.now,
         argv: options.argv,
+        noDeveloperPolicyRuntime,
     });
     runtime.registerCommands();
     runtime.registerLifecycleHooks();

@@ -351,6 +351,7 @@ function resultItems(
 ): AsyncResultArtifact["results"] {
   return results.map((result) => ({
     agent: result.agent,
+    ...(result.promptVariant ? { promptVariant: result.promptVariant } : {}),
     ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
     ticketId: result.ticketId,
     output: result.output,
@@ -562,6 +563,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
       results: [
         {
           agent,
+          ...(firstStep?.promptVariant ? { promptVariant: firstStep.promptVariant } : {}),
           ...(firstStep?.projectAgent ? { projectAgent: firstStep.projectAgent } : {}),
           ticketId: firstStep?.ticketId,
           output: statusPayload.error,

@@ -143,6 +143,7 @@ function resultStep(
     output: "",
     success: complete,
     ...(complete ? {} : { error: message }),
+    ...(step.promptVariant ? { promptVariant: step.promptVariant } : {}),
     ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
     ...(step.ticketId ? { ticketId: step.ticketId } : {}),
     ...(step.exitCode !== undefined ? { exitCode: step.exitCode } : {}),

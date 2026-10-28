@@ -18,6 +18,7 @@ const LEGACY_UNKNOWN_FEATURE = "legacy-flag";
 const SERIAL_TEST = { concurrency: false };
 const jiti = createJiti(import.meta.url);
 const {
+  NO_DEVELOPER_FEATURE,
   SESSION_MIRROR_OBSERVER_FEATURE,
   buildPrimaryExperimentalPrompt,
   getTlhExperimentalConfig,
@@ -90,11 +91,11 @@ test(
       const command = registeredExperimentalCommand();
       assert.deepEqual(
         (await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-        [`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`],
+        [`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, `enable ${NO_DEVELOPER_FEATURE}`],
       );
       assert.deepEqual(
         (await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-        ["status", `status ${SESSION_MIRROR_OBSERVER_FEATURE}`],
+        ["status", `status ${SESSION_MIRROR_OBSERVER_FEATURE}`, `status ${NO_DEVELOPER_FEATURE}`],
       );
       assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -160,6 +161,48 @@ test(
         /currently enabled session retains activation until a new session/i,
       );
       assert.match(notifications.at(-1)?.message ?? "", /not immediate revocation/i);
+    });
+  },
+);
+
+test(
+  "no-developer preference is default-off and reports next-session reload semantics",
+  SERIAL_TEST,
+  async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+    const settingsPath = join(fixture.agent, "settings.json");
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const command = registeredExperimentalCommand();
+      const initial = createCommandContext(fixture.dir);
+      await command.handler(`status ${NO_DEVELOPER_FEATURE}`, initial.ctx);
+      assert.match(initial.notifications.at(-1)?.message ?? "", /no-developer/);
+      assert.match(initial.notifications.at(-1)?.message ?? "", /disabled \(default\)/i);
+      assert.match(
+        initial.notifications.at(-1)?.message ?? "",
+        /next session start \(including \/reload\)/i,
+      );
+      assert.equal(existsSync(settingsPath), false);
+
+      const { ctx, notifications } = createCommandContext(fixture.dir);
+      await command.handler(`enable ${NO_DEVELOPER_FEATURE}`, ctx);
+      assert.match(notifications.at(-1)?.message ?? "", /It is now enabled/);
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /next session start \(including \/reload\)/i,
+      );
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /captured execution policy remains unchanged/i,
+      );
+      assert.deepEqual(
+        JSON.parse(readFileSync(settingsPath, "utf8")).tlh.experimental.enabledFeatures,
+        [NO_DEVELOPER_FEATURE],
+      );
+
+      await command.handler(`disable ${NO_DEVELOPER_FEATURE}`, ctx);
+      assert.match(notifications.at(-1)?.message ?? "", /It is now disabled/);
+      assert.match(notifications.at(-1)?.message ?? "", /captured no-developer policy until then/i);
     });
   },
 );

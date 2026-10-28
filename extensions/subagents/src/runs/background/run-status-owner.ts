@@ -56,7 +56,13 @@ type SingleStepResultValue = Awaited<ReturnType<typeof runSingleStep>>;
 
 type StatusTask = Pick<
   RunnerSubagentStep,
-  "agent" | "model" | "modelIdentity" | "modelResolution" | "projectAgent" | "ticketId"
+  | "agent"
+  | "model"
+  | "modelIdentity"
+  | "modelResolution"
+  | "projectAgent"
+  | "promptVariant"
+  | "ticketId"
 >;
 
 interface BackgroundStatusOwnerInput {
@@ -316,6 +322,7 @@ export function createBackgroundRunStatusOwner(
     });
     return {
       agent: task.agent,
+      ...(task.promptVariant ? { promptVariant: task.promptVariant } : {}),
       ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
       ...(ticketId ? { ticketId } : {}),
       status: "pending",
@@ -998,6 +1005,7 @@ export function createBackgroundRunStatusOwner(
     const ticketId = validatedTicketId(task);
     return {
       agent: task.agent,
+      ...(task.promptVariant ? { promptVariant: task.promptVariant } : {}),
       ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
       ...(ticketId ? { ticketId } : {}),
       output: paused

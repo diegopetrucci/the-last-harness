@@ -4,11 +4,50 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * Process-local bridge for host-owned project-agent authorization.
  *
  * The executor resolves the fixed project-agent file itself. This bridge only
- * supplies the current primary-agent role and persisted trust-store factory;
- * no prompt snapshot or run-control state crosses this boundary.
+ * supplies the current primary-agent role, captured no-developer state, and
+ * persisted trust-store factory; no prompt snapshot or run-control state crosses
+ * this boundary.
  */
 
 let activeProjectAgentAccessProvider;
+let activeNoDeveloperPolicyOwner;
+let activeNoDeveloperSession = false;
+
+/**
+ * Create the process-local owner for the session-scoped no-developer policy.
+ *
+ * The owner token prevents a stale runtime's shutdown handler from clearing the
+ * policy captured by a replacement runtime during /reload.
+ *
+ * @returns {{ capture: (enabled: unknown) => void, clear: () => void }}
+ */
+export function createTlhNoDeveloperPolicyRuntime() {
+  const owner = Symbol("tlh.no-developer-policy");
+  activeNoDeveloperPolicyOwner = owner;
+  activeNoDeveloperSession = false;
+  let retired = false;
+  return Object.freeze({
+    capture(enabled) {
+      if (retired || activeNoDeveloperPolicyOwner !== owner) return;
+      activeNoDeveloperSession = enabled === true;
+    },
+    clear() {
+      retired = true;
+      if (activeNoDeveloperPolicyOwner !== owner) return;
+      activeNoDeveloperPolicyOwner = undefined;
+      activeNoDeveloperSession = false;
+    },
+  });
+}
+
+export function retireTlhNoDeveloperPolicyRuntime() {
+  activeNoDeveloperPolicyOwner = undefined;
+  activeNoDeveloperSession = false;
+}
+
+export function isTlhNoDeveloperSessionActive() {
+  return activeNoDeveloperPolicyOwner !== undefined && activeNoDeveloperSession;
+}
 
 /** @param {((request: unknown) => unknown) | undefined} provider */
 export function setTlhProjectAgentAccessProvider(provider) {
@@ -17,8 +56,16 @@ export function setTlhProjectAgentAccessProvider(provider) {
 
 /** @param {unknown} request @returns {unknown} */
 export function getTlhProjectAgentAccess(request) {
+  const noDeveloper = isTlhNoDeveloperSessionActive();
   const provider = activeProjectAgentAccessProvider;
-  if (!provider) return undefined;
+  if (!provider) {
+    // A captured host restriction remains authoritative even if its provider
+    // disappears. Preserve the normal legacy/absent result when no restriction
+    // is active.
+    return noDeveloper
+      ? { architect: false, canManage: false, canInitiate: false, noDeveloper: true }
+      : undefined;
+  }
   try {
     return provider(request);
   } catch {
@@ -30,6 +77,7 @@ export function getTlhProjectAgentAccess(request) {
       canManage: false,
       canInitiate: false,
       controlRestrictedToEmbedded: true,
+      noDeveloper,
     };
   }
 }

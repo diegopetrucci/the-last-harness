@@ -207,7 +207,7 @@ export function registerRuntimeHarness(options = {}) {
   const beforeAgentStart = createBeforeAgentStartHarness(pi);
   const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
   assert.equal(typeof toolCall, "function");
-  const applySessionStart = (ctx) => runtime?.applySessionStart(ctx);
+  const applySessionStart = (ctx, reason) => runtime?.applySessionStart(ctx, reason);
   return { pi, runtime, beforeAgentStart, toolCall, applySessionStart };
 }
 

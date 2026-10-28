@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveAsyncRunLocation, type AsyncRunLocation } from "../background/async-resume.ts";
+import {
+  persistedChildAgentConflict,
+  resolveAsyncRunLocation,
+  type AsyncRunLocation,
+} from "../background/async-resume.ts";
 import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveSubagentRunId } from "../background/run-id-resolver.ts";
@@ -473,6 +477,12 @@ export async function authorizeProjectSteerTarget(input: {
       agent: step.agent,
       cwd: step.cwd ?? status?.cwd,
       projectAgent: step.projectAgent,
+      noDeveloperConflict:
+        persistedChildAgentConflict({
+          status,
+          resultPath: location.resultPath,
+          index: input.params.index !== undefined ? input.params.index : steps.indexOf(step),
+        }) || undefined,
     })),
     ctx: input.ctx,
     deps: input.deps,

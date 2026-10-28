@@ -1,7 +1,7 @@
 // Generated from extensions/subagents/src/runs/shared/run-control.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveAsyncRunLocation } from "../background/async-resume.js";
+import { persistedChildAgentConflict, resolveAsyncRunLocation, } from "../background/async-resume.js";
 import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
@@ -399,6 +399,11 @@ export async function authorizeProjectSteerTarget(input) {
             agent: step.agent,
             cwd: step.cwd ?? status?.cwd,
             projectAgent: step.projectAgent,
+            noDeveloperConflict: persistedChildAgentConflict({
+                status,
+                resultPath: location.resultPath,
+                index: input.params.index !== undefined ? input.params.index : steps.indexOf(step),
+            }) || undefined,
         })),
         ctx: input.ctx,
         deps: input.deps,

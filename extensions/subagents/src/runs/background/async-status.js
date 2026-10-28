@@ -86,6 +86,7 @@ function statusToSummary(asyncDir, status) {
         return {
             index,
             agent: step.agent,
+            ...(step.promptVariant ? { promptVariant: step.promptVariant } : {}),
             ...(step.ticketId ? { ticketId: step.ticketId } : {}),
             status: step.status,
             ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),

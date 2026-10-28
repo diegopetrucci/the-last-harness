@@ -27,6 +27,79 @@ const SAFE_MODEL_ID = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
 const LEGACY_OPENAI_PROVIDERS = new Set(["openai", "openai-codex"]);
 const LEGACY_ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 
+export type TlhPromptVariant = "normal" | "ticket-free";
+
+const PROMPT_VARIANT_MARKER =
+  /^\s*<!-- tlh:prompt-variant:(normal|ticket-free):(start|end) -->\s*$/;
+const PROMPT_VARIANT_MARKER_PREFIX = /<!--\s*tlh:prompt-variant\b/;
+
+/**
+ * Render the narrow conditional sections used by the packaged Architect and
+ * test-runner prompts. Markers are deliberately line-oriented so malformed or
+ * nested sections fail closed instead of leaking control text into a child.
+ */
+export function renderPromptVariant(source: string, variant: TlhPromptVariant = "normal"): string {
+  if (variant !== "normal" && variant !== "ticket-free") {
+    throw new Error("Unknown TLH prompt-variant selection.");
+  }
+  const lines = source.split("\n");
+  const hasTicketFreeSection = lines.some(
+    (line) => line.match(PROMPT_VARIANT_MARKER)?.[1] === "ticket-free",
+  );
+  const seen = new Set<TlhPromptVariant>();
+  const rendered: string[] = [];
+  let active: TlhPromptVariant | undefined;
+  let activeLines: string[] | undefined;
+
+  for (const line of lines) {
+    const marker = line.match(PROMPT_VARIANT_MARKER);
+    if (!marker) {
+      if (PROMPT_VARIANT_MARKER_PREFIX.test(line)) {
+        throw new Error("Malformed TLH prompt-variant marker.");
+      }
+      if (activeLines) {
+        activeLines.push(line);
+      } else {
+        rendered.push(line);
+      }
+      continue;
+    }
+
+    const markerVariant = marker[1] as TlhPromptVariant;
+    const markerKind = marker[2];
+    if (markerKind === "start") {
+      if (active !== undefined) {
+        throw new Error("Nested TLH prompt-variant section.");
+      }
+      active = markerVariant;
+      activeLines = [];
+      seen.add(markerVariant);
+      continue;
+    }
+
+    if (active === undefined || activeLines === undefined || active !== markerVariant) {
+      throw new Error("Unmatched TLH prompt-variant section end marker.");
+    }
+    if (
+      active === variant ||
+      (variant === "ticket-free" && !hasTicketFreeSection && active === "normal")
+    ) {
+      rendered.push(...activeLines);
+    }
+    active = undefined;
+    activeLines = undefined;
+  }
+
+  if (active !== undefined || activeLines !== undefined) {
+    throw new Error("Unclosed TLH prompt-variant section.");
+  }
+  if (seen.size === 0) return source;
+  if (!seen.has("normal")) {
+    throw new Error("TLH prompt-variant source must define a normal section.");
+  }
+  return rendered.join("\n");
+}
+
 type ParsedFrontmatter = {
   frontmatter: Record<string, string>;
   tlhModelDefaults?: TlhModelDefault[];
@@ -512,9 +585,9 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 function formatAllowedSubagents(
   primary: AgentPrompt | undefined,
   subagents: SubagentMetadata[],
-  options: { neutral?: boolean } = {},
+  options: { neutral?: boolean; noDeveloperActive?: boolean } = {},
 ): string {
-  const allowed = new Set(allowedSubagentsForExperimentalConfig());
+  const allowed = new Set(allowedSubagentsForExperimentalConfig(options.noDeveloperActive));
   const lines = subagents
     .filter((agent) => allowed.has(agent.name))
     .map((agent) => `- ${agent.name}: ${agent.description}`);
@@ -535,18 +608,23 @@ export function buildTlhSystemPrompt(
   subagents: SubagentMetadata[],
   primaryEnabled: boolean,
   projectAgentGuidanceInventory?: ProjectAgentGuidanceInventory,
+  noDeveloperActive?: boolean,
 ): string {
   const prompts = [HARNESS_PROMPT.trim()];
   if (primaryEnabled) {
     if (primary) {
-      prompts.push(primary.systemPrompt.trim());
+      const promptVariant: TlhPromptVariant =
+        primary.name === "architect" && noDeveloperActive ? "ticket-free" : "normal";
+      prompts.push(renderPromptVariant(primary.systemPrompt, promptVariant).trim());
       prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
     }
-    prompts.push(formatAllowedSubagents(primary, subagents));
+    prompts.push(formatAllowedSubagents(primary, subagents, { noDeveloperActive }));
   } else {
     // Disabled mode retains TLH's infrastructure guidance without injecting a
     // primary-agent persona or its model/thinking/experimental defaults.
-    prompts.push(formatAllowedSubagents(undefined, subagents, { neutral: true }));
+    prompts.push(
+      formatAllowedSubagents(undefined, subagents, { neutral: true, noDeveloperActive }),
+    );
   }
   return prompts.filter(Boolean).join("\n\n");
 }

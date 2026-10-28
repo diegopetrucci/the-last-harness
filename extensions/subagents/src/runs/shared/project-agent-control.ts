@@ -43,6 +43,10 @@ function restrictedDenyAccess(value: Record<string, unknown>): ProjectAgentAcces
     canManage: false,
     canInitiate: false,
     controlRestrictedToEmbedded: true,
+    ...(typeof value.noDeveloper === "boolean" ? { noDeveloper: value.noDeveloper } : {}),
+    ...(value.noDeveloper !== undefined && typeof value.noDeveloper !== "boolean"
+      ? { noDeveloperPolicyInvalid: true }
+      : {}),
     ...(typeof value.resumeRestrictionReason === "string"
       ? { resumeRestrictionReason: value.resumeRestrictionReason }
       : {}),
@@ -52,11 +56,28 @@ function restrictedDenyAccess(value: Record<string, unknown>): ProjectAgentAcces
   };
 }
 
+function malformedNoDeveloperAccess(value: Record<string, unknown>): ProjectAgentAccess {
+  return {
+    // A malformed permission record must not reconstruct access from any
+    // surviving boolean. Retain only the independent no-developer evidence.
+    architect: false,
+    canManage: false,
+    canInitiate: false,
+    ...(typeof value.noDeveloper === "boolean" ? { noDeveloper: value.noDeveloper } : {}),
+    ...(typeof value.noDeveloper === "boolean" ? {} : { noDeveloperPolicyInvalid: true }),
+  };
+}
+
 export function normalizeProjectAgentAccess(value: unknown): ProjectAgentAccess | undefined {
   if (!isRecordValue(value)) return undefined;
   const normalized = normalizeWellFormedAccess(value);
   if (normalized) return normalized;
-  return value.controlRestrictedToEmbedded === true ? restrictedDenyAccess(value) : undefined;
+  if (value.controlRestrictedToEmbedded === true) return restrictedDenyAccess(value);
+  return Object.hasOwn(value, "noDeveloper") ? malformedNoDeveloperAccess(value) : undefined;
+}
+
+export function isNoDeveloperPolicyActive(access: ProjectAgentAccess | undefined): boolean {
+  return access?.noDeveloper === true || access?.noDeveloperPolicyInvalid === true;
 }
 
 function normalizeWellFormedAccess(value: Record<string, unknown>): ProjectAgentAccess | undefined {
@@ -65,6 +86,8 @@ function normalizeWellFormedAccess(value: Record<string, unknown>): ProjectAgent
   if (canManage === undefined) return undefined;
   if (value.canInitiate !== undefined && typeof value.canInitiate !== "boolean") return undefined;
   if (value.canManage !== undefined && typeof value.canManage !== "boolean") return undefined;
+  const noDeveloperPolicyInvalid =
+    value.noDeveloper !== undefined && typeof value.noDeveloper !== "boolean";
   const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : canManage;
   const agentDir = typeof value.agentDir === "string" ? value.agentDir : undefined;
   const trustStore = value.trustStore as ProjectAgentTrustStore | undefined;
@@ -78,6 +101,8 @@ function normalizeWellFormedAccess(value: Record<string, unknown>): ProjectAgent
     canManage,
     canInitiate,
     ...(value.controlRestrictedToEmbedded === true ? { controlRestrictedToEmbedded: true } : {}),
+    ...(typeof value.noDeveloper === "boolean" ? { noDeveloper: value.noDeveloper } : {}),
+    ...(noDeveloperPolicyInvalid ? { noDeveloperPolicyInvalid: true } : {}),
     ...(typeof value.resumeRestrictionReason === "string"
       ? { resumeRestrictionReason: value.resumeRestrictionReason }
       : {}),
@@ -356,13 +381,19 @@ export interface EmbeddedControlTarget {
   projectAgent?: unknown;
   /** True when persisted records for this child disagree about its identity. */
   conflict?: boolean;
+  /** True when role evidence conflicts for the host no-developer policy. */
+  noDeveloperConflict?: boolean;
+}
+
+function noDeveloperControlReason(action: "resume" | "steer"): string {
+  return `Primary agent may not ${action} the bundled developer subagent while the host no-developer policy is active.`;
 }
 
 /**
- * Executor-side enforcement of the restricted-control rule (Rush): every exact
- * target child must be an authorized embedded project agent. Returns a rejection
- * message, or undefined when unrestricted or all targets pass. Fails closed on
- * missing, malformed or conflicting identity.
+ * Executor-side enforcement of the restricted-control rule (Rush) and the
+ * captured host no-developer policy. Returns a rejection message, or undefined
+ * when unrestricted or all exact targets pass. Fails closed on missing,
+ * malformed or conflicting persisted target evidence.
  */
 export async function embeddedControlRestrictionError(input: {
   action: "resume" | "steer";
@@ -385,26 +416,53 @@ export async function embeddedControlRestrictionError(input: {
     // A throwing bridge is broken, not absent: fail closed.
     return `Primary agent may only ${input.action} embedded project-agent runs.`;
   }
-  if (!invocationRestricted && !access?.controlRestrictedToEmbedded) return undefined;
-  const reason =
+
+  const noDeveloperRestricted = isNoDeveloperPolicyActive(access);
+  const rushRestricted = invocationRestricted || access?.controlRestrictedToEmbedded === true;
+  if (!rushRestricted && !noDeveloperRestricted) return undefined;
+
+  // Preserve Rush's established error and embedded-only semantics whenever its
+  // restriction is active. The host policy is an additional exact-name check;
+  // it must not turn embedded.developer into the bundled developer target.
+  const rushReason =
     (input.action === "resume"
       ? access?.resumeRestrictionReason
       : access?.steerRestrictionReason) ??
     `Primary agent may only ${input.action} embedded project-agent runs.`;
-  if (input.targets.length === 0) return reason;
+  if (rushRestricted) {
+    if (input.targets.length === 0) return rushReason;
+    for (const target of input.targets) {
+      if (
+        target.conflict === true ||
+        typeof target.agent !== "string" ||
+        !EMBEDDED_TARGET_PATTERN.test(target.agent) ||
+        normalizeProjectAgentIdentity(target.projectAgent) === undefined
+      ) {
+        return rushReason;
+      }
+      try {
+        await authorizePersistedProjectAgentRun({ target, ctx: input.ctx, deps: input.deps });
+      } catch {
+        return rushReason;
+      }
+    }
+    return undefined;
+  }
+
+  const noDeveloperReason = noDeveloperControlReason(input.action);
+  if (input.targets.length === 0 || access?.noDeveloperPolicyInvalid === true)
+    return noDeveloperReason;
   for (const target of input.targets) {
     if (
       target.conflict === true ||
-      !EMBEDDED_TARGET_PATTERN.test(target.agent) ||
-      normalizeProjectAgentIdentity(target.projectAgent) === undefined
+      target.noDeveloperConflict === true ||
+      typeof target.agent !== "string" ||
+      target.agent.trim() !== target.agent ||
+      target.agent.length === 0
     ) {
-      return reason;
+      return noDeveloperReason;
     }
-    try {
-      await authorizePersistedProjectAgentRun({ target, ctx: input.ctx, deps: input.deps });
-    } catch {
-      return reason;
-    }
+    if (target.agent === "developer") return noDeveloperReason;
   }
   return undefined;
 }

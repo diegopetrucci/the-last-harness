@@ -8,7 +8,11 @@ import {
   rushResumeDelegationReason,
   rushSteerDelegationReason,
 } from "./primary-agent-runtime-delegation.js";
-import { setTlhProjectAgentAccessProvider } from "./project-agent-access.mjs";
+import {
+  isTlhNoDeveloperSessionActive,
+  retireTlhNoDeveloperPolicyRuntime,
+  setTlhProjectAgentAccessProvider,
+} from "./project-agent-access.mjs";
 import {
   inventoryProjectAgentGuidance,
   type ProjectAgentGuidanceInventory,
@@ -46,6 +50,7 @@ function createTrustStore(agentDir: string): ProjectTrustStore {
 
 export function retireTlhPrimaryAgentResourceRuntime(): void {
   activeRuntimeEpoch = ++runtimeEpoch;
+  retireTlhNoDeveloperPolicyRuntime();
   setTlhProjectAgentAccessProvider(undefined);
 }
 
@@ -65,6 +70,7 @@ export function createTlhPrimaryAgentResourceLifecycle(options: {
       canManage,
       canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
       controlRestrictedToEmbedded: selection === "rush",
+      noDeveloper: isTlhNoDeveloperSessionActive(),
       resumeRestrictionReason: rushResumeDelegationReason(),
       steerRestrictionReason: rushSteerDelegationReason(),
       agentDir: getAgentDir(),
@@ -74,6 +80,7 @@ export function createTlhPrimaryAgentResourceLifecycle(options: {
       canManage: boolean;
       canInitiate: boolean;
       controlRestrictedToEmbedded: boolean;
+      noDeveloper: boolean;
       resumeRestrictionReason: string;
       steerRestrictionReason: string;
       agentDir: string;

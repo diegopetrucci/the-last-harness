@@ -8,6 +8,7 @@ import type {
   ContextUsageDiagnostics,
   ModelAttempt,
   SubagentModelIdentity,
+  SubagentPromptVariant,
   SubagentModelResolution,
   SubagentTerminationReason,
 } from "../../shared/types.ts";
@@ -21,6 +22,8 @@ export interface StepResult {
   /** Flat plan index retained for telemetry step correlation. */
   index?: number;
   agent: string;
+  /** Internal prompt policy captured for this child; absent legacy evidence is normal. */
+  promptVariant?: SubagentPromptVariant;
   projectAgent?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity;
   /** Normalized ticket ID, when assigned. */
   ticketId?: string;
@@ -145,6 +148,9 @@ export function normalizeFailedSupervisorPauseResults(
   if (results.length === 0) {
     results.push({
       agent: steps[requesterIndex]?.agent ?? fallbackAgent,
+      ...(steps[requesterIndex]?.promptVariant
+        ? { promptVariant: steps[requesterIndex].promptVariant }
+        : {}),
       ...(steps[requesterIndex]?.projectAgent
         ? { projectAgent: steps[requesterIndex].projectAgent }
         : {}),

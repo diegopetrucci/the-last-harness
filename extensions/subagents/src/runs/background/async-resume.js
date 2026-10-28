@@ -7,6 +7,7 @@ import { normalizeProjectAgentIdentity, } from "../../agents/project-agent-loade
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { persistedTicketId } from "../shared/ticket-context.js";
 import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
+import { isSubagentPromptVariant, normalizeSubagentPromptVariant, } from "../../shared/types.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
@@ -60,6 +61,13 @@ function validateOptionalString(value, field, source, displayField = field) {
         throw new Error(`Invalid async result file '${source}': ${displayField} must be a string.`);
     return fieldValue;
 }
+function validatePromptVariant(value, source, field) {
+    if (value === undefined)
+        return undefined;
+    if (!isSubagentPromptVariant(value))
+        throw new Error(`Invalid async result file '${source}': ${field} must be "normal" or "ticket-free".`);
+    return value;
+}
 function validateModelIdentity(value, source, field) {
     if (value === undefined)
         return undefined;
@@ -109,6 +117,7 @@ function validateResultFile(value, resultPath) {
             const stepCwd = typeof rawStepCwd === "string" && rawStepCwd.length > 0 ? rawStepCwd : undefined;
             const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
             const ticketId = persistedTicketId(child.ticketId);
+            const promptVariant = validatePromptVariant(child.promptVariant, resultPath, `results[${index}].promptVariant`);
             const thinking = parseThinkingLevel(child.thinking);
             const modelIdentity = parseResultModelIdentity(child.modelIdentity, resultPath, `results[${index}].modelIdentity`);
             const modelResolution = parseResultModelResolution(child.modelResolution, resultPath, `results[${index}].modelResolution`);
@@ -147,6 +156,7 @@ function validateResultFile(value, resultPath) {
                 ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
                 ...(model ? { model } : {}),
                 ...(ticketId ? { ticketId } : {}),
+                ...(promptVariant ? { promptVariant } : {}),
                 ...(thinking ? { thinking } : {}),
                 ...(modelIdentity ? { modelIdentity } : {}),
                 ...(modelResolution ? { modelResolution } : {}),
@@ -486,8 +496,15 @@ function resolveProjectAgentMetadata(context, index, statusStep) {
     const resultChild = context.resultSteps[index];
     const statusIdentity = normalizeProjectAgentIdentity(statusStep?.projectAgent);
     const resultIdentity = normalizeProjectAgentIdentity(resultChild?.projectAgent);
+    const resultHasChildRecords = context.result?.results !== undefined;
+    const roleEvidenceConflict = resultHasChildRecords
+        ? resultChild === undefined || typeof resultChild.agent !== "string"
+        : statusStep !== undefined &&
+            context.result !== undefined &&
+            (typeof context.result.agent !== "string" || statusStep.agent !== context.result.agent);
     const childIdentityConflict = (statusStep?.projectAgent !== undefined && !statusIdentity) ||
         (resultChild?.projectAgent !== undefined && !resultIdentity) ||
+        roleEvidenceConflict ||
         (statusStep !== undefined &&
             resultChild !== undefined &&
             statusStep.agent !== resultChild.agent) ||
@@ -530,8 +547,10 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
     const metadata = resolveResumeModelMetadata(index, statusStep, context.resultSteps, context.result);
     const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
     const ticketId = resolvePersistedTicketId(context, index, statusStep);
+    const promptVariant = resolvePromptVariant(context, index, statusStep);
     return {
         ...target,
+        promptVariant,
         ...(ticketId ? { ticketId } : {}),
         ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
@@ -581,6 +600,65 @@ export function resolvePersistedOwner(statusOwner, resultOwner) {
         owners.add(candidate);
     }
     return owners.size === 1 ? [...owners][0] : undefined;
+}
+export function persistedChildAgentConflict(input) {
+    if (!input.resultPath)
+        return false;
+    let result;
+    try {
+        result = readResultFile(input.resultPath);
+    }
+    catch {
+        return true;
+    }
+    const statusStep = input.status?.steps?.[input.index];
+    if (result.results !== undefined) {
+        const resultStep = result.results[input.index];
+        if (!resultStep || typeof resultStep.agent !== "string")
+            return true;
+        return statusStep !== undefined && statusStep.agent !== resultStep.agent;
+    }
+    if (!statusStep)
+        return false;
+    return typeof result.agent !== "string" || statusStep.agent !== result.agent;
+}
+function assertPersistedPromptVariantEvidence(runId, rawStatus, result) {
+    const statusSteps = Array.isArray(rawStatus?.steps) ? rawStatus.steps : [];
+    const resultSteps = result?.results ?? [];
+    for (let index = 0; index < Math.max(statusSteps.length, resultSteps.length); index++) {
+        const statusStep = statusSteps[index];
+        const resultStep = resultSteps[index];
+        const statusRecord = typeof statusStep === "object" && statusStep !== null && !Array.isArray(statusStep)
+            ? statusStep
+            : undefined;
+        if (statusRecord && Object.hasOwn(statusRecord, "promptVariant")) {
+            if (!isSubagentPromptVariant(statusRecord.promptVariant)) {
+                throw new Error(`Async run '${runId}' cannot be resumed: persisted status promptVariant for child ${index} is malformed (expected "normal" or "ticket-free"). Repair or remove it to continue; no artifacts were changed.`);
+            }
+        }
+        if (!statusRecord || !resultStep)
+            continue;
+        const statusHasVariant = Object.hasOwn(statusRecord, "promptVariant");
+        const resultHasVariant = resultStep.promptVariant !== undefined;
+        if (!statusHasVariant && !resultHasVariant)
+            continue;
+        const statusVariant = normalizeSubagentPromptVariant(statusRecord.promptVariant);
+        const resultVariant = normalizeSubagentPromptVariant(resultStep.promptVariant);
+        if (statusVariant !== resultVariant) {
+            throw new Error(`Async run '${runId}' cannot be resumed: persisted promptVariant for child ${index} conflicts between status and result artifacts (expected matching "normal" or "ticket-free"). Repair or remove it to continue; no artifacts were changed.`);
+        }
+    }
+}
+function resolvePromptVariant(context, index, statusStep) {
+    const resultStep = context.resultSteps[index];
+    if (statusStep && resultStep) {
+        const statusVariant = normalizeSubagentPromptVariant(statusStep.promptVariant);
+        const resultVariant = normalizeSubagentPromptVariant(resultStep.promptVariant);
+        if (statusVariant !== resultVariant) {
+            throw new Error(`Async run '${context.runId}' cannot be resumed: persisted promptVariant for child ${index} conflicts between status and result artifacts (expected matching "normal" or "ticket-free"). Repair or remove it to continue; no artifacts were changed.`);
+        }
+    }
+    return normalizeSubagentPromptVariant(statusStep?.promptVariant ?? resultStep?.promptVariant);
 }
 const UNREADABLE_OWNER_EVIDENCE = Object.freeze({ malformed: true });
 export function readPersistedResultOwner(resultsDir, runId) {
@@ -636,8 +714,10 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
     const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
     const ticketId = resolvePersistedTicketId(context, index, selectedStatusStep);
+    const promptVariant = resolvePromptVariant(context, index, selectedStatusStep);
     const targetWithModelMetadata = {
         ...target,
+        promptVariant,
         ...(ticketId ? { ticketId } : {}),
         ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
@@ -814,6 +894,8 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     }
     const rawStatus = readRawStatusRecord(location.asyncDir);
     const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
+    const preflightRunId = location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
+    assertPersistedPromptVariantEvidence(preflightRunId, rawStatus, result);
     const preIndex = params.index ?? 0;
     if (Number.isInteger(preIndex)) {
         const preRawSteps = rawStatus?.steps;

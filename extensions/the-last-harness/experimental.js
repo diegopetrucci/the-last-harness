@@ -2,6 +2,7 @@
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
 export const SESSION_MIRROR_OBSERVER_FEATURE = "session-mirror-observer";
+export const NO_DEVELOPER_FEATURE = "no-developer";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 export const EXPERIMENTAL_COMMAND_HELP = [
     "Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
@@ -12,6 +13,11 @@ export const TLH_EXPERIMENTAL_FEATURES = [
         id: SESSION_MIRROR_OBSERVER_FEATURE,
         description: "Opt-in iPhone companion session mirroring and replies; a paired companion can submit bounded plain-text user-message replies. Changes take effect on the next session.",
         telemetry: false,
+        nextSessionOnly: true,
+    },
+    {
+        id: NO_DEVELOPER_FEATURE,
+        description: "Omit the bundled developer from TLH's allowed minor-agent roster and block new developer dispatches. Changes take effect at the next session start, including /reload.",
         nextSessionOnly: true,
     },
 ];

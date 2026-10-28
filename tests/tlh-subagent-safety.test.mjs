@@ -132,6 +132,36 @@ test("experimental allowlist keeps contrarian enabled by default and treats stal
   assert.equal(allowedWithLegacyFlag.agentScope, "user");
 });
 
+test("no-developer filters only the exact bundled developer and leaves trusted embedded targets", () => {
+  const allowed = allowedSubagentsForExperimentalConfig(true);
+  assert.equal(allowed.includes("developer"), false);
+  assert.equal(allowed.includes("test-runner"), true);
+  assert.equal(allowed.includes("code-reviewer"), true);
+
+  const blockedSingle = { agent: "developer", task: "implement the ticket" };
+  assert.match(
+    validateSubagentToolInput(blockedSingle, { noDeveloperActive: true }),
+    /Disallowed target\(s\): developer/,
+  );
+  assert.equal(blockedSingle.agentScope, "user");
+
+  const blockedMixed = {
+    tasks: [
+      { agent: "repo-scout", task: "map the repository" },
+      { agent: "developer", task: "implement the ticket" },
+    ],
+  };
+  assert.match(
+    validateSubagentToolInput(blockedMixed, { noDeveloperActive: true }),
+    /Disallowed target\(s\): developer/,
+  );
+  assert.equal(blockedMixed.agentScope, "user");
+
+  const embeddedDeveloper = { agent: "embedded.developer", task: "use the trusted project agent" };
+  assertAllowed(embeddedDeveloper, { allowEmbeddedTargets: true, noDeveloperActive: true });
+  assert.equal(embeddedDeveloper.agentScope, "user");
+});
+
 test("custom allowlists are bounded to canonical bundled subagents", () => {
   const customEnabled = { agent: "contrarian", task: "stress-test this plan" };
   assertAllowed(customEnabled, { allowedSubagents: [" Developer ", " CONTRARIAN ", "root"] });
