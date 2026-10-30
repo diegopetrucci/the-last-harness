@@ -54,6 +54,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled `pi-mcp-adapter` pin from 5.0.1 to 5.0.2: servers that launch Xcode's MCP bridge (`xcrun mcpbridge`) now default to no idle timeout, so Xcode's "Allow agent to access Xcode?" prompt is not repeated after idle shutdown (an explicit per-server `idleTimeout` still wins).
 - Bumped the bundled Pi runtime from `1.3.0` to `1.4.0`. TLH behavior and defaults are unchanged; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence) and provider-backed checks remain pending.
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Refreshed bundled extension pins: `pi-fast` 0.1.6 → 0.1.10, `pi-anthropic-auth` 3.4.2 → 3.4.3, `pi-mcp-adapter` 5.0.0 → 5.0.1, `pi-web-access` 0.29.2 → 0.29.3, `pi-inline-bash` 0.1.11 → 0.1.13, `pi-context-inspector` 0.1.15 → 0.1.17, and `pi-dirty-repo-guard` 0.1.11 → 0.1.12. `pi-fast` 0.1.10 adds `/ultrafast` for eligible direct OpenAI API-key `gpt-6-astra` requests and changes direct OpenAI ChatGPT OAuth Fast requests from `service_tier: "fast"` to `service_tier: "priority"`.
