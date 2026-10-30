@@ -29,6 +29,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
+- Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.
+- `/annotate-last-message` no longer clips the bottom of long assistant messages; the message panel is now a flex column so its scroller fits below the header.
 - Held profiles on an older TLH-managed exact pre-v5 MCP adapter pin now advance to 2.36.0 during install/update (still held from v5), so Pi 1.3.0 stops warning about host packages in adapter dependencies.
 - Subagent runners now keep a child's process group tracked until post-exit cleanup settles, so an abort after the leader exits no longer leaves SIGINT/SIGTERM-ignoring descendants alive (#828).
 - Async subagent completions are no longer stranded when another tlh session's result watcher briefly holds the shared result claim: foreign-session watchers skip artifacts they do not own, and the owner retries a contended claim. (#851)
@@ -52,6 +55,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled `pi-mcp-adapter` pin from 5.0.1 to 5.0.2: servers that launch Xcode's MCP bridge (`xcrun mcpbridge`) now default to no idle timeout, so Xcode's "Allow agent to access Xcode?" prompt is not repeated after idle shutdown (an explicit per-server `idleTimeout` still wins).
 - Bumped the bundled Pi runtime from `1.3.0` to `1.4.0`. TLH behavior and defaults are unchanged; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence) and provider-backed checks remain pending.
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Refreshed bundled extension pins: `pi-fast` 0.1.6 → 0.1.11, `pi-anthropic-auth` 3.4.2 → 3.4.3, `pi-mcp-adapter` 5.0.0 → 5.0.2, `pi-web-access` 0.29.2 → 0.29.3, `pi-inline-bash` 0.1.11 → 0.1.14, `pi-context-inspector` 0.1.15 → 0.1.17, `pi-dirty-repo-guard` 0.1.11 → 0.1.13, and `pi-quiet-tools` 0.1.14 → 0.1.15. `pi-fast` 0.1.10 added `/ultrafast` for eligible direct OpenAI API-key `gpt-6-astra` requests and changes direct OpenAI ChatGPT OAuth Fast requests from `service_tier: "fast"` to `service_tier: "priority"`. `pi-fast` 0.1.11 adds Anthropic Fast mode through the request `betas` list instead of rewriting the `anthropic-beta` header, so Pi's own betas are preserved. `pi-mcp-adapter` 5.0.2 defaults Xcode `mcpbridge` servers to no idle timeout (an explicit per-server `idleTimeout` still wins), avoiding repeated Xcode access prompts. `pi-inline-bash` 0.1.14 and `pi-dirty-repo-guard` 0.1.13 honor session abort signals, and the guard's `git status` check now times out after 15 seconds. `pi-quiet-tools` 0.1.15 accepts string/numeric `read` offset and limit values when showing line ranges.

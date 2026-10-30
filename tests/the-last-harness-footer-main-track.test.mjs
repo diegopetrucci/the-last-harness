@@ -125,3 +125,18 @@ test("main-track footer keeps the install line within narrow widths", () => {
   assert.ok(visibleWidth(line) <= 20);
   assert.match(line, /\.\.\./);
 });
+
+test("footer renders the extension status line dimmed", () => {
+  const footerData = {
+    ...createFooterData(),
+    getExtensionStatuses: () => new Map([["mcp", "MCP: 0/2 servers"]]),
+  };
+  const lines = createTlhFooter(pi, createCtx(), theme, () => "architect", footerData, {}).render(
+    1000,
+  );
+
+  assert.ok(
+    lines.some((line) => line.startsWith("<dim>MCP: 0/2 servers")),
+    lines.join("\n"),
+  );
+});
