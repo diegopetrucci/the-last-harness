@@ -158,7 +158,7 @@ test("acknowledged apply copies JSONC bytes and mode, then updates only the owne
   assert.equal(lstatSync(value.globalNative).mode & 0o777, 0o640);
   assert.equal(readFileSync(value.globalLegacy, "utf8"), body);
   const settings = JSON.parse(readFileSync(value.settings, "utf8"));
-  assert.equal(settings.packages[0], "npm:@diegopetrucci/pi-mcp-adapter@5.0.1");
+  assert.equal(settings.packages[0], "npm:@diegopetrucci/pi-mcp-adapter@5.0.2");
   assert.equal(settings.owner, "preserve");
   assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
   assert.equal(settings.tlh.builtinMcpExclusionManaged, true);
@@ -660,7 +660,7 @@ test("approved replacement migration records owned canonical provenance and reru
   const firstSettingsStat = lstatSync(value.settings);
   const firstNativeStat = lstatSync(value.globalNative);
   const settings = JSON.parse(firstSettings.toString());
-  assert.equal(settings.packages[0], "npm:@diegopetrucci/pi-mcp-adapter@5.0.1");
+  assert.equal(settings.packages[0], "npm:@diegopetrucci/pi-mcp-adapter@5.0.2");
   assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
     canonicalMcpIdentity,
   ]);
@@ -977,7 +977,7 @@ test("managed provenance and object fields survive while unmarked builtin exclus
   const result = runDefaults(value, ["--apply", "--acknowledge-unverified-mcp-configs"]);
   assert.equal(result.status, 0, result.stderr);
   const settings = JSON.parse(readFileSync(value.settings, "utf8"));
-  assert.equal(settings.packages[0].source, "npm:@diegopetrucci/pi-mcp-adapter@5.0.1");
+  assert.equal(settings.packages[0].source, "npm:@diegopetrucci/pi-mcp-adapter@5.0.2");
   assert.deepEqual(settings.packages[0].customField, { keep: true });
   assert.deepEqual(settings.extensions, ["-builtin:mcp", "user-extension"]);
   assert.equal(Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged"), false);
@@ -1208,7 +1208,7 @@ test("successful multi-settings commit reaches and verifies both AFTER writes", 
     [value.settings, projectSettings],
   );
   for (const write of writes) {
-    assert.match(write.bytes.toString(), /5\.0\.1/);
+    assert.match(write.bytes.toString(), /5\.0\.2/);
     assert.match(write.bytes.toString(), /builtinMcpExclusionManaged/);
   }
   assert.equal(existsSync(value.globalNative), true);
@@ -1247,8 +1247,8 @@ test("two-settings rollback, linked-temp cleanup, and source-change races are co
     rollbackWrites.map((write) => write.path),
     [twoSettings.settings, projectSettings],
   );
-  assert.match(rollbackWrites[0].bytes.toString(), /5\.0\.1/);
-  assert.match(rollbackWrites[1].bytes.toString(), /5\.0\.1/);
+  assert.match(rollbackWrites[0].bytes.toString(), /5\.0\.2/);
+  assert.match(rollbackWrites[1].bytes.toString(), /5\.0\.2/);
   assert.equal(existsSync(twoSettings.globalNative), false);
   assert.equal(existsSync(twoSettings.projectNative), false);
   assert.deepEqual(readFileSync(twoSettings.settings), settingsBefore);

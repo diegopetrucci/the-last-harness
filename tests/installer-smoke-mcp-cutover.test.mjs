@@ -15,7 +15,7 @@ import {
   makeDefaultExtensionInstallConfig,
 } from "./install-stage1-default-extensions-test-helpers.mjs";
 
-const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.1";
+const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.2";
 const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
 const helperSource = "npm:fixture-helper@1.0.0";
 const canonicalIdentity = "npm:@diegopetrucci/pi-mcp-adapter";
@@ -105,7 +105,7 @@ function loggingNpmBody() {
 
 function assertNoMcpSource(text) {
   assert.doesNotMatch(text, /pi-mcp-adapter/u);
-  assert.doesNotMatch(text, /5\.0\.1/u);
+  assert.doesNotMatch(text, /5\.0\.2/u);
 }
 
 function assertOriginalBytes(before) {
@@ -199,7 +199,7 @@ test("fresh selection announces v5, cold pre-install is fake, and warm profiles 
   preInstallNpmDefaultExtensions(config);
   const npmLogPath = join(agentDir, "npm.log");
   const coldNpmLog = readFileSync(npmLogPath, "utf8");
-  assert.match(coldNpmLog, /pi-mcp-adapter@5\.0\.1/u);
+  assert.match(coldNpmLog, /pi-mcp-adapter@5\.0\.2/u);
   const npmRoot = join(agentDir, "npm");
   assert.equal(existsSync(npmRoot), true);
   writeFileSync(join(npmRoot, "warm-sentinel"), "preserve-warm\n");
@@ -245,12 +245,12 @@ test("acknowledged migration selects v5, while rollback re-holds the old source 
 
   let sources = defaultsCommand(config);
   assert.equal(sources.status, 0, `${sources.stdout}\n${sources.stderr}`);
-  assert.match(sources.stdout, /pi-mcp-adapter@5\.0\.1/u);
+  assert.match(sources.stdout, /pi-mcp-adapter@5\.0\.2/u);
   assert.doesNotMatch(sources.stderr, /cutover held/u);
 
   installDefaultExtensions(config);
   preInstallNpmDefaultExtensions(config);
-  assert.match(readFileSync(join(agentDir, "npm.log"), "utf8"), /pi-mcp-adapter@5\.0\.1/u);
+  assert.match(readFileSync(join(agentDir, "npm.log"), "utf8"), /pi-mcp-adapter@5\.0\.2/u);
   assertNoMcpSource(readFileSync(piLog, "utf8"));
 
   const rollbackSettings = JSON.parse(readFileSync(config.settingsPath, "utf8"));

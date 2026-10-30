@@ -232,11 +232,11 @@ test("bundled quiet-tools is mandatory for canonical and alias IDs and remains d
     .filter(Boolean);
   assert.deepEqual(
     sources.filter((source) => source.includes("pi-quiet-tools")),
-    ["npm:@diegopetrucci/pi-quiet-tools@0.1.14"],
+    ["npm:@diegopetrucci/pi-quiet-tools@0.1.15"],
   );
   assert.deepEqual(
     criticalSources.filter((source) => source.includes("pi-quiet-tools")),
-    ["npm:@diegopetrucci/pi-quiet-tools@0.1.14"],
+    ["npm:@diegopetrucci/pi-quiet-tools@0.1.15"],
   );
 
   for (const id of ["quiet-tools", "compact-bash"]) {

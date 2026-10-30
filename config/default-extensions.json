@@ -4,7 +4,7 @@
     "aliases": ["openai-fast"],
     "replaces": ["npm:@diegopetrucci/pi-openai-fast"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-fast@0.1.10",
+    "source": "npm:@diegopetrucci/pi-fast@0.1.11",
     "description": "Enable optional Fast mode for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models."
   },
   {
@@ -17,7 +17,7 @@
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
     "replaces": ["npm:pi-mcp-adapter", "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-mcp-adapter@5.0.1",
+    "source": "npm:@diegopetrucci/pi-mcp-adapter@5.0.2",
     "description": "Connect tlh to MCP servers with the upstream adapter."
   },
   {
@@ -29,7 +29,7 @@
   },
   {
     "id": "inline-bash",
-    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.13",
+    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.14",
     "description": "Expand inline bash commands in user prompts."
   },
   {
@@ -43,12 +43,12 @@
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.15",
     "description": "Always-on renderer-only compact collapsed built-in tool output in the TUI without changing model-visible results."
   },
   {
     "id": "dirty-repo-guard",
-    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.12",
+    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.13",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   }
 ]
