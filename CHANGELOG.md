@@ -28,6 +28,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.
 - `/annotate-last-message` no longer clips the bottom of long assistant messages; the message panel is now a flex column so its scroller fits below the header.
 - Held profiles on an older TLH-managed exact pre-v5 MCP adapter pin now advance to 2.36.0 during install/update (still held from v5), so Pi 1.3.0 stops warning about host packages in adapter dependencies.

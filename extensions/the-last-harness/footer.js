@@ -316,7 +316,7 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                     .filter(Boolean)
                     .join(" ");
                 if (statusLine) {
-                    lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+                    lines.push(truncateToWidth(theme.fg("dim", statusLine), width, theme.fg("dim", "...")));
                 }
             }
             if (installNotice) {
