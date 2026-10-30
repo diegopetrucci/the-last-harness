@@ -6,8 +6,8 @@ notices that accompany them.
 
 Herdr skill
 -----------
-Source: https://github.com/herdrdev/herdr/tree/b99002ac99b09e00b4ca692436cb15a6b0d676f1/skills/herdr
-Pinned commit: b99002ac99b09e00b4ca692436cb15a6b0d676f1 (herdr v0.9.0)
+Source: https://github.com/herdrdev/herdr/tree/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/skills/herdr
+Pinned commit: 2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01 (herdr v0.9.5)
 Bundled files: skills/herdr/SKILL.md
 License: Apache-2.0
 Copyright notice: The upstream Herdr LICENSE at this pinned commit does not
@@ -32,8 +32,8 @@ Copyright: Copyright (c) 2026 HumanLayer
 
 OpenClaw tmux skill
 -------------------
-Source: https://github.com/openclaw/openclaw/tree/793669c8f6ddfad07b40009068f532832685b7d6/skills/tmux
-Pinned commit: 793669c8f6ddfad07b40009068f532832685b7d6
+Source: https://github.com/openclaw/openclaw/tree/7861f59337f9163040c9ccfb1c1f682ede689e27/skills/tmux
+Pinned commit: 7861f59337f9163040c9ccfb1c1f682ede689e27
 Bundled files: skills/tmux/SKILL.md, skills/tmux/scripts/find-sessions.sh,
 and skills/tmux/scripts/wait-for-text.sh
 License: MIT
