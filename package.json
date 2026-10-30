@@ -104,6 +104,11 @@
     "@earendil-works/pi-tui": "1.4.0",
     "typebox": "*"
   },
+  "allowScripts": {
+    "glimpseui": true,
+    "@google/genai": false,
+    "protobufjs": false
+  },
   "dependencies": {
     "@tailwindcss/browser": "4.3.3",
     "glimpseui": "0.8.1",

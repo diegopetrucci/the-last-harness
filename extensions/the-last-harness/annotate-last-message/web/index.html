@@ -139,6 +139,8 @@
     border-radius: 14px;
     background: var(--panel);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .panel-header {
@@ -154,7 +156,8 @@
   }
 
   .message-lines {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     overflow: auto;
     padding: 8px 0 16px;
   }
