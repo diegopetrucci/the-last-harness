@@ -8,7 +8,7 @@ const html = readFileSync(
 );
 
 function rule(selector) {
-  const escaped = selector.replace(/[.]/g, "\\.");
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = html.match(new RegExp(`^\\s*${escaped}\\s*\\{([^}]*)\\}`, "m"));
   assert.ok(match, `missing rule ${selector}`);
   return match[1];
