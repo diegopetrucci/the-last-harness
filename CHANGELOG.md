@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.47.0] - 2026-10-30
+
 ### Breaking
 
 - Node.js 22 is no longer supported. The installer and package now require Node.js `^24.22.1 || >=26.12.1` (24.x from 24.22.1, and 26.12.1 or newer); Node.js 25.x and older releases are rejected, as are Node.js prerelease/nightly builds. Upgrade Node.js, then rerun the installer.
@@ -24,8 +26,6 @@ All notable changes to The Last Harness will be documented in this file.
 - Unreadable, invalid, or oversized async `status.json` files are retried once and then reported without automatic remediation; inspect and explicitly repair or undo the file and its sibling artifacts manually. Existing `<tempRoot>/quarantined-async-subagent-runs/` directories are no longer scanned; after preserving needed evidence, remove them manually if desired, and note that the new runtime never auto-deletes them.
 - All thirteen packaged agents (four primaries and nine minor roles) now include explicit MCP gateway policy text. Primary agents and `developer` may use the generic `mcp` gateway within their authorized scope; `test-runner` is the intentional exception — it may invoke assigned MCP validation steps that change external server state, but only in the exact order and shape supplied by its final-validation ticket; all other minor agents restrict MCP to read-only research or inspection and must escalate uncertain side effects to the architect.
 - In RPC mode, TLH now publishes its subscription usage footer segment as the `tlh-usage` extension UI status (cleared with `undefined`) so hosts such as tlh-gui can render it; the docs also list the existing `fast` status key; see [docs/commands.md](docs/commands.md#usage-and-rpc-status-for-hosts).
-- TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`.
-- The `tlh` wrapper defaults `PI_PROGRAM_STATUS=0` to keep Pi 1.1.0's native OSC 7501 emitter off while TLH's effective-activity reporter remains the root owner.
 
 ### Fixed
 
@@ -39,52 +39,17 @@ All notable changes to The Last Harness will be documented in this file.
 - Explicit subagent interrupt, steer, resume, and status by id now require the owning parent session and fail closed; id-prefix lookup and interrupt-all are scoped to the caller's own runs (#826).
 - Aborting an awaited subagent right after it starts could leave its run permanently `running`; the runner now installs its signal handler before its first status write.
 - Durable subagent revival now requires the owning parent session; ownerless, foreign or conflicting-owner runs are rejected before any side effect (#822).
-- A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped; a project-scoped agent list includes load warnings for canonical packaged roles.
-- `/toggle-context-cap` now refuses to write when `settings.json`, `tlh`, or `tlh.contextCap` is not a JSON object, instead of throwing or saving a corrupted settings file.
-- Explicit `--model` and `--thinking` launch flags now win over persisted primary-agent overrides and packaged defaults for the launch session. Previously, `applySessionStart` would replace the CLI-resolved model and thinking level with the active primary's stored or bundled defaults, causing RPC hosts (such as tlh-gui) that spawn `tlh --model M --thinking T` and verify the active model to fail.
-- The `/annotate-git-diff` file-tree error mark, comment popover, and save button now pick up the review palette. Those controls were using class names Tailwind v4 does not generate.
-- Session names now propagate to the terminal title (`tlh - <name> - <cwd basename>` when named, `tlh - <cwd basename>` when unnamed) and to Herdr as a pane metadata title, fixing a regression where TLH's title branding dropped session-name awareness.
-- Async status reads now reject non-regular artifacts without blocking or following path replacements.
-- The `/annotate-git-diff` review window now configures Monaco's inlined AMD loader with an absolute base URL for `about:blank` WebViews and excludes locale packs from the inlined runtime.
-- Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
-- Subagent thinking phrases no longer flicker on fast-turning agents; they now rotate on a steady 8-second cadence instead of changing every turn.
-- Trusted embedded project-agent tool declarations now reject `.ts`/`.js` extension-path aliases at load and execution boundaries while ordinary agent extension tools remain supported.
-- The result watcher now rescans existing results after a restart, since results written while it was down emit no events.
-- Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
 
 ### Changed
 
 - Bumped the bundled `pi-mcp-adapter` pin from 5.0.1 to 5.0.2: servers that launch Xcode's MCP bridge (`xcrun mcpbridge`) now default to no idle timeout, so Xcode's "Allow agent to access Xcode?" prompt is not repeated after idle shutdown (an explicit per-server `idleTimeout` still wins).
 - Bumped the bundled Pi runtime from `1.3.0` to `1.4.0`. TLH behavior and defaults are unchanged; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence) and provider-backed checks remain pending.
-- Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Refreshed bundled extension pins: `pi-fast` 0.1.6 → 0.1.11, `pi-anthropic-auth` 3.4.2 → 3.4.3, `pi-mcp-adapter` 5.0.0 → 5.0.2, `pi-web-access` 0.29.2 → 0.29.3, `pi-inline-bash` 0.1.11 → 0.1.14, `pi-context-inspector` 0.1.15 → 0.1.17, `pi-dirty-repo-guard` 0.1.11 → 0.1.13, and `pi-quiet-tools` 0.1.14 → 0.1.15. `pi-fast` 0.1.10 added `/ultrafast` for eligible direct OpenAI API-key `gpt-6-astra` requests and changes direct OpenAI ChatGPT OAuth Fast requests from `service_tier: "fast"` to `service_tier: "priority"`. `pi-fast` 0.1.11 adds Anthropic Fast mode through the request `betas` list instead of rewriting the `anthropic-beta` header, so Pi's own betas are preserved. `pi-mcp-adapter` 5.0.2 defaults Xcode `mcpbridge` servers to no idle timeout (an explicit per-server `idleTimeout` still wins), avoiding repeated Xcode access prompts. `pi-inline-bash` 0.1.14 and `pi-dirty-repo-guard` 0.1.13 honor session abort signals, and the guard's `git status` check now times out after 15 seconds. `pi-quiet-tools` 0.1.15 accepts string/numeric `read` offset and limit values when showing line ranges.
 - Refreshed the shipped `monaco-editor` dependency from 0.56.0 to 0.57.0.
-- Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
-- Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
-- Bumped the bundled Pi runtime from `1.0.3` to `1.0.4`. Pi 1.0.4 adds `*` patterns to `--tools`/`--exclude-tools`, `--no-mcp` for single-run MCP disablement, a codemode fix for `tools.read()` on images, and several MCP and provider fixes. Runtime behavior for TLH users is unchanged: mcporter remains the MCP adapter and `-builtin:mcp` remains active in isolated settings.
-- Install and update no longer clean up settings left by extensions retired in v0.34.0 or earlier (context-cap, oracle, rtk, intercom, fff, and subagents opt-outs in `tlh.disabledDefaultExtensions`; `tlh.gnosis`, `tlh.rtk`, and `subagents.disableBuiltins` keys). Leftover values from those versions are now silently ignored. Package-level force-removal for the same retired extensions is unaffected.
-- Bumped bundled defaults: `pi-fast` `0.1.4` → `0.1.6`, `pi-anthropic-auth` `3.3.2` → `3.4.2`, `pi-web-access` `0.10.10` → `0.29.2`, and `pi-context-inspector` `0.1.13` → `0.1.15`. The web-access fork now exposes only its Exa-backed three-tool surface, without curator/search commands, alternate providers, GitHub/PDF/video/browser workflows, or a bundled skill; migrate supported isolated settings manually as described in [docs/web-search.md](docs/web-search.md).
-- Bumped the bundled Pi runtime from `0.87.1` to `1.0.3`, adding Anthropic capacity-error retries and provider fixes. Pi sessions now start in fullscreen TUI mode by default; to keep normal terminal scrollback set `tuiMode` to `"regular"` via `/settings` → **TUI mode**, `~/.the-last-harness/agent/settings.json`, or `--tui-mode regular`.
-- **Pi 1.0.3: Azure provider rename.** If you use Azure OpenAI, rename the provider key from `azure-openai-responses` to `azure` in your `auth.json`, `models.json`, and `settings.json`; the old key is no longer recognized by Pi. TLH itself writes no Azure configuration.
-- **Pi 1.0.3: Home/End keybinding change.** In fullscreen TUI mode, Home and End now always move the editor cursor to line start/end. Scrolling to the top or bottom of the transcript has moved to Ctrl+Home and Ctrl+End (`tui.altScreen.top`/`tui.altScreen.bottom`).
-- TLH's packaged default theme is now Pi's terminal-adaptive `system` theme when no theme is set in the isolated profile; existing explicit theme values (including `the-last-harness`) are preserved by normal install and `tlh update`. Running `tlh update --force` or `bash install.sh --force` resets it to `system`.
-- `typebox` is no longer a runtime dependency of the TLH package: it is pinned as an exact dev dependency and declared as a `"*"` peer dependency because Pi provides it to extensions at runtime.
-- Updated the bundled OpenAI Codex defaults: Architect, Product, and Bug Hunter now use GPT-6.1 Sol at medium effort (was GPT-5.6 Sol at high); Rush now uses GPT-6.1 Sol at low effort (was GPT-5.6 Luna at medium); code-reviewer now uses GPT-6.1 Sol at medium effort (was GPT-5.6 Sol); and Contrarian now uses GPT-6 Astra at medium effort (was GPT-5.6 Sol at high). Oracle remains on GPT-6 Astra at medium effort, while all other packaged OpenAI Codex, Anthropic, xAI, and OpenRouter defaults remain unchanged.
-- Bumped the bundled `mcporter` extension (`@diegopetrucci/pi-mcp-adapter`) from `2.11.0` to `2.36.0`. It adds MCP Tasks with progress and cancellation, enabling and disabling servers from the `/mcp` panel, more reliable OAuth and bearer-token reconnection with secure credential storage, and a faster, ~150MB smaller default-extension install because it no longer bundles its own copies of Pi's libraries.
-- TLH now persists `-builtin:mcp` in isolated settings while bundled `mcporter` is enabled, so the adapter owns `/mcp` without Pi's built-in-extension replacement warning. TLH records ownership only when it inserts the exclusion; pre-existing unmarked exclusions remain user-owned. Disabling or opting out `mcporter` removes only a TLH-owned exclusion and clears its marker, while enabling it restores the exclusion only when absent.
-- Async activity rehydration now skips the machine-global run-directory scan in subagent child processes, reducing child startup overhead while preserving live async event handling.
-- Bundled async restore now publishes one exact-session snapshot for TLH activity tracking, avoiding a duplicate parent startup scan while retaining a fallback when bundled restore is unavailable.
-- TLH launch time should be ~25/30% faster.
-- Opus 5.5 is the default for many things, now.
-- The private Pi runtime is now installed via `npm ci` from a TLH-shipped lockfile in `config/pi-runtime/`, keeping Pi's dependency graph pinned even when upstream stops shipping a shrinkwrap; existing runtimes are reinstalled once from the lockfile on the next `tlh update` or fresh install, a failed install preserves the previous runtime, and `tlh doctor` warns when the runtime does not match the shipped lockfile.
-- The 0.46.0 acceptance quiet-cached-diff fix and project-agent snapshot-release-on-launch-failure fix do not apply to this runtime: the acceptance contract and project-agent snapshot/rebind machinery are retired here. The 0.46.0 stale-run reconciler recovery of stopped runs under the lifecycle lock also does not apply: the reconciler here does not repair stopped runs, and every status write for stopped or paused runs already goes through the lifecycle-locked owner.
 
 ### Removed
 
-- Removed the `DUMB ZONE` footer warning that appeared after context usage exceeded 200,000 tokens.
-- Removed TLH's custom `/review` command and interactive picker; automatic architect review remains.
-- Retired the bundled Pi Voice/Transcribe defaults. Updates remove only entries whose TLH ownership is recorded in default-extension provenance; ambiguous legacy entries without provenance stay installed. To reinstall manually, run `tlh install npm:@earendil-works/pi-voice` (or install a specific version) in the isolated profile; downloaded models and unrelated package files are left untouched.
 - Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
 - Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.
 - Removed the subagent acceptance contract, report parsing, role overrides, and verdict rendering. Terminal lifecycle facts now provide bounded execution evidence without judging task completion; historical status records remain readable and transcript text is preserved.
@@ -97,9 +62,9 @@ All notable changes to The Last Harness will be documented in this file.
 ### Internal
 
 - Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins` and `oxlint` 1.90.0, `oxfmt` 0.75.0, and `@types/node` 26.6.6.
-- Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 - Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
+- Release prep for v0.47.0.
 
 ## [0.46.0] - 2026-10-20
 
