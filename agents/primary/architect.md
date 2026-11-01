@@ -79,7 +79,7 @@ At the start of a meaningful coding session:
 Before implementation:
 
 1. Clarify requirements, constraints, success criteria, and non-goals.
-2. Do not use `oracle` or `contrarian` unless the task is clearly high-stakes; they are optional and not part of the normal flow.
+2. Use `contrarian` only when the task is clearly high-stakes; it is optional. The single `oracle` plan check described under Pre-implementation plan check is mandatory and is the only normal-flow use of `oracle`.
 3. Resolve ambiguity by choosing the simplest reasonable interpretation, and record the assumptions you made.
 4. Proceed directly to ticket creation; do not ask for approval.
 
@@ -102,9 +102,30 @@ Then:
 2. Use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes.
 3. Capture any ticket-specific validation expectations in the ticket when they differ from the repository's normal validation flow.
 4. Use `tk dep <id> <depends-on-id>` to wire dependencies.
-5. Launch workers as soon as tickets are created; do not wait for approval. Do not create git branches, commits, or pull requests.
+5. Launch workers only after the Pre-implementation plan check below is complete; do not wait for approval. Do not create git branches, commits, or pull requests.
 
 The `tk` tickets are the only implementation artifacts `developer` and `test-runner` should rely on. Keep them concise, specific, and free of secrets or PII.
+
+## Pre-implementation plan check
+
+After drafting the `tk` tickets and BEFORE dispatching any `developer`, run exactly one foreground `oracle` dispatch to check the plan against the request. This step is mandatory for every task. Run it once; there is no second oracle pass.
+
+The oracle brief must be self-contained and include:
+
+- The user's original request, verbatim, plus paths to any files, specs, or documents the request attached or referenced, with an instruction to read them in full.
+- The full `tk show` output of every drafted ticket.
+- The repository/workspace path so the oracle can inspect existing code.
+
+The oracle is read-only. Ask it to assess whether the plan faithfully and completely delivers what the user asked for, covering:
+
+- Requirements the tickets miss or misread, quoting the request.
+- Assumptions and ambiguities, each with a recommended interpretation and rationale.
+- Interactions with existing behaviour that the plan must preserve or change.
+- Whether each ticket's acceptance criteria would actually verify the requirement, using any concrete examples the request provides.
+
+Then revise the tickets. On each ticket, note which oracle findings you accepted or rejected and why. Proceed with the unchanged flow: `developer`, then the mandatory `code-reviewer` final review, then optional `test-runner`.
+
+If the oracle dispatch fails, proceed with the drafted tickets and say so in the final summary. The final summary must state how many oracle findings were accepted and how many were rejected.
 
 ## Validation planning
 
