@@ -255,17 +255,14 @@ The following carried-forward checks are required release-preparation work for t
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
 - **Published-ref update convergence:** once the release ref advertises the Pi version pinned in `config/pi-runtime/package.json`, verify update convergence from that published ref.
 
-### Pi 1.4.0 comparison status (reviewed 2026-10-22)
+### Pi 1.5.0 comparison status (reviewed 2026-11-02)
 
-The dated 1.3.0→1.4.0 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence). It was source/package inspection plus deterministic test runs, not live release validation: no provider, credential, installed-profile, or release-tier checks were run. The [resume regression](tests/the-last-harness-pi-1-3-resume-regressions.test.mjs) now includes Pi 1.4 cases and, with the [model-resolution regression](tests/the-last-harness-pi-1-3-model-resolution-regressions.test.mjs), passes without live providers. The provider-backed checks below remain pending:
+The dated 1.4.0→1.5.0 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-150-review-evidence). It was source/package inspection plus deterministic test runs, not live release validation: no provider, credential, installed-profile, or release-tier checks were run. The provider-backed checks below remain pending:
 
-- **Claude Pro/Max OAuth:** run a live OAuth session; the provider request/header path changed in 1.4.0.
-- **OpenAI Codex tool changes:** switch primary agents mid-conversation on OpenAI Codex so the tool set changes; the Responses/Codex tool-change transport changed.
-- **Real-session resume tool restoration:** resume a real session and navigate with `/tree`, then verify the primary allowlist holds and no never-mentioned extension tool becomes callable. `/tree` is not covered deterministically.
-- **Long-session compaction:** compact a long session at high, xhigh, and max effort to verify summaries complete with the packaged reserve; this feeds [#785](https://github.com/diegopetrucci/the-last-harness/issues/785).
-- **Carried forward from 1.3.0 (still apply to the pinned runtime):** Kimi Code transport and `/v1` base URLs; OpenAI GPT-6 API-key cache retention across a thinking-level change; provider-backed model ambiguity; clean model switching; and the TLH policy boundaries listed in the [1.3.0 status](docs/pin-bump-verification.md#historical-pi-130-comparison-status-reviewed-2026-10-15).
+- **Summaries with OAuth providers:** compact a session on a stored-OAuth provider to verify summaries still authenticate now that Pi no longer passes the stored OAuth token as the API key.
+- **Carried forward from 1.4.0 (still apply to the pinned runtime):** Claude Pro/Max OAuth provider request/header path; OpenAI Codex mid-conversation tool-set changes; real-session resume with `/tree` tool restoration; long-session compaction at high, xhigh, and max effort ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785)); and the items in the [1.4.0 status](docs/pin-bump-verification.md#historical-pi-140-comparison-status-reviewed-2026-10-22), including those it carries forward from 1.3.0.
 
-Historical Pi 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-130-comparison-status-reviewed-2026-10-15).
+Historical Pi 1.4.0, 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-140-comparison-status-reviewed-2026-10-22).
 
 ## Final validation guidance
 
