@@ -106,7 +106,7 @@ Return the deterministic faux child marker exactly.
       {
         packages: [packageRoot],
         tlh: {
-          primaryAgent: { enabled: false, selected: "disabled" },
+          primaryAgent: { applyModel: false, applyThinking: false },
           telemetry: { enabled: false },
           updateCheck: { enabled: false },
         },

@@ -84,6 +84,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Removed the `DUMB ZONE` footer warning that appeared after context usage exceeded 200,000 tokens.
 - Removed TLH's custom `/review` command and interactive picker; automatic architect review remains.
+- Removed disabled primary-agent mode; saved `disabled` selections (settings or sessions) now fall back to architect with a warning — fix with `/switch-primary-agent default architect`.
 - Retired the bundled Pi Voice/Transcribe defaults. Updates remove only entries whose TLH ownership is recorded in default-extension provenance; ambiguous legacy entries without provenance stay installed. To reinstall manually, run `tlh install npm:@earendil-works/pi-voice` (or install a specific version) in the isolated profile; downloaded models and unrelated package files are left untouched.
 - Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
 - Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.

@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   DEFAULT_PRIMARY_AGENT,
-  DISABLED_PRIMARY_AGENT,
   PRIMARY_AGENT_SESSION_STATE_ENTRY,
   nextPrimaryAgentSelection,
   primaryAgentDefaultLabel,
@@ -19,7 +18,7 @@ test("primary-agent config defaults to architect without settings", () => {
   assert.equal(primaryAgentDefaultLabel(undefined), "unset (TLH default: architect)");
 });
 
-test("primary-agent config supports selectable primaries and disabled while preserving enabled=false compatibility", () => {
+test("primary-agent config supports selectable primaries", () => {
   assert.equal(resolvePrimaryAgentConfig({ selected: "rush" }).selection, "rush");
   assert.equal(resolvePrimaryAgentConfig({ enabled: true, selected: "rush" }).selection, "rush");
   assert.equal(resolvePrimaryAgentConfig({ selected: "product" }).selection, "product");
@@ -32,14 +31,16 @@ test("primary-agent config supports selectable primaries and disabled while pres
     resolvePrimaryAgentConfig({ enabled: true, selected: "bug-hunter" }).selection,
     "bug-hunter",
   );
+});
+
+test("retired disabled inputs in persistent config fall back to architect via the generic invalid-selection diagnostic", () => {
+  const expected = { selection: DEFAULT_PRIMARY_AGENT, invalidSelected: "disabled" };
+  assert.deepEqual(resolvePrimaryAgentConfig({ selected: "disabled" }), expected);
+  assert.deepEqual(resolvePrimaryAgentConfig({ enabled: false }), expected);
+  assert.deepEqual(resolvePrimaryAgentConfig({ enabled: false, selected: "product" }), expected);
   assert.equal(
-    resolvePrimaryAgentConfig({ selected: "disabled" }).selection,
-    DISABLED_PRIMARY_AGENT,
-  );
-  assert.equal(resolvePrimaryAgentConfig({ enabled: false }).selection, DISABLED_PRIMARY_AGENT);
-  assert.equal(
-    resolvePrimaryAgentConfig({ enabled: false, selected: "product" }).selection,
-    DISABLED_PRIMARY_AGENT,
+    primaryAgentDefaultLabel({ enabled: false }),
+    'invalid "disabled" (TLH fallback: architect)',
   );
 });
 
@@ -57,12 +58,7 @@ test("invalid persistent primary names fall back to architect with a diagnostic"
 test("session primary state preserves old enabled booleans and supports selected primaries", () => {
   assert.deepEqual(resolvePrimaryAgentSessionState({}), {});
   assert.equal(resolvePrimaryAgentSessionState(true).selection, DEFAULT_PRIMARY_AGENT);
-  assert.equal(resolvePrimaryAgentSessionState(false).selection, DISABLED_PRIMARY_AGENT);
   assert.equal(resolvePrimaryAgentSessionState({ enabled: true }).selection, DEFAULT_PRIMARY_AGENT);
-  assert.equal(
-    resolvePrimaryAgentSessionState({ enabled: false }).selection,
-    DISABLED_PRIMARY_AGENT,
-  );
   assert.equal(resolvePrimaryAgentSessionState({ selected: "rush" }).selection, "rush");
   assert.equal(
     resolvePrimaryAgentSessionState({ enabled: true, selected: "rush" }).selection,
@@ -78,6 +74,13 @@ test("session primary state preserves old enabled booleans and supports selected
     resolvePrimaryAgentSessionState({ enabled: true, selected: "bug-hunter" }).selection,
     "bug-hunter",
   );
+});
+
+test("retired disabled session state falls back to architect via the generic invalid-selection diagnostic", () => {
+  const expected = { selection: DEFAULT_PRIMARY_AGENT, invalidSelected: "disabled" };
+  assert.deepEqual(resolvePrimaryAgentSessionState(false), expected);
+  assert.deepEqual(resolvePrimaryAgentSessionState({ enabled: false }), expected);
+  assert.deepEqual(resolvePrimaryAgentSessionState({ selected: "disabled" }), expected);
 });
 
 test("latest session primary state wins over earlier compatibility entries", () => {
@@ -106,10 +109,9 @@ test("latest session primary state wins over earlier compatibility entries", () 
   );
 });
 
-test("Shift+Tab advances through each primary selection and wraps", () => {
+test("Shift+Tab advances through each primary selection and wraps back to architect", () => {
   assert.equal(nextPrimaryAgentSelection("architect"), "rush");
   assert.equal(nextPrimaryAgentSelection("rush"), "product");
   assert.equal(nextPrimaryAgentSelection("product"), "bug-hunter");
-  assert.equal(nextPrimaryAgentSelection("bug-hunter"), "disabled");
-  assert.equal(nextPrimaryAgentSelection("disabled"), "architect");
+  assert.equal(nextPrimaryAgentSelection("bug-hunter"), "architect");
 });

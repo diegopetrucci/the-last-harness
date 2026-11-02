@@ -120,7 +120,7 @@ export type TlhExperimentalConfig = {
   enabledFeatures?: string[];
 };
 
-export type TlhPrimaryAgentSelection = "architect" | "rush" | "product" | "bug-hunter" | "disabled";
+export type TlhPrimaryAgentSelection = "architect" | "rush" | "product" | "bug-hunter";
 
 export type TlhPrimaryAgentSessionState = {
   enabled?: boolean;
