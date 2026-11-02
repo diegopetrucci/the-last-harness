@@ -22,7 +22,7 @@ describe("normalizeProjectAgentAccess", () => {
     assert.equal(access?.architect, false);
   });
 
-  it("keeps disabled mode initiate-only", () => {
+  it("keeps initiate-only access from granting management", () => {
     const access = normalizeProjectAgentAccess({
       architect: false,
       canManage: false,

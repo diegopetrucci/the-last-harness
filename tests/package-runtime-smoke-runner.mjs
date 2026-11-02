@@ -238,7 +238,14 @@ function createSessionContext() {
   return { context, installedFactories, notifications };
 }
 
-async function runSessionStart(tlhExtension, subagentExtension) {
+async function runSessionStart(tlhExtension, subagentExtension, runtime) {
+  // This smoke harness fires lifecycle hooks without a bound agent session, so
+  // stub the tool/thinking actions that the primary-agent runtime applies.
+  runtime.getAllTools = () => [];
+  runtime.getActiveTools = () => [];
+  runtime.setActiveTools = () => {};
+  runtime.getThinkingLevel = () => "off";
+  runtime.setThinkingLevel = () => {};
   const fixture = createSessionContext();
   for (const handler of tlhExtension.handlers.get("session_start") ?? []) {
     await handler({ reason: "reload" }, fixture.context);
@@ -255,11 +262,15 @@ async function runSessionStart(tlhExtension, subagentExtension) {
 
 await resourceLoader.reload();
 const defaultOff = inspectLoad();
-await runSessionStart(defaultOff.tlhExtension, defaultOff.subagentExtension);
+await runSessionStart(
+  defaultOff.tlhExtension,
+  defaultOff.subagentExtension,
+  defaultOff.result.runtime,
+);
 
 await resourceLoader.reload();
 const first = inspectLoad();
-await runSessionStart(first.tlhExtension, first.subagentExtension);
+await runSessionStart(first.tlhExtension, first.subagentExtension, first.result.runtime);
 
 await resourceLoader.reload();
 const second = inspectLoad();
@@ -284,7 +295,11 @@ for (const [resolvedPath, firstExtension] of firstExtensionsByPath) {
     assert.notEqual(secondExtension.tools, firstExtension.tools);
   }
 }
-const secondSession = await runSessionStart(second.tlhExtension, second.subagentExtension);
+const secondSession = await runSessionStart(
+  second.tlhExtension,
+  second.subagentExtension,
+  second.result.runtime,
+);
 const subagentExtension = second.subagentExtension;
 
 second.result.runtime.getSessionName = () => undefined;

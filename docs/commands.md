@@ -52,7 +52,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/experimental`                              | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`session-mirror-observer` and `no-developer` are currently registered)                                                  |
 | `/session-mirror-observer`                   | Show bounded aggregate observer status, or request a deferred snapshot with `status`/`snapshot`                                                                                                                                 |
 | `/tickets`                                   | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree                                                                                                                                          |
-| `/switch-primary-agent`                      | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`)                                                                                                                          |
+| `/switch-primary-agent`                      | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`)                                                                                                                          |
 | `/reconcile`                                 | Review and resolve model/effort override drift from TLH packaged defaults                                                                                                                                                       |
 | `/subagent-settings`                         | Show or edit persisted TLH bundled minor-agent model and effort overrides                                                                                                                                                       |
 | `/tlh-changelog`                             | Show TLH release notes from the packaged `CHANGELOG.md`                                                                                                                                                                         |
@@ -84,12 +84,6 @@ In the interactive TUI, `/model` without an exact argument and the default `Ctrl
 - **Esc/Ctrl+C** (default `tui.select.cancel` keybinding) cancels the picker without changing the active model or writing settings.
 
 Typed `/model <exact-name>` and model cycling are session-only and never create or edit a TLH per-primary override. To undo a persistent choice, choose the desired model through the picker and press Ctrl+S; for an active primary, `/switch-primary-agent model reset` clears its persisted override and attempts to reapply its packaged default, subject to `tlh.primaryAgent.applyModel`. Explicit `--model` and `--thinking` launch flags are session-only choices for the launch session, winning over persisted primary-agent overrides and packaged defaults; they are cleared on `/new`, `/reload`, or an explicit primary-agent mode change. How TLH observes persisted selections is described in [model selection](models.md#model-selection).
-
-### Disabled primary-agent mode
-
-Use `/switch-primary-agent disabled` to disable the primary persona for the current session; use `/switch-primary-agent default disabled` to make it the persistent default. `Shift+Tab` also cycles into disabled mode.
-
-Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Canonical bundled minor agents and persisted-trust-authorized project custom `embedded.<slug>` agents remain available; new embedded runs are forced to the validated Git-root project scope and a fresh context. Disabled mode may initiate explicitly requested embedded runs but cannot resume or steer retained project-agent runs (interrupt remains available); see [custom-subagents.md](custom-subagents.md#who-may-initiate-and-how-scope-is-selected). It does not inject the architect persona, architect-only project append or experimental guidance, automatic primary model/thinking defaults, any minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
 
 ### `/experimental`
 
@@ -250,7 +244,7 @@ The active TLH primary agent normally handles these tools for you. See [subagent
 
 ## Project custom subagents
 
-Custom subagents are not a slash command. Project-owned agents use the exact direct Git-root path `.tlh/agents/custom/<UPPERCASE-SLUG>.md`; persist trust for the validated Git root, then explicitly request one naturally by slug from an enabled primary agent or disabled mode. Generic profile, package, project `.pi/.agents`, configured-directory, and settings-based custom sources do not authorize targets. See [custom-subagents.md](custom-subagents.md) for strict frontmatter, trust boundaries, persisted-identity reauthorization, resume limits, troubleshooting, and removal.
+Custom subagents are not a slash command. Project-owned agents use the exact direct Git-root path `.tlh/agents/custom/<UPPERCASE-SLUG>.md`; persist trust for the validated Git root, then explicitly request one naturally by slug from an enabled primary agent. Generic profile, package, project `.pi/.agents`, configured-directory, and settings-based custom sources do not authorize targets. See [custom-subagents.md](custom-subagents.md) for strict frontmatter, trust boundaries, persisted-identity reauthorization, resume limits, troubleshooting, and removal.
 
 ---
 

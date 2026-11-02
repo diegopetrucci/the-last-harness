@@ -186,12 +186,12 @@ describe("persisted project-agent control authorization", () => {
     assert.equal(requests[0]?.message, "Focus.");
   });
 
-  it("rejects embedded resume and steer in disabled mode before dispatch or queueing", async () => {
-    const disabled = trustedAccess({ canManage: false, canInitiate: true });
+  it("rejects embedded resume and steer with initiate-only access before dispatch or queueing", async () => {
+    const initiateOnly = trustedAccess({ canManage: false, canInitiate: true });
     const dispatched: string[] = [];
     const completeId = writeRun("complete");
     const runningId = writeRun("running");
-    const executor = makeExecutor(disabled, dispatched);
+    const executor = makeExecutor(initiateOnly, dispatched);
 
     const resume = await run(
       executor,
@@ -208,7 +208,7 @@ describe("persisted project-agent control authorization", () => {
     assert.deepEqual(consumeChildMessageRequests(path.join(ASYNC_DIR, runningId)), []);
   });
 
-  it("lets disabled mode initiate an authorized target", async () => {
+  it("lets initiate-only access start an authorized target", async () => {
     const access = trustedAccess({ canManage: false, canInitiate: true });
     const resolution = await resolveProjectAgentExecution(
       { agent: "embedded.worker", task: "go" },

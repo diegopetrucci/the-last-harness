@@ -1,9 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import {
-  DISABLED_PRIMARY_AGENT,
-  isEnabledPrimaryAgentSelection,
-} from "../the-last-harness-primary-agent.mjs";
+import {} from "../the-last-harness-primary-agent.mjs";
 import {
   rushResumeDelegationReason,
   rushSteerDelegationReason,
@@ -64,11 +61,11 @@ export function createTlhPrimaryAgentResourceLifecycle(options: {
   let sessionProjectAgentGuidanceSnapshot: ProjectAgentGuidanceInventory | undefined;
   setTlhProjectAgentAccessProvider(() => {
     const selection = options.getPrimaryAgentSelection();
-    const canManage = isEnabledPrimaryAgentSelection(selection) && options.hasActivePrimaryAgent();
+    const canManage = options.hasActivePrimaryAgent();
     return {
       architect: selection === "architect" && canManage,
       canManage,
-      canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
+      canInitiate: canManage,
       controlRestrictedToEmbedded: selection === "rush",
       noDeveloper: isTlhNoDeveloperSessionActive(),
       resumeRestrictionReason: rushResumeDelegationReason(),

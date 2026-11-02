@@ -6,7 +6,7 @@ import {
   filterAvailableTools,
 } from "../extensions/the-last-harness-primary-tools.mjs";
 
-test("disabled primary mode restores active tools from before primary tools were applied", () => {
+test("primary tool state restores active tools from before primary tools were applied", () => {
   const availableTools = new Set(["bash", "edit", "find", "grep", "read"]);
   const primaryToolState = createPrimaryToolState();
   let activeTools = ["bash", "edit"];
@@ -19,7 +19,7 @@ test("disabled primary mode restores active tools from before primary tools were
     activeTools = primaryToolState.apply(validTools, activeTools);
   }
 
-  function disablePrimaryTools() {
+  function restorePrimaryTools() {
     const restoredTools = primaryToolState.restoreIfAppropriate(activeTools, availableTools);
     if (restoredTools) {
       activeTools = restoredTools;
@@ -32,11 +32,11 @@ test("disabled primary mode restores active tools from before primary tools were
   applyPrimaryTools(["read", "find"]);
   assert.deepEqual(activeTools, ["read", "find"]);
 
-  disablePrimaryTools();
+  restorePrimaryTools();
   assert.deepEqual(activeTools, ["bash", "edit"]);
 });
 
-test("disabled primary mode does not overwrite active tools changed after primary application", () => {
+test("primary tool state does not overwrite active tools changed after primary application", () => {
   const availableTools = new Set(["bash", "edit", "grep", "read"]);
   const primaryToolState = createPrimaryToolState();
   let activeTools = ["bash", "edit"];
@@ -52,7 +52,7 @@ test("disabled primary mode does not overwrite active tools changed after primar
   assert.deepEqual(activeTools, ["bash"]);
 });
 
-test("disabled primary mode restores additive late-registered tools captured after the first primary pass", () => {
+test("primary tool state restores additive late-registered tools captured after the first primary pass", () => {
   const availableTools = new Set([
     "bash",
     "edit",

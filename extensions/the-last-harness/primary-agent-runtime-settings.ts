@@ -2,7 +2,7 @@ import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE } from "../the-last-harness-primary-agent.mjs";
+import { PRIMARY_AGENT_CYCLE } from "../the-last-harness-primary-agent.mjs";
 import { isThinkingLevel } from "./thinking.js";
 import type {
   AgentPrompt,
@@ -182,9 +182,6 @@ export function writeTlhPrimaryAgentDefault(
       if (selection === undefined) {
         setField("enabled", undefined);
         setField("selected", undefined);
-      } else if (selection === DISABLED_PRIMARY_AGENT) {
-        setField("enabled", false);
-        setField("selected", DISABLED_PRIMARY_AGENT);
       } else {
         setField("enabled", true);
         setField("selected", selection);
