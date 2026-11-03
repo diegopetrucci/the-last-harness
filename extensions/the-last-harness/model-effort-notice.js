@@ -1,17 +1,12 @@
 // Generated from extensions/the-last-harness/model-effort-notice.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isRecord } from "./common.js";
 import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
-import { backfillMissingBaselines, computeModelEffortDrift, hasMeaningfulSubagentOverride, isKnownProvider, isMeaningfulPrimaryOverride, readReconcileState, } from "./model-effort-reconcile.js";
+import { backfillMissingBaselines, computeModelEffortDrift, hasMeaningfulSubagentOverride, isKnownProvider, listOverriddenPrimaryNames, readReconcileState, } from "./model-effort-reconcile.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 let notifiedThisProcess = false;
 export function hasAnyModelEffortOverride(settings) {
-    const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
-    if (isRecord(primaryModelOverrides)) {
-        for (const overrideValue of Object.values(primaryModelOverrides)) {
-            if (isMeaningfulPrimaryOverride(overrideValue)) {
-                return true;
-            }
-        }
+    if (listOverriddenPrimaryNames(settings).length > 0) {
+        return true;
     }
     const subagentOverrides = settings.subagents?.agentOverrides;
     if (isRecord(subagentOverrides)) {
