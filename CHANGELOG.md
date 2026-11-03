@@ -106,6 +106,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 - Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
+- The test process-liveness probe now treats a `/proc/<pid>/stat` read that fails with `ENOENT`/`ESRCH` after a successful `kill(pid, 0)` as the process being gone, fixing a reap-race flake in detached-child cleanup tests.
 
 ## [0.46.0] - 2026-10-20
 

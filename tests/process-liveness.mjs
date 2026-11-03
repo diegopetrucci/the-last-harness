@@ -55,8 +55,10 @@ export function isProcessAlive(
 
   try {
     return parseLinuxProcStatState(readProcStat(pid)) !== "Z";
-  } catch {
-    // A process that cannot be inspected must not be treated as gone.
+  } catch (error) {
+    // The process was reaped between the kill probe and the /proc read.
+    if (error?.code === "ENOENT" || error?.code === "ESRCH") return false;
+    // Other failures (e.g. EACCES) mean it cannot be inspected, so it must not be treated as gone.
     return true;
   }
 }
