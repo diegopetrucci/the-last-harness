@@ -192,7 +192,7 @@ function writeProfileFixture(agentDir, installState, updateCheckEnabled = false)
     `${JSON.stringify(
       {
         tlh: {
-          primaryAgent: { enabled: false, selected: "disabled" },
+          primaryAgent: { applyModel: false, applyThinking: false },
           telemetry: { enabled: false },
           updateCheck: updateCheckEnabled ? {} : { enabled: false },
         },

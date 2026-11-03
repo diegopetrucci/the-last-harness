@@ -159,7 +159,10 @@ for (const [selection, defaultModel] of [
         `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: selection, modelOverrides: { [selection]: `${overrideModel.provider}/${overrideModel.id}` } } } }, null, 2)}\n`,
       );
       const { pi, runtime } = registerRuntimeHarness({
-        primaryAgents: new Map([[selection, primary]]),
+        primaryAgents: new Map([
+          ["architect", createPrimaryPrompt("architect")],
+          [selection, primary],
+        ]),
         subagentMetadata: [],
       });
       await runtime.applySessionStart({
@@ -260,7 +263,10 @@ test("Rush persists a model override through public setModel for a non-default u
     applyModel: true,
     applyThinking: true,
   });
-  const primaryAgents = new Map([["rush", rushPrimary]]);
+  const primaryAgents = new Map([
+    ["architect", createPrimaryPrompt("architect")],
+    ["rush", rushPrimary],
+  ]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
@@ -320,7 +326,10 @@ for (const selection of ["product", "bug-hunter"]) {
 
     await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
       const { pi, runtime } = registerRuntimeHarness({
-        primaryAgents: new Map([[selection, primary]]),
+        primaryAgents: new Map([
+          ["architect", createPrimaryPrompt("architect")],
+          [selection, primary],
+        ]),
         subagentMetadata: [],
       });
 

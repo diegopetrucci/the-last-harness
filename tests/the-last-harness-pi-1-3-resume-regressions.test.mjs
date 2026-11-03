@@ -738,8 +738,7 @@ for (const primaryEnabled of [false, true]) {
         assert.equal(boundary.all.includes("new_tool"), true);
 
         if (!primaryEnabled) {
-          // Control: TLH is not loaded (its "disabled" primary mode still applies the
-          // architect tool surface), so this isolates Pi's own resume restore. Pi 1.4 activates extension tools the branch never mentioned.
+          // Control: TLH is not loaded (no primary agent applies a tool surface), so this isolates Pi's own resume restore. Pi 1.4 activates extension tools the branch never mentioned.
           // Pi 1.3 restored only the recorded `toolsAdded`, so this would fail there.
           assert.equal(boundary.active.includes("new_tool"), true);
           assert.equal(session.getActiveToolNames().includes("new_tool"), true);

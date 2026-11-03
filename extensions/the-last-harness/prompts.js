@@ -454,25 +454,17 @@ function formatAllowedSubagents(primary, subagents, options = {}) {
         return "";
     }
     const managementGuidance = `For subagent management \`action: "list"\`/\`"get"\`/\`"resume"\` calls, omit \`agentScope\` or use \`"user"\`. For \`action: "resume"\`, also omit \`context\` or use \`"fresh"\`. TLH minor agents are isolated to the user scope.`;
-    if (options.neutral) {
-        return `## TLH Allowed Minor Subagents\n\nThe subagent tool may delegate to these bundled TLH minor agents:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted \`embedded.<slug>\` agents may also be used only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves them only from \`.tlh/agents/custom/<UPPERCASE-SLUG>.md\`.`;
-    }
-    const projectAgentGuidance = "Trusted `embedded.<slug>` project agents are intentionally omitted from management `list`/`get` output. After the user asks for the `xyz` project subagent, map it to `embedded.xyz`; enabled primary roles may start and manage this trusted project-agent exception, while disabled mode may start a fresh run. Use it only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves project agents only from `.tlh/agents/custom/<UPPERCASE-SLUG>.md`.";
+    const projectAgentGuidance = "Trusted `embedded.<slug>` project agents are intentionally omitted from management `list`/`get` output. After the user asks for the `xyz` project subagent, map it to `embedded.xyz`; enabled primary roles may start and manage this trusted project-agent exception. Use it only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves project agents only from `.tlh/agents/custom/<UPPERCASE-SLUG>.md`.";
     return `## TLH Allowed Minor Subagents\n\nYou may delegate${primary ? " only" : ""} to these bundled TLH minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} ${projectAgentGuidance}\n\nDo not delegate outside this bundled TLH minor-agent list except for the explicitly requested trusted project-agent exception.`;
 }
-export function buildTlhSystemPrompt(primary, subagents, primaryEnabled, projectAgentGuidanceInventory, noDeveloperActive) {
+export function buildTlhSystemPrompt(primary, subagents, projectAgentGuidanceInventory, noDeveloperActive) {
     const prompts = [HARNESS_PROMPT.trim()];
-    if (primaryEnabled) {
-        if (primary) {
-            const promptVariant = primary.name === "architect" && noDeveloperActive ? "ticket-free" : "normal";
-            prompts.push(renderPromptVariant(primary.systemPrompt, promptVariant).trim());
-            prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
-        }
-        prompts.push(formatAllowedSubagents(primary, subagents, { noDeveloperActive }));
+    if (primary) {
+        const promptVariant = primary.name === "architect" && noDeveloperActive ? "ticket-free" : "normal";
+        prompts.push(renderPromptVariant(primary.systemPrompt, promptVariant).trim());
+        prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
     }
-    else {
-        prompts.push(formatAllowedSubagents(undefined, subagents, { neutral: true, noDeveloperActive }));
-    }
+    prompts.push(formatAllowedSubagents(primary, subagents, { noDeveloperActive }));
     return prompts.filter(Boolean).join("\n\n");
 }
 export function buildChildSubagentSystemPrompt() {
