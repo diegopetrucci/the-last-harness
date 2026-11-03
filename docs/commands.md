@@ -26,7 +26,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import`        | Import and resume a session from a JSONL file — **hidden from TLH autocomplete**                                                                                                                          |
 | `/login`         | Configure provider authentication                                                                                                                                                                         |
 | `/logout`        | Remove provider authentication                                                                                                                                                                            |
-| `/model`         | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model picker](#model-picker))                   |
+| `/model`         | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model picker](#model-picker))    |
 | `/name`          | Set the session display name                                                                                                                                                                              |
 | `/new`           | Start a new session                                                                                                                                                                                       |
 | `/quit`          | Quit the TLH TUI                                                                                                                                                                                          |
@@ -46,22 +46,22 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 
 These commands are registered by the TLH extension bundled with this profile.
 
-| Command                                      | Description                                                                                                                                                                             |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/effort`                                    | TLH behavioral alias for Pi's native thinking-level picker                                                                                                                              |
-| `/experimental`                              | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`session-mirror-observer` and `no-developer` are currently registered) |
-| `/session-mirror-observer`                   | Show bounded aggregate observer status, or request a deferred snapshot with `status`/`snapshot`                                                                                         |
-| `/tickets`                                   | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree                                                                                                  |
-| `/switch-primary-agent`                      | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`)                                                                                              |
-| `/reconcile`                                 | Review and resolve model/effort override drift from TLH packaged defaults                                                                                                               |
-| `/subagent-settings`                         | Show or edit persisted TLH bundled minor-agent model and effort overrides                                                                                                               |
-| `/tlh-changelog`                             | Show TLH release notes from the packaged `CHANGELOG.md`                                                                                                                                 |
-| `/tokens`                                    | Generate and open a single no-flags local HTML token-spend report for the current session                                                                                               |
-| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions                                                                                             |
-| `/toggle-context-cap`                        | Toggle the effective context-window cap for auto-compaction                                                                                                                             |
-| `/toggle-tlh-git-attribution`                | Toggle the TLH commit attribution footer for agent-created git commits                                                                                                                  |
-| `/usage`                                     | Show or change TLH subscription usage-limit footer preferences                                                                                                                          |
-| `/version`                                   | Show the installed TLH version and the upstream Pi runtime version                                                                                                                      |
+| Command                                      | Description                                                                                                                                                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/effort`                                    | TLH behavioral alias for Pi's native thinking-level picker                                                                                                                                                                      |
+| `/experimental`                              | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`session-mirror-observer` and `no-developer` are currently registered)                                                  |
+| `/session-mirror-observer`                   | Show bounded aggregate observer status, or request a deferred snapshot with `status`/`snapshot`                                                                                                                                 |
+| `/tickets`                                   | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree                                                                                                                                          |
+| `/switch-primary-agent`                      | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`)                                                                                                                          |
+| `/reconcile`                                 | Review and resolve model/effort override drift from TLH packaged defaults                                                                                                                                                       |
+| `/subagent-settings`                         | Show or edit persisted TLH bundled minor-agent model and effort overrides                                                                                                                                                       |
+| `/tlh-changelog`                             | Show TLH release notes from the packaged `CHANGELOG.md`                                                                                                                                                                         |
+| `/tokens`                                    | Generate and open a single no-flags local HTML token-spend report for the current session                                                                                                                                       |
+| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions                                                                                                                                     |
+| `/toggle-context-cap`                        | Toggle the effective context-window cap for auto-compaction                                                                                                                                                                |
+| `/toggle-tlh-git-attribution`                | Toggle the TLH commit attribution footer for agent-created git commits                                                                                                                                                          |
+| `/usage`                                     | Show or change TLH subscription usage-limit footer preferences                                                                                                                                                                  |
+| `/version`                                   | Show the installed TLH version and the upstream Pi runtime version                                                                                                                                                              |
 
 ### `/thinking` (native) and `/effort` (TLH alias)
 
@@ -138,8 +138,7 @@ For each subagent dispatch, the effective choices are resolved from highest to l
 1. A direct dispatch with an explicit model that already has a recognized `:effort` suffix is left unchanged; the suffix wins over any saved effort.
 2. A direct dispatch with an explicit model but no recognized suffix keeps that model. A recognized saved role effort is appended unchanged; an invalid saved value is omitted with a warning. A saved role model pin does not replace the caller's explicit model.
 3. When the dispatch has no explicit model, stored `/subagent-settings` values are resolved before bundled defaults. An available stored model pin is used, and any recognized stored effort is forwarded unchanged. A stored `model: false` means inherit the current session model and then apply the stored effort. A stored effort without a model pin applies to the resolved role model.
-4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. `code-reviewer`, `oracle`, and `contrarian` prefer an available opposite provider for independence; the other bundled roles generally follow the current session provider when TLH injects defaults.
-5. With no applicable stored override, TLH uses the bundled provider-aware role defaults. Opposite-provider selection for review roles is described in [review independence](models.md#review-independence-for-code-reviewer-oracle-and-contrarian).
+4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. Opposite-provider selection for review roles is described in [review independence](models.md#review-independence-for-code-reviewer-oracle-and-contrarian).
    A saved model pin that is no longer available is not silently replaced: TLH warns that `TLH saved minor-agent model override "<model>" is not in the available registry for <role>; forwarding the model argument to Pi for validation instead of swapping in bundled defaults. Update it with /subagent-settings set <role> model <provider/id> or clear it with /subagent-settings reset <role> model.` During dispatch, the subagents runtime uses fallback models from the role's saved `subagents.agentOverrides.<role>.fallbackModels` field or bundled agent frontmatter, together with TLH-generated provider-aware candidates. Caller-supplied `fallbackModels` are no longer accepted. Because TLH cannot observe every runtime fallback source, this warning does not claim that a dispatch will fail closed.
 
 Recognized effort overrides are forwarded unchanged on each dispatch. This includes explicit unknown models, persisted or project saved pins absent from the registry, and registry-known models whose metadata does not advertise the requested effort. Capability metadata may produce a diagnostic such as `TLH stored minor-agent effort "<level>" is not advertised by <provider/id>; the :<level> suffix is forwarded and Pi will validate it.`, but it never filters, neutralizes, or clears that suffix. An unavailable saved pin additionally reports `TLH stored minor-agent effort "<level>" had unavailable capability metadata for saved model "<provider/id>"; the :<level> suffix is forwarded and Pi will validate it for <role>.` Only syntactically invalid stored/project effort values are omitted, with an explicit invalid-effort warning naming the accepted levels.
@@ -377,8 +376,8 @@ These commands are registered and fully functional, but deliberately excluded fr
 
 ### Hidden bundled extension commands
 
-| Command        | Extension        | Description                                                                                               |
-| -------------- | ---------------- | --------------------------------------------------------------------------------------------------------- |
+| Command        | Extension       | Description                                                                                                  |
+| -------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
 | `/quiet-tools` | `pi-quiet-tools` | Show read-only status for the mandatory TLH-managed renderer; this command does not toggle or disable it. |
 
 The status covers only the installer-managed quiet-tools source. Separately loaded third-party extensions are outside its scope. Ctrl+O and per-row expansion remain available for native full output.
@@ -411,15 +410,15 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 
 Every field is always present. A missing, invalid, or wrong-typed value is `null` (except `schemaVersion` and `agentDir`).
 
-| Field           | Source                                                                                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schemaVersion` | Always `1`                                                                                                                                                |
-| `tlhVersion`    | Installed TLH package version; on ref tracks such as `main`, the release version that checkout is based on                                                |
-| `piVersion`     | Version of the private Pi runtime package the wrapper execs, read from its `package.json` (no subprocess)                                                 |
-| `track`         | Install metadata: `latest-release`, `pinned-tag`, `ref`, or `custom`                                                                                      |
+| Field           | Source                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `schemaVersion` | Always `1`                                                                                                 |
+| `tlhVersion`    | Installed TLH package version; on ref tracks such as `main`, the release version that checkout is based on |
+| `piVersion`     | Version of the private Pi runtime package the wrapper execs, read from its `package.json` (no subprocess)  |
+| `track`         | Install metadata: `latest-release`, `pinned-tag`, `ref`, or `custom`                                       |
 | `ref`           | Installed tag or ref from install metadata: release tag on `latest-release`, tag on `pinned-tag`, ref on `ref`; may be `null` on `custom` or when unknown |
-| `repo`          | Install metadata: the source repository                                                                                                                   |
-| `agentDir`      | The wrapper's authoritative isolated profile path                                                                                                         |
+| `repo`          | Install metadata: the source repository                                                                    |
+| `agentDir`      | The wrapper's authoritative isolated profile path                                                          |
 
 `track` is one of the four values above or `null`; consumers should tolerate new `track` values added in future schema-compatible releases.
 
