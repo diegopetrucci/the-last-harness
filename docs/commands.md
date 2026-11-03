@@ -253,7 +253,7 @@ These commands ship inside the TLH package itself rather than through separately
 
 | Command                  | Extension           | Description                                                                                                                                         |
 | ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/annotate-last-message` | `the-last-harness`  | Open a native annotation window for the latest assistant message and send submitted feedback to the agent                                           |
+| `/annotate-last-message [N]` | `the-last-harness`  | Open a native annotation window for the latest (or Nth latest) assistant message and send submitted feedback to the agent                           |
 | `/annotate-git-diff`     | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
 | `/subagents-doctor`      | `subagents`         | Show first-party subagent runtime diagnostics                                                                                                       |
 
@@ -273,10 +273,11 @@ These commands ship inside the TLH package itself rather than through separately
 
 - Finds the latest completed assistant message on the active session branch and shows it with line numbers plus section-level grouping.
 - Lets you leave overall, section, and inline comments in one lightweight first-party TLH window.
-- When you submit, TLH sends a structured planning-oriented feedback prompt directly to the agent as a follow-up message. Your existing editor text is left untouched.
+- When you submit, TLH sends a structured planning-oriented feedback prompt directly to the agent as a follow-up message. Your existing editor text is left untouched. Closing the window discards unsent notes.
 - Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines.
 - It does not auto-apply code changes or silently mutate prior messages.
-- Use `/annotate-last-message` directly when you want to annotate the latest assistant reply.
+- Use `/annotate-last-message` directly when you want to annotate the latest assistant reply, or `/annotate-last-message N` (positive integer, 1 = latest) to annotate an earlier one. N ≥ 2 counts only completed text replies, skipping tool-use and empty turns; the prompt then refers to "your assistant message from N replies ago". Invalid arguments show a usage error; if fewer than N completed replies exist you get an "Only K completed assistant replies" error.
+- A section is a run of lines between blank lines. A fenced code block (` ``` ` or `~~~`) stays one section across blank lines, and a block containing only a horizontal rule is not a section.
 
 #### Extension-local notes
 
@@ -286,6 +287,7 @@ See [`extensions/the-last-harness/annotate-last-message/README.md`](../extension
 
 - `annotate-last-message requires interactive mode.` → run the command from the TLH TUI rather than a non-interactive command context.
 - `No assistant messages found on the current session branch.` → wait until the branch has an assistant reply, then rerun.
+- `Only K completed assistant replies found on the current session branch.` → rerun with a smaller `N`.
 - `Latest assistant message is incomplete (...)` → wait for the assistant turn to finish, then rerun.
 - `Latest assistant message has no text to annotate.` → rerun after a normal text reply; tool-only or empty assistant turns cannot be annotated.
 - `A last-message annotation window is already open.` → return to the existing window or close it before opening another.

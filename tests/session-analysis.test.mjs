@@ -7,6 +7,7 @@ import {
   aggregateCoverage,
   analyzeSubagentSessions,
   extractSubagentCorrelationsWithStatus,
+  mapWithConcurrency,
   readSessionHeader,
   recordCorrelationEvidenceFailures,
   scanSessionFile,
@@ -1223,4 +1224,23 @@ test("extractSubagentCorrelationsWithStatus: refuses symlink pointing outside se
     "symlink pointing outside sessionsDir must not be resolved",
   );
   assert.equal(correlations[0]?.childSessionId, undefined);
+});
+
+test("mapWithConcurrency: bounds in-flight work and preserves input order", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const items = Array.from({ length: 20 }, (_, i) => i);
+  const results = await mapWithConcurrency(items, 8, async (n) => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, (20 - n) % 5));
+    inFlight--;
+    return n * 2;
+  });
+  assert.deepEqual(
+    results,
+    items.map((n) => n * 2),
+  );
+  assert.ok(maxInFlight > 1, "expected concurrent execution");
+  assert.ok(maxInFlight <= 8, `expected at most 8 in flight, saw ${maxInFlight}`);
 });
