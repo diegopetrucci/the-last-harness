@@ -11,6 +11,10 @@ All notable changes to The Last Harness will be documented in this file.
 ### What's new
 
 - Bumped managed Gnosis (`gn`) to 0.5.5.
+- Managed Gnosis install now fetches the release checksums concurrently with the archive download, reducing install latency.
+- `/annotate-git-diff` now runs independent git lookups concurrently when opening the review window and loading file contents, reducing latency.
+- `/what-consumed-my-session-limit-and-tokens` now reads session files with bounded concurrency, reducing report latency.
+- `tlh sessions` now scans session files and resolves subagent child headers with bounded concurrency, reducing latency.
 - Suppressed Pi's extension update changelog notices at launch; TLH keeps only its own update signals ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Hid OpenAI Codex `gpt-6.1-terra` from the model picker by default ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Refreshed the bundled Herdr and tmux terminal skills to newer upstream commits.

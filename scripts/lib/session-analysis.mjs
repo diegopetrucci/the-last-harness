@@ -1276,6 +1276,21 @@ function projectionGapCountForMessage(entry, message, projection) {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+/** Maximum session files read concurrently by `tlh sessions`. */
+export const SESSION_FILE_CONCURRENCY = 8;
+/** Maps items with at most `limit` calls in flight; results keep input order. */
+export async function mapWithConcurrency(items, limit, fn) {
+    const results = Array.from({ length: items.length });
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next++;
+            results[index] = await fn(items[index]);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
 /**
  * Scan a single session JSONL file in a streaming, read-only manner.
  *
@@ -1639,50 +1654,48 @@ export async function extractSubagentCorrelationsWithStatus(scanResult, sessions
         failureReasons.push("generationMismatch");
     if (failureReasons.length > 0)
         return { correlations: [], failureReasons };
-    const correlations = [];
-    for (const { toolCallId, details } of rescan.evidence) {
-        for (const r of details.results ?? []) {
-            // Resolve child paths only after canonicalizing them beneath sessionsDir.
-            let underSessionsDir = false;
-            if (sessionsDir !== undefined) {
-                try {
-                    const realChild = realpathSync(r.sessionFile);
-                    const realSessions = realpathSync(sessionsDir);
-                    underSessionsDir = realChild.startsWith(realSessions + "/");
-                }
-                catch {
-                    underSessionsDir = false;
-                }
+    const children = rescan.evidence.flatMap(({ toolCallId, details }) => (details.results ?? []).map((r) => ({ toolCallId, details, r })));
+    const correlations = await mapWithConcurrency(children, SESSION_FILE_CONCURRENCY, async ({ toolCallId, details, r }) => {
+        // Resolve child paths only after canonicalizing them beneath sessionsDir.
+        let underSessionsDir = false;
+        if (sessionsDir !== undefined) {
+            try {
+                const realChild = realpathSync(r.sessionFile);
+                const realSessions = realpathSync(sessionsDir);
+                underSessionsDir = realChild.startsWith(realSessions + "/");
             }
-            let childResolved = false;
-            let childSessionId;
-            let childStartedAt;
-            if (underSessionsDir) {
-                try {
-                    const header = await readSessionHeader(r.sessionFile);
-                    if (header) {
-                        childResolved = true;
-                        childSessionId = header.id;
-                        childStartedAt = header.timestamp;
-                    }
-                }
-                catch {
-                    // Keep unresolved on missing or unreadable child files.
-                }
+            catch {
+                underSessionsDir = false;
             }
-            correlations.push({
-                parentSessionFile: scanResult.filePath,
-                parentSessionId,
-                toolCallId,
-                runId: details.runId,
-                ...(r.agent !== undefined ? { agent: r.agent } : {}),
-                childSessionFile: r.sessionFile,
-                childResolved,
-                ...(childSessionId !== undefined ? { childSessionId } : {}),
-                ...(childStartedAt !== undefined ? { childStartedAt } : {}),
-            });
         }
-    }
+        let childResolved = false;
+        let childSessionId;
+        let childStartedAt;
+        if (underSessionsDir) {
+            try {
+                const header = await readSessionHeader(r.sessionFile);
+                if (header) {
+                    childResolved = true;
+                    childSessionId = header.id;
+                    childStartedAt = header.timestamp;
+                }
+            }
+            catch {
+                // Keep unresolved on missing or unreadable child files.
+            }
+        }
+        return {
+            parentSessionFile: scanResult.filePath,
+            parentSessionId,
+            toolCallId,
+            runId: details.runId,
+            ...(r.agent !== undefined ? { agent: r.agent } : {}),
+            childSessionFile: r.sessionFile,
+            childResolved,
+            ...(childSessionId !== undefined ? { childSessionId } : {}),
+            ...(childStartedAt !== undefined ? { childStartedAt } : {}),
+        };
+    });
     return { correlations, failureReasons };
 }
 // ---------------------------------------------------------------------------

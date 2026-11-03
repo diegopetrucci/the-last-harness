@@ -1398,6 +1398,27 @@ function projectionGapCountForMessage(
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Maximum session files read concurrently by `tlh sessions`. */
+export const SESSION_FILE_CONCURRENCY = 8;
+
+/** Maps items with at most `limit` calls in flight; results keep input order. */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = Array.from({ length: items.length });
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /**
  * Scan a single session JSONL file in a streaming, read-only manner.
  *
@@ -1873,9 +1894,13 @@ export async function extractSubagentCorrelationsWithStatus(
   if (scanResult.correlationEvidenceGeneration !== rescan.generation)
     failureReasons.push("generationMismatch");
   if (failureReasons.length > 0) return { correlations: [], failureReasons };
-  const correlations: SubagentCorrelation[] = [];
-  for (const { toolCallId, details } of rescan.evidence) {
-    for (const r of details.results ?? []) {
+  const children = rescan.evidence.flatMap(({ toolCallId, details }) =>
+    (details.results ?? []).map((r) => ({ toolCallId, details, r })),
+  );
+  const correlations = await mapWithConcurrency(
+    children,
+    SESSION_FILE_CONCURRENCY,
+    async ({ toolCallId, details, r }): Promise<SubagentCorrelation> => {
       // Resolve child paths only after canonicalizing them beneath sessionsDir.
       let underSessionsDir = false;
       if (sessionsDir !== undefined) {
@@ -1902,7 +1927,7 @@ export async function extractSubagentCorrelationsWithStatus(
           // Keep unresolved on missing or unreadable child files.
         }
       }
-      correlations.push({
+      return {
         parentSessionFile: scanResult.filePath,
         parentSessionId,
         toolCallId,
@@ -1912,9 +1937,9 @@ export async function extractSubagentCorrelationsWithStatus(
         childResolved,
         ...(childSessionId !== undefined ? { childSessionId } : {}),
         ...(childStartedAt !== undefined ? { childStartedAt } : {}),
-      });
-    }
-  }
+      };
+    },
+  );
   return { correlations, failureReasons };
 }
 // ---------------------------------------------------------------------------

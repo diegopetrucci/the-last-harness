@@ -19,8 +19,10 @@ import {
   aggregateCoverage,
   analyzeSubagentSessions,
   extractSubagentCorrelationsWithStatus,
+  mapWithConcurrency,
   recordCorrelationEvidenceFailures,
   scanSessionFile,
+  SESSION_FILE_CONCURRENCY,
   type ExtraCoverageData,
   type ScanCoverage,
   type SessionScanResult,
@@ -528,14 +530,21 @@ async function main(): Promise<void> {
     unreadableDirectories: discovery.unreadableDirectories,
   };
 
+  const scanOutcomes = await mapWithConcurrency(
+    sessionFiles,
+    SESSION_FILE_CONCURRENCY,
+    async (filePath): Promise<SessionScanResult | null> => {
+      try {
+        return await scanSessionFile(filePath);
+      } catch {
+        return null;
+      }
+    },
+  );
   const scanResults: SessionScanResult[] = [];
-  for (const filePath of sessionFiles) {
-    try {
-      const result = await scanSessionFile(filePath);
-      scanResults.push(result);
-    } catch {
-      extraCoverage.failedScans = (extraCoverage.failedScans ?? 0) + 1;
-    }
+  for (const outcome of scanOutcomes) {
+    if (outcome === null) extraCoverage.failedScans = (extraCoverage.failedScans ?? 0) + 1;
+    else scanResults.push(outcome);
   }
 
   const coverage = aggregateCoverage(scanResults, extraCoverage);
