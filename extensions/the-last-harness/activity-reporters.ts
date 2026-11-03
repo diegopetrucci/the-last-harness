@@ -18,6 +18,11 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
 const MIN_HEARTBEAT_INTERVAL_MS = 1000;
 const MAX_HEARTBEAT_INTERVAL_MS = 2_147_483_647;
 const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500] as const;
+const HERDR_RESUME_WRAPPER_FALLBACK = "tlh";
+// Herdr's own resume_argv bounds; exceeding either rejects the whole report.
+const HERDR_MAX_RESUME_ARGV_ARGS = 64;
+const HERDR_MAX_RESUME_ARGV_BYTES = 8192;
+const HERDR_PLAIN_COMMAND_NAME = /^[A-Za-z0-9_.-]+$/;
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
 
@@ -376,6 +381,62 @@ function defaultHerdrRequestSender(
   };
 }
 
+/**
+ * Herdr restore types the recorded command into the pane's fresh login shell,
+ * so the launcher must be a bare command name rather than a path. The name
+ * must also pass [`isValidHerdrResumeArgv`] on its own, since Herdr rejects the
+ * whole report when any argument is unusable (for example an oversized name).
+ */
+function resolveRuntimeWrapperName(env: NodeJS.ProcessEnv): string {
+  const candidate = env.TLH_RUNTIME_WRAPPER_NAME;
+  if (typeof candidate === "string" && isValidHerdrResumeArgv([candidate])) {
+    return candidate;
+  }
+  return HERDR_RESUME_WRAPPER_FALLBACK;
+}
+
+/** Rust's `char::is_control` (Unicode category Cc): the C0 and C1 ranges. */
+function hasControlChar(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+/**
+ * Mirrors Herdr's `validate_resume_argv`: a rejected command fails the whole
+ * pane.report_agent call, so validate locally before opting into the feature.
+ */
+function isValidHerdrResumeArgv(argv: readonly string[]): boolean {
+  const command = argv[0];
+  if (command === undefined) return false;
+  if (argv.length > HERDR_MAX_RESUME_ARGV_ARGS) return false;
+  let totalBytes = 0;
+  for (const arg of argv) {
+    if (hasControlChar(arg) || arg.includes("'")) return false;
+    totalBytes += Buffer.byteLength(arg, "utf8");
+  }
+  if (totalBytes > HERDR_MAX_RESUME_ARGV_BYTES) return false;
+  return command.length > 0 && !command.startsWith("-") && HERDR_PLAIN_COMMAND_NAME.test(command);
+}
+
+/**
+ * Herdr only accepts native session refs from official (source, agent) pairs
+ * such as (herdr:pi, pi), so a session ref reported by herdr:tlh is dropped.
+ * `resume_argv` is the supported third-party path: Herdr persists the command
+ * while the reporting source holds the pane and types it into a fresh login
+ * shell when it restores the pane. An unusable session path still reports the
+ * bare wrapper, because Herdr keeps the previously recorded command when
+ * `resume_argv` is omitted (leaving a stale session behind) and rejects the
+ * whole state report when the argv is invalid.
+ */
+function buildResumeArgv(wrapperName: string, sessionPath: string | undefined): string[] {
+  if (sessionPath === undefined) return [wrapperName];
+  const argv = [wrapperName, "--session", sessionPath];
+  return isValidHerdrResumeArgv(argv) ? argv : [wrapperName];
+}
+
 export function createHerdrActivityReporter(
   options: HerdrActivityReporterOptions = {},
 ): TlhActivityReporter {
@@ -393,8 +454,10 @@ export function createHerdrActivityReporter(
   }
   const sendRequest = options.sendRequest ?? defaultHerdrRequestSender(env, options);
   const now = options.now ?? Date.now;
+  const wrapperName = resolveRuntimeWrapperName(env);
   let reportSeq = now() * 1000;
   let sessionRef: ActivitySessionRef = {};
+  let resumeArgv: string[] = [wrapperName];
   let rootSession = false;
   let disposed = false;
 
@@ -444,6 +507,7 @@ export function createHerdrActivityReporter(
           agent: HERDR_AGENT,
           state,
           seq: nextReportSeq(),
+          resume_argv: resumeArgv,
         },
         sessionRef,
       ),
@@ -527,6 +591,17 @@ export function createHerdrActivityReporter(
     (heartbeatTimer as { unref?: () => void }).unref?.();
   };
 
+  const commitStateReport = async (state: HerdrProtocolState): Promise<void> => {
+    await sendStateCore(state);
+    lastReportedState = state;
+    if (!heartbeatStarted) {
+      heartbeatStarted = true;
+      // The default sender resolves after exhausted socket retries on
+      // purpose, so this still starts best-effort recovery heartbeats.
+      scheduleHeartbeat();
+    }
+  };
+
   const sendState: StateSender<HerdrProtocolState> = (_state) => {
     return enqueueOutbound(async () => {
       if (!rootSession || disposed) return;
@@ -535,15 +610,22 @@ export function createHerdrActivityReporter(
       // idle or blocked after a newer working snapshot.
       const state = desiredState;
       if (state === undefined) return;
-      await sendStateCore(state);
-      lastReportedState = state;
-      if (!heartbeatStarted) {
-        heartbeatStarted = true;
-        // The default sender resolves after exhausted socket retries on
-        // purpose, so this still starts best-effort recovery heartbeats.
-        scheduleHeartbeat();
-      }
+      await commitStateReport(state);
     });
+  };
+
+  // A session change must reach Herdr promptly even when the activity state did
+  // not change (the queued reporter dedupes identical states) and even when
+  // heartbeats are disabled with HERDR_TLH_HEARTBEAT_MS=0. Reusing the
+  // serialized outbound queue keeps seq monotonic and the send order intact.
+  const reportCurrentStateOnSessionChange = (): void => {
+    if (desiredState === undefined && lastReportedState === undefined) return;
+    void enqueueOutbound(async () => {
+      if (!rootSession || disposed) return;
+      const state = desiredState ?? lastReportedState;
+      if (state === undefined) return;
+      await commitStateReport(state);
+    }).catch(() => undefined);
   };
 
   const queuedReporter = createQueuedStateReporter(
@@ -573,22 +655,11 @@ export function createHerdrActivityReporter(
       rootSession = true;
       sessionRef = readSessionRef(ctx);
       currentSessionTitle = readSessionName(ctx);
-      const startedSessionRef = sessionRef;
-      if (startedSessionRef.agentSessionId || startedSessionRef.agentSessionPath) {
-        void sendRequest({
-          id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
-          method: "pane.report_agent_session",
-          params: withSessionRef(
-            {
-              pane_id: paneId,
-              source: HERDR_SOURCE,
-              agent: HERDR_AGENT,
-              seq: nextReportSeq(),
-            },
-            startedSessionRef,
-          ),
-        }).catch(() => undefined);
-      }
+      // New, resume, fork, and reload all enter here: refresh the restore
+      // command for whichever session now owns this pane. It rides on the
+      // activity reports, so Herdr sees it with the pane's next state report.
+      resumeArgv = buildResumeArgv(wrapperName, sessionRef.agentSessionPath);
+      reportCurrentStateOnSessionChange();
       // Keep presentation metadata on its own source so HERDR_SOURCE remains
       // exclusively responsible for the pane's lifecycle authority. It does
       // not require a session ref: pane metadata is keyed by pane/source.

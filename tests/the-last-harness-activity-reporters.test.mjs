@@ -393,7 +393,7 @@ test("Herdr reporter does not retry after first activity socket response", async
   assert.equal(JSON.parse(activitySocket.writes[0]).method, "pane.report_agent");
 });
 
-test("Herdr reporter sends monotonic working/idle state with session refs", async () => {
+test("Herdr reporter sends monotonic working/idle state with session refs and resume argv", async () => {
   const timers = createFakeTimers();
   const calls = [];
   const reporter = createHerdrActivityReporter({
@@ -411,8 +411,9 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
     sessionManager: { getSessionFile: () => "/tmp/session.jsonl", getSessionId: () => "session-1" },
   });
   await flushAsyncWork();
-  assert.equal(calls[0].method, "pane.report_agent_session");
-  assert.equal(calls[0].params.agent_session_path, "/tmp/session.jsonl");
+  // The startup session-ref side channel is gone: the resume command rides on
+  // the seq-ordered activity reports instead.
+  assert.equal(calls.filter((call) => call.method === "pane.report_agent_session").length, 0);
   const metadataCalls = calls.filter((call) => call.method === "pane.report_metadata");
   assert.equal(metadataCalls.length, 1);
   assert.deepEqual(metadataCalls[0].params, {
@@ -435,6 +436,7 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
   assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 1);
   assert.equal(calls.at(-1).params.state, "working");
   assert.equal(calls.at(-1).params.agent_session_path, "/tmp/session.jsonl");
+  assert.deepEqual(calls.at(-1).params.resume_argv, ["tlh", "--session", "/tmp/session.jsonl"]);
 
   reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
   timers.advance(24);
@@ -449,6 +451,10 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
     ["working", "idle"],
   );
   assert.ok(stateCalls[1].params.seq > stateCalls[0].params.seq);
+  assert.ok(
+    stateCalls.every((call) => call.params.resume_argv?.at(-1) === "/tmp/session.jsonl"),
+    "every state report carries the resume command",
+  );
 
   reporter.handleSessionShutdown();
   await flushAsyncWork();

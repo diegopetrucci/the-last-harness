@@ -32,6 +32,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Restored Herdr panes now relaunch the same TLH session instead of a plain shell; see [docs/integrations.md](docs/integrations.md) ([#864](https://github.com/diegopetrucci/the-last-harness/pull/864)).
 - The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.
 - `/annotate-last-message` no longer clips the bottom of long assistant messages; the message panel is now a flex column so its scroller fits below the header.
