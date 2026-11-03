@@ -16,6 +16,8 @@ export interface LastAssistantMessageData {
   text: string;
   lines: LastAssistantMessageLine[];
   sections: LastAssistantMessageSection[];
+  /** Set only when an earlier reply (N >= 2) was selected. */
+  repliesAgo?: number;
 }
 
 export type LastAssistantMessageLookupResult =

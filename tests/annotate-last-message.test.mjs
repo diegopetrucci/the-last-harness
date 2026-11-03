@@ -169,6 +169,72 @@ test("findLastAssistantMessage extracts text blocks into normalized lines and se
   ]);
 });
 
+test("findLastAssistantMessage skips thematic-break-only blocks and keeps numbering contiguous", () => {
+  const sections = (text) =>
+    findLastAssistantMessage([
+      messageEntry("assistant", [{ type: "text", text }]),
+    ]).data.sections.map((s) => [s.id, s.index, s.startLine, s.endLine]);
+
+  assert.deepEqual(sections("a\n\n---\n\nb\n\n * * *\n_ _ _\n\nc"), [
+    ["section-1", 1, 1, 1],
+    ["section-2", 2, 5, 5],
+    ["section-3", 3, 10, 10],
+  ]);
+  // Setext heading underline stays with its text.
+  assert.deepEqual(sections("Title\n---\n\nb"), [
+    ["section-1", 1, 1, 2],
+    ["section-2", 2, 4, 4],
+  ]);
+  // Rule-like lines inside a fence are not breaks.
+  assert.deepEqual(sections("a\n\n```\n---\n\n***\n```\n\nb"), [
+    ["section-1", 1, 1, 1],
+    ["section-2", 2, 3, 7],
+    ["section-3", 3, 9, 9],
+  ]);
+  // Four leading spaces is not a break; heading-only sections are kept.
+  assert.deepEqual(sections("    ---\n\n# Heading\n\nb"), [
+    ["section-1", 1, 1, 1],
+    ["section-2", 2, 3, 3],
+    ["section-3", 3, 5, 5],
+  ]);
+});
+
+test("findLastAssistantMessage keeps fenced blocks with blank lines in one section", () => {
+  const ranges = (text) =>
+    findLastAssistantMessage([
+      messageEntry("assistant", [{ type: "text", text }]),
+    ]).data.sections.map((s) => [s.startLine, s.endLine]);
+
+  // ``` fence with internal blank lines; blank lines outside still split.
+  assert.deepEqual(ranges("a\n\n```js\nx\n\ny\n```\n\nb"), [
+    [1, 1],
+    [3, 7],
+    [9, 9],
+  ]);
+  // ~~~ fence, and fence directly after text without a blank line.
+  assert.deepEqual(ranges("a\n~~~\nx\n\ny\n~~~\n\nb"), [
+    [1, 6],
+    [8, 8],
+  ]);
+  // Unclosed fence runs to the end of the message.
+  assert.deepEqual(ranges("a\n\n```\nx\n\ny\n\nz"), [
+    [1, 1],
+    [3, 8],
+  ]);
+  // 4-space-indented fence-like line is not a fence.
+  assert.deepEqual(ranges("a\n    ```\n\nb"), [
+    [1, 2],
+    [4, 4],
+  ]);
+  // Mismatched closers (other char, shorter, trailing text) do not close.
+  assert.deepEqual(ranges("````\nx\n\n```\n\n~~~~\n\n```` text\n\ny"), [[1, 10]]);
+  // Matching closer (longer, same char) closes; later blank line splits.
+  assert.deepEqual(ranges("```\nx\n\n`````\n\nb"), [
+    [1, 4],
+    [6, 6],
+  ]);
+});
+
 test("composeAnnotateLastMessagePrompt trims and orders overall, section, inline, and unknown-reference comments", () => {
   const prompt = composeAnnotateLastMessagePrompt(
     {
@@ -214,7 +280,6 @@ test("composeAnnotateLastMessagePrompt trims and orders overall, section, inline
       "",
       "Treat this as planning-oriented feedback:",
       "- update your explanation, plan, or proposed approach in chat;",
-      "- do not assume any code or file changes have already been applied;",
       "- do not auto-apply anything outside the normal response flow.",
       "",
       "## Overall guidance",
@@ -737,4 +802,119 @@ test("wiring: buildAnnotateLastMessageCommand passes dependencies.getTheme to th
   );
 
   command.handleSessionShutdown();
+});
+
+const nthBranch = () => [
+  messageEntry("assistant", [{ type: "text", text: "First reply" }]),
+  messageEntry("user", [{ type: "text", text: "Q" }]),
+  messageEntry("assistant", [{ type: "text", text: "Narration" }], "toolUse"),
+  messageEntry("assistant", [{ type: "text", text: "   " }]),
+  messageEntry("assistant", [{ type: "text", text: "Second reply" }]),
+  messageEntry("user", [{ type: "text", text: "Q2" }]),
+  messageEntry("assistant", [{ type: "text", text: "Third reply" }]),
+];
+
+test("findLastAssistantMessage N>=2 counts only completed non-empty text replies", () => {
+  const two = findLastAssistantMessage(nthBranch(), 2);
+  assert.equal(two.ok, true);
+  assert.equal(two.data.text, "Second reply");
+  assert.equal(two.data.repliesAgo, 2);
+  assert.equal(findLastAssistantMessage(nthBranch(), 3).data.text, "First reply");
+  assert.deepEqual(findLastAssistantMessage(nthBranch(), 4), {
+    ok: false,
+    code: "missing",
+    message: "Only 3 completed assistant replies found on the current session branch.",
+  });
+  assert.equal(findLastAssistantMessage(nthBranch(), 1).data.repliesAgo, undefined);
+  assert.equal(
+    findLastAssistantMessage([messageEntry("assistant", [{ type: "text", text: "Only" }])], 2)
+      .message,
+    "Only 1 completed assistant reply found on the current session branch.",
+  );
+  assert.equal(
+    findLastAssistantMessage([messageEntry("user", [{ type: "text", text: "Q" }])], 2).message,
+    "Only 0 completed assistant replies found on the current session branch.",
+  );
+});
+
+test("annotate-last-message handler validates N and opens the Nth reply", async () => {
+  for (const bad of ["0", "-1", "abc", "1.5", "2 3"]) {
+    let opened = 0;
+    const command = buildAnnotateLastMessageCommand({
+      openAnnotationWindow: async () => {
+        opened += 1;
+        return new FakeWindow();
+      },
+      sendUserMessage: () => {},
+    });
+    const context = createContext({ branch: nthBranch() });
+    await command.handler(bad, context.ctx);
+    assert.equal(opened, 0, bad);
+    assert.deepEqual(context.notifications, [
+      {
+        message: "Usage: /annotate-last-message [N] (N = positive integer, 1 = latest reply).",
+        level: "error",
+      },
+    ]);
+  }
+
+  let opened = 0;
+  const outOfRange = buildAnnotateLastMessageCommand({
+    openAnnotationWindow: async () => {
+      opened += 1;
+      return new FakeWindow();
+    },
+    sendUserMessage: () => {},
+  });
+  const ctxA = createContext({ branch: nthBranch() });
+  await outOfRange.handler("9", ctxA.ctx);
+  assert.equal(opened, 0);
+  assert.equal(
+    ctxA.notifications[0].message,
+    "Only 3 completed assistant replies found on the current session branch.",
+  );
+
+  const window = new FakeWindow();
+  let html = "";
+  const { sent, sendUserMessage } = createSendUserMessage();
+  const command = buildAnnotateLastMessageCommand({
+    openAnnotationWindow: async (h) => {
+      html = h;
+      return window;
+    },
+    sendUserMessage,
+  });
+  const ctxB = createContext({ branch: nthBranch() });
+  await command.handler(" 2 ", ctxB.ctx);
+  assert.match(html, /Second reply/);
+  window.emit("message", {
+    type: "submit",
+    overallComment: "Tighten",
+    inlineComments: [],
+    sectionComments: [],
+  });
+  await flushAsyncWork();
+  assert.match(sent[0].message, /^Please revisit your assistant message from 2 replies ago using/);
+  assert.match(sent[0].message, /revising your assistant message from 2 replies ago or its plan/);
+  assert.doesNotMatch(sent[0].message, /last assistant message/);
+});
+
+test("annotate-last-message N=1 prompt wording is unchanged", async () => {
+  const window = new FakeWindow();
+  const { sent, sendUserMessage } = createSendUserMessage();
+  const command = buildAnnotateLastMessageCommand({
+    openAnnotationWindow: async () => window,
+    sendUserMessage,
+  });
+  const ctx = createContext({ branch: nthBranch() });
+  await command.handler("1", ctx.ctx);
+  window.emit("message", {
+    type: "submit",
+    overallComment: "x",
+    inlineComments: [],
+    sectionComments: [],
+  });
+  await flushAsyncWork();
+  assert.match(sent[0].message, /^Please revisit your last assistant message using/);
+  assert.match(sent[0].message, /revising your last message or its plan/);
 });

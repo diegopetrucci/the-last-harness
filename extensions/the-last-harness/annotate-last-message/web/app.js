@@ -22,6 +22,7 @@ const elements = {
   status: document.getElementById("status"),
   submitButton: document.getElementById("submit-button"),
   cancelButton: document.getElementById("cancel-button"),
+  submitHint: document.getElementById("submit-hint"),
 };
 
 function feedbackCount() {
@@ -61,20 +62,55 @@ function setSectionComment(sectionId, value) {
   updateSubmitState();
 }
 
+const autoGrowTextareas = [];
+
+// No-op without layout (test fake DOM) or when hidden (scrollHeight is 0).
+function autoGrow(textarea) {
+  if (!textarea || !textarea.style || typeof textarea.scrollHeight !== "number") return;
+  textarea.style.height = "auto";
+  if (textarea.scrollHeight <= 0) return;
+  const borders = (textarea.offsetHeight || 0) - (textarea.clientHeight || 0);
+  textarea.style.height = `${textarea.scrollHeight + Math.max(0, borders)}px`;
+}
+
+function enableAutoGrow(textarea) {
+  autoGrowTextareas.push(textarea);
+  textarea.addEventListener("input", () => autoGrow(textarea));
+}
+
+function createPencilIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.5");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const d of [
+    "M2 14l.8-3.4L11 2.4a1.4 1.4 0 0 1 2 0l.6.6a1.4 1.4 0 0 1 0 2L5.4 13.2z",
+    "M9.5 4l2.5 2.5",
+  ]) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
 function createInlineEditor(line) {
   const container = document.createElement("div");
   container.className = "inline-editor";
   container.hidden = true;
 
-  const meta = document.createElement("p");
-  meta.className = "line-meta";
-  meta.textContent = `Inline note for line ${line.number}`;
-  container.append(meta);
-
   const textarea = document.createElement("textarea");
-  textarea.placeholder =
-    "Explain what should change here, what is unclear, or what planning detail is missing.";
+  textarea.placeholder = "Note on this line…";
+  textarea.setAttribute("autocorrect", "off");
+  textarea.setAttribute("autocapitalize", "off");
   textarea.value = state.inlineComments.get(line.number) || "";
+  enableAutoGrow(textarea);
   container.append(textarea);
 
   return { container, textarea };
@@ -201,7 +237,8 @@ function renderClassifiedLine(container, classification) {
 function renderLineContent(container, rawText, lineType) {
   if (lineType === "fence-body") {
     // Code-block body: raw text, no inline markdown, code-block styling.
-    container.style.cssText = "border-left: 3px solid var(--mdCodeBlockBorder); padding-left: 8px;";
+    container.style.cssText =
+      "border-left: var(--bar-width) solid var(--mdCodeBlockBorder); padding-left: var(--space-2);";
     const code = document.createElement("code");
     code.style.cssText = "display: block; color: var(--mdCodeBlock, var(--text))";
     code.textContent = rawText.length > 0 ? rawText : " ";
@@ -255,14 +292,21 @@ function createLineRow(line, lineType) {
   const toggle = document.createElement("button");
   toggle.className = "inline-toggle";
   toggle.type = "button";
-  toggle.textContent = "Add inline note";
   row.append(toggle);
 
   const editor = createInlineEditor(line);
   const syncToggle = () => {
     const hasValue = (state.inlineComments.get(line.number) || "").trim().length > 0;
-    toggle.dataset.active = hasValue || !editor.container.hidden ? "true" : "false";
-    toggle.textContent = hasValue ? "Edit inline note" : "Add inline note";
+    const open = !editor.container.hidden;
+    toggle.dataset.active = hasValue || open ? "true" : "false";
+    toggle.dataset.state = open ? "open" : hasValue ? "note" : "empty";
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    const label = hasValue ? `Edit note on line ${line.number}` : `Add note to line ${line.number}`;
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+    if (!open && hasValue) toggle.replaceChildren(createPencilIcon());
+    else toggle.textContent = open ? "\u2212" : "+";
+    wrapper.dataset.hasNote = hasValue ? "true" : "false";
   };
 
   editor.textarea.addEventListener("input", () => {
@@ -270,11 +314,22 @@ function createLineRow(line, lineType) {
     syncToggle();
   });
 
+  editor.textarea.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    // Stop the document-level Esc handler from cancelling the whole window.
+    event.preventDefault();
+    event.stopPropagation();
+    editor.container.hidden = true;
+    syncToggle();
+    toggle.focus();
+  });
+
   toggle.addEventListener("click", () => {
     editor.container.hidden = !editor.container.hidden;
     syncToggle();
     if (!editor.container.hidden) {
       editor.textarea.focus();
+      autoGrow(editor.textarea);
     }
   });
 
@@ -282,6 +337,8 @@ function createLineRow(line, lineType) {
   syncToggle();
   return wrapper;
 }
+
+const SECTION_PREVIEW_MAX_LINES = 4;
 
 function createSectionCard(section) {
   const card = document.createElement("div");
@@ -293,12 +350,15 @@ function createSectionCard(section) {
       ? `line ${section.startLine}`
       : `lines ${section.startLine}-${section.endLine}`;
   title.textContent = `Section ${section.index}`;
-  card.append(title);
 
   const meta = document.createElement("p");
   meta.className = "section-meta";
   meta.textContent = lineRange;
-  card.append(meta);
+
+  const header = document.createElement("div");
+  header.className = "section-header";
+  header.append(title, meta);
+  card.append(header);
 
   // Render section preview with per-line markdown.
   // Fence state is computed fresh for each section (each section is independent).
@@ -307,19 +367,29 @@ function createSectionCard(section) {
 
   const sectionLines = section.text.split("\n");
   const fenceState = globalThis.__tlhMdRenderer.applyFenceState(sectionLines);
-  for (let idx = 0; idx < sectionLines.length; idx++) {
+  const shownCount = Math.min(sectionLines.length, SECTION_PREVIEW_MAX_LINES);
+  for (let idx = 0; idx < shownCount; idx++) {
     const lineDiv = document.createElement("div");
     renderLineContent(lineDiv, sectionLines[idx], fenceState[idx].lineType);
     preview.append(lineDiv);
   }
+  const hiddenCount = sectionLines.length - shownCount;
+  if (hiddenCount > 0) {
+    const more = document.createElement("div");
+    more.className = "section-preview-more";
+    more.textContent = `+${hiddenCount} more ${hiddenCount === 1 ? "line" : "lines"}`;
+    preview.append(more);
+  }
   card.append(preview);
   const textarea = document.createElement("textarea");
-  textarea.placeholder =
-    "Describe what should change across this section or what larger concern should be addressed.";
+  textarea.placeholder = "Note on this section…";
+  textarea.setAttribute("autocorrect", "off");
+  textarea.setAttribute("autocapitalize", "off");
   textarea.value = state.sectionComments.get(section.id) || "";
   textarea.addEventListener("input", () => {
     setSectionComment(section.id, textarea.value);
   });
+  enableAutoGrow(textarea);
   card.append(textarea);
 
   return card;
@@ -364,7 +434,12 @@ function collectPayload() {
   };
 }
 
+// Set once a terminal message (submit/cancel) has been sent so the Esc status-reset
+// timeout never touches a closing window.
+let sent = false;
+
 function sendPayload(payload) {
+  sent = true;
   window.glimpse?.send?.(payload);
   window.glimpse?.close?.();
 }
@@ -381,6 +456,47 @@ function cancel() {
   sendPayload({ type: "cancel" });
 }
 
+const ESC_CONFIRM_MS = 2000;
+let escArmedUntil = 0;
+
+// Two-step Esc instead of window.confirm, which is unreliable in WKWebView.
+function escapePressed() {
+  const count = feedbackCount();
+  if (count === 0) {
+    cancel();
+    return;
+  }
+  const now = Date.now();
+  if (now <= escArmedUntil) {
+    cancel();
+    return;
+  }
+  escArmedUntil = now + ESC_CONFIRM_MS;
+  const noun = count === 1 ? "note" : "notes";
+  setStatus(`Press Esc again to discard ${count} ${noun}`, "error");
+  setTimeout(() => {
+    if (Date.now() > escArmedUntil && sent === false) updateSubmitState();
+  }, ESC_CONFIRM_MS + 50);
+}
+
+function submitShortcutHint() {
+  try {
+    const platform =
+      (typeof navigator !== "undefined" &&
+        ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform)) ||
+      "";
+    if (typeof platform === "string" && platform && !/mac|iphone|ipad/i.test(platform)) {
+      return "Ctrl \u21B5";
+    }
+  } catch {
+    // fall through to the default
+  }
+  return "\u2318 \u21B5";
+}
+
+elements.submitHint.textContent = submitShortcutHint();
+
+enableAutoGrow(elements.overallComment);
 elements.overallComment.addEventListener("input", () => {
   state.overallComment = elements.overallComment.value;
   updateSubmitState();
@@ -398,10 +514,13 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape") {
     event.preventDefault();
-    cancel();
+    // Ignore auto-repeat so holding Esc cannot arm and confirm a discard.
+    if (event.repeat) return;
+    escapePressed();
   }
 });
 
 renderMessageLines();
 renderSectionComments();
 updateSubmitState();
+for (const textarea of autoGrowTextareas) autoGrow(textarea);

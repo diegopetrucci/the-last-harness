@@ -50,11 +50,16 @@ export function composeAnnotateLastMessagePrompt(message, payload) {
         .sort((left, right) => (sectionMap.get(left.sectionId)?.index ?? Number.MAX_SAFE_INTEGER) -
         (sectionMap.get(right.sectionId)?.index ?? Number.MAX_SAFE_INTEGER));
     const lines = [];
-    lines.push("Please revisit your last assistant message using the annotation feedback below.");
+    const target = message.repliesAgo != null && message.repliesAgo >= 2
+        ? `your assistant message from ${message.repliesAgo} replies ago`
+        : "your last assistant message";
+    const closingTarget = message.repliesAgo != null && message.repliesAgo >= 2
+        ? `your assistant message from ${message.repliesAgo} replies ago`
+        : "your last message";
+    lines.push(`Please revisit ${target} using the annotation feedback below.`);
     lines.push("");
     lines.push("Treat this as planning-oriented feedback:");
     lines.push("- update your explanation, plan, or proposed approach in chat;");
-    lines.push("- do not assume any code or file changes have already been applied;");
     lines.push("- do not auto-apply anything outside the normal response flow.");
     lines.push("");
     const overallComment = payload.overallComment.trim();
@@ -79,6 +84,6 @@ export function composeAnnotateLastMessagePrompt(message, payload) {
             lines.push("");
         });
     }
-    lines.push("Please respond by revising your last message or its plan in chat, incorporating the feedback above.");
+    lines.push(`Please respond by revising ${closingTarget} or its plan in chat, incorporating the feedback above.`);
     return lines.join("\n").trim();
 }

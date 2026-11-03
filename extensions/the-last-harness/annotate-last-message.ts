@@ -62,8 +62,10 @@ function isCancelPayload(value: unknown): value is AnnotateLastMessageCancelPayl
   return typeof value === "object" && value != null && "type" in value && value.type === "cancel";
 }
 
+const USAGE_MESSAGE = "Usage: /annotate-last-message [N] (N = positive integer, 1 = latest reply).";
+
 type AnnotateLastMessageCommand = {
-  handler: (_args: string, ctx: ExtensionCommandContext) => Promise<void>;
+  handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
   handleSessionShutdown: () => void;
 };
 
@@ -102,7 +104,7 @@ export function buildAnnotateLastMessageCommand(
     }
   }
 
-  async function openWindowForContext(ctx: ExtensionCommandContext): Promise<void> {
+  async function openWindowForContext(ctx: ExtensionCommandContext, n: number): Promise<void> {
     if (!ctx.hasUI) {
       ctx.ui.notify("annotate-last-message requires interactive mode.", "error");
       return;
@@ -112,7 +114,7 @@ export function buildAnnotateLastMessageCommand(
       return;
     }
 
-    const messageResult = findLastAssistantMessage(ctx.sessionManager.getBranch());
+    const messageResult = findLastAssistantMessage(ctx.sessionManager.getBranch(), n);
     if (messageResult.ok === false) {
       ctx.ui.notify(messageResult.message, "error");
       return;
@@ -239,8 +241,17 @@ export function buildAnnotateLastMessageCommand(
   }
 
   return {
-    handler: async (_args, ctx) => {
-      await openWindowForContext(ctx);
+    handler: async (args, ctx) => {
+      const trimmed = (args ?? "").trim();
+      let n = 1;
+      if (trimmed.length > 0) {
+        if (!/^[1-9][0-9]*$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+          ctx.ui.notify(USAGE_MESSAGE, "error");
+          return;
+        }
+        n = Number(trimmed);
+      }
+      await openWindowForContext(ctx, n);
     },
     handleSessionShutdown: () => {
       lifecycleGeneration += 1;
