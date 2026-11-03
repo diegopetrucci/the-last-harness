@@ -33,6 +33,8 @@ All notable changes to The Last Harness will be documented in this file.
 - In RPC mode, TLH now publishes its subscription usage footer segment as the `tlh-usage` extension UI status (cleared with `undefined`) so hosts such as tlh-gui can render it; the docs also list the existing `fast` status key; see [docs/commands.md](docs/commands.md#usage-and-rpc-status-for-hosts).
 - TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`.
 - The `tlh` wrapper defaults `PI_PROGRAM_STATUS=0` to keep Pi 1.1.0's native OSC 7501 emitter off while TLH's effective-activity reporter remains the root owner.
+- `/annotate-last-message N` annotates an earlier reply; `N` counts completed text replies, and `1` (the default) is the latest.
+- Refreshed the `/annotate-last-message` window: each line has a note button, Esc with notes needs a second press to discard, Esc inside an inline note closes only that note, and Cancel/Submit show their shortcuts.
 
 ### Fixed
 
@@ -60,6 +62,7 @@ All notable changes to The Last Harness will be documented in this file.
 - The result watcher now rescans existing results after a restart, since results written while it was down emit no events.
 - Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
+- `/annotate-last-message` keeps a fenced code block in one section across blank lines and no longer creates an empty section for a horizontal-rule-only block.
 
 ### Changed
 
@@ -110,6 +113,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 - Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
+- The test process-liveness probe now treats a `/proc/<pid>/stat` read that fails with `ENOENT`/`ESRCH` after a successful `kill(pid, 0)` as the process being gone, fixing a reap-race flake in detached-child cleanup tests ([#865](https://github.com/diegopetrucci/the-last-harness/pull/865)).
 
 ## [0.46.0] - 2026-10-20
 

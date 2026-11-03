@@ -112,7 +112,7 @@ test("Jiti command facades resolve tokens, annotate-last-message, and tlh-change
     assert.equal(typeof annotateCommand?.handler, "function");
     assert.equal(
       annotateCommand?.description,
-      "Open a native annotation window for the latest assistant message",
+      "Open a native annotation window for the latest assistant message (optional [N] for an earlier reply)",
     );
     assert.equal(typeof changelogCommand?.handler, "function");
 
