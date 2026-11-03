@@ -39,6 +39,75 @@ const PINNED_ARGS = {
   piCmd: "/home/user/.the-last-harness/runtime/bin/pi",
 };
 
+test("renderWrapper: exports TLH_RUNTIME_WRAPPER_NAME from the default wrapper name", () => {
+  const rendered = renderWrapper(PINNED_ARGS);
+  assert.ok(rendered.includes('export TLH_RUNTIME_WRAPPER_NAME="${default_wrapper_name}"'));
+  assert.ok(rendered.includes("default_wrapper_name='tlh'"));
+  const custom = renderWrapper({ ...PINNED_ARGS, wrapperName: "tlh-alt" });
+  assert.ok(custom.includes("default_wrapper_name='tlh-alt'"));
+  assert.ok(custom.includes('export TLH_RUNTIME_WRAPPER_NAME="${default_wrapper_name}"'));
+});
+
+test("renderWrapper: does not export the installer input TLH_WRAPPER_NAME", () => {
+  const rendered = renderWrapper(PINNED_ARGS);
+  const assignments = rendered
+    .split("\n")
+    .filter((line) => /^\s*(export\s+)?TLH_WRAPPER_NAME=/.test(line));
+  assert.deepEqual(assignments, []);
+  assert.ok(!rendered.includes("export TLH_WRAPPER_NAME"));
+});
+
+test("renderWrapper: TLH_RUNTIME_WRAPPER_NAME is exported before the pinned pi exec", () => {
+  const rendered = renderWrapper(PINNED_ARGS);
+  const exportIndex = rendered.indexOf('export TLH_RUNTIME_WRAPPER_NAME="${default_wrapper_name}"');
+  const piExecIndex = rendered.indexOf('exec "${default_pi_cmd}" "$@"');
+  assert.ok(exportIndex >= 0 && piExecIndex >= 0);
+  assert.ok(exportIndex < piExecIndex);
+});
+
+function launchWithStubPi(t, wrapperName) {
+  const root = mkdtempSync(join(tmpdir(), "tlh-wrapper-runtime-name-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const piCmd = join(root, "runtime", "bin", "pi");
+  mkdirSync(dirname(piCmd), { recursive: true });
+  writeFileSync(
+    piCmd,
+    [
+      "#!/usr/bin/env bash",
+      "printf 'TLH_RUNTIME_WRAPPER_NAME=%s\\n' \"${TLH_RUNTIME_WRAPPER_NAME:-}\"",
+      "printf 'TLH_WRAPPER_NAME=%s\\n' \"${TLH_WRAPPER_NAME:-}\"",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const wrapperPath = join(root, wrapperName);
+  writeFileSync(
+    wrapperPath,
+    renderWrapper({
+      ...BASE_ARGS,
+      agentDir: join(root, "agent"),
+      binDir: root,
+      packageRoot: REPO_ROOT,
+      wrapperName,
+      piCmd,
+    }),
+    { mode: 0o755 },
+  );
+  const env = { ...process.env, HOME: root };
+  delete env.TLH_WRAPPER_NAME;
+  delete env.TLH_RUNTIME_WRAPPER_NAME;
+  return spawnSync("bash", [wrapperPath], { cwd: root, env, encoding: "utf8" });
+}
+
+test("rendered wrapper: launch environment carries the runtime wrapper name only", (t) => {
+  for (const name of ["tlh", "tlh-alt"]) {
+    const result = launchWithStubPi(t, name);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, new RegExp(`^TLH_RUNTIME_WRAPPER_NAME=${name}$`, "m"));
+    assert.match(result.stdout, /^TLH_WRAPPER_NAME=$/m);
+  }
+});
+
 test("renderWrapper: MCP adapter startup guard runs before the pinned pi exec", () => {
   const rendered = renderWrapper(PINNED_ARGS);
   const guardIndex = rendered.indexOf(

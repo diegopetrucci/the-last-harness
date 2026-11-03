@@ -399,6 +399,9 @@ function renderWrapper(args) {
         // Pre-disable upstream Pi's native OSC 7501 emitter (see GitHub issue #748;
         // available since Pi 1.1.0) so it cannot fight TLH's root-record reporter.
         'export PI_PROGRAM_STATUS="${PI_PROGRAM_STATUS:-0}"',
+        // Herdr restore relaunches a pane by typing this wrapper name back into a
+        // login shell; TLH_WRAPPER_NAME stays reserved for installer/update input.
+        'export TLH_RUNTIME_WRAPPER_NAME="${default_wrapper_name}"',
         "",
         'if [[ "${1:-}" == "update" ]]; then',
         "  shift",
