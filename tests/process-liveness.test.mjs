@@ -71,6 +71,22 @@ test("isProcessAlive keeps unreadable Linux proc records alive", () => {
   );
 });
 
+test("isProcessAlive treats proc records that vanish after the kill probe as gone", () => {
+  for (const code of ["ENOENT", "ESRCH"]) {
+    assert.equal(
+      isProcessAlive(123, {
+        platform: "linux",
+        kill: () => {},
+        readProcStat: () => {
+          throw codedError(code);
+        },
+      }),
+      false,
+      `expected ${code} to mean the process is gone`,
+    );
+  }
+});
+
 test("isProcessAlive preserves EPERM and ESRCH kill results", () => {
   assert.equal(
     isProcessAlive(123, {
