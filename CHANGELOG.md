@@ -10,7 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
-- `/effort` Ctrl+S now saves a per-primary effort override (`tlh.primaryAgent.effortOverrides`) instead of the global default; `/reconcile` lists and resets effort-only overrides.
+- `/effort` Ctrl+S now saves a per-primary effort override (`tlh.primaryAgent.effortOverrides`) instead of the global default; `/reconcile` lists and resets effort-only overrides ([#866](https://github.com/diegopetrucci/the-last-harness/pull/866)).
 - Refreshed the bundled Herdr and tmux terminal skills to newer upstream commits.
 - Added the opt-in ticket-free Architect/no-developer workflow; see [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode) ([#854](https://github.com/diegopetrucci/the-last-harness/pull/854)).
 - Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume and cancel for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
