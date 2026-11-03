@@ -6,13 +6,32 @@ First-party `/annotate-last-message` support for The Last Harness.
 
 `/annotate-last-message` opens a lightweight native annotation window for the latest completed assistant message on the current session branch.
 
+To annotate an earlier reply, pass a positive integer: `/annotate-last-message N`.
+
+- `1` is the latest reply, the same as passing no argument.
+- For `N` of 2 or more, TLH counts only completed text replies, skipping tool-use and empty turns.
+- The prompt that TLH sends refers to "your assistant message from N replies ago".
+- An invalid argument shows a usage error and opens no window.
+- If fewer than `N` completed replies exist, TLH shows an error with the number it found.
+
 From that window you can leave:
 
 - overall guidance for the whole reply,
-- section comments for larger chunks of the message, and
+- section comments for one block of the message (a run of lines between blank lines; a fenced code block stays in one section even with blank lines, and a block containing only a horizontal rule is not a section), and
 - inline notes tied to individual lines.
 
-When you submit, TLH sends the feedback directly to the agent as a follow-up message. Your existing editor text is left untouched. Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines. It does not auto-apply changes or rewrite the old message in place.
+When you submit, TLH sends the feedback directly to the agent as a follow-up message. Your existing editor text is left untouched. Closing the window discards unsent notes. Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines. It does not auto-apply changes or rewrite the old message in place.
+
+Buttons and keys in the window:
+
+| Action                                                         | Result                                                                                                             |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Click **Submit**, or press `⌘ ↵` (`Ctrl ↵` on other platforms) | TLH sends the feedback to the agent as a follow-up message. Your editor text does not change.                      |
+| Press Esc inside an inline note                                | TLH closes that note and keeps its text.                                                                           |
+| Press Esc anywhere else, with notes                            | TLH asks you to press Esc again within about 2 seconds. The second press discards the notes and closes the window. |
+| Press Esc anywhere else, with no notes                         | The window closes.                                                                                                 |
+| Click **Cancel**                                               | TLH discards the notes and closes the window.                                                                      |
+| Close the window with its close button                         | TLH discards unsent notes and sends nothing to the agent.                                                          |
 
 This is TLH's first-party replacement for the older Plannotator-based last-message annotation flow. Use `/annotate-last-message` directly; this workflow does not require Plannotator.
 
@@ -50,6 +69,7 @@ The UI assets are packaged locally with TLH, so the window does not need CDN-hos
 
 - `annotate-last-message requires interactive mode.` → run it from the TLH TUI.
 - `No assistant messages found on the current session branch.` → wait for a branch reply, then rerun.
+- `Only K completed assistant replies found on the current session branch.` → use a smaller `N`.
 - `Latest assistant message is incomplete (...)` → wait for the assistant turn to finish, then rerun.
 - `Latest assistant message has no text to annotate.` → rerun after a normal text reply.
 - `A last-message annotation window is already open.` → reuse or close the existing window before opening another.
