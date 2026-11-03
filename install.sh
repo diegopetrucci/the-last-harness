@@ -9,7 +9,7 @@ REF="${TLH_REF:-main}"
 # major; the last is an open floor.
 TLH_MIN_NODE_VERSIONS=("24.22.1" "26.12.1")
 TLH_NODE_REQUIREMENT_TEXT="Node.js >=24.22.1 <25 or >=26.12.1"
-TLH_PINNED_PI_VERSION="1.4.0"
+TLH_PINNED_PI_VERSION="1.5.0"
 
 # Keep stage-0 remote support downloads bounded so an unavailable raw-file
 # request cannot hold up the installer indefinitely, especially in parallel.
@@ -98,7 +98,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.4)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.5)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:

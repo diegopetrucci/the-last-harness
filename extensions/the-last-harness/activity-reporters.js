@@ -13,6 +13,10 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
 const MIN_HEARTBEAT_INTERVAL_MS = 1000;
 const MAX_HEARTBEAT_INTERVAL_MS = 2_147_483_647;
 const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500];
+const HERDR_RESUME_WRAPPER_FALLBACK = "tlh";
+const HERDR_MAX_RESUME_ARGV_ARGS = 64;
+const HERDR_MAX_RESUME_ARGV_BYTES = 8192;
+const HERDR_PLAIN_COMMAND_NAME = /^[A-Za-z0-9_.-]+$/;
 function parseDurationEnv(env, name, fallback) {
     const raw = env[name];
     if (!raw)
@@ -257,6 +261,43 @@ function defaultHerdrRequestSender(env, options = {}) {
         }
     };
 }
+function resolveRuntimeWrapperName(env) {
+    const candidate = env.TLH_RUNTIME_WRAPPER_NAME;
+    if (typeof candidate === "string" && isValidHerdrResumeArgv([candidate])) {
+        return candidate;
+    }
+    return HERDR_RESUME_WRAPPER_FALLBACK;
+}
+function hasControlChar(value) {
+    for (const char of value) {
+        const code = char.codePointAt(0) ?? 0;
+        if (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+            return true;
+    }
+    return false;
+}
+function isValidHerdrResumeArgv(argv) {
+    const command = argv[0];
+    if (command === undefined)
+        return false;
+    if (argv.length > HERDR_MAX_RESUME_ARGV_ARGS)
+        return false;
+    let totalBytes = 0;
+    for (const arg of argv) {
+        if (hasControlChar(arg) || arg.includes("'"))
+            return false;
+        totalBytes += Buffer.byteLength(arg, "utf8");
+    }
+    if (totalBytes > HERDR_MAX_RESUME_ARGV_BYTES)
+        return false;
+    return command.length > 0 && !command.startsWith("-") && HERDR_PLAIN_COMMAND_NAME.test(command);
+}
+function buildResumeArgv(wrapperName, sessionPath) {
+    if (sessionPath === undefined)
+        return [wrapperName];
+    const argv = [wrapperName, "--session", sessionPath];
+    return isValidHerdrResumeArgv(argv) ? argv : [wrapperName];
+}
 export function createHerdrActivityReporter(options = {}) {
     const env = options.env ?? process.env;
     const paneId = env.HERDR_PANE_ID;
@@ -272,8 +313,10 @@ export function createHerdrActivityReporter(options = {}) {
     }
     const sendRequest = options.sendRequest ?? defaultHerdrRequestSender(env, options);
     const now = options.now ?? Date.now;
+    const wrapperName = resolveRuntimeWrapperName(env);
     let reportSeq = now() * 1000;
     let sessionRef = {};
+    let resumeArgv = [wrapperName];
     let rootSession = false;
     let disposed = false;
     const heartbeatIntervalMs = parseHeartbeatIntervalEnv(env);
@@ -310,6 +353,7 @@ export function createHerdrActivityReporter(options = {}) {
                 agent: HERDR_AGENT,
                 state,
                 seq: nextReportSeq(),
+                resume_argv: resumeArgv,
             }, sessionRef),
         });
     };
@@ -377,6 +421,14 @@ export function createHerdrActivityReporter(options = {}) {
         }, heartbeatIntervalMs);
         heartbeatTimer.unref?.();
     };
+    const commitStateReport = async (state) => {
+        await sendStateCore(state);
+        lastReportedState = state;
+        if (!heartbeatStarted) {
+            heartbeatStarted = true;
+            scheduleHeartbeat();
+        }
+    };
     const sendState = (_state) => {
         return enqueueOutbound(async () => {
             if (!rootSession || disposed)
@@ -384,13 +436,20 @@ export function createHerdrActivityReporter(options = {}) {
             const state = desiredState;
             if (state === undefined)
                 return;
-            await sendStateCore(state);
-            lastReportedState = state;
-            if (!heartbeatStarted) {
-                heartbeatStarted = true;
-                scheduleHeartbeat();
-            }
+            await commitStateReport(state);
         });
+    };
+    const reportCurrentStateOnSessionChange = () => {
+        if (desiredState === undefined && lastReportedState === undefined)
+            return;
+        void enqueueOutbound(async () => {
+            if (!rootSession || disposed)
+                return;
+            const state = desiredState ?? lastReportedState;
+            if (state === undefined)
+                return;
+            await commitStateReport(state);
+        }).catch(() => undefined);
     };
     const queuedReporter = createQueuedStateReporter(sendState, (snapshot) => snapshot.inProgress ? "working" : snapshot.waitingForUser ? "blocked" : "idle", {
         idleDebounceMs: options.idleDebounceMs ??
@@ -409,19 +468,8 @@ export function createHerdrActivityReporter(options = {}) {
             rootSession = true;
             sessionRef = readSessionRef(ctx);
             currentSessionTitle = readSessionName(ctx);
-            const startedSessionRef = sessionRef;
-            if (startedSessionRef.agentSessionId || startedSessionRef.agentSessionPath) {
-                void sendRequest({
-                    id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
-                    method: "pane.report_agent_session",
-                    params: withSessionRef({
-                        pane_id: paneId,
-                        source: HERDR_SOURCE,
-                        agent: HERDR_AGENT,
-                        seq: nextReportSeq(),
-                    }, startedSessionRef),
-                }).catch(() => undefined);
-            }
+            resumeArgv = buildResumeArgv(wrapperName, sessionRef.agentSessionPath);
+            reportCurrentStateOnSessionChange();
             displayMetadataPending = true;
             displayMetadataDirty = true;
             retryDisplayMetadata();

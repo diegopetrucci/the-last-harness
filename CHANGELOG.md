@@ -10,6 +10,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
+- Bumped managed Gnosis (`gn`) to 0.5.5.
+- Suppressed Pi's extension update changelog notices at launch; TLH keeps only its own update signals ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
+- Hid OpenAI Codex `gpt-6.1-terra` from the model picker by default ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - `/effort` Ctrl+S now saves a per-primary effort override (`tlh.primaryAgent.effortOverrides`) instead of the global default; `/reconcile` lists and resets effort-only overrides ([#866](https://github.com/diegopetrucci/the-last-harness/pull/866)).
 - Refreshed the bundled Herdr and tmux terminal skills to newer upstream commits.
 - Added the opt-in ticket-free Architect/no-developer workflow; see [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode) ([#854](https://github.com/diegopetrucci/the-last-harness/pull/854)).
@@ -30,6 +33,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Restored Herdr panes now relaunch the same TLH session instead of a plain shell; see [docs/integrations.md](docs/integrations.md) ([#864](https://github.com/diegopetrucci/the-last-harness/pull/864)).
 - The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.
 - `/annotate-last-message` no longer clips the bottom of long assistant messages; the message panel is now a flex column so its scroller fits below the header.
@@ -57,7 +61,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped the bundled `pi-mcp-adapter` pin from 5.0.1 to 5.0.2: servers that launch Xcode's MCP bridge (`xcrun mcpbridge`) now default to no idle timeout, so Xcode's "Allow agent to access Xcode?" prompt is not repeated after idle shutdown (an explicit per-server `idleTimeout` still wins).
-- Bumped the bundled Pi runtime from `1.3.0` to `1.4.0`. TLH behavior and defaults are unchanged; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence) and provider-backed checks remain pending.
+- Bumped the bundled Pi runtime from `1.3.0` to `1.5.0` (via `1.4.0`). TLH behavior and defaults are unchanged; review evidence is in the upstream-sync inventory ([1.5.0](docs/upstream-sync-inventory.md#pi-150-review-evidence), [1.4.0](docs/upstream-sync-inventory.md#historical-pi-140-review-evidence)) and provider-backed checks remain pending ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Refreshed bundled extension pins: `pi-fast` 0.1.6 → 0.1.11, `pi-anthropic-auth` 3.4.2 → 3.4.3, `pi-mcp-adapter` 5.0.0 → 5.0.2, `pi-web-access` 0.29.2 → 0.29.3, `pi-inline-bash` 0.1.11 → 0.1.14, `pi-context-inspector` 0.1.15 → 0.1.17, `pi-dirty-repo-guard` 0.1.11 → 0.1.13, and `pi-quiet-tools` 0.1.14 → 0.1.15. `pi-fast` 0.1.10 added `/ultrafast` for eligible direct OpenAI API-key `gpt-6-astra` requests and changes direct OpenAI ChatGPT OAuth Fast requests from `service_tier: "fast"` to `service_tier: "priority"`. `pi-fast` 0.1.11 adds Anthropic Fast mode through the request `betas` list instead of rewriting the `anthropic-beta` header, so Pi's own betas are preserved. `pi-mcp-adapter` 5.0.2 defaults Xcode `mcpbridge` servers to no idle timeout (an explicit per-server `idleTimeout` still wins), avoiding repeated Xcode access prompts. `pi-inline-bash` 0.1.14 and `pi-dirty-repo-guard` 0.1.13 honor session abort signals, and the guard's `git status` check now times out after 15 seconds. `pi-quiet-tools` 0.1.15 accepts string/numeric `read` offset and limit values when showing line ranges.
 - Refreshed the shipped `monaco-editor` dependency from 0.56.0 to 0.57.0.
@@ -98,10 +102,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Removed the union-merge Gnosis conflict guidance from `AGENTS.md`; Gnosis 0.5.5 keeps entries sorted by ID and warns on duplicates.
 - Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins` and `oxlint` 1.90.0, `oxfmt` 0.75.0, and `@types/node` 26.6.6.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 - Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
+- The test process-liveness probe now treats a `/proc/<pid>/stat` read that fails with `ENOENT`/`ESRCH` after a successful `kill(pid, 0)` as the process being gone, fixing a reap-race flake in detached-child cleanup tests ([#865](https://github.com/diegopetrucci/the-last-harness/pull/865)).
 
 ## [0.46.0] - 2026-10-20
 
