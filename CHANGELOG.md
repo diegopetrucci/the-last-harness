@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
+- Bumped managed Gnosis (`gn`) to 0.5.5.
 - Suppressed Pi's extension update changelog notices at launch; TLH keeps only its own update signals ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Hid OpenAI Codex `gpt-6.1-terra` from the model picker by default ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Refreshed the bundled Herdr and tmux terminal skills to newer upstream commits.
@@ -99,6 +100,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Removed the union-merge Gnosis conflict guidance from `AGENTS.md`; Gnosis 0.5.5 keeps entries sorted by ID and warns on duplicates.
 - Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins` and `oxlint` 1.90.0, `oxfmt` 0.75.0, and `@types/node` 26.6.6.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
