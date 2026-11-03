@@ -51,7 +51,29 @@ type SessionLimitReportDependencies = {
   now?: () => Date;
   /** Override for snapshot retrieval (injectable for tests). Pass ctx to get snapshot. */
   getSnapshot?: (ctx: ExtensionContext) => TlhSubscriptionUsageSnapshot | undefined;
+  /** Override for session file parsing (injectable for tests). */
+  parseSession?: typeof parseSessionJsonl;
 };
+
+const SESSION_PARSE_CONCURRENCY = 8;
+
+/** Maps items with at most `limit` calls in flight; results keep input order. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = Array.from({ length: items.length });
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 export function createSessionLimitReportCommandHandler(
   _pi: ExtensionAPI,
@@ -60,6 +82,7 @@ export function createSessionLimitReportCommandHandler(
   const openReport = dependencies.openReport ?? openLocalReport;
   const now = dependencies.now ?? (() => new Date());
   const getSnapshot = dependencies.getSnapshot ?? (() => undefined);
+  const parseSession = dependencies.parseSession ?? parseSessionJsonl;
 
   return async (args: string, ctx: ExtensionContext): Promise<void> => {
     if (args.trim()) {
@@ -96,19 +119,26 @@ export function createSessionLimitReportCommandHandler(
       }> = [];
       const parseFailureCaveats: string[] = [];
 
-      for (const filePath of files) {
-        try {
-          const parsed = await parseSessionJsonl(filePath);
-          const slimmedEntries = slimEntries(parsed.entries);
-          parsedFiles.push({
-            filePath,
-            entries: slimmedEntries,
-            malformedLineCount: parsed.malformedLineCount,
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          parseFailureCaveats.push(`Could not read session file ${basename(filePath)}: ${message}`);
-        }
+      const outcomes = await mapWithConcurrency(
+        files,
+        SESSION_PARSE_CONCURRENCY,
+        async (filePath) => {
+          try {
+            const parsed = await parseSession(filePath);
+            return {
+              filePath,
+              entries: slimEntries(parsed.entries),
+              malformedLineCount: parsed.malformedLineCount,
+            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return `Could not read session file ${basename(filePath)}: ${message}`;
+          }
+        },
+      );
+      for (const outcome of outcomes) {
+        if (typeof outcome === "string") parseFailureCaveats.push(outcome);
+        else parsedFiles.push(outcome);
       }
 
       const result = aggregateSessionUsage(window, sessionsRoot, parsedFiles, [
