@@ -35,7 +35,7 @@ import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const VALIDATION_TIMEOUT_MS = 5_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "0.5.4";
+const DEFAULT_GNOSIS_VERSION = "0.5.5";
 
 interface CliArgs extends Record<string, unknown> {
   agentDir?: string;
@@ -71,7 +71,7 @@ Options:
   --settings <path>    Isolated settings file used to record the managed gn version (default: <agent-dir>/settings.json)
   --target <path>      Managed gn install target (default: <agent-dir>/bin/gn)
   --gnosis-repo <r>    Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
-  --gnosis-version <v> Gnosis version to install (default: 0.5.4)
+  --gnosis-version <v> Gnosis version to install (default: 0.5.5)
   --detail             Print verbose/dry-run installer details
   --dry-run            Print intended changes without writing
   --quiet              Only print errors

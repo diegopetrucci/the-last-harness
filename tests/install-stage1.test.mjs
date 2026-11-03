@@ -278,7 +278,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
   assert.match(stage0Help.stdout, /installed into a private TLH runtime/);
   assert.match(
     stage0Help.stdout,
-    /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0\.5\.4\)/,
+    /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0.5.5\)/,
   );
   assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
 
@@ -294,7 +294,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 
   assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
   assert.match(usage(), new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
-  assert.match(usage(), /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0\.5\.4\)/);
+  assert.match(usage(), /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0.5.5\)/);
   assert.doesNotMatch(usage(), /--no-pi-install/);
 
   const updateHelp = spawnSync(
@@ -508,7 +508,7 @@ test("stage-1 defaults managed Gnosis to the pinned release and still honors env
     return buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir], env), env);
   };
 
-  assert.equal(configFor().gnosisVersion, "0.5.4");
+  assert.equal(configFor().gnosisVersion, "0.5.5");
   assert.equal(configFor({ TLH_GNOSIS_VERSION: "latest" }).gnosisVersion, "latest");
   assert.equal(configFor({ TLH_GNOSIS_VERSION: "0.5.2" }).gnosisVersion, "0.5.2");
 });

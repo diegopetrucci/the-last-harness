@@ -85,7 +85,6 @@ git diff --cached
 - At the start of any task, run `gn help plan` and follow its instructions.
 - After finishing a task, run `gn help review`.
 - Always commit gnosis entries with the relevant work.
-- Always merge gnosis conflicts as a union, keeping both sides.
 
 ## Miscellaneous
 
