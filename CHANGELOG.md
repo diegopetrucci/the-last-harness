@@ -10,8 +10,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
-- Suppressed Pi's extension update changelog notices at launch; TLH keeps only its own update signals.
-- Hid OpenAI Codex `gpt-6.1-terra` from the model picker by default.
+- Suppressed Pi's extension update changelog notices at launch; TLH keeps only its own update signals ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
+- Hid OpenAI Codex `gpt-6.1-terra` from the model picker by default ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Refreshed the bundled Herdr and tmux terminal skills to newer upstream commits.
 - Added the opt-in ticket-free Architect/no-developer workflow; see [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode) ([#854](https://github.com/diegopetrucci/the-last-harness/pull/854)).
 - Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume and cancel for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
@@ -58,7 +58,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped the bundled `pi-mcp-adapter` pin from 5.0.1 to 5.0.2: servers that launch Xcode's MCP bridge (`xcrun mcpbridge`) now default to no idle timeout, so Xcode's "Allow agent to access Xcode?" prompt is not repeated after idle shutdown (an explicit per-server `idleTimeout` still wins).
-- Bumped the bundled Pi runtime from `1.3.0` to `1.5.0` (via `1.4.0`). TLH behavior and defaults are unchanged; review evidence is in the upstream-sync inventory ([1.5.0](docs/upstream-sync-inventory.md#pi-150-review-evidence), [1.4.0](docs/upstream-sync-inventory.md#historical-pi-140-review-evidence)) and provider-backed checks remain pending.
+- Bumped the bundled Pi runtime from `1.3.0` to `1.5.0` (via `1.4.0`). TLH behavior and defaults are unchanged; review evidence is in the upstream-sync inventory ([1.5.0](docs/upstream-sync-inventory.md#pi-150-review-evidence), [1.4.0](docs/upstream-sync-inventory.md#historical-pi-140-review-evidence)) and provider-backed checks remain pending ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Refreshed bundled extension pins: `pi-fast` 0.1.6 → 0.1.11, `pi-anthropic-auth` 3.4.2 → 3.4.3, `pi-mcp-adapter` 5.0.0 → 5.0.2, `pi-web-access` 0.29.2 → 0.29.3, `pi-inline-bash` 0.1.11 → 0.1.14, `pi-context-inspector` 0.1.15 → 0.1.17, `pi-dirty-repo-guard` 0.1.11 → 0.1.13, and `pi-quiet-tools` 0.1.14 → 0.1.15. `pi-fast` 0.1.10 added `/ultrafast` for eligible direct OpenAI API-key `gpt-6-astra` requests and changes direct OpenAI ChatGPT OAuth Fast requests from `service_tier: "fast"` to `service_tier: "priority"`. `pi-fast` 0.1.11 adds Anthropic Fast mode through the request `betas` list instead of rewriting the `anthropic-beta` header, so Pi's own betas are preserved. `pi-mcp-adapter` 5.0.2 defaults Xcode `mcpbridge` servers to no idle timeout (an explicit per-server `idleTimeout` still wins), avoiding repeated Xcode access prompts. `pi-inline-bash` 0.1.14 and `pi-dirty-repo-guard` 0.1.13 honor session abort signals, and the guard's `git status` check now times out after 15 seconds. `pi-quiet-tools` 0.1.15 accepts string/numeric `read` offset and limit values when showing line ranges.
 - Refreshed the shipped `monaco-editor` dependency from 0.56.0 to 0.57.0.
