@@ -9,7 +9,6 @@ import {
   type ContextUsageDiagnostics,
   type SubagentModelIdentity,
   type Usage,
-  getSubagentDepthEnv,
 } from "../../shared/types.ts";
 import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import {
@@ -192,7 +191,6 @@ export function runPiStreaming(
   env?: Record<string, string | undefined>,
   piPackageRoot?: string,
   piArgv1?: string,
-  maxSubagentDepth?: number,
   childEventContext?: ChildEventContext,
   registerInterrupt?: (interrupt: (() => void) | undefined) => void,
   onChildEvent?: (event: ChildEvent) => void,
@@ -209,7 +207,7 @@ export function runPiStreaming(
 ): Promise<RunPiStreamingResult> {
   return new Promise((resolve) => {
     const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
-    const spawnEnv = buildSubagentSpawnEnv(process.env, env, getSubagentDepthEnv(maxSubagentDepth));
+    const spawnEnv = buildSubagentSpawnEnv(process.env, env);
     const spawnSpec = getPiSpawnCommand(args, {
       ...(piPackageRoot ? { piPackageRoot } : {}),
       ...(piArgv1 ? { argv1: piArgv1 } : {}),

@@ -32,27 +32,9 @@ function writeRawStatus(asyncDir: string, status: unknown): void {
   fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
 }
 
-function writeRoute(nestedEventsDir: string, rootRunId: string, suffix: string): string {
-  const routeDir = path.join(nestedEventsDir, `${rootRunId}-${suffix}`);
-  fs.mkdirSync(path.join(routeDir, "events"), { recursive: true });
-  fs.mkdirSync(path.join(routeDir, "controls"), { recursive: true });
-  fs.writeFileSync(
-    path.join(routeDir, "route.json"),
-    JSON.stringify({ rootRunId, capabilityToken: suffix }, null, 2),
-    "utf-8",
-  );
-  return routeDir;
-}
-
-function createPaths(root: string): {
-  asyncDir: string;
-  nestedRunsDir: string;
-  nestedEventsDir: string;
-} {
+function createPaths(root: string): { asyncDir: string } {
   return {
     asyncDir: path.join(root, "async-subagent-runs"),
-    nestedRunsDir: path.join(root, "nested-subagent-runs"),
-    nestedEventsDir: path.join(root, "nested-subagent-events"),
   };
 }
 
@@ -375,7 +357,7 @@ describe("runtime cleanup", () => {
     }
   });
 
-  it("reports runtime dir counts and unreferenced nested event routes", () => {
+  it("reports runtime dir counts", () => {
     const root = tempRoot("pi-runtime-cleanup-counts-");
     const now = Date.now();
     const paths = createPaths(root);
@@ -388,17 +370,14 @@ describe("runtime cleanup", () => {
         startedAt: now - 1000,
         lastUpdate: now - 500,
       });
-      writeStatus(path.join(paths.nestedRunsDir, "run-live", "child-1"), {
-        runId: "child-1",
+      writeStatus(path.join(paths.asyncDir, "run-stale"), {
+        runId: "run-stale",
         mode: "single",
         state: "failed",
         startedAt: now - 10 * ONE_DAY_MS,
         endedAt: now - 8 * ONE_DAY_MS,
       });
-      setTreeMtime(path.join(paths.nestedRunsDir, "run-live", "child-1"), now - 8 * ONE_DAY_MS);
-      writeRoute(paths.nestedEventsDir, "run-live", "kept");
-      const staleRoute = writeRoute(paths.nestedEventsDir, "gone-root", "stale");
-      setTreeMtime(staleRoute, now - 2 * ONE_DAY_MS);
+      setTreeMtime(path.join(paths.asyncDir, "run-stale"), now - 8 * ONE_DAY_MS);
 
       const inspectedPids: number[] = [];
       const counts = inspectRuntimeDirs(paths, {
@@ -409,13 +388,10 @@ describe("runtime cleanup", () => {
         },
       });
       assert.deepEqual(inspectedPids, [process.pid]);
-      assert.equal(counts.topLevelAsyncDirs, 1);
-      assert.equal(counts.nestedAsyncDirs, 1);
+      assert.equal(counts.asyncDirs, 2);
       assert.equal(counts.retainedAsyncDirs, 1);
       assert.equal(counts.activeOrLiveAsyncDirs, 1);
       assert.equal(counts.staleAsyncDirs, 1);
-      assert.equal(counts.nestedEventDirs, 2);
-      assert.equal(counts.unreferencedNestedEventDirs, 1);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

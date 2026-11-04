@@ -183,7 +183,7 @@ function createExecutor(root, state, { agent = createAgent(), asyncDispatches = 
       getSessionName: () => "visibility-test-parent",
     },
     state,
-    config: { maxSubagentDepth: 2, control: {} },
+    config: { control: {} },
     tempArtifactsDir: root,
     getSubagentSessionRoot: () => root,
     expandTilde: (value) => value,

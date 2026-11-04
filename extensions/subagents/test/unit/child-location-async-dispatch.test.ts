@@ -58,7 +58,6 @@ describe("child-location snapshot in async dispatch plan", () => {
       agents: [agentDef],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      maxSubagentDepth: 2,
     });
 
     assert.ok("plan" in result, "expected a successful plan");
@@ -109,7 +108,6 @@ describe("async per-step cwd from real producer chain (BUG-02)", () => {
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         ctx: ctx2,
         cwd: runCwd,
-        maxSubagentDepth: 2,
         sessionFilesByFlatIndex: [sessionFile],
       });
       assert.ok("plan" in built, `plan build must succeed; got: ${JSON.stringify(built)}`);
@@ -174,7 +172,6 @@ describe("async per-step cwd from real producer chain (BUG-02)", () => {
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         ctx: ctx3,
         cwd: runCwd,
-        maxSubagentDepth: 2,
         sessionFilesByFlatIndex: [sessionFile],
       });
       assert.ok("plan" in built, `plan build must succeed; got: ${JSON.stringify(built)}`);

@@ -526,7 +526,6 @@ export function parseAgentDefinition(content, source, filePath) {
         if (!KNOWN_FIELDS.has(key))
             extraFields[key] = value;
     }
-    const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
     const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(frontmatter.maxExecutionTimeMs, "maxExecutionTimeMs", `Agent '${localName}'`);
     const supervisorBridge = parseOptionalBooleanFrontmatter(frontmatter.supervisorBridge, "supervisorBridge", `Agent '${localName}'`);
     const agent = {
@@ -550,9 +549,6 @@ export function parseAgentDefinition(content, source, filePath) {
         output: frontmatter.output,
         defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
         defaultProgress: frontmatter.defaultProgress === "true",
-        maxSubagentDepth: Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
-            ? parsedMaxSubagentDepth
-            : undefined,
         supervisorBridge,
         maxExecutionTimeMs,
         extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,

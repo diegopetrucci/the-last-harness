@@ -1143,7 +1143,6 @@ export async function runSingleStep(
         attempt.env,
         stepCtx.piPackageRoot,
         stepCtx.piArgv1,
-        step.maxSubagentDepth,
         {
           eventsPath: setup.eventsPath,
           runId: stepCtx.id,

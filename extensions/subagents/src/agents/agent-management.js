@@ -106,8 +106,6 @@ function formatAgentDetail(agent) {
         lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
     if (agent.defaultProgress)
         lines.push("Progress: true");
-    if (agent.maxSubagentDepth !== undefined)
-        lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
     if (agent.maxExecutionTimeMs !== undefined)
         lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
     if (agent.supervisorBridge === false)

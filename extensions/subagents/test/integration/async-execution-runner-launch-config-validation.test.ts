@@ -192,7 +192,6 @@ describe("async execution runner launch and configuration validation", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
     effects.push("return");
 
@@ -230,7 +229,6 @@ describe("async execution runner launch and configuration validation", () => {
           artifactConfig: makeRouteArtifactConfig(),
           shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
         });
         assert.equal(result.isError, undefined);
         const persistedConfig = readPersistedRunnerConfig(id);
@@ -274,7 +272,6 @@ describe("async execution runner launch and configuration validation", () => {
         artifactConfig: makeRouteArtifactConfig(),
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       assert.equal(result.isError, undefined);
       const persistedConfig = readPersistedRunnerConfig(id);
@@ -317,7 +314,6 @@ describe("async execution runner launch and configuration validation", () => {
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       assert.equal(result.isError, undefined);
@@ -360,7 +356,6 @@ describe("async execution runner launch and configuration validation", () => {
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       assert.equal(result.isError, undefined);
@@ -425,7 +420,6 @@ describe("async execution runner launch and configuration validation", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
     assert.equal(run.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id);
@@ -460,7 +454,6 @@ describe("async execution runner launch and configuration validation", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
     assert.equal(run.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id);
@@ -502,7 +495,6 @@ describe("async execution runner launch and configuration validation", () => {
           cleanupDays: 7,
         },
         shareEnabled: false,
-        maxSubagentDepth: 2,
       });
       assert.equal(run.isError, undefined);
       const payload = JSON.parse(
@@ -534,7 +526,6 @@ describe("async execution runner launch and configuration validation", () => {
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig,
       shareEnabled: false,
-      maxSubagentDepth: 2,
     };
     mockPi.onCall({ output: "single done" });
     const singleId = `async-receipt-single-${Date.now().toString(36)}`;

@@ -127,7 +127,7 @@ function executorWithKill(
       },
     } as any,
     state,
-    config: { maxSubagentDepth: 2, control: {} } as any,
+    config: { control: {} } as any,
     tempArtifactsDir: os.tmpdir(),
     getSubagentSessionRoot: (parentSessionFile) =>
       parentSessionFile

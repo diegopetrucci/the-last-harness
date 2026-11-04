@@ -46,7 +46,6 @@ function singleParams(
     artifactConfig,
     shareEnabled: false,
     sessionRoot: path.join(cwd, "sessions", id),
-    maxSubagentDepth: 2,
     ...overrides,
     awaited: true as const,
   };

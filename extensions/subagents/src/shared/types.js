@@ -43,7 +43,6 @@ export const WIDGET_KEY = "subagent-async";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
-const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const SUBAGENT_ACTIONS = [
     "list",
     "get",
@@ -70,41 +69,6 @@ export function resolveTopLevelParallelConcurrency(configValue) {
 }
 export function getAsyncConfigPath(suffix) {
     return path.join(TEMP_ROOT_DIR, `async-cfg-${suffix}.json`);
-}
-function normalizeNonNegativeInteger(value) {
-    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-    if (!Number.isInteger(parsed) || parsed < 0)
-        return undefined;
-    return parsed;
-}
-export function normalizeMaxSubagentDepth(value) {
-    return normalizeNonNegativeInteger(value);
-}
-export function resolveCurrentMaxSubagentDepth(configMaxDepth) {
-    return (normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH) ??
-        normalizeMaxSubagentDepth(configMaxDepth) ??
-        DEFAULT_SUBAGENT_MAX_DEPTH);
-}
-export function resolveChildMaxSubagentDepth(parentMaxDepth, agentMaxDepth) {
-    const normalizedParent = normalizeMaxSubagentDepth(parentMaxDepth) ?? DEFAULT_SUBAGENT_MAX_DEPTH;
-    const normalizedAgent = normalizeMaxSubagentDepth(agentMaxDepth);
-    return normalizedAgent === undefined
-        ? normalizedParent
-        : Math.min(normalizedParent, normalizedAgent);
-}
-export function checkSubagentDepth(configMaxDepth) {
-    const depth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
-    const maxDepth = resolveCurrentMaxSubagentDepth(configMaxDepth);
-    const blocked = Number.isFinite(depth) && depth >= maxDepth;
-    return { blocked, depth, maxDepth };
-}
-export function getSubagentDepthEnv(maxDepth) {
-    const parentDepth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
-    const nextDepth = Number.isFinite(parentDepth) ? parentDepth + 1 : 1;
-    return {
-        PI_SUBAGENT_DEPTH: String(nextDepth),
-        PI_SUBAGENT_MAX_DEPTH: String(normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth()),
-    };
 }
 function formatBytes(bytes) {
     if (bytes < 1024)

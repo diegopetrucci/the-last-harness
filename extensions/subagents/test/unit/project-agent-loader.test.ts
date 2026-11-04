@@ -86,7 +86,6 @@ describe("loadProjectAgent", () => {
       agents: [loaded.agent],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: makeAsyncCtx(root),
-      maxSubagentDepth: 2,
     });
     assert.ok("plan" in plan);
     if ("plan" in plan) assert.equal(plan.plan.tasks[0]?.timeoutMs, 14_400_000);

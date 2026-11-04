@@ -87,7 +87,6 @@ function singleParams(
     artifactConfig,
     shareEnabled: false,
     sessionRoot: path.join(cwd, "sessions", id),
-    maxSubagentDepth: 2,
     ...overrides,
     awaited: true as const,
   };
@@ -1017,7 +1016,6 @@ describe("awaited async-run owner", () => {
       artifactConfig,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(result.details.mode, "parallel");
@@ -1077,7 +1075,6 @@ describe("awaited async-run owner", () => {
       artifactConfig,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
       signal: controller.signal,
     });
     await waitForMockPiCall(mockPi, 0);

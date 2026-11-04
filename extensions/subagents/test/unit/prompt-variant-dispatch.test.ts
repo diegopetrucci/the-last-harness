@@ -61,7 +61,7 @@ function makeHarness(root: string, accessProvider?: () => AccessFixture | undefi
   const executor = createSubagentExecutor({
     pi: makeExtensionAPI(),
     state: makeSubagentState({ baseCwd: root, currentSessionId: "parent-session" }),
-    config: { maxSubagentDepth: 2, control: {} },
+    config: { control: {} },
     tempArtifactsDir: root,
     getSubagentSessionRoot: () => path.join(root, "sessions"),
     expandTilde: (value) => value,
@@ -283,7 +283,7 @@ describe("captured prompt-variant dispatch selection", () => {
       noncanonical.executor = createSubagentExecutor({
         pi: makeExtensionAPI(),
         state: makeSubagentState({ baseCwd: root, currentSessionId: "parent-session" }),
-        config: { maxSubagentDepth: 2, control: {} },
+        config: { control: {} },
         tempArtifactsDir: root,
         getSubagentSessionRoot: () => path.join(root, "sessions"),
         expandTilde: (value) => value,

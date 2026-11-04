@@ -14,7 +14,7 @@ import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from ".
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
 import { buildFallbackModelList, buildModelCandidatePlan, canonicalSubagentModelIdentity, deduplicateModelCandidates, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { contextWindowsForChildModels, resolveEffectiveThinking, } from "../../shared/model-info.js";
-import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, } from "../../shared/types.js";
 import { buildSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { normalizeTicketId, readTicketBody, ticketLookupKey } from "../shared/ticket-context.js";
@@ -204,7 +204,7 @@ const UNAVAILABLE_SUBAGENT_SKILL_ERROR = "Skills not found: pi-subagents";
 class UnavailableSubagentSkillError extends Error {
 }
 export function buildAsyncRunnerPlan(id, params) {
-    const { tasks, agents, ctx, cwd, sessionFilesByFlatIndex, maxSubagentDepth } = params;
+    const { tasks, agents, ctx, cwd, sessionFilesByFlatIndex } = params;
     const outputBaseDir = params.artifactsDir
         ? path.join(params.artifactsDir, "outputs", id)
         : undefined;
@@ -339,7 +339,6 @@ export function buildAsyncRunnerPlan(id, params) {
             outputPath,
             outputMode: behavior.outputMode,
             sessionFile,
-            maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agent.maxSubagentDepth),
             ...(agent.maxExecutionTimeMs !== undefined
                 ? { timeoutMs: agent.maxExecutionTimeMs, timeoutOwner: "role" }
                 : {}),
@@ -403,7 +402,7 @@ function initialAsyncTelemetry(input) {
     });
 }
 export function executeAsyncParallel(id, params) {
-    const { tasks, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, sessionRoot, sessionFilesByFlatIndex, maxSubagentDepth, controlConfig, } = params;
+    const { tasks, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, sessionRoot, sessionFilesByFlatIndex, controlConfig, } = params;
     const retiredNestedError = retiredNestedLaunchError(params);
     if (retiredNestedError)
         return formatAsyncStartError("parallel", retiredNestedError);
@@ -436,7 +435,6 @@ export function executeAsyncParallel(id, params) {
             sessionFilesByFlatIndex,
             progressDir: params.progressDir ??
                 (artifactsDir ? path.join(artifactsDir, "progress", id) : path.join(asyncDir, "progress")),
-            maxSubagentDepth,
             projectAgentIdentities: params.projectAgentIdentities,
             ticketBodies: params.ticketBodies,
         });
@@ -564,7 +562,7 @@ export function executeAsyncParallel(id, params) {
     };
 }
 export function buildAsyncSingleRunnerPlan(params, inputs) {
-    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, priorTerminalResult, activeRuntimeMs, activeRuntimeCheckpointAt, projectAgent, sessionFile, maxSubagentDepth, } = params;
+    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, priorTerminalResult, activeRuntimeMs, activeRuntimeCheckpointAt, projectAgent, sessionFile, } = params;
     const { taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, skillsWarning, outputPath, outputMode, childLocation, } = inputs;
     const durableResume = persistedModelResolution !== undefined || restoredModelIdentity !== undefined;
     const explicitResumeModel = durableResume && typeof modelOverride === "string" && modelOverride.trim() !== ""
@@ -675,7 +673,6 @@ export function buildAsyncSingleRunnerPlan(params, inputs) {
                         contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(contextPressureCrossedThresholds),
                     }
                     : {}),
-                maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
                 ...(roleBudgetMs !== undefined ? { timeoutMs: roleBudgetMs } : {}),
                 ...(timeoutOwner ? { timeoutOwner } : {}),
                 ...(resolvedActiveRuntimeMs > 0 ? { activeRuntimeMs: resolvedActiveRuntimeMs } : {}),

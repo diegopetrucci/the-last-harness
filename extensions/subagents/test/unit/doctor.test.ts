@@ -125,10 +125,7 @@ describe("buildDoctorReport", () => {
       assert.match(report, /- current session file: .*parent\.jsonl/);
       assert.doesNotMatch(report, /shared run ceiling|maxRunTimeMs/);
       assert.match(report, /- temp root: ok /);
-      assert.match(
-        report,
-        /- runtime dir counts: async 1 \(top-level 1, nested 0, active\/live 1, stale 0\); nested event routes 0 \(unreferenced 0\)/,
-      );
+      assert.match(report, /- runtime dir counts: async 1 \(active\/live 1, stale 0\)/);
       assert.match(report, /- agents: total 4 \(builtin 1, package 0, user 1, project 2\)/);
       assert.doesNotMatch(report, /- chains:/);
       assert.match(

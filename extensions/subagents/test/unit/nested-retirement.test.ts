@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { NESTED_EVENTS_DIR } from "../../src/runs/shared/nested-events.ts";
 import {
   retiredNestedLaunchError,
   RETIRED_NESTED_ROUTE_ENV_VARS,
@@ -14,28 +13,6 @@ import { makeSubagentState } from "../support/helpers.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
 describe("nested orchestration retirement", () => {
-  it("does not create a retired nested events dir for an ordinary run", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-root-no-nested-route-"));
-    try {
-      // An ordinary run launch without nested env vars should not produce
-      // a NESTED_EVENTS_DIR entry. This confirms the janitor-only purpose.
-      const error = retiredNestedLaunchError({});
-      assert.equal(error, undefined, "ordinary config should not trigger nested error");
-
-      let routesForRoot: string[] = [];
-      try {
-        routesForRoot = fs
-          .readdirSync(NESTED_EVENTS_DIR)
-          .filter((entry) => entry.startsWith(path.basename(root)));
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-      }
-      assert.deepEqual(routesForRoot, []);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("rejects retired route environments before spawn or artifact creation", () => {
     const routeEnvVars = [SUBAGENT_CHILD_ENV, ...RETIRED_NESTED_ROUTE_ENV_VARS];
     const previous = new Map(routeEnvVars.map((name) => [name, process.env[name]]));
@@ -103,7 +80,7 @@ function makeNestedExecutor(sessionBase: string) {
       },
     } as any,
     state,
-    config: { maxSubagentDepth: 2, control: {} } as any,
+    config: { control: {} } as any,
     tempArtifactsDir: sessionBase,
     getSubagentSessionRoot: () => sessionBase,
     expandTilde: (v) => v,
