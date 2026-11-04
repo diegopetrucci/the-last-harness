@@ -33,7 +33,9 @@ function exitAfterFlush(code) {
       if (--pending === 0) forceExit();
     });
   }
-  setTimeout(forceExit, 500);
+  // Keep the short cap on Windows only; elsewhere (e.g. macOS) a 500ms cap can
+  // truncate large async pipe writes before the parent has read them.
+  setTimeout(forceExit, process.platform === "win32" ? 500 : 10000);
 }
 
 function fail(message, exitCode = 1) {
