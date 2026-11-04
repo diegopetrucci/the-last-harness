@@ -1,12 +1,39 @@
 // Generated from extensions/the-last-harness/model-effort-reconcile.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isRecord, readText } from "./common.js";
 import { formatProviderModelReference, listAgentModelDefaultReferences, parseProviderModelReference, selectProviderAwareAgentDefaults, splitKnownThinkingSuffix, } from "./model-defaults.js";
+import { getTlhPrimaryEffortOverride } from "./primary-agent-runtime-settings.js";
 import { tlhStatePath, writeGuardedTlhStateFile } from "./profile-state.js";
 export function isKnownProvider(provider) {
     return typeof provider === "string" && provider.length > 0;
 }
 export function isMeaningfulPrimaryOverride(value) {
     return typeof value === "string" && value.length > 0;
+}
+export function readPrimaryOverride(settings, name) {
+    const primaryConfig = settings.tlh?.primaryAgent;
+    const modelOverrides = primaryConfig?.modelOverrides;
+    const rawModel = isRecord(modelOverrides) && Object.hasOwn(modelOverrides, name)
+        ? modelOverrides[name]
+        : undefined;
+    const model = isMeaningfulPrimaryOverride(rawModel) ? rawModel : undefined;
+    const thinking = getTlhPrimaryEffortOverride(primaryConfig, name);
+    if (model === undefined && thinking === undefined)
+        return undefined;
+    return {
+        ...(model !== undefined ? { model } : {}),
+        ...(thinking !== undefined ? { thinking } : {}),
+    };
+}
+export function listOverriddenPrimaryNames(settings) {
+    const primaryConfig = settings.tlh?.primaryAgent;
+    const names = new Set();
+    for (const container of [primaryConfig?.modelOverrides, primaryConfig?.effortOverrides]) {
+        if (isRecord(container)) {
+            for (const name of Object.keys(container))
+                names.add(name);
+        }
+    }
+    return [...names].filter((name) => readPrimaryOverride(settings, name) !== undefined);
 }
 export function hasMeaningfulSubagentOverride(override) {
     if (!isRecord(override))
@@ -183,21 +210,15 @@ export function backfillMissingBaselines(primaryAgents, subagentMetadata, settin
             return snapshot;
         }
         const toBackfill = {};
-        const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
-        if (isRecord(primaryModelOverrides)) {
-            for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
-                if (!isMeaningfulPrimaryOverride(overrideValue)) {
-                    continue;
-                }
-                if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
-                    continue;
-                }
-                toBackfill[name] = {
-                    byProvider: {
-                        [currentProvider]: packagedProviderAcknowledgment(primaryAgents.get(name), currentProvider),
-                    },
-                };
+        for (const name of listOverriddenPrimaryNames(settings)) {
+            if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
+                continue;
             }
+            toBackfill[name] = {
+                byProvider: {
+                    [currentProvider]: packagedProviderAcknowledgment(primaryAgents.get(name), currentProvider),
+                },
+            };
         }
         const subagentOverrides = settings.subagents?.agentOverrides;
         if (isRecord(subagentOverrides)) {
@@ -241,26 +262,24 @@ export function backfillMissingBaselines(primaryAgents, subagentMetadata, settin
 }
 export function computeModelEffortDrift(primaryAgents, subagentMetadata, settings, currentProvider, acknowledgedSnapshot) {
     const drift = [];
-    const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
-    if (isRecord(primaryModelOverrides)) {
-        for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
-            if (!isMeaningfulPrimaryOverride(overrideValue)) {
-                continue;
-            }
-            const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
-            const providerEntry = isKnownProvider(currentProvider)
-                ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
-                : undefined;
-            const packagedDefaultsChanged = providerEntry !== undefined &&
-                (providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
-            drift.push({
-                role: "primary",
-                name,
-                override: { model: overrideValue },
-                packaged,
-                packagedDefaultsChanged,
-            });
+    for (const name of listOverriddenPrimaryNames(settings)) {
+        const override = readPrimaryOverride(settings, name);
+        if (!override) {
+            continue;
         }
+        const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
+        const providerEntry = isKnownProvider(currentProvider)
+            ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
+            : undefined;
+        const packagedDefaultsChanged = providerEntry !== undefined &&
+            (providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
+        drift.push({
+            role: "primary",
+            name,
+            override,
+            packaged,
+            packagedDefaultsChanged,
+        });
     }
     const subagentOverrides = settings.subagents?.agentOverrides;
     if (isRecord(subagentOverrides)) {

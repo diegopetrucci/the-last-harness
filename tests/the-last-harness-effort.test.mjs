@@ -55,10 +55,13 @@ function createPiHarness() {
   };
 }
 
-function createFakeRuntime(agentPrompt) {
+function createFakeRuntime(agentPrompt, effortTarget) {
   return {
     activePrimaryAgentPrompt() {
       return agentPrompt;
+    },
+    primaryEffortPersistenceTarget() {
+      return effortTarget;
     },
   };
 }
@@ -465,4 +468,162 @@ test("Ctrl+S refuses the normal Pi profile without changing it", async (t) => {
     assert.match(interactive.notifications.at(-1)?.message ?? "", /session only/);
     assert.deepEqual(JSON.parse(readFileSync(join(normalAgent, "settings.json"))), original);
   });
+});
+
+const architectTarget = { primary: "architect", packagedEffort: "high", applyThinking: true };
+
+async function saveFromPicker(fixture, { settings, target, level, current = "low" }) {
+  writeFileSync(join(fixture.agent, "settings.json"), JSON.stringify(settings));
+  return withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = current;
+    registerEffortCommand(pi, createFakeRuntime(architectPrimary(), target));
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    interactive.picker.getSelectList().setSelectedIndex(level);
+    interactive.picker.handleInput(String.fromCharCode(19));
+    await commandPromise;
+    return { written: readSettings(fixture.agent), notifications: interactive.notifications };
+  });
+}
+
+test("Ctrl+S with an active primary writes only its effort override", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-primary-save-", { cwd: true, test: t });
+  const { written, notifications } = await saveFromPicker(fixture, {
+    settings: {
+      defaultThinkingLevel: "low",
+      unknown: 1,
+      tlh: { primaryAgent: { applyModel: true } },
+    },
+    target: architectTarget,
+    level: 3, // medium
+  });
+  assert.equal(written.defaultThinkingLevel, "low");
+  assert.equal(written.unknown, 1);
+  assert.equal(written.tlh.primaryAgent.applyModel, true);
+  assert.deepEqual(written.tlh.primaryAgent.effortOverrides, { architect: "medium" });
+  assert.match(notifications.at(-1).message, /saved for architect/);
+  assert.ok(readdirSync(fixture.agent).some((name) => name.startsWith("settings.json.bak-")));
+});
+
+test("Ctrl+S at the packaged effort removes the override and drops an empty map", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-primary-clear-", { cwd: true, test: t });
+  const { written, notifications } = await saveFromPicker(fixture, {
+    settings: {
+      tlh: { primaryAgent: { effortOverrides: { architect: "medium" } } },
+    },
+    target: architectTarget,
+    level: 4, // high == packaged, no global default
+  });
+  assert.equal(written.tlh.primaryAgent.effortOverrides, undefined);
+  assert.match(notifications.at(-1).message, /override cleared.*its packaged default/);
+
+  const other = createIsolatedProfileFixture("tlh-effort-primary-clear-2-", { cwd: true, test: t });
+  const second = await saveFromPicker(other, {
+    settings: {
+      tlh: { primaryAgent: { effortOverrides: { architect: "medium", rush: "low" } } },
+    },
+    target: architectTarget,
+    level: 4,
+  });
+  assert.deepEqual(second.written.tlh.primaryAgent.effortOverrides, { rush: "low" });
+});
+
+test("Ctrl+S writes an override at the packaged effort when the global default differs", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-primary-keep-", { cwd: true, test: t });
+  const { written, notifications } = await saveFromPicker(fixture, {
+    settings: { defaultThinkingLevel: "low" },
+    target: architectTarget,
+    level: 4, // high == packaged, but the next session would resolve to global low
+  });
+  assert.equal(written.defaultThinkingLevel, "low");
+  assert.deepEqual(written.tlh.primaryAgent.effortOverrides, { architect: "high" });
+  assert.match(notifications.at(-1).message, /saved for architect/);
+});
+
+test("Ctrl+S at the global default removes the override and names the global default", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-primary-global-", {
+    cwd: true,
+    test: t,
+  });
+  const { written, notifications } = await saveFromPicker(fixture, {
+    settings: {
+      defaultThinkingLevel: "low",
+      tlh: { primaryAgent: { effortOverrides: { architect: "high" } } },
+    },
+    target: architectTarget,
+    level: 2, // low == global default
+  });
+  assert.equal(written.defaultThinkingLevel, "low");
+  assert.equal(written.tlh.primaryAgent.effortOverrides, undefined);
+  assert.match(notifications.at(-1).message, /override cleared.*the global default/);
+});
+
+test("Ctrl+S records a baseline only when it creates the primary's first override", async (t) => {
+  async function save(settings) {
+    const fixture = createIsolatedProfileFixture("tlh-effort-primary-baseline-", {
+      cwd: true,
+      test: t,
+    });
+    const calls = [];
+    const target = { ...architectTarget, recordOverrideBaseline: (p) => calls.push(p) };
+    await saveFromPicker(fixture, { settings, target, level: 3 });
+    return calls;
+  }
+  assert.deepEqual(await save({}), ["anthropic"]);
+  assert.deepEqual(
+    await save({ tlh: { primaryAgent: { effortOverrides: { architect: "low" } } } }),
+    [],
+  );
+  assert.deepEqual(
+    await save({ tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/x" } } } }),
+    [],
+  );
+});
+
+test("Ctrl+S writes the global default when applyThinking is false or no primary is active", async (t) => {
+  for (const target of [{ ...architectTarget, applyThinking: false }, undefined]) {
+    const fixture = createIsolatedProfileFixture("tlh-effort-global-save-", { cwd: true, test: t });
+    const { written, notifications } = await saveFromPicker(fixture, {
+      settings: { defaultThinkingLevel: "low" },
+      target,
+      level: 3,
+    });
+    assert.equal(written.defaultThinkingLevel, "medium");
+    assert.equal(written.tlh, undefined);
+    assert.match(notifications.at(-1).message, /global default/);
+  }
+});
+
+test("native effort picker marks the primary override, falling back to the global default", async (t) => {
+  async function highlighted(settings) {
+    const fixture = createIsolatedProfileFixture("tlh-effort-primary-badge-", {
+      cwd: true,
+      test: t,
+    });
+    writeFileSync(join(fixture.agent, "settings.json"), JSON.stringify(settings));
+    return withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const pi = createPiHarness();
+      registerEffortCommand(pi, createFakeRuntime(architectPrimary(), architectTarget));
+      const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+      const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+      const lines = interactive.picker.render(120);
+      interactive.picker.handleInput("\u001b");
+      await commandPromise;
+      return lines.filter((line) => /(high|low|medium)\b.*default/.test(line));
+    });
+  }
+  const override = await highlighted({
+    defaultThinkingLevel: "low",
+    tlh: { primaryAgent: { effortOverrides: { architect: "high" } } },
+  });
+  assert.equal(override.length, 1);
+  assert.match(override[0], /high/);
+  const fallback = await highlighted({ defaultThinkingLevel: "low" });
+  assert.match(fallback[0] ?? "", /low/);
+  const invalid = await highlighted({
+    defaultThinkingLevel: "low",
+    tlh: { primaryAgent: { effortOverrides: { architect: "turbo" } } },
+  });
+  assert.match(invalid[0] ?? "", /low/);
 });

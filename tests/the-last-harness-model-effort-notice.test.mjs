@@ -1140,3 +1140,16 @@ test("backfill: in-memory merged snapshot is returned even when the disk write f
     );
   });
 });
+
+test("hasAnyModelEffortOverride: true for a valid primary effort-only override, false for invalid", () => {
+  assert.equal(
+    hasAnyModelEffortOverride({ tlh: { primaryAgent: { effortOverrides: { architect: "low" } } } }),
+    true,
+  );
+  assert.equal(
+    hasAnyModelEffortOverride({
+      tlh: { primaryAgent: { effortOverrides: { architect: "bogus" } } },
+    }),
+    false,
+  );
+});

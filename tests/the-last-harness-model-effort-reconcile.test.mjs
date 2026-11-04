@@ -266,6 +266,59 @@ test("primary override drift — model override with anthropic provider", () => 
   assert.equal(entry.packagedDefaultsChanged, false);
 });
 
+test("primary override drift — effort-only override is reported with override.thinking", () => {
+  const settings = { tlh: { primaryAgent: { effortOverrides: { architect: "low" } } } };
+  const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic");
+  assert.equal(entry.role, "primary");
+  assert.equal(entry.name, "architect");
+  assert.deepEqual(entry.override, { thinking: "low" });
+  assert.equal(entry.packaged.thinking, "high");
+});
+
+test("primary override drift — model+effort override yields a single entry with both fields", () => {
+  const settings = {
+    tlh: {
+      primaryAgent: {
+        modelOverrides: { architect: "anthropic/claude-sonnet-4-6" },
+        effortOverrides: { architect: "medium" },
+      },
+    },
+  };
+  const entries = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic");
+  assert.equal(entries.length, 1);
+  assert.deepEqual(entries[0].override, {
+    model: "anthropic/claude-sonnet-4-6",
+    thinking: "medium",
+  });
+});
+
+test("primary override drift — invalid effort values are ignored", () => {
+  const settings = {
+    tlh: { primaryAgent: { effortOverrides: { architect: "bogus", rush: 3, product: null } } },
+  };
+  assert.deepEqual(
+    computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic"),
+    [],
+  );
+});
+
+test("primary effort-only override: packaged change vs acknowledged baseline sets packagedDefaultsChanged", () => {
+  const settings = { tlh: { primaryAgent: { effortOverrides: { architect: "low" } } } };
+  const acknowledgedSnapshot = {
+    architect: {
+      byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "medium" } },
+    },
+  };
+  const [entry] = computeModelEffortDrift(
+    primaryAgents,
+    subagentMetadata,
+    settings,
+    "anthropic",
+    acknowledgedSnapshot,
+  );
+  assert.equal(entry.packagedDefaultsChanged, true);
+});
+
 test("primary override drift — openai-codex session reports the openai packaged default", () => {
   const settings = {
     tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },

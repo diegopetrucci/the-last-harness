@@ -2,6 +2,8 @@
 import { ThinkingSelectorComponent, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord, readText } from "./common.js";
 import { safeTlhProfileFilePath, withLockedTlhSettingsWrite } from "./profile-state.js";
+import { readPrimaryOverride } from "./model-effort-reconcile.js";
+import { getTlhDurableThinkingLevel, getTlhGlobalSettings, getTlhPrimaryEffortOverride, isTlhPrimaryAgentSelection, writeTlhPrimaryAgentEffortOverride, } from "./primary-agent-runtime-settings.js";
 import { getAvailableThinkingLevels, isThinkingLevel, setExtensionThinkingLevel, } from "./thinking.js";
 function parseSettingsObject(content) {
     const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
@@ -10,7 +12,7 @@ function parseSettingsObject(content) {
     }
     return parsed;
 }
-function readTlhThinkingDefault() {
+function readTlhThinkingDefault(primary) {
     const settingsPath = safeTlhProfileFilePath("settings.json");
     const content = settingsPath ? readText(settingsPath) : undefined;
     if (!content || !content.trim()) {
@@ -18,6 +20,18 @@ function readTlhThinkingDefault() {
     }
     try {
         const settings = parseSettingsObject(content);
+        if (primary !== undefined) {
+            const tlh = settings.tlh;
+            const primaryAgent = isRecord(tlh) ? tlh.primaryAgent : undefined;
+            const override = isRecord(primaryAgent)
+                ? getTlhPrimaryEffortOverride({
+                    effortOverrides: primaryAgent.effortOverrides,
+                }, primary)
+                : undefined;
+            if (override) {
+                return override;
+            }
+        }
         const level = settings.defaultThinkingLevel;
         return typeof level === "string" && isThinkingLevel(level) ? level : undefined;
     }
@@ -62,6 +76,8 @@ export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
         return;
     }
     const pickerLevels = availableLevels;
+    const effortTarget = runtime?.primaryEffortPersistenceTarget?.(ctx);
+    const perPrimaryTarget = effortTarget?.applyThinking ? effortTarget : undefined;
     if (pickerLevels.length === 0) {
         ctx.ui.notify("No thinking levels are available for the current model.", "warning");
         return;
@@ -103,8 +119,24 @@ export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
                     return;
                 }
                 try {
-                    const result = persistTlhThinkingDefault(ctx.cwd, nextLevel);
-                    ctx.ui.notify(`Thinking level set to ${nextLevel} and saved as the default for future sessions.${formatBackupNotice(result)}`, "info");
+                    if (perPrimaryTarget && isTlhPrimaryAgentSelection(perPrimaryTarget.primary)) {
+                        const globalDefault = getTlhDurableThinkingLevel(ctx.cwd);
+                        const fallback = globalDefault ?? perPrimaryTarget.packagedEffort;
+                        const clearsOverride = nextLevel === fallback;
+                        const hadOverride = readPrimaryOverride(getTlhGlobalSettings(ctx.cwd), perPrimaryTarget.primary) !==
+                            undefined;
+                        const result = writeTlhPrimaryAgentEffortOverride(ctx.cwd, perPrimaryTarget.primary, clearsOverride ? undefined : nextLevel);
+                        if (result.changed && !clearsOverride && !hadOverride) {
+                            perPrimaryTarget.recordOverrideBaseline?.(ctx.model?.provider);
+                        }
+                        ctx.ui.notify(clearsOverride
+                            ? `Thinking level set to ${nextLevel}; ${perPrimaryTarget.primary} saved effort override cleared, so it uses ${globalDefault !== undefined ? "the global default" : "its packaged default"} for future sessions.${formatBackupNotice(result)}`
+                            : `Thinking level set to ${nextLevel} and saved for ${perPrimaryTarget.primary} in future sessions.${formatBackupNotice(result)}`, "info");
+                    }
+                    else {
+                        const result = persistTlhThinkingDefault(ctx.cwd, nextLevel);
+                        ctx.ui.notify(`Thinking level set to ${nextLevel} and saved as the global default for future sessions.${formatBackupNotice(result)}`, "info");
+                    }
                     done({ level: nextLevel, persisted: true });
                 }
                 catch (error) {
@@ -112,7 +144,7 @@ export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
                     done({ level: nextLevel, persisted: false });
                 }
             };
-            return new ThinkingSelectorComponent(currentLevel, pickerLevels, selectForSession, () => done(undefined), selectAsDefault, readTlhThinkingDefault());
+            return new ThinkingSelectorComponent(currentLevel, pickerLevels, selectForSession, () => done(undefined), selectAsDefault, readTlhThinkingDefault(perPrimaryTarget?.primary));
         });
     }
     catch (error) {
