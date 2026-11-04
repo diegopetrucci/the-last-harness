@@ -1,6 +1,6 @@
 // Generated from extensions/the-last-harness/tokens-analyzer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { computeMedian, pairToolCalls } from "./tool-pairing.js";
-import { getMcpToolKind } from "./mcp-tools.js";
+import { getMcpToolKind, readNestedToolCalls } from "./mcp-tools.js";
 const NOISE_FLOOR_TOKENS = 1024;
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
 const CHARS_PER_TOKEN = 4;
@@ -71,8 +71,10 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
     let currentTurn;
     let totalToolResults = 0;
     let totalToolErrors = 0;
-    let mcpProxyCalls = 0;
     let mcpDirectCalls = 0;
+    let mcpCodemodeCalls = 0;
+    let codemodeCalls = 0;
+    const countedNestedCallIds = new Set();
     const cacheMissAnalyzer = createCacheMissAnalyzer(priceSource);
     for (const entry of entries) {
         if (entry.type === "compaction" || entry.type === "branch_summary") {
@@ -188,7 +190,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                         resultCount: 0,
                         errorCount: 0,
                         approxTokens: 0,
-                        mcp: source.kind === "mcp-proxy" || source.kind === "mcp-direct",
+                        mcp: source.kind === "mcp",
                         source,
                     };
                     existing.callCount += 1;
@@ -207,14 +209,12 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                     toolSourceUsage.set(source.key, sourceBucket);
                     turn.toolCalls.total += 1;
                     turn.toolCallCounts.set(block.name, (turn.toolCallCounts.get(block.name) ?? 0) + 1);
-                    if (source.kind === "mcp-proxy" || source.kind === "mcp-direct") {
+                    if (source.kind === "mcp") {
                         turn.toolCalls.mcp += 1;
-                        if (source.kind === "mcp-proxy") {
-                            mcpProxyCalls += 1;
-                        }
-                        else {
-                            mcpDirectCalls += 1;
-                        }
+                        mcpDirectCalls += 1;
+                    }
+                    else if (source.kind === "codemode") {
+                        codemodeCalls += 1;
                     }
                 }
             }
@@ -222,6 +222,28 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
         }
         if (message.role !== "toolResult") {
             continue;
+        }
+        const countNestedMcpCall = (id, name) => {
+            if (typeof name !== "string" || getMcpToolKind(name, toolCatalogByName.get(name)) !== "mcp") {
+                return;
+            }
+            if (id !== undefined) {
+                if (countedNestedCallIds.has(id)) {
+                    return;
+                }
+                countedNestedCallIds.add(id);
+            }
+            mcpCodemodeCalls += 1;
+            if (currentTurn) {
+                currentTurn.toolCalls.mcp += 1;
+            }
+        };
+        if (typeof message.parentToolCallId === "string") {
+            countNestedMcpCall(typeof message.toolCallId === "string" ? message.toolCallId : undefined, message.toolName);
+            continue;
+        }
+        for (const nested of readNestedToolCalls(message)) {
+            countNestedMcpCall(nested.id, nested.name);
         }
         totalToolResults += 1;
         if (message.isError) {
@@ -241,7 +263,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                 resultCount: 0,
                 errorCount: 0,
                 approxTokens: 0,
-                mcp: source.kind === "mcp-proxy" || source.kind === "mcp-direct",
+                mcp: source.kind === "mcp",
                 source,
             };
             existing.resultCount += 1;
@@ -338,9 +360,10 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             totalCalls: [...toolUsage.values()].reduce((sum, tool) => sum + tool.callCount, 0),
             totalResults: totalToolResults,
             totalErrors: totalToolErrors,
-            mcpCalls: mcpProxyCalls + mcpDirectCalls,
-            mcpProxyCalls,
+            mcpCalls: mcpDirectCalls + mcpCodemodeCalls,
             mcpDirectCalls,
+            mcpCodemodeCalls,
+            codemodeCalls,
             byTool: [...toolUsage.values()].sort((left, right) => right.approxTokens - left.approxTokens ||
                 right.callCount - left.callCount ||
                 right.resultCount - left.resultCount ||
@@ -650,30 +673,22 @@ function collectActiveBranchIds(activeLeafId, byId) {
 }
 function estimateToolSource(toolName, catalogEntry) {
     const mcpKind = getMcpToolKind(toolName, catalogEntry);
-    if (mcpKind === "proxy") {
+    if (mcpKind === "mcp") {
         return {
-            key: catalogEntry?.sourceInfo?.source
-                ? `mcp-proxy:${catalogEntry.sourceInfo.source}`
-                : "mcp-proxy",
-            label: catalogEntry?.sourceInfo?.source
-                ? `MCP proxy (${catalogEntry.sourceInfo.source})`
-                : "MCP proxy",
-            kind: "mcp-proxy",
+            key: "mcp",
+            label: "MCP",
+            kind: "mcp",
             source: catalogEntry?.sourceInfo?.source,
             scope: catalogEntry?.sourceInfo?.scope,
             origin: catalogEntry?.sourceInfo?.origin,
             estimated: true,
         };
     }
-    if (mcpKind === "direct") {
+    if (mcpKind === "codemode") {
         return {
-            key: catalogEntry?.sourceInfo?.source
-                ? `mcp-direct:${catalogEntry.sourceInfo.source}`
-                : `mcp-direct:${toolName}`,
-            label: catalogEntry?.sourceInfo?.source
-                ? `MCP direct (${catalogEntry.sourceInfo.source})`
-                : `MCP direct (${toolName})`,
-            kind: "mcp-direct",
+            key: "codemode",
+            label: "Codemode",
+            kind: "codemode",
             source: catalogEntry?.sourceInfo?.source,
             scope: catalogEntry?.sourceInfo?.scope,
             origin: catalogEntry?.sourceInfo?.origin,

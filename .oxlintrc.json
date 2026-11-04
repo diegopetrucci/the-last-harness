@@ -57,7 +57,6 @@
         "extensions/subagents/src/**/*.js",
         "scripts/lib/default-extensions.mjs",
         "scripts/lib/mcp-adapter-cutover.mjs",
-        "scripts/lib/mcp-adapter-migration.mjs",
         "scripts/lib/session-analysis.mjs",
         "scripts/lib/tlh-install-git.mjs",
         "scripts/lib/tlh-install-npm.mjs",

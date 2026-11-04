@@ -58,6 +58,7 @@ import {
 import { registerVersionCommand } from "./the-last-harness/version.js";
 import { createRetryableLazyImport } from "./the-last-harness/common.js";
 import type {
+  StartupPromptResourceMetadata,
   StartupResources,
   TlhLaunchContextAllocation,
   TlhUsageRefreshOptions,
@@ -145,6 +146,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
   let activeTlhHeaderSessionToken = 0;
   let activeTlhHeaderComponentId = 0;
   let tlhHeaderComponentGeneration = 0;
+  let refreshActiveLaunchContext: ((ctx: ExtensionContext) => void) | undefined;
   const invalidateActiveTlhHeaderSession = () => {
     activeTlhHeaderSessionToken += 1;
     activeTlhHeader = undefined;
@@ -371,6 +373,12 @@ export default function theLastHarness(pi: ExtensionAPI) {
     setTlhTerminalTitle(ctx);
   });
 
+  // Pi adds sections such as `mcp_servers` while preparing the run (before_agent_start), after
+  // session_start snapshotted the prompt. agent_start fires once preparation is complete.
+  pi.on("agent_start", (_event, ctx) => {
+    refreshActiveLaunchContext?.(ctx);
+  });
+
   pi.on("turn_end", (_event, ctx) => {
     setTlhTerminalTitle(ctx);
     refreshSubscriptionUsage(ctx);
@@ -540,20 +548,52 @@ export default function theLastHarness(pi: ExtensionAPI) {
           sessionState.requestFooterRender?.();
         },
       }).catch(() => undefined);
-      const launchContextInputs = (() => {
+      const captureLaunchContextInputs = (captureCtx: ExtensionContext) => {
         try {
-          const baseSystemPrompt = ctx.getSystemPrompt();
+          const baseSystemPrompt = captureCtx.getSystemPrompt();
           return {
-            contextWindow: ctx.model?.contextWindow,
+            contextWindow: captureCtx.model?.contextWindow,
             baseSystemPrompt,
-            launchSystemPrompt: primaryAgentRuntime.buildLaunchSystemPrompt(ctx, baseSystemPrompt),
+            launchSystemPrompt: primaryAgentRuntime.buildLaunchSystemPrompt(
+              captureCtx,
+              baseSystemPrompt,
+            ),
             activeToolNames: pi.getActiveTools(),
             allTools: pi.getAllTools(),
           };
         } catch {
           return undefined;
         }
-      })();
+      };
+      let launchContextInputs = captureLaunchContextInputs(ctx);
+      let promptMetadata: StartupPromptResourceMetadata | undefined;
+      const applyLaunchContext = () => {
+        let launchContextAllocation: TlhLaunchContextAllocation | undefined;
+        try {
+          launchContextAllocation =
+            launchContextInputs && promptMetadata
+              ? estimateTlhLaunchContextAllocation({ ...launchContextInputs, promptMetadata })
+              : undefined;
+        } catch {
+          // Resource inventory still hydrates if launch-context attribution is unavailable.
+        }
+        sessionState.launchContextAllocation = launchContextAllocation;
+        sessionState.header?.setLaunchContextAllocation(launchContextAllocation);
+        sessionState.requestRender?.();
+      };
+      refreshActiveLaunchContext = (runCtx) => {
+        if (activeTlhHeaderSessionToken !== sessionToken) {
+          return;
+        }
+        const refreshed = captureLaunchContextInputs(runCtx);
+        if (!refreshed) {
+          return;
+        }
+        launchContextInputs = refreshed;
+        if (promptMetadata) {
+          applyLaunchContext();
+        }
+      };
       void startupResourceCollector(ctx.cwd, {
         projectTrusted: getActiveProjectTrustDecision(ctx),
         projectAgentGuidance: primaryAgentRuntime.projectAgentGuidanceSnapshot(),
@@ -563,23 +603,10 @@ export default function theLastHarness(pi: ExtensionAPI) {
             return;
           }
 
-          let launchContextAllocation: TlhLaunchContextAllocation | undefined;
-          try {
-            launchContextAllocation = launchContextInputs
-              ? estimateTlhLaunchContextAllocation({
-                  ...launchContextInputs,
-                  promptMetadata: snapshot.promptMetadata,
-                })
-              : undefined;
-          } catch {
-            // Resource inventory still hydrates if launch-context attribution is unavailable.
-          }
-
+          promptMetadata = snapshot.promptMetadata;
           sessionState.resources = snapshot.resources;
-          sessionState.launchContextAllocation = launchContextAllocation;
           sessionState.header?.setResources(snapshot.resources);
-          sessionState.header?.setLaunchContextAllocation(launchContextAllocation);
-          sessionState.requestRender?.();
+          applyLaunchContext();
         })
         .catch(() => {
           // Keep startup resilient. The header can still render without resource details.

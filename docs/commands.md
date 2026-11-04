@@ -26,7 +26,8 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import`        | Import and resume a session from a JSONL file — **hidden from TLH autocomplete**                                                                                                                          |
 | `/login`         | Configure provider authentication                                                                                                                                                                         |
 | `/logout`        | Remove provider authentication                                                                                                                                                                            |
-| `/model`         | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model picker](#model-picker))    |
+| `/mcp`           | Inspect MCP servers, sign in (`/mcp login <server>`), reconnect, and change exposure; see [MCP](mcp.md)                                                                                                   |
+| `/model`         | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model picker](#model-picker))                   |
 | `/name`          | Set the session display name                                                                                                                                                                              |
 | `/new`           | Start a new session                                                                                                                                                                                       |
 | `/quit`          | Quit the TLH TUI                                                                                                                                                                                          |
@@ -46,22 +47,22 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 
 These commands are registered by the TLH extension bundled with this profile.
 
-| Command                                      | Description                                                                                                                                                                                                                     |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/effort`                                    | TLH behavioral alias for Pi's native thinking-level picker                                                                                                                                                                      |
-| `/experimental`                              | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`session-mirror-observer` and `no-developer` are currently registered)                                                  |
-| `/session-mirror-observer`                   | Show bounded aggregate observer status, or request a deferred snapshot with `status`/`snapshot`                                                                                                                                 |
-| `/tickets`                                   | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree                                                                                                                                          |
-| `/switch-primary-agent`                      | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`)                                                                                                                          |
-| `/reconcile`                                 | Review and resolve model/effort override drift from TLH packaged defaults                                                                                                                                                       |
-| `/subagent-settings`                         | Show or edit persisted TLH bundled minor-agent model and effort overrides                                                                                                                                                       |
-| `/tlh-changelog`                             | Show TLH release notes from the packaged `CHANGELOG.md`                                                                                                                                                                         |
-| `/tokens`                                    | Generate and open a single no-flags local HTML token-spend report for the current session                                                                                                                                       |
-| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions                                                                                                                                     |
-| `/toggle-context-cap`                        | Toggle the effective context-window cap for auto-compaction                                                                                                                                                                |
-| `/toggle-tlh-git-attribution`                | Toggle the TLH commit attribution footer for agent-created git commits                                                                                                                                                          |
-| `/usage`                                     | Show or change TLH subscription usage-limit footer preferences                                                                                                                                                                  |
-| `/version`                                   | Show the installed TLH version and the upstream Pi runtime version                                                                                                                                                              |
+| Command                                      | Description                                                                                                                                                                             |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/effort`                                    | TLH behavioral alias for Pi's native thinking-level picker                                                                                                                              |
+| `/experimental`                              | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`session-mirror-observer` and `no-developer` are currently registered) |
+| `/session-mirror-observer`                   | Show bounded aggregate observer status, or request a deferred snapshot with `status`/`snapshot`                                                                                         |
+| `/tickets`                                   | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree                                                                                                  |
+| `/switch-primary-agent`                      | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`)                                                                                              |
+| `/reconcile`                                 | Review and resolve model/effort override drift from TLH packaged defaults                                                                                                               |
+| `/subagent-settings`                         | Show or edit persisted TLH bundled minor-agent model and effort overrides                                                                                                               |
+| `/tlh-changelog`                             | Show TLH release notes from the packaged `CHANGELOG.md`                                                                                                                                 |
+| `/tokens`                                    | Generate and open a single no-flags local HTML token-spend report for the current session                                                                                               |
+| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions                                                                                             |
+| `/toggle-context-cap`                        | Toggle the effective context-window cap for auto-compaction                                                                                                                             |
+| `/toggle-tlh-git-attribution`                | Toggle the TLH commit attribution footer for agent-created git commits                                                                                                                  |
+| `/usage`                                     | Show or change TLH subscription usage-limit footer preferences                                                                                                                          |
+| `/version`                                   | Show the installed TLH version and the upstream Pi runtime version                                                                                                                      |
 
 ### `/thinking` (native) and `/effort` (TLH alias)
 
@@ -342,12 +343,10 @@ These slash commands come from prompt templates bundled inside TLH. They insert 
 
 These commands are provided by bundled default extensions and are visible in TLH autocomplete. They are available when the relevant extension is installed and active.
 
-| Command     | Extension              | Description                                                                                 |
-| ----------- | ---------------------- | ------------------------------------------------------------------------------------------- |
-| `/context`  | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going                        |
-| `/fast`     | `pi-fast`              | Toggle Fast mode for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models |
-| `/mcp`      | `pi-mcp-adapter`       | Show MCP server status                                                                      |
-| `/mcp-auth` | `pi-mcp-adapter`       | Authenticate with an MCP server (OAuth)                                                     |
+| Command    | Extension              | Description                                                                                 |
+| ---------- | ---------------------- | ------------------------------------------------------------------------------------------- |
+| `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going                        |
+| `/fast`    | `pi-fast`              | Toggle Fast mode for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models |
 
 ---
 
@@ -378,8 +377,8 @@ These commands are registered and fully functional, but deliberately excluded fr
 
 ### Hidden bundled extension commands
 
-| Command        | Extension       | Description                                                                                                  |
-| -------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| Command        | Extension        | Description                                                                                               |
+| -------------- | ---------------- | --------------------------------------------------------------------------------------------------------- |
 | `/quiet-tools` | `pi-quiet-tools` | Show read-only status for the mandatory TLH-managed renderer; this command does not toggle or disable it. |
 
 The status covers only the installer-managed quiet-tools source. Separately loaded third-party extensions are outside its scope. Ctrl+O and per-row expansion remain available for native full output.
@@ -396,7 +395,7 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 
 ### `tlh version`
 
-`tlh version` reports stable, machine-readable install information for external tools such as tlh-gui. It is read-only, makes no network calls, and dispatches before the MCP adapter startup guard and the runtime. Run `tlh version` for a human summary or `tlh version --json` for pretty-printed JSON on stdout. It exits 0 on success, 2 for argument errors (nothing on stdout), and 1 when the wrapper cannot run the reporter (missing or corrupt support files, or no `node`).
+`tlh version` reports stable, machine-readable install information for external tools such as tlh-gui. It is read-only, makes no network calls, and dispatches before the runtime. Run `tlh version` for a human summary or `tlh version --json` for pretty-printed JSON on stdout. It exits 0 on success, 2 for argument errors (nothing on stdout), and 1 when the wrapper cannot run the reporter (missing or corrupt support files, or no `node`).
 
 ```json
 {
@@ -412,15 +411,15 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 
 Every field is always present. A missing, invalid, or wrong-typed value is `null` (except `schemaVersion` and `agentDir`).
 
-| Field           | Source                                                                                                     |
-| --------------- | ---------------------------------------------------------------------------------------------------------- |
-| `schemaVersion` | Always `1`                                                                                                 |
-| `tlhVersion`    | Installed TLH package version; on ref tracks such as `main`, the release version that checkout is based on |
-| `piVersion`     | Version of the private Pi runtime package the wrapper execs, read from its `package.json` (no subprocess)  |
-| `track`         | Install metadata: `latest-release`, `pinned-tag`, `ref`, or `custom`                                       |
+| Field           | Source                                                                                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemaVersion` | Always `1`                                                                                                                                                |
+| `tlhVersion`    | Installed TLH package version; on ref tracks such as `main`, the release version that checkout is based on                                                |
+| `piVersion`     | Version of the private Pi runtime package the wrapper execs, read from its `package.json` (no subprocess)                                                 |
+| `track`         | Install metadata: `latest-release`, `pinned-tag`, `ref`, or `custom`                                                                                      |
 | `ref`           | Installed tag or ref from install metadata: release tag on `latest-release`, tag on `pinned-tag`, ref on `ref`; may be `null` on `custom` or when unknown |
-| `repo`          | Install metadata: the source repository                                                                    |
-| `agentDir`      | The wrapper's authoritative isolated profile path                                                          |
+| `repo`          | Install metadata: the source repository                                                                                                                   |
+| `agentDir`      | The wrapper's authoritative isolated profile path                                                                                                         |
 
 `track` is one of the four values above or `null`; consumers should tolerate new `track` values added in future schema-compatible releases.
 

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createPrimaryToolState,
   filterAvailableTools,
+  withDirectMcpTools,
 } from "../extensions/the-last-harness-primary-tools.mjs";
 
 test("primary tool state restores active tools from before primary tools were applied", () => {
@@ -74,4 +75,27 @@ test("primary tool state restores additive late-registered tools captured after 
   }
 
   assert.deepEqual(activeTools, ["bash", "edit", "subagent_supervisor", "intercom"]);
+});
+
+test("primary tools keep codemode active and append only direct-exposure mcp__* tools alongside it", () => {
+  const allTools = [
+    { name: "read", exposure: "direct" },
+    { name: "codemode", exposure: "direct" },
+    { name: "mcp__dir__lookup", exposure: "direct" },
+    { name: "mcp__cm__lookup", exposure: "codemode" },
+    { name: "mcp__def__lookup", exposure: "deferred" },
+    { name: "mcp__hid__lookup", exposure: "hidden" },
+    { name: "bash", exposure: "direct" },
+  ];
+  const availableTools = new Set(allTools.map((tool) => tool.name));
+  const primaryToolState = createPrimaryToolState();
+
+  const withCodemode = withDirectMcpTools(
+    filterAvailableTools(["read", "codemode"], availableTools),
+    allTools,
+  );
+  assert.deepEqual(withCodemode, ["read", "codemode", "mcp__dir__lookup"]);
+  assert.deepEqual(primaryToolState.apply(withCodemode, ["bash"]), withCodemode);
+
+  assert.deepEqual(withDirectMcpTools(["read"], allTools), ["read"]);
 });

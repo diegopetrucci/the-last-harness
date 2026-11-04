@@ -232,7 +232,7 @@ test("mcp and tools buckets are disjoint and sum to the combined pre-split total
     promptGuidelines: [nonMcpGuideline],
   };
   const mcpTool = {
-    name: "mcp",
+    name: "mcp__docs__search",
     description: "MCP proxy tool",
     parameters: { type: "object", properties: { server: { type: "string" } } },
     promptGuidelines: [mcpGuideline],
@@ -250,7 +250,7 @@ test("mcp and tools buckets are disjoint and sum to the combined pre-split total
     baseSystemPrompt,
     launchSystemPrompt: baseSystemPrompt,
     promptMetadata: { contextFiles: [], skills: [] },
-    activeToolNames: ["bash", "mcp"],
+    activeToolNames: ["bash", "mcp__docs__search"],
     allTools: [normalTool, mcpTool],
   });
 
@@ -302,7 +302,7 @@ test("tlh bucket is unchanged by the mcp/tools split", () => {
     promptGuidelines: [guideline],
   };
   const mcpTool = {
-    name: "mcp",
+    name: "mcp__docs__search",
     description: "MCP proxy",
     parameters: { type: "object", properties: {} },
   };
@@ -312,7 +312,7 @@ test("tlh bucket is unchanged by the mcp/tools split", () => {
     baseSystemPrompt,
     launchSystemPrompt: `${baseSystemPrompt}${tlhAddition}`,
     promptMetadata: { contextFiles: [], skills: [] },
-    activeToolNames: ["read", "mcp"],
+    activeToolNames: ["read", "mcp__docs__search"],
     allTools: [normalTool, mcpTool],
   };
 
@@ -345,7 +345,7 @@ test("guideline shared between mcp and non-mcp tool is claimed exactly once", ()
     promptGuidelines: [sharedGuideline],
   };
   const mcpTool = {
-    name: "mcp",
+    name: "mcp__docs__search",
     description: "MCP proxy tool",
     parameters: { type: "object", properties: { server: { type: "string" } } },
     promptGuidelines: [sharedGuideline],
@@ -363,7 +363,7 @@ test("guideline shared between mcp and non-mcp tool is claimed exactly once", ()
     baseSystemPrompt,
     launchSystemPrompt: baseSystemPrompt,
     promptMetadata: { contextFiles: [], skills: [] },
-    activeToolNames: ["bash", "mcp"],
+    activeToolNames: ["bash", "mcp__docs__search"],
     allTools: [normalTool, mcpTool],
   });
 
@@ -410,4 +410,43 @@ test("collapsed launch allocation wraps within narrow terminal widths", () => {
   for (const line of lines) {
     assert.ok(visibleWidth(line) <= width, `line exceeded width ${width}: ${JSON.stringify(line)}`);
   }
+});
+
+test("mcp_servers section and codemode tool land in the mcp bucket once, not in tlh", () => {
+  const section =
+    "<mcp_servers>\nUse codemode to reach servers.\n- mcp__docs (codemode): Docs\n</mcp_servers>";
+  const codemodeGuideline = "Use codemode to batch independent tool calls.";
+  const baseSystemPrompt = `Runtime\n${codemodeGuideline}\n${section}\nTail`;
+  const codemode = {
+    name: "codemode",
+    description: "Run JavaScript",
+    parameters: { type: "object", properties: { code: { type: "string" } } },
+    promptGuidelines: [codemodeGuideline],
+    sourceInfo: { path: "builtin:codemode", source: "builtin" },
+  };
+  const plain = {
+    name: "write",
+    description: "Write",
+    parameters: { type: "object", properties: {} },
+  };
+  const allocation = estimateTlhLaunchContextAllocation({
+    contextWindow: 100_000,
+    baseSystemPrompt,
+    launchSystemPrompt: baseSystemPrompt,
+    promptMetadata: { contextFiles: [], skills: [] },
+    activeToolNames: ["write", "codemode"],
+    allTools: [plain, codemode],
+  });
+  const serializedCodemode = JSON.stringify([
+    { name: codemode.name, description: codemode.description, parameters: codemode.parameters },
+  ]);
+  assert.equal(
+    allocation?.estimatedTokens.mcp,
+    estimateTokens(codemodeGuideline.length + section.length + serializedCodemode.length),
+  );
+  // Section and guideline are removed from the base-instruction (tlh) share exactly once.
+  assert.equal(
+    allocation?.estimatedTokens.tlh,
+    estimateTokens(baseSystemPrompt.length - codemodeGuideline.length - section.length),
+  );
 });

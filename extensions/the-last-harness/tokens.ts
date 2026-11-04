@@ -211,7 +211,7 @@ export function buildTokensReportHtml(
         renderMetricCard(
           "MCP calls",
           formatInteger(analysis.tools.mcpCalls),
-          `${formatInteger(analysis.tools.mcpProxyCalls)} proxy • ${formatInteger(analysis.tools.mcpDirectCalls)} direct`,
+          `${formatInteger(analysis.tools.mcpDirectCalls)} direct • ${formatInteger(analysis.tools.mcpCodemodeCalls)} via codemode`,
         ),
         renderMetricCard(
           "Source precision",

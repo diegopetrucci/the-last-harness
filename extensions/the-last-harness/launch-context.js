@@ -1,5 +1,5 @@
 // Generated from extensions/the-last-harness/launch-context.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
-import { getMcpToolKind } from "./mcp-tools.js";
+import { getMcpToolKind, MCP_SERVERS_SECTION_NAME } from "./mcp-tools.js";
 const CHARS_PER_TOKEN = 4;
 function estimateTokensFromChars(charCount) {
     return charCount > 0 ? Math.ceil(charCount / CHARS_PER_TOKEN) : 0;
@@ -60,6 +60,11 @@ function consumeContextMetadata(tracker, promptMetadata) {
         chars += tracker.consume(contextFile.content);
     }
     return chars;
+}
+const MCP_SERVERS_SECTION_PATTERN = new RegExp(`<${MCP_SERVERS_SECTION_NAME}>\\n[\\s\\S]*?\\n</${MCP_SERVERS_SECTION_NAME}>`);
+function consumeMcpServersSection(tracker, baseSystemPrompt) {
+    const section = MCP_SERVERS_SECTION_PATTERN.exec(baseSystemPrompt)?.[0];
+    return section ? tracker.consume(section) : 0;
 }
 function consumeSkillMetadata(tracker, promptMetadata) {
     let chars = 0;
@@ -127,7 +132,8 @@ export function estimateTlhLaunchContextAllocation(options) {
         ? consumeSkillMetadata(tracker, options.promptMetadata)
         : 0;
     const guidelineChars = consumeToolGuidelinesPartitioned(tracker, activeTools);
-    const embeddedToolChars = guidelineChars.mcp + guidelineChars.nonMcp;
+    const mcpServersSectionChars = consumeMcpServersSection(tracker, options.baseSystemPrompt);
+    const embeddedToolChars = guidelineChars.mcp + guidelineChars.nonMcp + mcpServersSectionChars;
     const baseInstructionChars = Math.max(0, options.baseSystemPrompt.length - agentsClaudeChars - skillsChars - embeddedToolChars);
     const appendedTlhChars = options.launchSystemPrompt.startsWith(options.baseSystemPrompt)
         ? options.launchSystemPrompt.length - options.baseSystemPrompt.length
@@ -141,7 +147,7 @@ export function estimateTlhLaunchContextAllocation(options) {
             tools: guidelineChars.nonMcp +
                 toolDefinitionChars(activeTools) -
                 toolDefinitionChars(mcpActiveTools),
-            mcp: guidelineChars.mcp + toolDefinitionChars(mcpActiveTools),
+            mcp: guidelineChars.mcp + mcpServersSectionChars + toolDefinitionChars(mcpActiveTools),
             other: 0,
         }),
     };

@@ -639,7 +639,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(args[args.indexOf("--tools") + 1], "bash,contact_supervisor");
   });
 
-  it("retains generic MCP while filtering direct MCP selections", () => {
+  it("appends mcp__* when codemode is allowlisted and filters legacy mcp: selections", () => {
     const { args, env } = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
@@ -647,35 +647,31 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
       supervisorBridge: false,
-      tools: ["bash", "mcp", "mcp:server/lookup"],
+      tools: ["bash", "codemode", "mcp:server/lookup"],
     });
 
-    assert.equal(args[args.indexOf("--tools") + 1], "bash,mcp");
+    assert.equal(args[args.indexOf("--tools") + 1], "bash,codemode,mcp__*");
     assert.equal(args.includes("--no-tools"), false);
     assert.equal(args.includes("mcp:server/lookup"), false);
-    assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+    assert.equal("MCP_DIRECT_TOOLS" in env, false);
   });
 
-  it("keeps the generic MCP gateway for MCP-only declarations while direct tools stay filtered", () => {
-    const { args, env } = buildPiArgs({
+  it("does not duplicate mcp__* and does not add it without codemode", () => {
+    const base = {
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
       inheritProjectContext: false,
       inheritSkills: false,
       supervisorBridge: false,
-      tools: ["mcp", "mcp:server/lookup"],
-    });
-
-    assert.equal(args[args.indexOf("--tools") + 1], "mcp");
-    assert.equal(args.includes("--no-tools"), false);
-    assert.equal(args.includes("mcp:server/lookup"), false);
-    assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+    };
+    const withBoth = buildPiArgs({ ...base, tools: ["codemode", "mcp__*"] });
+    assert.equal(withBoth.args[withBoth.args.indexOf("--tools") + 1], "codemode,mcp__*");
+    const withoutCodemode = buildPiArgs({ ...base, tools: ["bash"] });
+    assert.equal(withoutCodemode.args[withoutCodemode.args.indexOf("--tools") + 1], "bash");
   });
 
-  it("always sets MCP_DIRECT_TOOLS=__none__ sentinel for @diegopetrucci/pi-mcp-adapter", () => {
-    // The adapter's init.ts checks envDirect !== "__none__" before bootstrapping direct MCP tools.
-    // An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would widen every child's tool surface.
+  it("does not set the retired MCP_DIRECT_TOOLS sentinel", () => {
     const { env } = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
@@ -683,7 +679,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
     });
-    assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+    assert.equal("MCP_DIRECT_TOOLS" in env, false);
   });
 
   it("loads subagent-only extension paths only through child process extension args", () => {

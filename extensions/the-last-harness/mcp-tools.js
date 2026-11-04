@@ -1,30 +1,38 @@
 // Generated from extensions/the-last-harness/mcp-tools.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
-export function hasPersistedDirectMcpResultDetails(toolName, details) {
-    if (!details || typeof details !== "object") {
-        return false;
-    }
-    const candidate = details;
-    if (typeof candidate.server !== "string" ||
-        candidate.server.length === 0 ||
-        typeof candidate.tool !== "string" ||
-        candidate.tool.length === 0) {
-        return false;
-    }
-    const serverPrefix = candidate.server.replaceAll("-", "_");
-    const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
-    return new Set([
-        candidate.tool,
-        `${serverPrefix}_${candidate.tool}`,
-        `${shortPrefix}_${candidate.tool}`,
-    ]).has(toolName);
-}
+export const MCP_SERVERS_SECTION_NAME = "mcp_servers";
+const MCP_BUILTIN_PATH = "builtin:mcp";
+const CODEMODE_BUILTIN_PATH = "builtin:codemode";
+const CODEMODE_TOOL_NAME = "codemode";
+const MCP_TOOL_NAME_PREFIX = "mcp__";
 export function getMcpToolKind(toolName, toolInfo) {
-    if (toolName === "mcp") {
-        return "proxy";
+    const path = toolInfo?.sourceInfo?.path;
+    if (toolName.startsWith(MCP_TOOL_NAME_PREFIX) || path === MCP_BUILTIN_PATH) {
+        return "mcp";
     }
-    const source = toolInfo?.sourceInfo?.source;
-    if (typeof source === "string" && /^(npm|git):/.test(source) && /mcp/i.test(source)) {
-        return "direct";
+    if (path === CODEMODE_BUILTIN_PATH) {
+        return "codemode";
+    }
+    if (toolName === CODEMODE_TOOL_NAME && typeof path !== "string") {
+        return "codemode";
     }
     return undefined;
+}
+export function readNestedToolCalls(message) {
+    const nested = message?.nestedCalls;
+    const calls = Array.isArray(nested)
+        ? nested
+        : Array.isArray(nested?.calls)
+            ? nested.calls
+            : [];
+    const records = [];
+    for (const call of calls) {
+        const candidate = call;
+        if (candidate && typeof candidate.name === "string") {
+            records.push({
+                name: candidate.name,
+                ...(typeof candidate.id === "string" ? { id: candidate.id } : {}),
+            });
+        }
+    }
+    return records;
 }

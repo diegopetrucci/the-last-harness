@@ -90,8 +90,9 @@ test("analyzeSessionEntries summarizes exact assistant usage, estimated tool att
   assert.equal(analysis.tools.totalResults, 3);
   assert.equal(analysis.tools.totalErrors, 0);
   assert.equal(analysis.tools.mcpCalls, 1);
-  assert.equal(analysis.tools.mcpProxyCalls, 1);
-  assert.equal(analysis.tools.mcpDirectCalls, 0);
+  assert.equal(analysis.tools.mcpDirectCalls, 1);
+  assert.equal(analysis.tools.mcpCodemodeCalls, 0);
+  assert.equal(analysis.tools.codemodeCalls, 0);
   assert.equal(analysis.tools.bySource.length, 3);
   assert.equal(
     analysis.tools.byTool.find((tool) => tool.toolName === "bash")?.source.kind,
@@ -102,8 +103,8 @@ test("analyzeSessionEntries summarizes exact assistant usage, estimated tool att
     "extension",
   );
   assert.equal(
-    analysis.tools.byTool.find((tool) => tool.toolName === "mcp")?.source.kind,
-    "mcp-proxy",
+    analysis.tools.byTool.find((tool) => tool.toolName === "mcp__exa__search")?.source.kind,
+    "mcp",
   );
 
   assert.equal(analysis.subagents.runCount, 1);
@@ -479,12 +480,17 @@ test("subagents.byAgent excludes runs missing usage and does not affect total", 
   assert.equal(byAgentInputTotal, analysis.subagents.usage.inputTokens);
 });
 
-test("direct MCP tools count toward estimated MCP attribution when the current tool catalog identifies them", () => {
+test("native MCP tools count toward estimated MCP attribution when called directly", () => {
   const entries = [
     assistantEntry("a1", null, "2026-06-15T14:00:00Z", {
       stopReason: "tool_use",
       content: [
-        { type: "toolCall", id: "call-exa-1", name: "exa_search", arguments: { query: "secret" } },
+        {
+          type: "toolCall",
+          id: "call-exa-1",
+          name: "mcp__exa__search",
+          arguments: { query: "secret" },
+        },
       ],
       usage: usage({ input: 20, output: 5, cost: 0.05 }),
     }),
@@ -495,8 +501,68 @@ test("direct MCP tools count toward estimated MCP attribution when the current t
   assert.equal(analysis.tools.totalCalls, 1);
   assert.equal(analysis.tools.mcpCalls, 1);
   assert.equal(analysis.tools.mcpDirectCalls, 1);
-  assert.equal(analysis.tools.byTool[0]?.source.kind, "mcp-direct");
-  assert.equal(analysis.tools.bySource[0]?.source.kind, "mcp-direct");
+  assert.equal(analysis.tools.mcpCodemodeCalls, 0);
+  assert.equal(analysis.tools.byTool[0]?.source.kind, "mcp");
+  assert.equal(analysis.tools.bySource[0]?.source.kind, "mcp");
+});
+
+test("codemode counts the codemode call once and nested MCP calls once without double counting", () => {
+  const nested = (id, name) => ({ id, name, status: "ok" });
+  const entries = [
+    assistantEntry("a1", null, "2026-06-15T14:00:00Z", {
+      stopReason: "tool_use",
+      content: [
+        { type: "toolCall", id: "cm-1", name: "codemode", arguments: { code: "x".repeat(400) } },
+      ],
+      usage: usage({ input: 20, output: 5, cost: 0.05 }),
+    }),
+    {
+      ...toolResultEntry("tr1", "a1", "2026-06-15T14:00:05Z", "codemode", {}, false, "ok"),
+      message: {
+        ...toolResultEntry("tr1", "a1", "2026-06-15T14:00:05Z", "codemode", {}, false, "ok")
+          .message,
+        toolCallId: "cm-1",
+        nestedCalls: {
+          complete: true,
+          calls: [
+            nested("cm-1/1", "mcp__exa__search"),
+            nested("cm-1/2", "mcp__exa__search"),
+            nested("cm-1/3", "read"),
+            // Same call id reported twice (record + a nested result message): counted once.
+            nested("cm-1/1", "mcp__exa__search"),
+          ],
+        },
+      },
+    },
+    {
+      ...toolResultEntry("tr2", "tr1", "2026-06-15T14:00:06Z", "mcp__exa__search", {}, false, "r"),
+      message: {
+        ...toolResultEntry("tr2", "tr1", "2026-06-15T14:00:06Z", "mcp__exa__search", {}, false, "r")
+          .message,
+        toolCallId: "cm-1/2",
+        parentToolCallId: "cm-1",
+      },
+    },
+  ];
+
+  const analysis = analyzeSessionEntries(entries, { toolCatalog });
+
+  assert.equal(analysis.tools.codemodeCalls, 1);
+  assert.equal(analysis.tools.mcpDirectCalls, 0);
+  // cm-1/1 and cm-1/2 only; cm-1/3 is `read`, and the nested result message is not model-issued.
+  assert.equal(analysis.tools.mcpCodemodeCalls, 2);
+  assert.equal(analysis.tools.mcpCalls, 2);
+  assert.equal(analysis.tools.totalCalls, 1);
+  assert.equal(analysis.tools.totalResults, 1);
+  assert.equal(
+    analysis.tools.byTool.find((tool) => tool.toolName === "mcp__exa__search"),
+    undefined,
+    "nested MCP calls are not attributed transcript tokens or tool rows",
+  );
+  const codemode = analysis.tools.byTool.find((tool) => tool.toolName === "codemode");
+  assert.equal(codemode?.source.kind, "codemode");
+  assert.equal(codemode?.mcp, false);
+  assert.equal(analysis.tools.mcpApproxTokens, 0);
 });
 
 test("discovery traversal tolerates cycles and processes the exact depth without reading its children", () => {

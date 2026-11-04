@@ -18,6 +18,7 @@ import {
 import {
   createPrimaryToolState,
   filterAvailableTools,
+  withDirectMcpTools,
 } from "../the-last-harness-primary-tools.mjs";
 import {
   allowedSubagentsForExperimentalConfig,
@@ -629,8 +630,12 @@ function createTlhPrimaryAgentRuntime(
     warnOnMissing = true,
   ): string[] {
     const desiredTools = primaryToolAllowlist(primary);
-    const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
-    const validTools = filterAvailableTools(desiredTools, allToolNames);
+    const allTools = pi.getAllTools();
+    const allToolNames = new Set(allTools.map((tool) => tool.name));
+    const validTools = withDirectMcpTools(
+      filterAvailableTools(desiredTools, allToolNames),
+      allTools,
+    );
     const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
     if (warnOnMissing && missingTools.length > 0) {
       warnOnce(

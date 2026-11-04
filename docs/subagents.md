@@ -16,7 +16,7 @@ The canonical packaged TLH roles are thirteen roles: the four primaries `archite
 
 ### MCP gateway contracts
 
-All thirteen packaged roles declare the generic `mcp` gateway without enabling direct `mcp:*` child tools; the per-role policy and the `mcporter` enable/disable and rollback steps are owned by [mcp.md](mcp.md#default-usage). The packaged `test-runner`'s MCP exception is described under [Final-validation test-runner](#final-validation-test-runner).
+All thirteen packaged roles declare `codemode` for native MCP access (children reach direct-exposure servers via `mcp__*`); the per-role policy and migration steps are owned by [mcp.md](mcp.md#exposure-and-agents). The packaged `test-runner`'s MCP exception is described under [Final-validation test-runner](#final-validation-test-runner).
 
 ### Malformed custom-agent handling
 
@@ -79,7 +79,7 @@ The optional `tools` declaration has three distinct states, and the child CLI is
 
 An agent may declare `supervisorBridge: false` to opt out of generic native-supervisor prompt guidance and runtime `contact_supervisor` support. TLH emits `--exclude-tools contact_supervisor`; it does not rewrite the declared `tools` field, and `contact_supervisor` is omitted only from the runtime-required allowlist additions.
 
-A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). The generic `mcp` entry is retained in an explicit child `--tools` allowlist, while `mcp:*` entries are filtered and never registered as direct child tools; `MCP_DIRECT_TOOLS=__none__` keeps direct MCP bootstrap disabled.
+A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). When an explicit child `--tools` allowlist contains `codemode`, TLH appends `mcp__*` so direct-exposure MCP servers stay reachable; legacy adapter-style `mcp:*` entries are filtered out.
 
 **Pi note — `--no-extensions` and built-in providers:** When a custom agent declares an explicit `extensions` list, TLH emits `--no-extensions` for the child process. In the pinned Pi runtime, `--no-extensions` disables **all** built-in extensions: `builtin:mcp`, `builtin:codemode`, `builtin:tool-search`, and `builtin:llama.cpp` (the llama.cpp provider). The `DefaultResourceLoader` achieves this by limiting the resolved extension paths to only CLI-passed sources when `noExtensions` is set, which excludes the settings-enabled built-in paths (`resource-loader.js` ~403). If a custom agent with an explicit extension list needs one of these built-ins, add `builtin:<name>` (for example `"builtin:mcp"`) as an entry in the agent definition's `extensions` field. TLH passes it through as `--extension builtin:<name>`, which causes the package manager's `resolveExtensionSources` to include it in the CLI-enabled paths and restore that specific built-in even after `--no-extensions` (`resource-loader.js` ~750).
 
@@ -97,7 +97,7 @@ After each successful compaction, a pinned canonical developer receives exactly 
 
 ### Final-validation test-runner
 
-The packaged `test-runner` declares `tools: bash, mcp` and `supervisorBridge: false`. It can use the generic MCP gateway to discover, connect to, and invoke any configured server/tool, including tools that change server-side state, but direct `mcp:*` tools remain disabled by the `MCP_DIRECT_TOOLS=__none__` sentinel and the frontmatter allowlist. A final-validation ticket must provide an exact ordered list of shell commands and/or MCP calls. Each MCP step is exact adapter-shaped gateway input with only the fields required by the selected status, discovery, search, connect, or call operation; `server`, `tool`, and JSON-string `args` are optional overall. The runner treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it; it does not infer or broaden steps from prose. It stops after the first failed shell/MCP step and may not edit the repository, install or fix anything, mutate shell/package/ticket state, delegate, or call `contact_supervisor`.
+The packaged `test-runner` declares `tools: bash, codemode` and `supervisorBridge: false`. It can run assigned `codemode` scripts that call any configured MCP server/tool, including tools that change server-side state. A final-validation ticket must provide an exact ordered list of shell commands and/or `codemode` scripts; the runner executes each script verbatim and treats a thrown error or `isError: true` result as a failed step. The runner treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it; it does not infer or broaden steps from prose. It stops after the first failed shell/MCP step and may not edit the repository, install or fix anything, mutate shell/package/ticket state, delegate, or call `contact_supervisor`.
 
 ## Skills
 
@@ -336,6 +336,7 @@ This is human-approved recovery, not a technically enforced boundary: a same-use
    ```
 
    Children run in their own detached process groups, which a dead runner does not clean up. The persisted `processCleanup.processGroupId` values exist only after a cleanup attempt, and a child's session file may be discovered after launch, so the absence of a match does not account for every group. A listed process is not necessarily this run's (for example an unrelated Pi session); reconcile each one. **If any child process group cannot be accounted for, or anything remains, stop and investigate. Do not edit ownership.**
+
 4. **Back up every record that exists**, outside the result directory (the result watcher scans it). Note which records are absent. If any command prints `STOP` or errors, do not continue:
 
    ```sh
@@ -347,6 +348,7 @@ This is human-approved recovery, not a technically enforced boundary: a same-use
      echo "STOP: no backup directory; do not continue" >&2
    fi
    ```
+
 5. **Edit.** In each existing record, change only the top-level `sessionId` to the same key from step 1. Never create a missing record, and change nothing else.
 6. **Verify and reopen.** Re-read the edited records, then reopen the session whose exact key you wrote and retry the resume.
 

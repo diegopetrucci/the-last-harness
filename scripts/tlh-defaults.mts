@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -26,16 +25,6 @@ import {
   expandHomePath,
   readJsonFile,
 } from "./lib/tlh-install-utils.mjs";
-import {
-  evaluateMcpAdapterCutover,
-  mcpAdapterCutoverNotice,
-  mcpAdapterManagedIdentityPreservation,
-  mcpAdapterMigrationFrozen,
-  mcpAdapterPackageIdentities,
-  MCP_ADAPTER_CUTOVER_EXTENSION_ID,
-  type McpAdapterCutoverDecision,
-} from "./lib/mcp-adapter-cutover.mjs";
-import { parseMcpMigrationArgs, runMcpAdapterMigration } from "./lib/mcp-adapter-migration.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 
 interface CliArgs extends Record<string, unknown> {
@@ -54,9 +43,6 @@ type Settings = JsonObject & {
   tlh?: JsonObject;
   warnings?: unknown;
 };
-
-const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
-const MCPORTER_EXTENSION_ID = "mcporter";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -77,13 +63,10 @@ Commands:
   enable <id>          Re-enable a bundled default extension persistently
   sources              Print enabled default package sources (installer internal)
   critical-sources     Print enabled critical default package sources (installer internal)
-  migrate-mcp          Preview MCP config migration; use --apply with explicit acknowledgement to write
 
 Options:
   --settings <path>    Settings file to update (default: ~/.the-last-harness/agent/settings.json, or PI_CODING_AGENT_DIR/settings.json)
   --defaults <path>    Default extension manifest (default: config/default-extensions.json next to this script)
-  migrate-mcp options: --project DIR (repeatable), --apply,
-                       --acknowledge-unverified-mcp-configs
   -h, --help           Show this help
 `;
 }
@@ -119,10 +102,6 @@ function parseArgs(argv: readonly string[]): CliArgs {
       continue;
     }
     if (arg.startsWith("-")) {
-      if (args.command === "migrate-mcp") {
-        args.commandArgs.push(arg);
-        continue;
-      }
       throw new Error(`Unknown option: ${arg}`);
     }
     if (!args.command) {
@@ -485,19 +464,10 @@ function commandList(
 function commandSources(
   settings: Settings,
   defaultExtensions: readonly DefaultExtensionEntry[],
-  {
-    criticalOnly = false,
-    mcpDecision,
-  }: { criticalOnly?: boolean; mcpDecision?: McpAdapterCutoverDecision } = {},
+  { criticalOnly = false }: { criticalOnly?: boolean } = {},
 ): void {
   for (const extension of defaultExtensions) {
     if (criticalOnly && extension.critical !== true) continue;
-    if (
-      extension.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID &&
-      mcpAdapterMigrationFrozen(extension, mcpDecision)
-    ) {
-      continue;
-    }
     if (extension.critical === true) {
       if (!isDefaultSourceDeferred(settings, extension)) console.log(extension.source);
       continue;
@@ -508,59 +478,6 @@ function commandSources(
     ) {
       console.log(extension.source);
     }
-  }
-}
-
-function isBuiltinMcpExclusionManaged(settings: Settings): boolean {
-  return settings.tlh?.builtinMcpExclusionManaged === true;
-}
-
-function markBuiltinMcpExclusionManaged(settings: Settings): void {
-  settings.tlh ??= {};
-  settings.tlh.builtinMcpExclusionManaged = true;
-}
-
-function clearBuiltinMcpExclusionManaged(settings: Settings): boolean {
-  if (!settings.tlh || !Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged")) {
-    return false;
-  }
-  delete settings.tlh.builtinMcpExclusionManaged;
-  return true;
-}
-
-/**
- * Remove only TLH-owned -builtin:mcp entries when mcporter is disabled so
- * Pi's native builtin:mcp can own /mcp without a warning. Unmarked entries
- * are user-owned and must remain untouched.
- */
-function applyBuiltinMcpExclusionOnDisable(settings: Settings): void {
-  if (!isBuiltinMcpExclusionManaged(settings)) return;
-  if (Array.isArray(settings.extensions)) {
-    const filtered = settings.extensions.filter((e: unknown) => e !== BUILTIN_MCP_EXCLUSION);
-    if (filtered.length !== settings.extensions.length) {
-      if (filtered.length === 0) {
-        delete settings.extensions;
-      } else {
-        settings.extensions = filtered;
-      }
-    }
-  }
-  clearBuiltinMcpExclusionManaged(settings);
-}
-
-/**
- * Restore -builtin:mcp to settings.extensions when mcporter is re-enabled so
- * the adapter remains the sole /mcp owner without a replacement warning. A
- * pre-existing unmarked entry is user-owned and is not claimed.
- */
-function applyBuiltinMcpExclusionOnEnable(settings: Settings): void {
-  if (Array.isArray(settings.extensions)) {
-    if (settings.extensions.includes(BUILTIN_MCP_EXCLUSION)) return;
-    settings.extensions = [BUILTIN_MCP_EXCLUSION, ...settings.extensions];
-    markBuiltinMcpExclusionManaged(settings);
-  } else if (settings.extensions === undefined) {
-    settings.extensions = [BUILTIN_MCP_EXCLUSION];
-    markBuiltinMcpExclusionManaged(settings);
   }
 }
 
@@ -598,9 +515,6 @@ function commandDisable(
   disabledIds.add(extension.id);
   setDisabledIds(settings, disabledIds, defaultExtensions);
   disablePackage(settings, extension);
-  if (extension.id === MCPORTER_EXTENSION_ID) {
-    applyBuiltinMcpExclusionOnDisable(settings);
-  }
   if (extension.id === "anthropic-auth") {
     return applyAnthropicWarningOnDisable(settings);
   }
@@ -611,21 +525,12 @@ function commandEnable(
   settings: Settings,
   defaultExtensions: readonly DefaultExtensionEntry[],
   id: string,
-  mcpDecision?: McpAdapterCutoverDecision,
 ): boolean {
   const extension = assertKnownExtension(defaultExtensions, id);
   const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
   disabledIds.delete(extension.id);
   setDisabledIds(settings, disabledIds, defaultExtensions);
-  if (!mcpAdapterMigrationFrozen(extension, mcpDecision)) {
-    enablePackage(settings, extension);
-  }
-  if (
-    extension.id === MCPORTER_EXTENSION_ID &&
-    !defaultExtensionPackageFilterDisables(settings, extension)
-  ) {
-    applyBuiltinMcpExclusionOnEnable(settings);
-  }
+  enablePackage(settings, extension);
   if (extension.id === "anthropic-auth") {
     return applyAnthropicWarningOnEnable(settings);
   }
@@ -635,7 +540,6 @@ function commandEnable(
 function syncDefaultExtensionProvenance(
   settings: Settings,
   defaultExtensions: readonly DefaultExtensionEntry[],
-  mcpDecision?: McpAdapterCutoverDecision,
 ): void {
   const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
   const previousManagedIdentities =
@@ -649,46 +553,12 @@ function syncDefaultExtensionProvenance(
     settings,
     managedPackageIdentities,
   );
-  const mcpExtension = defaultExtensions.find(
-    (extension) => extension.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID,
-  );
   for (const identity of previousManagedIdentities) {
     if (RETIRED_DEFAULT_PACKAGE_IDENTITIES.has(identity)) {
       nextManagedPackageIdentities.add(identity);
     }
   }
-  if (mcpAdapterMigrationFrozen(mcpExtension, mcpDecision)) {
-    const preserved = mcpAdapterManagedIdentityPreservation(
-      mcpExtension,
-      mcpDecision,
-      previousManagedIdentities,
-    );
-    for (const identity of mcpAdapterPackageIdentities(mcpExtension)) {
-      nextManagedPackageIdentities.delete(identity);
-      if (preserved.has(identity)) nextManagedPackageIdentities.add(identity);
-    }
-  }
   setDefaultExtensionProvenance(settings, nextManagedPackageIdentities);
-}
-
-function mcpCutoverDecision(
-  settings: Settings,
-  settingsPath: string,
-  defaultExtensions: readonly DefaultExtensionEntry[],
-  { includeDisabledMarker }: { includeDisabledMarker: boolean },
-): McpAdapterCutoverDecision | undefined {
-  const extension = defaultExtensions.find((item) => item.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID);
-  if (!extension) return undefined;
-  const disabledByMarker = disabledIdsFromSettings(settings, defaultExtensions).has(
-    MCP_ADAPTER_CUTOVER_EXTENSION_ID,
-  );
-  const disabledByFilter = defaultExtensionPackageFilterDisables(settings, extension);
-  return evaluateMcpAdapterCutover(settings, extension, {
-    agentDir: dirname(settingsPath),
-    homeDir: process.env.HOME || homedir(),
-    optedOut: disabledByFilter || (includeDisabledMarker && disabledByMarker),
-    preserveOptOut: disabledByFilter,
-  });
 }
 
 function main(): void {
@@ -707,19 +577,8 @@ function main(): void {
       defaultDefaultExtensionsPath(),
   );
   const mutatesSettings = args.command === "disable" || args.command === "enable";
-  if (mutatesSettings || args.command === "migrate-mcp") assertNotNormalPiSettings(settingsPath);
+  if (mutatesSettings) assertNotNormalPiSettings(settingsPath);
   const defaultExtensions = readDefaultExtensions(defaultExtensionsPath);
-  if (args.command === "migrate-mcp") {
-    const migrationArgs = parseMcpMigrationArgs(args.commandArgs);
-    const result = runMcpAdapterMigration({
-      ...migrationArgs,
-      settingsPath,
-      defaultExtensionsPath,
-    });
-    console.log(result.output);
-    if (result.exitCode !== 0) process.exitCode = result.exitCode;
-    return;
-  }
   const { settings, previousRaw } = loadSettings(settingsPath);
   validateSettings(settings);
 
@@ -728,14 +587,8 @@ function main(): void {
     return;
   }
   if (args.command === "sources" || args.command === "critical-sources") {
-    const mcpDecision = mcpCutoverDecision(settings, settingsPath, defaultExtensions, {
-      includeDisabledMarker: true,
-    });
-    const notice = mcpDecision ? mcpAdapterCutoverNotice(mcpDecision) : undefined;
-    if (notice) console.error(notice);
     commandSources(settings, defaultExtensions, {
       criticalOnly: args.command === "critical-sources",
-      mcpDecision,
     });
     return;
   }
@@ -766,24 +619,8 @@ function main(): void {
     const id = args.commandArgs[0];
     if (!id || args.commandArgs.length !== 1) throw new Error("Usage: tlh defaults enable <id>");
     const before = beforeScrub;
-    const enabledExtension = findDefaultExtension(defaultExtensions, id);
-    const mcpDecision =
-      enabledExtension?.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID
-        ? mcpCutoverDecision(settings, settingsPath, defaultExtensions, {
-            includeDisabledMarker: false,
-          })
-        : undefined;
-    const notice = mcpDecision ? mcpAdapterCutoverNotice(mcpDecision) : undefined;
-    if (notice) console.error(notice);
-    if (mcpDecision?.action === "opted-out" && mcpDecision?.freeze === true) {
-      console.error(
-        "Warning: mcporter remains disabled by a package filter on its package entry in the" +
-          " isolated settings; the user-owned entry was left unchanged." +
-          " To load the adapter, edit or remove the package filter on the mcporter package entry.",
-      );
-    }
-    const warningChanged = commandEnable(settings, defaultExtensions, id, mcpDecision);
-    syncDefaultExtensionProvenance(settings, defaultExtensions, mcpDecision);
+    const warningChanged = commandEnable(settings, defaultExtensions, id);
+    syncDefaultExtensionProvenance(settings, defaultExtensions);
     const changed = before !== JSON.stringify(settings);
     const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
     console.log(`${id} is enabled for the tlh profile.`);

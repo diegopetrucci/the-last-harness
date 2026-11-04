@@ -6,11 +6,13 @@ The deferred, contributor-only investigation of `anti-slop/no-unsafe-dictionary-
 
 ## TelemetryDeck MCP (contributors only)
 
-The project-local [`.mcp.json`](../.mcp.json) provides a lazy, OAuth-backed `telemetrydeck` MCP server for approved contributor investigations. It is not part of TLH runtime telemetry behavior. Authenticate only when needed with:
+The project-local [`.mcp.json`](../.mcp.json) provides an OAuth-backed `telemetrydeck` MCP server for approved contributor investigations. It is loaded through the bundled project-mcp-json extension, so the project must be trusted first (run `/trust` once in the session). It is not part of TLH runtime telemetry behavior. Native MCP handles OAuth automatically; authenticate only when needed, inside the session:
 
 ```text
-/mcp-auth telemetrydeck
+/mcp login telemetrydeck
 ```
+
+Do not use `pi mcp login telemetrydeck` from a shell: the shell `pi mcp` command does not load extensions, so it cannot see this server.
 
 Treat TelemetryDeck data as sensitive and follow these mandatory constraints:
 

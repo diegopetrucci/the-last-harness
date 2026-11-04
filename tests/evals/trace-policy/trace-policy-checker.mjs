@@ -401,12 +401,12 @@ function normalizeAssignedValidationStep(step) {
     return command ? { kind: "shell", command } : undefined;
   }
 
-  const isMcp =
-    ["mcp"].includes(type) ||
-    ["mcp"].includes(kind) ||
-    (type === "tool" && declaredTool === "mcp") ||
-    declaredTool === "mcp";
-  if (!isMcp) {
+  const isCodemode =
+    ["codemode"].includes(type) ||
+    ["codemode"].includes(kind) ||
+    (type === "tool" && declaredTool === "codemode") ||
+    declaredTool === "codemode";
+  if (!isCodemode) {
     return undefined;
   }
 
@@ -426,12 +426,12 @@ function normalizeAssignedValidationStep(step) {
       "error",
       "details",
     ]);
-    if (type === "tool" || declaredTool === "mcp") {
+    if (type === "tool" || declaredTool === "codemode") {
       excludedKeys.add("tool");
     }
     input = Object.fromEntries(Object.entries(step).filter(([key]) => !excludedKeys.has(key)));
   }
-  return { kind: "mcp", input: stableValidationValue(input) };
+  return { kind: "codemode", input: stableValidationValue(input) };
 }
 
 function legacyAssignedValidationSteps(transcript) {
@@ -468,7 +468,7 @@ function actualValidationStep(step) {
   if (name === "bash") {
     return { kind: "shell", command: normalizeText(commandText(step)) };
   }
-  if (name !== "mcp") {
+  if (name !== "codemode") {
     return undefined;
   }
 
@@ -476,23 +476,9 @@ function actualValidationStep(step) {
   if (Object.hasOwn(step, "input")) {
     input = step.input === undefined ? {} : step.input;
   } else {
-    const inputKeys = [
-      "server",
-      "args",
-      "search",
-      "describe",
-      "connect",
-      "action",
-      "regex",
-      "includeSchemas",
-    ];
-    const presentInputKeys = inputKeys.filter((key) => Object.hasOwn(step, key));
-    input =
-      presentInputKeys.length > 0
-        ? Object.fromEntries(presentInputKeys.map((key) => [key, step[key]]))
-        : {};
+    input = Object.hasOwn(step, "script") ? { script: step.script } : {};
   }
-  return { kind: "mcp", input: stableValidationValue(input) };
+  return { kind: "codemode", input: stableValidationValue(input) };
 }
 
 function validationStepsEqual(expected, actual) {
@@ -512,7 +498,7 @@ function describeValidationStep(step) {
   if (step.kind === "shell") {
     return step.command || "<empty shell command>";
   }
-  return `mcp ${serializedValidationValue(step.input)}`;
+  return `codemode ${serializedValidationValue(step.input)}`;
 }
 
 function evaluateTestRunner(transcript, addViolation) {
@@ -521,7 +507,7 @@ function evaluateTestRunner(transcript, addViolation) {
   let failedTicketShowAt;
   let failedValidationAt;
   let validationStepIndex = 0;
-  let sawUnassignedGenericMcp = false;
+  let sawUnassignedCodemode = false;
   let stepOrderViolationReported = false;
 
   const addStepOrderViolation = (index, expected, actual) => {
@@ -560,16 +546,16 @@ function evaluateTestRunner(transcript, addViolation) {
 
     const name = toolName(step);
     const isTicketShow = isPureTkShowCommand(step);
-    const isValidationStep = (name === "bash" && !isTicketShow) || name === "mcp";
+    const isValidationStep = (name === "bash" && !isTicketShow) || name === "codemode";
     const isMutatingShellStep =
       name === "bash" && (step.mutates === true || readOnlyBashMutation(step));
-    const isUnassignedGenericMcp = name === "mcp" && !hasValidAssignedValidationSteps;
+    const isUnassignedCodemode = name === "codemode" && !hasValidAssignedValidationSteps;
 
-    if ((name !== "bash" && name !== "mcp") || isMutatingShellStep || isUnassignedGenericMcp) {
+    if ((name !== "bash" && name !== "codemode") || isMutatingShellStep || isUnassignedCodemode) {
       addViolation(
         "test-runner.read_only",
         index,
-        "Test-runner may use only bash or explicitly assigned generic mcp validation steps; repository edits, direct mcp:* tools, mutating shell/package/ticket commands, and delegation are forbidden.",
+        "Test-runner may use only bash or explicitly assigned codemode validation steps; repository edits, direct mcp__* tools, mutating shell/package/ticket commands, and delegation are forbidden.",
       );
     }
 
@@ -586,8 +572,8 @@ function evaluateTestRunner(transcript, addViolation) {
       continue;
     }
 
-    if (isUnassignedGenericMcp) {
-      sawUnassignedGenericMcp = true;
+    if (isUnassignedCodemode) {
+      sawUnassignedCodemode = true;
     }
 
     if (!sawSuccessfulTicketShow) {
@@ -599,7 +585,7 @@ function evaluateTestRunner(transcript, addViolation) {
     }
 
     const actualStep = actualValidationStep(step);
-    if (expectedSteps && !isUnassignedGenericMcp) {
+    if (expectedSteps && !isUnassignedCodemode) {
       addStepOrderViolation(index, expectedSteps[validationStepIndex], actualStep);
       validationStepIndex += 1;
     }
@@ -613,7 +599,7 @@ function evaluateTestRunner(transcript, addViolation) {
     expectedSteps &&
     failedTicketShowAt === undefined &&
     failedValidationAt === undefined &&
-    !sawUnassignedGenericMcp &&
+    !sawUnassignedCodemode &&
     !stepOrderViolationReported &&
     validationStepIndex !== expectedSteps.length
   ) {

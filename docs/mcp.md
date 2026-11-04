@@ -1,170 +1,53 @@
-# MCP adapter
+# MCP
 
-TLH ships a scoped package of `pi-mcp-adapter` as the non-critical bundled default `mcporter`, pinned to a published `npm:@diegopetrucci/pi-mcp-adapter` version (see `config/default-extensions.json`). The adapter provides TLH's proxy-first MCP gateway and lazy-loading startup behavior without making MCP a critical part of the profile.
+TLH uses Pi's native MCP support. Server configuration, OAuth, exposure modes, `/mcp`, `pi mcp`, and codemode behavior are owned by [Pi's MCP documentation](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/docs/mcp.md); this page covers only what TLH adds or changes. The bundled `project-mcp-json` default (see `config/default-extensions.json`) adds loading of a project `.mcp.json`.
 
-When the MCP status line is visible, TLH appends an approximate retained-context estimate such as `MCP: 1/1 servers, atlassian • (3.2% of context)`. The estimate includes active MCP tool definitions plus retained MCP tool calls and results in the current context. It is a local display aid, not a provider billing value, and may change after messages, tool results, branch changes, compaction, or MCP activation change what remains in context.
+## Configuration locations
 
-## Default usage
+| Scope                      | File                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| TLH profile (user-level)   | `<agent-dir>/mcp.json` (by default `~/.the-last-harness/agent/mcp.json`)     |
+| Project, Pi-native         | `.pi/mcp.json`, read only after project trust                                |
+| Project, Claude Code–style | `.mcp.json`, loaded by `project-mcp-json` under Pi's project-trust semantics |
 
-TLH uses the adapter in a proxy-first way: by default you get one `mcp` tool that routes requests to your configured MCP servers, instead of exposing every MCP tool directly. All four packaged primary agents and all nine packaged minor agents declare this generic gateway while preserving their other tools.
+A `.pi/mcp.json` entry replaces a same-named profile entry. If a `.mcp.json` server has the same name as one in Pi's own `mcp.json`, the Pi entry wins. `project-mcp-json` reads only `<cwd>/.mcp.json` and does not walk parent directories; see the [package README](https://www.npmjs.com/package/@diegopetrucci/pi-project-mcp-json/v/0.1.4).
 
-- Primary agents and `developer` may call the gateway within their authorized task scope and existing role boundaries.
-- Read-only minors are instructed to avoid mutations and escalate uncertain side effects. This is prompt guidance, not gateway enforcement; the gateway itself may still expose a tool with side effects.
-- The packaged `test-runner` is the intentional unrestricted exception: it may use assigned generic MCP steps to discover, connect to, and invoke any configured server/tool, including tools that change server-side state. Its exact validation-ticket and repository/ticket restrictions still apply.
+## Exposure and agents
 
-Direct `mcp:*` child tools remain filtered out, and `MCP_DIRECT_TOOLS=__none__` prevents an unset direct-tool setting from bootstrapping configured direct tools.
+Servers default to `codemode` exposure, so the packaged primary agents and minor agents declare `codemode` (not an MCP gateway tool) and call servers from scripts as `tools.mcp__<server>__<tool>(...)`. Servers you set to `direct` exposure are also reachable in subagents: with an explicit `--tools` allowlist containing `codemode`, TLH adds `mcp__*` so those tools are not hidden. See [Control tool exposure](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/docs/mcp.md#control-tool-exposure).
 
-Common slash commands:
+- Primary agents and `developer` may use MCP within their authorized scope; read-only minors are instructed to avoid mutations and escalate uncertain side effects. This is prompt guidance, not enforcement.
+- The packaged `test-runner` is the intentional exception: it runs assigned `codemode` scripts verbatim, and those scripts may call tools that change server-side state. Its other restrictions are described under [Final-validation test-runner](subagents.md#final-validation-test-runner).
 
-- `/mcp` — show adapter status.
-- `/mcp setup` — walk through MCP setup.
-- `/mcp tools` — list available MCP tools.
-- `/mcp reconnect` — reconnect all configured servers.
-- `/mcp reconnect <server>` — reconnect one server.
-- `/mcp-auth <server>` — complete OAuth login for one server.
+## Project trust and subagents
 
-## Configuration
+Project configuration (`.pi/mcp.json`, and `.mcp.json` via `project-mcp-json`) loads only in trusted projects. Subagents run headless and cannot show a trust prompt, so run `/trust` once in the project from an interactive session; the saved decision then applies to children. Details: [project trust](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/docs/security.md#understand-project-trust).
 
-- Bundled default id: `mcporter`
-- Extension source: the `mcporter` entry in `config/default-extensions.json`
-- Shared server config: `~/.config/mcp/mcp.json`
-- TLH/Pi native config: `${PI_CODING_AGENT_DIR}/mcp.json` (by default `~/.the-last-harness/agent/mcp.json`)
-- Project shared config: `.mcp.json`
-- Project Pi native config: `.pi/mcp.json`
-- Global adapter-owned config: `${PI_CODING_AGENT_DIR}/mcp-adapter.json`
-- Project adapter-owned config: `.pi/mcp-adapter.json`
+## Authentication
 
-Use the shared `mcp.json` files for server definitions. Use `mcp-adapter.json` for adapter-owned `settings`, imports, and overrides; do not put those adapter-specific options in a native Pi `mcp.json`.
+Sign in with `/mcp login <server>` inside a TLH session (`/mcp` lists servers there). Shell `pi mcp` commands are not equivalent: bare `pi` does not select the TLH isolated profile and cannot see `.mcp.json` servers registered by `project-mcp-json`, so scope them explicitly with `PI_CODING_AGENT_DIR` and only expect native config files (`<agent-dir>/mcp.json`, `.pi/mcp.json`); tokens are stored in `<agent-dir>/mcp-auth.json`. Adapter-era credentials are not carried over, so re-login once after migrating. See [Authenticate with OAuth](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/docs/mcp.md#authenticate-with-oauth).
 
-### Configuration precedence and native translation
+## What native MCP does not provide
 
-For the normal TLH profile, these sources are applied in order. Most layers merge same-named server entries field by field, so partial adapter overrides retain unset definition fields rather than replacing the complete server definition. Explicit transport overrides (`command`, `url`, or `socket`) discard incompatible fields from the other transport; when a changed `url` is applied, inherited URL-bound authentication material (`headers`, `bearerToken`, `bearerTokenEnv`, `bearerTokenStore`, `requestHeadersCommand`, `caFile`, object-valued `auth`, and non-`false` `oauth`) is cleared, while authentication explicitly supplied by the higher-precedence definition remains. The native project `.pi/mcp.json` entry replaces a matching native `${PI_CODING_AGENT_DIR}/mcp.json` entry before the project adapter override is applied:
+Compared with the retired adapter, these are not available: per-server `approveTools`, keychain-backed credentials, lazy server lifecycle (servers connect at session start), `imports` and the shared `~/.config/mcp` / `~/.agents` configs, the SSE transport, and MCP UI, elicitation, sampling, and prompts.
 
-1. `~/.config/mcp/mcp.json`
-2. `${PI_CODING_AGENT_DIR}/mcp.json`
-3. `${PI_CODING_AGENT_DIR}/mcp-adapter.json`
-4. opted-in ancestor `.mcp.json` and `.pi/mcp-adapter.json` files, farthest first
-5. `.mcp.json`
-6. `.pi/mcp.json`
-7. `.pi/mcp-adapter.json`
+## Migrating from the MCP adapter
 
-`~/.agents/mcp.json` and `~/.agents/mcp/mcp.json` are not in this list: the adapter detects them but does not load them by default. Like other host configs, they load only through an explicit `imports` entry in an adapter config, and imported servers take the importing file's position in this list, below that file's own `mcpServers` entries.
+TLH no longer bundles `pi-mcp-adapter` (formerly the `mcporter` default) or the `/mcp-auth` and `tlh defaults migrate-mcp` commands. A full install or `tlh update` removes ALL recognized adapter package selections from the isolated settings, including user-installed and pinned copies, and any TLH-managed `-builtin:mcp` exclusion. Your config files are never rewritten; `tlh update` and `tlh doctor` print a count-only warning that links here for anything native Pi ignores or rejects. Each category means:
 
-Ancestor discovery is opt-in through `settings.ancestorConfigRoots` in a user-global or explicitly selected adapter config. Within a directory, adapter-owned config overrides shared config; project files override global files.
+| Warning                                         | Meaning                                                             | Fix                                                                                                                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| server(s) with string `auth`                    | Native Pi rejects the server (for example `"auth": "oauth"`).       | Remove the `auth` field; OAuth is automatic for HTTP servers, then run `/mcp login <server>`. Use `headers` or `oauth` objects for anything else.                   |
+| config file(s) using `imports`                  | Ignored.                                                            | Copy the imported servers into the files below.                                                                                                                     |
+| server(s) using `lifecycle`                     | Ignored; servers connect at session start.                          | Remove the field.                                                                                                                                                   |
+| server(s) using `directTools`                   | Ignored.                                                            | Remove it; use `exposure`/`toolExposure` (see [Pi docs](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/docs/mcp.md#control-tool-exposure)). |
+| `mcp-adapter.json` file(s)                      | Never read.                                                         | Move the servers into `<agent-dir>/mcp.json`, or project `.pi/mcp.json` / `.mcp.json`, and delete the file.                                                         |
+| shared config in `~/.config/mcp` or `~/.agents` | Never read.                                                         | Move the servers into `<agent-dir>/mcp.json`, or project `.pi/mcp.json` / `.mcp.json`.                                                                              |
+| MCP adapter package(s) still installed          | An adapter is still in your isolated settings and would own `/mcp`. | Run a full `tlh update` (`tlh update --extensions` does not remove it).                                                                                             |
+| `-builtin:mcp` exclusion                        | A hand-added exclusion not owned by TLH disables native MCP.        | Remove `"-builtin:mcp"` from `extensions` in the isolated `settings.json`.                                                                                          |
 
-`mcporter` reads the native `${PI_CODING_AGENT_DIR}/mcp.json` and `.pi/mcp.json` server entries and translates supported Pi fields. In native `mcp.json`, `enabled: false` is translated to the adapter's `disabled: true`; native `exposure` and `toolExposure` are also translated to the corresponding adapter controls. By contrast, `disabled: true` is the adapter-owned setting for shared `mcp.json` and `mcp-adapter.json` configuration.
+For converting entries from other clients, see [Migrate configuration from another client](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/docs/mcp.md#migrate-configuration-from-another-client). Run `/reload` after editing, and `/mcp` to validate.
 
-Existing adapter-specific fields in a native `mcp.json` are ignored rather than migrated. Explicitly relocate or merge those fields into the corresponding `${PI_CODING_AGENT_DIR}/mcp-adapter.json` or `.pi/mcp-adapter.json`; `mcporter` does not rewrite native Pi files, automatically migrate their fields, or write user files on their behalf. Top-level adapter `settings`, `imports`, and plugin configuration likewise belong in `mcp-adapter.json`.
+## Undo
 
-The adapter expects a top-level `mcpServers` object. Minimal examples:
-
-```json
-{
-  "mcpServers": {
-    "chrome-devtools": {
-      "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"]
-    },
-    "example-remote": {
-      "url": "https://example.com/mcp",
-      "auth": "oauth"
-    }
-  }
-}
-```
-
-For stdio servers, use `command` plus `args`. For HTTP servers, use `url`; add `auth: "oauth"` when the server uses OAuth, then run `/mcp-auth <server>` to finish login. Upstream also supports `${VAR}` and `$env:VAR` interpolation in fields such as `env`, `headers`, `cwd`, and `bearerToken`.
-
-## Guarded rollout and migration
-
-The bundled default remains the `mcporter` pin in `config/default-extensions.json`. That manifest pin is a choice for a fresh component, not proof that an existing profile or any project config is safe to reinterpret. A profile that already selects a pre-v5 adapter, an unresolved/custom/ambiguous selection, or conflicting installed metadata is held rather than silently advanced. `--force`, `--yes`, and an update fallback do not override that hold. The one exception is a held profile whose single adapter entry is a TLH-managed exact `@diegopetrucci/pi-mcp-adapter` pin older than `MCP_ADAPTER_LEGACY_PIN_FLOOR` in `scripts/lib/mcp-adapter-cutover.mts`: install and full `tlh update` move it to that last pre-v5 release and it stays held. Ranges, unpinned, object, replacement-identity, opted-out, and multiple-entry selections are untouched.
-
-For an existing legacy profile, use the migration command as a transaction. It only reads configs and isolated-profile settings; it does not connect to an MCP server, call a provider, access an OAuth/keyring store, or install a package:
-
-```sh
-# Preview only; repeat --project for each project you have selected.
-tlh defaults migrate-mcp --project /path/to/project
-
-# Apply only after reviewing the preview and accepting its limits.
-tlh defaults migrate-mcp --project /path/to/project \
-  --apply --acknowledge-unverified-mcp-configs
-```
-
-Preview is the default and makes no writes. Apply requires **both** `--apply` and `--acknowledge-unverified-mcp-configs`; `--preview`/`--dry-run`, `--force`, and `--yes` never substitute for that acknowledgement. The acknowledgement is deliberately explicit because the command cannot verify every project or every loader mode. Refused files stay unchanged and need manual review; do not work around a refusal by renaming the original or by adding an unreviewed import.
-
-### What the automatic lane does
-
-The supported legacy lane is intentionally narrow:
-
-- A non-empty global `${PI_CODING_AGENT_DIR}/mcp.json` can be copied to its sibling `${PI_CODING_AGENT_DIR}/mcp-adapter.json`.
-- A non-empty selected project's `.pi/mcp.json` can be copied to `.pi/mcp-adapter.json`.
-- The selected profile/project must positively identify one managed pre-v5 adapter selection, and all selected inputs must pass the ownership, regular-file, access, alias, and race checks. A missing target or an exact byte-identical target is safe; a different existing target is a refusal.
-- JSONC comments and trailing commas are accepted for the narrow validation pass, but the copy preserves the original bytes, comments, ordering, and file mode. Native/shared originals are never rewritten, renamed, or deleted.
-- The owned profile pin is changed to the manifest's pinned version only after the copies are committed. Existing settings are backed up using TLH's normal `settings.json.backup-*` mechanism. If a transaction cannot verify rollback, it retains required copies and reports the residual state instead of claiming success.
-
-The command does not merge or translate fields. It refuses native policy fields, imports, `claudePlugins`, alternate `mcp-servers` containers, ambiguous ownership, BOM/malformed/non-object files, simultaneous `command` and `url`, object-valued authentication, unsafe aliases, and other unsupported shapes. Review adapter-specific `settings`, imports, server approval/direct-tool policy, lifecycle or `mcpScript` behavior, project trust/headless behavior, exclusive-mode behavior, OAuth/credential-store behavior, and leftover native notices manually. The adapter's normal native-file translation is separate from this migration and is not activated by copying a file.
-
-### Project selection and traversal limits
-
-Without `--project`, only the global pair is considered. Each `--project DIR` selects that directory explicitly. The command walks lexical ancestors only to detect existing `.pi/mcp.json` files and report them as `ancestor-manual-only`; discovered ancestors are never copied or pinned automatically. It does not recursively scan the filesystem, visit sibling/unrelated projects, enable project trust, or infer an exclusive configuration from an unvisited directory. If an ancestor is intended to migrate, select that directory explicitly and review its independent settings and ownership checks.
-
-`.agents` is not an MCP ownership signal in this rollout. It is detection-only context for forks or integrations that choose to inspect it; TLH does not recursively import, trust, rename, or migrate `.agents` files. A fork adding `.agents` behavior must opt in explicitly and retain its own review/acknowledgement boundary; that fork behavior is not enabled by the TLH command.
-
-`migrate-mcp` refuses (`unsafe-path`) any selected profile directory (derived from `--settings`) or project directory (`--project DIR`) whose path passes through a symbolic link, including macOS system links such as `/tmp` → `/private/tmp` and `/var` → `/private/var`; pass a resolved path to work around this, e.g. `--project "$(realpath DIR)"` or `--settings "$(realpath SETTINGS_PATH)"`.
-
-### Package refresh and cold-start limits
-
-The migration commits configuration before refreshing the package cache. Run a normal full `tlh update` after successful apply. Pi's npm resource resolver can install missing packages and reconcile versions outside the configured range, but TLH's launch guard refuses conflicting cached metadata for a native exact pin before that resolver runs. `tlh update --extensions` skips exact npm pins and is not a cache-repair substitute.
-
-Pi retains distinct warm-cache and cold-cache paths. TLH's launch guard refuses unsafe or unverified selections; a compatible warm legacy launch may continue until explicitly migrated. The guard covers the selected profile/current project boundary, not live MCP connectivity, every project, or direct manual invocations of the upstream runtime/package manager. It is therefore not a provider, keyring, production, or universal loader-equivalence proof.
-
-### Rollback
-
-To roll back an applied profile, stop using it, inspect the TLH-created `settings.json.backup-*`, and restore the backed-up profile settings (or explicitly set that isolated profile's adapter entry back to `npm:@diegopetrucci/pi-mcp-adapter@2.36.0` while preserving unrelated settings). Then restart/reload and refresh the profile through the normal update path. Copies left in `mcp-adapter.json` are inert to the `2.36.0` adapter; do not delete native originals as part of rollback. If a failed transaction retained copies or backups, inspect them before retrying.
-
-Do not roll back an existing v5 profile by changing only the packaged manifest to `2.36.0`: a manifest-only downgrade can make a future merge overwrite an explicitly selected v5 profile. An explicit profile pin or the backed-up settings must establish ownership first. A manifest change is only a separate decision for future fresh installs/updates, and must not be presented as a silent downgrade of profiles already on v5.
-
-## Doctor coverage
-
-`tlh doctor` remains read-only. It recognizes the native `mcp.json` files and the adapter-owned global/project `mcp-adapter.json` files, counts valid/invalid files using strict JSON without printing their contents, and reports a sanitized `MCP adapter cutover` state such as the held reason plus numeric selected/target versions. JSONC comments and trailing commas that a loader may accept can therefore be counted as invalid and reported as a warning; this is not actual-loader verification. The cutover summary evaluates isolated profile settings only; it does not apply project package overrides and is not a launch-safety verdict. It does not print server names, URLs, credentials, tokens, package sources, or config payloads, and it does not repair, reconnect, install, or call a provider. Doctor's current-project view is bounded; it is not an audit of unvisited projects or ancestor configs.
-
-## OAuth and direct tools
-
-For OAuth-backed servers, configure an HTTP `url` for the server and then run `/mcp-auth <server>` to finish login.
-
-`directTools` is opt-in. It exposes individual MCP tools directly instead of going through the proxy `mcp` tool, but it is more token-expensive and may need cache warm-up or a manual `/mcp reconnect <server>` before the direct tool list is ready.
-
-## Built-in MCP compatibility
-
-Pi includes a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. TLH's packaged settings defaults persist `-builtin:mcp` in the isolated profile before the bundled `mcporter` adapter loads. This keeps the adapter as the sole `/mcp` owner and prevents Pi's built-in-extension replacement warning; the warning should not appear in a normal TLH session.
-
-This is temporary compatibility behavior while `mcporter` owns `/mcp`. Install/update adds the exclusion only when `mcporter` is present and enabled in the bundled default-extension manifest. When TLH inserts it, the isolated settings record `tlh.builtinMcpExclusionManaged: true` as ownership evidence. A pre-existing exclusion without that marker is user-owned: TLH preserves it during opt-out and does not claim it when the adapter is enabled. Disabling `mcporter`, opting it out by package filter, or removing it from the manifest removes only a TLH-managed exclusion and clears the marker; unrelated extension settings remain unchanged.
-
-Keep the adapter enabled — it is the intended TLH MCP integration. To switch to native MCP, run `tlh defaults disable mcporter`; Pi's built-in `builtin:mcp` will load on next session start without a warning only if no `-builtin:mcp` exclusion remains in the isolated settings. TLH removes only a TLH-managed exclusion; a preserved user-owned exclusion continues to prevent native MCP from loading. If TLH migrates away from `mcporter`, that migration must explicitly remove any TLH-managed `-builtin:mcp` entry and its ownership marker while preserving unmarked user exclusions. Tracking upstream `builtin:mcp` progress is recorded in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705), but that native migration is a non-goal of the per-agent gateway contract.
-
-If `mcporter` is disabled and native `builtin:mcp` loads, this provides core MCP connectivity without TLH's adapter-specific features (status-bar footer, proxy `mcp` tool). In particular, the packaged agents' generic proxy-gateway contract is lost while the adapter is disabled; enabling the native extension does not recreate that contract. Direct `mcp:*` child tools remain filtered out.
-
-## Pin updates
-
-The manifest value is a packaged default for future TLH install/update merges. Changing this manifest pin does not replace the package or rewrite configuration in an already-running profile; an existing session keeps its current adapter until that profile is updated and restarted/reloaded as appropriate.
-
-If a future release intentionally changes the packaged default, that is a separate release decision. Updating the manifest alone is not a rollback for an existing profile: use the backed-up settings or an explicit profile pin as described in [Rollback](#rollback), and keep the no-silent-downgrade rule for profiles already on v5.
-
-## Rollback and re-enable
-
-To undo an adapter opt-out and restore the packaged generic `mcp` gateway, re-enable the bundled adapter and restart or reload TLH:
-
-```sh
-tlh defaults enable mcporter
-```
-
-This restores the adapter-specific proxy gateway and footer behavior; it does not migrate the profile to native MCP or change the child direct-tool safety sentinel. If the adapter is also disabled by a package filter on its package entry in the isolated settings, `tlh defaults enable mcporter` leaves that user-owned entry unchanged and prints a warning; edit or remove the package filter on that entry to load the adapter.
-
-## Opt out
-
-If you do not want TLH to manage the bundled adapter for that isolated profile:
-
-```sh
-tlh defaults disable mcporter   # opt out; reload uses native MCP without TLH's proxy gateway
-tlh defaults enable mcporter    # re-enable the TLH gateway
-```
+To go back to the adapter-based behavior, reinstall the previous TLH release tag (see [pinned-tag installs and rollback](install.md)); the adapter and `/mcp-auth` return with it. Adapter-era config files you did not delete are still on disk.

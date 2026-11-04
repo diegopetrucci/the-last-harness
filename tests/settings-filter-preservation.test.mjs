@@ -5,14 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, test } from "node:test";
 
-import {
-  bundledSource,
-  defaultsScript,
-  readJson,
-  runNode,
-  tempFixture,
-} from "./support/default-extensions-fixtures.mjs";
-
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const harness = "git:github.com/diegopetrucci/the-last-harness";
@@ -67,35 +59,4 @@ test("harness source update keeps object-entry filters and replaces string entri
 
   const str = merge({ packages: [`${harness}@tlh-v1.0.0`] }, defaults, `${harness}@tlh-v2.0.0`);
   assert.deepEqual(str.settings.packages, [`${harness}@tlh-v2.0.0`]);
-});
-
-test("enable mcporter does not exclude native MCP while the adapter stays filter-disabled", () => {
-  const fixture = tempFixture();
-  const src = bundledSource("mcporter");
-  writeFileSync(
-    fixture.extensions,
-    JSON.stringify([{ id: "mcporter", source: src, aliases: [], replaces: [] }]),
-  );
-  writeFileSync(
-    fixture.settings,
-    JSON.stringify({
-      packages: [{ source: src, extensions: [] }],
-      extensions: ["./user-ext.js"],
-      tlh: { disabledDefaultExtensions: ["mcporter"] },
-    }),
-  );
-  const args = [
-    "--settings",
-    fixture.settings,
-    "--defaults",
-    fixture.extensions,
-    "enable",
-    "mcporter",
-  ];
-  runNode(defaultsScript, args);
-  const first = readJson(fixture.settings);
-  assert.deepEqual(first.extensions, ["./user-ext.js"]);
-  assert.equal(first.tlh?.builtinMcpExclusionManaged, undefined);
-  runNode(defaultsScript, args);
-  assert.deepEqual(readJson(fixture.settings), first);
 });

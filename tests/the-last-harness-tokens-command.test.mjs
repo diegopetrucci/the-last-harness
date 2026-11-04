@@ -330,7 +330,8 @@ test("buildTokensReportHtml escapes dynamic content while preserving required re
         totalResults: 1,
         totalErrors: 0,
         mcpCalls: 0,
-        mcpProxyCalls: 0,
+        mcpCodemodeCalls: 0,
+        codemodeCalls: 0,
         mcpDirectCalls: 0,
         mcpApproxTokens: 0,
         totalToolApproxTokens: 100,
@@ -497,7 +498,7 @@ test("analyzeSessionEntries computes non-zero approxTokens for tool calls and re
         {
           type: "toolCall",
           id: "call-mcp-1",
-          name: "mcp",
+          name: "mcp__search__query",
           arguments: { server: "search", query: "example query text" },
         },
       ],
@@ -508,7 +509,7 @@ test("analyzeSessionEntries computes non-zero approxTokens for tool calls and re
       "tr2",
       "a1",
       "2026-06-17T10:00:07Z",
-      "mcp",
+      "mcp__search__query",
       {},
       false,
       "search result content here",
@@ -524,12 +525,12 @@ test("analyzeSessionEntries computes non-zero approxTokens for tool calls and re
       sourceInfo: { source: "built-in", path: "core/bash.ts", scope: "user", origin: "top-level" },
     },
     {
-      name: "mcp",
+      name: "mcp__search__query",
       sourceInfo: {
-        source: "npm:pi-mcp-adapter",
-        path: "extensions/mcp.mjs",
-        scope: "user",
-        origin: "package",
+        source: "builtin",
+        path: "builtin:mcp",
+        scope: "temporary",
+        origin: "top-level",
       },
     },
   ];
@@ -540,14 +541,14 @@ test("analyzeSessionEntries computes non-zero approxTokens for tool calls and re
   assert.ok(bashTool, "bash tool present in byTool");
   assert.ok(bashTool.approxTokens > 0, "bash tool has non-zero approxTokens");
 
-  const mcpTool = analysis.tools.byTool.find((t) => t.toolName === "mcp");
+  const mcpTool = analysis.tools.byTool.find((t) => t.toolName === "mcp__search__query");
   assert.ok(mcpTool, "mcp tool present in byTool");
   assert.ok(mcpTool.approxTokens > 0, "mcp tool has non-zero approxTokens");
 
   // Per-source approxTokens should be non-zero
-  const mcpSource = analysis.tools.bySource.find((s) => s.source.kind === "mcp-proxy");
-  assert.ok(mcpSource, "mcp-proxy source present in bySource");
-  assert.ok(mcpSource.approxTokens > 0, "mcp-proxy source has non-zero approxTokens");
+  const mcpSource = analysis.tools.bySource.find((s) => s.source.kind === "mcp");
+  assert.ok(mcpSource, "mcp source present in bySource");
+  assert.ok(mcpSource.approxTokens > 0, "mcp source has non-zero approxTokens");
 
   // Aggregate totals should be non-zero
   assert.ok(analysis.tools.mcpApproxTokens > 0, "mcpApproxTokens is non-zero");
@@ -578,13 +579,21 @@ test("buildTokensReportHtml renders MCP est. tokens card and Est. tokens columns
         {
           type: "toolCall",
           id: "call-mcp-1",
-          name: "mcp",
+          name: "mcp__search__query",
           arguments: { server: "search", query: "example" },
         },
       ],
       usage: usage({ input: 80, output: 10, cost: 0.18 }),
     }),
-    toolResultEntry("tr1", "a1", "2026-06-17T10:00:06Z", "mcp", {}, false, "result content"),
+    toolResultEntry(
+      "tr1",
+      "a1",
+      "2026-06-17T10:00:06Z",
+      "mcp__search__query",
+      {},
+      false,
+      "result content",
+    ),
     assistantEntry("a2", "tr1", "2026-06-17T10:00:10Z", {
       text: "Done.",
       usage: usage({ input: 40, output: 5, cost: 0.08 }),
@@ -592,12 +601,12 @@ test("buildTokensReportHtml renders MCP est. tokens card and Est. tokens columns
   ];
   const toolCatalog = [
     {
-      name: "mcp",
+      name: "mcp__search__query",
       sourceInfo: {
-        source: "npm:pi-mcp-adapter",
-        path: "extensions/mcp.mjs",
-        scope: "user",
-        origin: "package",
+        source: "builtin",
+        path: "builtin:mcp",
+        scope: "temporary",
+        origin: "top-level",
       },
     },
   ];
@@ -826,7 +835,8 @@ function makeMinimalAnalysis(overrides = {}) {
       totalResults: 0,
       totalErrors: 0,
       mcpCalls: 0,
-      mcpProxyCalls: 0,
+      mcpCodemodeCalls: 0,
+      codemodeCalls: 0,
       mcpDirectCalls: 0,
       mcpApproxTokens: 0,
       totalToolApproxTokens: 0,

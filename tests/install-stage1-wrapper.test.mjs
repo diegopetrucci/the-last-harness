@@ -34,13 +34,6 @@ import {
 import { buildInstallConfig, parseArgs } from "../scripts/tlh-install.mjs";
 import { renderShellWords } from "../scripts/lib/tlh-install-utils.mjs";
 
-function writeInertMcpGuardFixture(packageRoot) {
-  mkdirSync(join(packageRoot, "scripts", "lib"), { recursive: true });
-  mkdirSync(join(packageRoot, "config"), { recursive: true });
-  writeFileSync(join(packageRoot, "scripts", "lib", "mcp-adapter-cutover.mjs"), "export {};\n");
-  writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[]\n");
-}
-
 test("wrapper skips stale fallback package helpers for unlocatable custom sources", (t) => {
   const root = makeTempDir();
   const homeDir = join(root, "home");
@@ -179,7 +172,7 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
   assert.equal(existsSync(ticketsLog), false);
 });
 
-test("wrapper guards cold MCP startup, permits warm legacy and management paths, and fails closed on missing guard", (t) => {
+test("new wrapper launches pi without an MCP startup guard even for a legacy adapter profile", (t) => {
   const root = makeTempDir();
   const homeDir = join(root, "home");
   const agentDir = join(root, "agent");
@@ -197,74 +190,65 @@ test("wrapper guards cold MCP startup, permits warm legacy and management paths,
   writeLoggingPi(pinnedPiDir, piLog);
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const render = (packageRoot = repoRoot) => {
-    runHelper(
-      "scripts/tlh-wrapper.mjs",
-      [
-        "--agent-dir",
-        agentDir,
-        "--bin-dir",
-        binDir,
-        "--wrapper-name",
-        "tlh",
-        "--package-root",
-        packageRoot,
-        "--pi-cmd",
-        join(pinnedPiDir, "pi"),
-      ],
-      { homeDir },
-    );
-  };
-  render();
-  const wrapper = join(binDir, "tlh");
-  const wrapperEnv = scrubInstallerEnv({ HOME: homeDir, PATH: process.env.PATH || "" });
-
-  const cold = spawnSync(wrapper, ["chat"], {
-    cwd: cwdDir,
-    env: wrapperEnv,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  assert.equal(cold.status, 1);
-  assert.match(cold.stderr, /MCP adapter launch held/);
-  assert.equal(existsSync(piLog), false);
-
-  const metadataDir = join(agentDir, "npm", "node_modules", "@diegopetrucci", "pi-mcp-adapter");
-  mkdirSync(metadataDir, { recursive: true });
-  writeFileSync(
-    join(metadataDir, "package.json"),
-    JSON.stringify({ name: "@diegopetrucci/pi-mcp-adapter", version: "2.36.0" }),
-  );
-  const warm = spawnSync(wrapper, ["chat"], {
-    cwd: cwdDir,
-    env: wrapperEnv,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  assert.equal(warm.status, 0, `${warm.stdout}\n${warm.stderr}`);
-  assert.match(readFileSync(piLog, "utf8"), /chat/);
-
-  rmSync(join(agentDir, "npm"), { recursive: true, force: true });
-  const management = spawnSync(wrapper, ["--version"], {
-    cwd: cwdDir,
-    env: wrapperEnv,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  assert.equal(management.status, 0, `${management.stdout}\n${management.stderr}`);
-  assert.match(readFileSync(piLog, "utf8"), /--version/);
-
+  // A package root without the cutover stub: the new wrapper must not need it.
   const incompletePackage = join(root, "incomplete-package");
   mkdirSync(incompletePackage, { recursive: true });
-  render(incompletePackage);
-  const missingGuard = spawnSync(wrapper, ["chat"], {
+  runHelper(
+    "scripts/tlh-wrapper.mjs",
+    [
+      "--agent-dir",
+      agentDir,
+      "--bin-dir",
+      binDir,
+      "--wrapper-name",
+      "tlh",
+      "--package-root",
+      incompletePackage,
+      "--pi-cmd",
+      join(pinnedPiDir, "pi"),
+    ],
+    { homeDir },
+  );
+  const wrapper = join(binDir, "tlh");
+  assert.doesNotMatch(readFileSync(wrapper, "utf8"), /mcp-adapter-cutover|startup-guard/);
+
+  const launched = spawnSync(wrapper, ["chat"], {
     cwd: cwdDir,
-    env: wrapperEnv,
+    env: scrubInstallerEnv({ HOME: homeDir, PATH: process.env.PATH || "" }),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  assert.equal(missingGuard.status, 1);
-  assert.match(missingGuard.stderr, /startup guard support files are missing or corrupt/);
+  assert.equal(launched.status, 0, `${launched.stdout}\n${launched.stderr}`);
+  assert.match(readFileSync(piLog, "utf8"), /chat/);
+});
+
+test("legacy wrapper startup-guard call to the cutover stub exits 0 and is inert", (t) => {
+  const root = makeTempDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const agentDir = join(root, "agent");
+  mkdirSync(agentDir, { recursive: true });
+  const settingsPath = join(agentDir, "settings.json");
+  const settings = JSON.stringify({ packages: ["npm:@diegopetrucci/pi-mcp-adapter@2.36.0"] });
+  writeFileSync(settingsPath, settings);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(repoRoot, "scripts", "lib", "mcp-adapter-cutover.mjs"),
+      "--startup-guard",
+      "--agent-dir",
+      agentDir,
+      "--defaults",
+      join(repoRoot, "config", "default-extensions.json"),
+      "--cwd",
+      root,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  assert.equal(readFileSync(settingsPath, "utf8"), settings);
 });
 
 test("wrapper uses original node for helpers while exposing isolated bin only for tickets and pi", (t) => {
@@ -289,7 +273,6 @@ test("wrapper uses original node for helpers while exposing isolated bin only fo
   mkdirSync(agentBin, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(join(packageRoot, "scripts"), { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   mkdirSync(cwdDir, { recursive: true });
   if (process.platform !== "win32") {
     symlinkSync(agentBin, agentBinLink, "dir");
@@ -889,7 +872,6 @@ test("wrapper uses the profile recovery updater before legacy profile update hel
   mkdirSync(join(agentDir, "tlh"), { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   mkdirSync(safeBin, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -1007,7 +989,6 @@ test("wrapper resolves pi to an absolute command path before exposing isolated b
   mkdirSync(agentBin, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   mkdirSync(cwdDir, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -1088,7 +1069,6 @@ test("wrapper falls back to the sanitized PATH when HOME is unset", (t) => {
   mkdirSync(agentBin, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
@@ -1156,7 +1136,6 @@ test("wrapper --pi-cmd validates the pinned binary before fast-path exec", (t) =
   mkdirSync(agentBin, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   writeFakePi(
@@ -1224,7 +1203,6 @@ test("wrapper --pi-cmd hard-fails when the pinned path is non-executable", (t) =
   mkdirSync(agentBin, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const missingPiCmd = join(root, "nonexistent", "pi");
@@ -1276,7 +1254,6 @@ test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitize
   mkdirSync(agentBin, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   // Pinned pi logs PATH so we can verify ordering.
@@ -1647,7 +1624,6 @@ test("wrapper pi exec path exports NODE_COMPILE_CACHE pointing at the runtime pr
   mkdirSync(agentBin, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
-  writeInertMcpGuardFixture(packageRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   // Fake pi logs NODE_COMPILE_CACHE so we can assert its value.

@@ -159,6 +159,7 @@ function resolveToolPolicy(
     ? tools
         .filter((tool): tool is string => typeof tool === "string")
         .map((tool) => tool.trim())
+        // Legacy adapter-style direct selections (`mcp:server/tool`) are not Pi tool names.
         .filter((tool) => tool && !tool.startsWith("mcp:"))
     : [];
   const toolExtensionPaths = [...new Set(declaredTools.filter(isExtensionToolPath))];
@@ -271,6 +272,11 @@ function buildPiArgsInternal(
       if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {
         allowedToolNames.push(CONTACT_SUPERVISOR_TOOL_NAME);
       }
+      // Native MCP: with an explicit allowlist, `codemode` alone would hide direct-exposure
+      // servers' `mcp__*` tools, so keep them reachable whenever codemode is allowed.
+      if (allowedToolNames.includes("codemode") && !allowedToolNames.includes("mcp__*")) {
+        allowedToolNames.push("mcp__*");
+      }
       if (allowedToolNames.length > 0) {
         args.push("--tools", allowedToolNames.join(","));
       } else {
@@ -380,11 +386,6 @@ function buildPiArgsInternal(
   if (input.childIndex !== undefined) {
     env[SUBAGENT_CHILD_INDEX_ENV] = String(input.childIndex);
   }
-  // Sentinel required by @diegopetrucci/pi-mcp-adapter (bundled in TLH):
-  // the adapter's init.ts checks envDirect !== "__none__" before bootstrapping direct MCP tools.
-  // An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would silently
-  // widen every child subagent's tool surface. This assignment must not be removed.
-  env.MCP_DIRECT_TOOLS = "__none__";
   if (input.steerInboxDir) {
     env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
   }

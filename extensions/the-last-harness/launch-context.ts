@@ -1,5 +1,5 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
-import { getMcpToolKind } from "./mcp-tools.js";
+import { getMcpToolKind, MCP_SERVERS_SECTION_NAME } from "./mcp-tools.js";
 import type {
   StartupPromptResourceMetadata,
   TlhLaunchContextAllocation,
@@ -94,6 +94,20 @@ function consumeContextMetadata(
   return chars;
 }
 
+// The native MCP extension adds an `mcp_servers` section to the system prompt, rendered as
+// `<mcp_servers>…</mcp_servers>`. Claim it once so it lands in the MCP bucket, not in TLH.
+const MCP_SERVERS_SECTION_PATTERN = new RegExp(
+  `<${MCP_SERVERS_SECTION_NAME}>\\n[\\s\\S]*?\\n</${MCP_SERVERS_SECTION_NAME}>`,
+);
+
+function consumeMcpServersSection(
+  tracker: PromptContributionTracker,
+  baseSystemPrompt: string,
+): number {
+  const section = MCP_SERVERS_SECTION_PATTERN.exec(baseSystemPrompt)?.[0];
+  return section ? tracker.consume(section) : 0;
+}
+
 function consumeSkillMetadata(
   tracker: PromptContributionTracker,
   promptMetadata: StartupPromptResourceMetadata,
@@ -186,7 +200,8 @@ export function estimateTlhLaunchContextAllocation(
     : 0;
   // Single pass across all active tools preserves the one-claim-per-guideline invariant.
   const guidelineChars = consumeToolGuidelinesPartitioned(tracker, activeTools);
-  const embeddedToolChars = guidelineChars.mcp + guidelineChars.nonMcp;
+  const mcpServersSectionChars = consumeMcpServersSection(tracker, options.baseSystemPrompt);
+  const embeddedToolChars = guidelineChars.mcp + guidelineChars.nonMcp + mcpServersSectionChars;
   const baseInstructionChars = Math.max(
     0,
     options.baseSystemPrompt.length - agentsClaudeChars - skillsChars - embeddedToolChars,
@@ -209,7 +224,7 @@ export function estimateTlhLaunchContextAllocation(
         guidelineChars.nonMcp +
         toolDefinitionChars(activeTools) -
         toolDefinitionChars(mcpActiveTools),
-      mcp: guidelineChars.mcp + toolDefinitionChars(mcpActiveTools),
+      mcp: guidelineChars.mcp + mcpServersSectionChars + toolDefinitionChars(mcpActiveTools),
       other: 0,
     }),
   };

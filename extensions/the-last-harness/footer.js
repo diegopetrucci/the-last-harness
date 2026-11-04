@@ -6,10 +6,6 @@ import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./c
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import { getTlhSubscriptionUsageFooterState, } from "./footer-subscription-usage.js";
-import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
-const CHARS_PER_TOKEN = 4;
-const ESTIMATED_IMAGE_CHARS = 4800;
-const MCP_STATUS_PREFIX = /^MCP:\s/i;
 const FAST_STATUS_KEY = "fast";
 const NO_PROVIDER_WARNING_TEXT = "\u26a0 no provider \u2014 run /login";
 function formatCost(cost) {
@@ -41,138 +37,6 @@ function collectUsageTotals(ctx) {
         totals.cost += Number(usage.cost?.total) || 0;
     }
     return totals;
-}
-function safeJsonLength(value) {
-    if (value == null) {
-        return 0;
-    }
-    try {
-        return JSON.stringify(value).length;
-    }
-    catch {
-        return 0;
-    }
-}
-function resultContentChars(content) {
-    if (!Array.isArray(content)) {
-        return 0;
-    }
-    let total = 0;
-    for (const item of content) {
-        if (!item || typeof item !== "object" || !("type" in item)) {
-            continue;
-        }
-        if (item.type === "text" && "text" in item && typeof item.text === "string") {
-            total += item.text.length;
-        }
-        else if (item.type === "image") {
-            total += ESTIMATED_IMAGE_CHARS;
-        }
-    }
-    return total;
-}
-function estimateTokensFromChars(charCount) {
-    return charCount > 0 ? Math.ceil(charCount / CHARS_PER_TOKEN) : 0;
-}
-function estimateMcpDefinitionTokens(toolInfo) {
-    return estimateTokensFromChars(safeJsonLength({
-        name: toolInfo.name,
-        description: toolInfo.description,
-        parameters: toolInfo.parameters,
-        promptGuidelines: toolInfo.promptGuidelines,
-    }));
-}
-function buildMcpContextEstimateCacheKey(activeToolNames, ctx, contextTokens) {
-    const leafId = ctx.sessionManager.getLeafId?.() ?? "";
-    return `${leafId}::${contextTokens}::${activeToolNames.join("|")}`;
-}
-function getMcpContextEstimateSuffix(pi, ctx, contextUsage, cache) {
-    const contextTokens = contextUsage?.tokens;
-    if (typeof contextTokens !== "number" || !Number.isFinite(contextTokens) || contextTokens <= 0) {
-        return { key: "no-context", suffix: undefined };
-    }
-    const activeToolNames = pi.getActiveTools();
-    const cacheKey = buildMcpContextEstimateCacheKey(activeToolNames, ctx, contextTokens);
-    if (cache?.key === cacheKey) {
-        return cache;
-    }
-    const allTools = pi.getAllTools();
-    const toolCatalogByName = new Map(allTools.map((toolInfo) => [toolInfo.name, toolInfo]));
-    const knownDirectMcpToolNames = new Set();
-    const activeMcpTools = activeToolNames
-        .map((toolName) => toolCatalogByName.get(toolName))
-        .filter((toolInfo) => Boolean(toolInfo?.name))
-        .filter((toolInfo) => {
-        const kind = getMcpToolKind(toolInfo.name, toolInfo);
-        if (kind === "direct") {
-            knownDirectMcpToolNames.add(toolInfo.name);
-        }
-        return kind !== undefined;
-    });
-    const pendingToolCallsById = new Map();
-    let mcpTokens = activeMcpTools.reduce((sum, toolInfo) => sum + estimateMcpDefinitionTokens(toolInfo), 0);
-    for (const entry of ctx.sessionManager.buildContextEntries()) {
-        if (entry.type !== "message") {
-            continue;
-        }
-        const message = entry.message;
-        if (message.role === "assistant" && Array.isArray(message.content)) {
-            for (const block of message.content) {
-                if (block?.type !== "toolCall" || typeof block.name !== "string") {
-                    continue;
-                }
-                const catalogKind = getMcpToolKind(block.name, toolCatalogByName.get(block.name));
-                if (catalogKind === "direct") {
-                    knownDirectMcpToolNames.add(block.name);
-                }
-                const kind = catalogKind ?? (knownDirectMcpToolNames.has(block.name) ? "direct" : undefined);
-                const argumentTokens = estimateTokensFromChars(safeJsonLength(block.arguments));
-                if (kind) {
-                    mcpTokens += argumentTokens;
-                    continue;
-                }
-                if (typeof block.id === "string") {
-                    pendingToolCallsById.set(block.id, { toolName: block.name, tokens: argumentTokens });
-                }
-            }
-            continue;
-        }
-        if (message.role === "toolResult" && typeof message.toolName === "string") {
-            const pendingCall = typeof message.toolCallId === "string"
-                ? pendingToolCallsById.get(message.toolCallId)
-                : undefined;
-            const hasPairedDirectResultProvenance = message.toolName !== "mcp" &&
-                pendingCall?.toolName === message.toolName &&
-                hasPersistedDirectMcpResultDetails(message.toolName, message.details);
-            const kind = getMcpToolKind(message.toolName, toolCatalogByName.get(message.toolName)) ??
-                (knownDirectMcpToolNames.has(message.toolName) || hasPairedDirectResultProvenance
-                    ? "direct"
-                    : undefined);
-            if (!kind) {
-                continue;
-            }
-            if (kind === "direct") {
-                knownDirectMcpToolNames.add(message.toolName);
-                if (pendingCall?.toolName === message.toolName && typeof message.toolCallId === "string") {
-                    mcpTokens += pendingCall.tokens;
-                    pendingToolCallsById.delete(message.toolCallId);
-                }
-            }
-            mcpTokens += estimateTokensFromChars(resultContentChars(message.content));
-        }
-    }
-    const rawPercent = (mcpTokens / contextTokens) * 100;
-    const percent = Number.isFinite(rawPercent) ? Math.min(100, Math.max(0, rawPercent)) : 0;
-    return {
-        key: cacheKey,
-        suffix: ` • (${percent.toFixed(1)}% of context)`,
-    };
-}
-function appendMcpContextEstimate(statusText, suffix) {
-    if (!suffix || !MCP_STATUS_PREFIX.test(statusText) || statusText.includes("% of context)")) {
-        return statusText;
-    }
-    return `${statusText}${suffix}`;
 }
 function formatNoProviderWarningLine(width, theme) {
     const warningText = theme.fg("warning", NO_PROVIDER_WARNING_TEXT);
@@ -219,7 +83,6 @@ function formatTlhInstallNoticeLine(notice, width, theme, mainTrackBehindCount) 
     return truncateToWidth(warningStr, width, theme.fg("dim", "..."));
 }
 export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice, providerAuthHealth, mainTrackFooterState) {
-    let mcpContextEstimateCache;
     return {
         render(width) {
             const model = ctx.model;
@@ -290,12 +153,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 if (warningLine !== undefined)
                     lines.push(warningLine);
             }
-            const hasMcpStatus = extensionStatuses
-                ? Array.from(extensionStatuses.values()).some((status) => MCP_STATUS_PREFIX.test(sanitizeStatusText(status)))
-                : false;
-            if (hasMcpStatus) {
-                mcpContextEstimateCache = getMcpContextEstimateSuffix(pi, ctx, contextUsage, mcpContextEstimateCache);
-            }
             if (line3 !== undefined) {
                 lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
             }
@@ -312,7 +169,7 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                     .filter(([key]) => key !== FAST_STATUS_KEY)
                     .sort(([a], [b]) => a.localeCompare(b));
                 const statusLine = visibleStatuses
-                    .map(([, text]) => appendMcpContextEstimate(sanitizeStatusText(text), mcpContextEstimateCache?.suffix))
+                    .map(([, text]) => sanitizeStatusText(text))
                     .filter(Boolean)
                     .join(" ");
                 if (statusLine) {

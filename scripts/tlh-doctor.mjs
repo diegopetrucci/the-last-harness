@@ -6,10 +6,9 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
+import { detectLegacyMcpConfig, disabledDefaultExtensionIds, formatLegacyMcpConfigNotice, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
 import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare } from "./lib/tlh-install-paths.mjs";
-import { evaluateMcpAdapterCutover } from "./lib/mcp-adapter-cutover.mjs";
 import { assignOptionValue, defaultTlhSettingsPath, expandHomePath, pathIsInNormalPiConfig, readJsonFile, resolveTlhAgentDir, } from "./lib/tlh-install-utils.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PACKAGE_ROOT = resolve(__dirname, "..");
@@ -461,53 +460,6 @@ function summarizeMcpConfigs(agentDir) {
     }
     return summary;
 }
-function formatMcpVersion(value) {
-    if (!isPlainObject(value))
-        return undefined;
-    const major = value.major;
-    const minor = value.minor;
-    const patch = value.patch;
-    if (typeof major !== "number" ||
-        !Number.isSafeInteger(major) ||
-        major < 0 ||
-        typeof minor !== "number" ||
-        !Number.isSafeInteger(minor) ||
-        minor < 0 ||
-        typeof patch !== "number" ||
-        !Number.isSafeInteger(patch) ||
-        patch < 0) {
-        return undefined;
-    }
-    return `${major}.${minor}.${patch}`;
-}
-function summarizeMcpAdapterState(settings, extension, agentDir, enabled) {
-    if (!enabled) {
-        return { level: "WARN", detail: "state=opted-out; cutover is not evaluated" };
-    }
-    try {
-        const decision = evaluateMcpAdapterCutover(settings, extension, {
-            agentDir,
-            homeDir: homedir(),
-        });
-        const selectedVersions = decision.selected.map((selection) => formatMcpVersion(selection.version) || "unresolved");
-        const details = [`state=${decision.action}`];
-        if (decision.reason)
-            details.push(`reason=${decision.reason}`);
-        details.push(`selected=${selectedVersions.length > 0 ? selectedVersions.join(",") : "none"}`);
-        const targetVersion = formatMcpVersion(decision.targetVersion);
-        if (targetVersion)
-            details.push(`target=${targetVersion}`);
-        if (decision.action === "hold")
-            details.push("held");
-        return {
-            level: decision.action === "hold" || decision.action === "opted-out" ? "WARN" : "OK",
-            detail: details.join("; "),
-        };
-    }
-    catch {
-        return { level: "WARN", detail: "state=unavailable; version summary unavailable" };
-    }
-}
 function readWebSearchSettings(agentDir) {
     const settingsPath = join(agentDir, "extensions", "pi-web-access", "settings.json");
     if (!existsSync(settingsPath))
@@ -527,26 +479,24 @@ function addMcpAndWebSearchCheck(results, packageRoot, agentDir, settings) {
     const defaultExtensions = readDefaultExtensions(defaultExtensionsPath(packageRoot), {
         allowMissing: false,
     });
-    const mcporter = extensionById(defaultExtensions, "mcporter");
+    const projectMcpJson = extensionById(defaultExtensions, "project-mcp-json");
     const webAccess = extensionById(defaultExtensions, "pi-web-access");
-    const mcpEnabled = extensionEnabled(settings, defaultExtensions, "mcporter");
+    const mcpEnabled = extensionEnabled(settings, defaultExtensions, "project-mcp-json");
     const webEnabled = extensionEnabled(settings, defaultExtensions, "pi-web-access");
-    const mcpPresent = extensionPresent(settings, mcporter);
+    const mcpPresent = extensionPresent(settings, projectMcpJson);
     const webPresent = extensionPresent(settings, webAccess);
     const webSettings = readWebSearchSettings(agentDir);
     const mcpConfigs = summarizeMcpConfigs(agentDir);
     const hasExaEnvKey = typeof process.env.EXA_API_KEY === "string" && process.env.EXA_API_KEY.trim().length > 0;
     const details = [];
     const levels = [];
-    const adapterState = summarizeMcpAdapterState(settings, mcporter, agentDir, mcpEnabled);
-    recordCheck(results, adapterState.level, "MCP adapter cutover", adapterState.detail);
     if (mcpEnabled) {
         if (mcpPresent) {
-            details.push("mcporter enabled");
+            details.push("project-mcp-json enabled");
         }
         else {
             levels.push("WARN");
-            details.push("mcporter not installed in isolated settings");
+            details.push("project-mcp-json not installed in isolated settings");
         }
         if (mcpConfigs.validCount > 0) {
             const adapterDetail = mcpConfigs.adapterValidCount > 0 ? `; ${mcpConfigs.adapterValidCount} adapter-owned` : "";
@@ -563,7 +513,17 @@ function addMcpAndWebSearchCheck(results, packageRoot, agentDir, settings) {
     }
     else {
         levels.push("WARN");
-        details.push("mcporter opted out");
+        details.push("project-mcp-json opted out");
+    }
+    const legacyMcpNotice = formatLegacyMcpConfigNotice(detectLegacyMcpConfig({
+        agentDir,
+        projectDir: process.cwd(),
+        homeDir: homedir(),
+        settings,
+    }));
+    if (legacyMcpNotice) {
+        levels.push("WARN");
+        details.push(legacyMcpNotice);
     }
     if (webEnabled) {
         if (webPresent) {

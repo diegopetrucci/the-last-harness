@@ -11,6 +11,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### What's new
 
 - Bumped managed Gnosis (`gn`) to 0.5.5.
+- MCP now uses Pi's native support plus the bundled `project-mcp-json`; the `pi-mcp-adapter` default, `/mcp-auth`, and `tlh defaults migrate-mcp` are removed. See [Migrating from the MCP adapter](docs/mcp.md#migrating-from-the-mcp-adapter) ([#869](https://github.com/diegopetrucci/the-last-harness/pull/869)).
 - Managed Gnosis install now fetches the release checksums concurrently with the archive download, reducing install latency.
 - `/annotate-git-diff` now runs independent git lookups concurrently when opening the review window and loading file contents, reducing latency.
 - `/what-consumed-my-session-limit-and-tokens` now reads session files with bounded concurrency, reducing report latency.
