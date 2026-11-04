@@ -112,6 +112,8 @@ export type TlhPrimaryAgentConfig = {
   applyModel?: boolean;
   applyThinking?: boolean;
   modelOverrides?: Record<string, string>;
+  /** Per-primary persisted effort (thinking level) overrides keyed by primary name. */
+  effortOverrides?: Record<string, ThinkingLevel>;
 };
 
 export type TlhExperimentalFeatureId = string;

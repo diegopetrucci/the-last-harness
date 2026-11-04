@@ -479,3 +479,99 @@ test("loadReviewFileContents does not follow untracked working-tree symlinks for
   assert.equal(commitContents.modifiedExists, true);
   assert.equal(commitContents.modifiedPreviewUrl, null);
 });
+
+test("getReviewWindowData issues branch, upstream, and origin HEAD lookups concurrently", async (t) => {
+  const repoRoot = tempFixture(t);
+  runCommand("git", ["init"], repoRoot);
+  runCommand("git", ["config", "user.name", "TLH Test"], repoRoot);
+  runCommand("git", ["config", "user.email", "tlh@example.com"], repoRoot);
+  writeFileSync(join(repoRoot, "a.txt"), "a\n");
+  runCommand("git", ["add", "."], repoRoot);
+  runCommand("git", ["commit", "-m", "seed"], repoRoot);
+
+  const baseline = await getReviewWindowData(createExecApi(), repoRoot);
+
+  const real = createExecApi();
+  const isLookup = (args) =>
+    args.join(" ") === "branch --show-current" ||
+    args.join(" ") === "rev-parse --abbrev-ref --symbolic-full-name @{upstream}" ||
+    args.join(" ") === "symbolic-ref refs/remotes/origin/HEAD --short";
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pi = {
+    exec: async (command, args, options) => {
+      if (command !== "git" || !isLookup(args)) return real.exec(command, args, options);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (inFlight === 3) release();
+      // Only resolves once all three lookups are in flight; a sequential
+      // implementation would stall here and trip the timeout.
+      await Promise.race([gate, new Promise((resolve) => setTimeout(resolve, 2000))]);
+      const result = await real.exec(command, args, options);
+      inFlight -= 1;
+      return result;
+    },
+  };
+
+  const reviewData = await getReviewWindowData(pi, repoRoot);
+  assert.equal(maxInFlight, 3);
+  assert.deepEqual(reviewData, baseline);
+});
+
+function createGatedShowApi() {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  return {
+    get maxInFlight() {
+      return maxInFlight;
+    },
+    exec: async (_command, args) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (inFlight === 2) release();
+      // Resolves once both sides are in flight; a sequential loader trips the timeout.
+      await Promise.race([gate, new Promise((resolve) => setTimeout(resolve, 2000))]);
+      inFlight -= 1;
+      return { code: 0, stdout: `content:${args[1]}`, stderr: "" };
+    },
+  };
+}
+
+test("loadReviewFileContents loads original and modified sides concurrently for commit and branch text", async () => {
+  const file = {
+    path: "a.txt",
+    kind: "text",
+    mimeType: "text/plain",
+    hasWorkingTreeFile: false,
+    gitDiff: { oldPath: "a.txt", newPath: "b.txt" },
+  };
+
+  const commitApi = createGatedShowApi();
+  const commitContents = await loadReviewFileContents(commitApi, "/repo", file, "commits", "abc");
+  assert.equal(commitApi.maxInFlight, 2);
+  assert.equal(commitContents.originalContent, "content:abc^:a.txt");
+  assert.equal(commitContents.modifiedContent, "content:abc:b.txt");
+  assert.equal(commitContents.originalExists, true);
+  assert.equal(commitContents.modifiedExists, true);
+
+  const branchApi = createGatedShowApi();
+  const branchContents = await loadReviewFileContents(
+    branchApi,
+    "/repo",
+    file,
+    "branch",
+    null,
+    "base",
+  );
+  assert.equal(branchApi.maxInFlight, 2);
+  assert.equal(branchContents.originalContent, "content:base:a.txt");
+  assert.equal(branchContents.modifiedContent, "content:HEAD:b.txt");
+});

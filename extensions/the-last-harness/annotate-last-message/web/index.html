@@ -24,6 +24,26 @@
     --muted: #8a8a8a;
     --dim: #585858;
     --accent: #f4c95d;
+    --toggle-size: 2rem;
+
+    /* 1rem = 14px here (html font-size). */
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --space-6: 2rem;
+    --radius-1: 3px;
+    --radius-2: 8px;
+    --radius-3: 10px;
+    --text-sm: 12px;
+    --text-md: 13px;
+    --text-lg: 14px;
+    --border-line: 1px solid var(--border);
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bar-width: 3px;
+    --input-bg: #0b1118;
+    --line-number-width: 32px;
 
     /* Markdown token colours — kept in sync with FALLBACK in theme.ts */
     --mdHeading: #f4c95d;
@@ -61,8 +81,8 @@
   }
 
   button {
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    border: var(--border-line);
+    border-radius: var(--radius-2);
     background: var(--panel);
     color: var(--text);
     cursor: pointer;
@@ -79,12 +99,12 @@
 
   textarea {
     width: 100%;
-    min-height: 104px;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    min-height: 5.5rem;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-line);
+    border-radius: var(--radius-2);
     resize: vertical;
-    background: #0b1118;
+    background: var(--input-bg);
     color: var(--text);
   }
 
@@ -93,28 +113,16 @@
     border-color: var(--accent);
   }
 
-  .page-header,
   .page-footer {
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
+    padding: var(--space-4) var(--space-5);
     background: rgba(13, 17, 23, 0.96);
-  }
-
-  .page-footer {
-    border-top: 1px solid var(--border);
-    border-bottom: none;
+    border-top: var(--border-line);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
-  .page-header h1 {
-    margin: 0 0 6px;
-    font-size: 18px;
-  }
-
-  .page-header p,
   .status,
   .empty-hint,
   .line-meta,
@@ -128,83 +136,97 @@
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1.7fr) minmax(340px, 0.95fr);
-    gap: 20px;
-    padding: 20px;
     overflow: hidden;
   }
 
   .panel {
     min-height: 0;
-    border: 1px solid var(--border);
-    border-radius: 14px;
+    border-right: var(--border-line);
     background: var(--panel);
     overflow: hidden;
     display: flex;
     flex-direction: column;
   }
 
-  .panel-header {
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .panel-header h2,
   .sidebar-stack h2,
   .sidebar-stack h3 {
-    margin: 0 0 4px;
-    font-size: 14px;
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-lg);
   }
 
   .message-lines {
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 8px 0 16px;
+    padding: var(--space-2) 0 var(--space-5);
   }
 
   .message-line {
-    padding: 10px 16px 0;
+    padding: var(--space-2) var(--space-4) 0;
+    border-left: var(--bar-width) solid transparent;
   }
 
   .message-line-row {
     display: grid;
-    grid-template-columns: 52px minmax(0, 1fr) auto;
-    gap: 12px;
+    grid-template-columns: var(--line-number-width) minmax(0, 1fr) var(--toggle-size);
+    gap: var(--space-3);
     align-items: start;
+    min-height: var(--toggle-size);
   }
 
   .line-number {
     color: var(--muted);
-    font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font: var(--text-sm)/1.6 var(--font-mono);
     text-align: right;
-    padding-top: 2px;
+    padding-top: var(--space-1);
   }
 
   .line-text {
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
-    font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font: var(--text-md)/1.6 var(--font-mono);
+  }
+
+  .message-line[data-has-note="true"] {
+    border-left: var(--bar-width) solid color-mix(in srgb, var(--accent) 60%, transparent);
   }
 
   .inline-toggle {
-    min-width: 112px;
-    padding: 7px 10px;
-    font-size: 12px;
+    width: var(--toggle-size);
+    height: var(--toggle-size);
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--text-lg);
+    line-height: 1;
+    color: var(--muted);
+    opacity: 0.55;
   }
 
-  .inline-toggle[data-active="true"] {
-    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  .inline-toggle svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+  }
+
+  .message-line:hover .inline-toggle,
+  .inline-toggle:focus-visible,
+  .inline-toggle[aria-expanded="true"] {
+    opacity: 1;
     color: var(--text);
   }
 
+  .inline-toggle[data-state="note"] {
+    opacity: 1;
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+
   .inline-editor {
-    margin: 10px 0 0 64px;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: rgba(1, 4, 9, 0.28);
+    margin: var(--space-3) calc(var(--space-3) + var(--toggle-size)) 0 calc(var(--line-number-width) + var(--space-3));
   }
 
   .inline-editor[hidden] {
@@ -212,7 +234,7 @@
   }
 
   .inline-editor textarea {
-    min-height: 88px;
+    min-height: 4.75rem;
   }
 
   .sidebar-stack {
@@ -220,49 +242,76 @@
     overflow: auto;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding-right: 4px;
   }
 
   .sidebar-panel {
-    border: 1px solid var(--border);
-    border-radius: 14px;
+    border-bottom: var(--border-line);
     background: var(--panel);
-    padding: 16px;
+    padding: var(--space-4);
   }
 
   .section-card {
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    padding: var(--space-3);
+    border: var(--border-line);
+    border-radius: var(--radius-3);
     background: rgba(1, 4, 9, 0.18);
   }
 
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .section-header h3 {
+    margin: 0;
+  }
+
+  .section-header .section-meta {
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+
   .section-card + .section-card {
-    margin-top: 12px;
+    margin-top: var(--space-3);
   }
 
   .section-preview {
-    margin: 8px 0 10px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: #0b1118;
-    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    margin: var(--space-2) 0 var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-2);
+    background: var(--input-bg);
+    font: var(--text-sm)/1.5 var(--font-mono);
     white-space: pre-wrap;
     word-break: break-word;
   }
 
   .empty-hint {
-    padding: 12px 0 0;
+    padding: var(--space-3) 0 0;
   }
 
   .footer-actions {
     display: flex;
-    gap: 10px;
+    gap: var(--space-2);
   }
 
   .footer-actions button {
-    padding: 10px 14px;
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .kbd-hint {
+    margin-left: var(--space-2);
+    padding: 0 var(--space-1);
+    border: var(--border-line);
+    border-radius: var(--radius-1);
+    color: var(--muted);
+    font: var(--text-sm)/1.4 var(--font-mono);
+  }
+
+  .section-preview-more {
+    color: var(--muted);
+    font-style: italic;
   }
 
   .submit-button {
@@ -318,7 +367,7 @@
   }
 
   .markdown-content p { margin: 0; }
-  .markdown-content p + p { margin-top: 4px; }
+  .markdown-content p + p { margin-top: var(--space-1); }
 
   .markdown-content a {
     color: var(--mdLink);
@@ -335,17 +384,17 @@
   .markdown-content code {
     background: rgba(128, 128, 128, 0.2);
     color: var(--mdCode);
-    padding: 0 3px;
-    border-radius: 3px;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-1);
     font-family: inherit;
   }
 
   .markdown-content pre {
     background: transparent;
-    margin: 4px 0;
+    margin: var(--space-1) 0;
     overflow-x: auto;
-    border-left: 3px solid var(--mdCodeBlockBorder);
-    padding-left: 8px;
+    border-left: var(--bar-width) solid var(--mdCodeBlockBorder);
+    padding-left: var(--space-2);
   }
 
   .markdown-content pre code {
@@ -356,16 +405,16 @@
   }
 
   .markdown-content blockquote {
-    border-left: 3px solid var(--mdQuoteBorder);
-    padding-left: 8px;
-    margin: 4px 0;
+    border-left: var(--bar-width) solid var(--mdQuoteBorder);
+    padding-left: var(--space-2);
+    margin: var(--space-1) 0;
     color: var(--mdQuote);
     font-style: italic;
   }
 
   .markdown-content ul,
   .markdown-content ol {
-    margin: 4px 0;
+    margin: var(--space-1) 0;
     padding-left: 1.5em;
   }
 
@@ -375,7 +424,7 @@
   .markdown-content hr {
     border: none;
     border-top: 1px solid var(--mdHr);
-    margin: 6px 0;
+    margin: var(--space-1) 0;
   }
 
   /* Bold / italic: font-weight/font-style carry the visual emphasis;
@@ -396,6 +445,11 @@
       overflow: auto;
     }
 
+    .panel {
+      border-right: none;
+      border-bottom: var(--border-line);
+    }
+
     .panel,
     .sidebar-stack {
       min-height: 520px;
@@ -406,30 +460,19 @@
 <style id="tlh-theme-vars">__INLINE_THEME__</style>
 </head>
 <body>
-<header class="page-header">
-  <h1>Annotate last assistant message</h1>
-  <p>Review the latest assistant message, add notes, and submit feedback to the agent.</p>
-</header>
-
 <div class="layout">
   <section class="panel">
-    <div class="panel-header">
-      <h2>Assistant text</h2>
-      <p class="line-meta">Click <strong>Add inline note</strong> beside any line to attach focused feedback.</p>
-    </div>
     <div id="message-lines" class="message-lines"></div>
   </section>
 
   <aside class="sidebar-stack">
     <section class="sidebar-panel">
       <h2>Overall guidance</h2>
-      <p class="section-meta">Optional high-level direction for the next response or plan update.</p>
-      <textarea id="overall-comment" placeholder="Explain what should change overall, what to clarify, or what plan adjustments you want."></textarea>
+      <textarea id="overall-comment" autocorrect="off" autocapitalize="off" placeholder="Overall direction for the next response…"></textarea>
     </section>
 
     <section class="sidebar-panel">
       <h2>Section comments</h2>
-      <p class="section-meta">Add broader notes for a paragraph or block from the assistant message.</p>
       <div id="section-comments"></div>
     </section>
   </aside>
@@ -438,8 +481,8 @@
 <footer class="page-footer">
   <p id="status" class="status">Add any feedback you want to send to the agent.</p>
   <div class="footer-actions">
-    <button id="cancel-button" class="cancel-button" type="button">Cancel</button>
-    <button id="submit-button" class="submit-button" type="button">Submit feedback</button>
+    <button id="cancel-button" class="cancel-button" type="button">Cancel <kbd class="kbd-hint">Esc</kbd></button>
+    <button id="submit-button" class="submit-button" type="button">Submit feedback <kbd id="submit-hint" class="kbd-hint">⌘ ↵</kbd></button>
   </div>
 </footer>
 

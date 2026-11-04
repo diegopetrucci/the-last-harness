@@ -38,6 +38,7 @@ function isSubmitPayload(value) {
 function isCancelPayload(value) {
     return typeof value === "object" && value != null && "type" in value && value.type === "cancel";
 }
+const USAGE_MESSAGE = "Usage: /annotate-last-message [N] (N = positive integer, 1 = latest reply).";
 export function buildAnnotateLastMessageCommand(dependencies) {
     const openAnnotationWindow = dependencies.openAnnotationWindow ?? openQuietGlimpse;
     const setTimer = dependencies.setTimeoutFn ?? setTimeout;
@@ -61,7 +62,7 @@ export function buildAnnotateLastMessageCommand(dependencies) {
         catch {
         }
     }
-    async function openWindowForContext(ctx) {
+    async function openWindowForContext(ctx, n) {
         if (!ctx.hasUI) {
             ctx.ui.notify("annotate-last-message requires interactive mode.", "error");
             return;
@@ -70,7 +71,7 @@ export function buildAnnotateLastMessageCommand(dependencies) {
             ctx.ui.notify("A last-message annotation window is already open.", "warning");
             return;
         }
-        const messageResult = findLastAssistantMessage(ctx.sessionManager.getBranch());
+        const messageResult = findLastAssistantMessage(ctx.sessionManager.getBranch(), n);
         if (messageResult.ok === false) {
             ctx.ui.notify(messageResult.message, "error");
             return;
@@ -189,8 +190,17 @@ export function buildAnnotateLastMessageCommand(dependencies) {
         }
     }
     return {
-        handler: async (_args, ctx) => {
-            await openWindowForContext(ctx);
+        handler: async (args, ctx) => {
+            const trimmed = (args ?? "").trim();
+            let n = 1;
+            if (trimmed.length > 0) {
+                if (!/^[1-9][0-9]*$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+                    ctx.ui.notify(USAGE_MESSAGE, "error");
+                    return;
+                }
+                n = Number(trimmed);
+            }
+            await openWindowForContext(ctx, n);
         },
         handleSessionShutdown: () => {
             lifecycleGeneration += 1;

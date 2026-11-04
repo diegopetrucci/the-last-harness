@@ -917,3 +917,65 @@ test("buildSessionLimitReportHtml escapes dynamic content to prevent XSS", () =>
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
   assert.doesNotMatch(html, /<img src=x/);
 });
+
+test(`/${SESSION_LIMIT_REPORT_COMMAND_NAME} parses session files with bounded concurrency and preserves caveat order`, async (t) => {
+  const baseDir = makeTempDir("tlh-slr-concurrency-", t);
+  const { sessionsRoot } = createSessionsFixture(baseDir);
+  const projectDir = join(sessionsRoot, "--Users-foo-my-project--");
+  for (let i = 0; i < 20; i += 1) {
+    writeFileSync(
+      join(projectDir, `1746097200${String(i).padStart(3, "0")}_extra${i}.jsonl`),
+      JSON.stringify({ type: "session", id: `extra${i}` }) + "\n",
+    );
+  }
+  const sessionDir = join(baseDir, "current-session");
+  mkdirSync(sessionDir, { recursive: true });
+
+  const started = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let openedPath;
+  const handler = createSessionLimitReportCommandHandler(createPiHarness(), {
+    openReport: async (p) => {
+      openedPath = p;
+    },
+    now: () => new Date("2026-05-01T13:00:00.000Z"),
+    getSnapshot: () => makeSnapshot(),
+    parseSession: async (filePath) => {
+      const index = started.push(filePath) - 1;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      // Later files finish sooner so completion order differs from file order.
+      await new Promise((resolve) => setTimeout(resolve, 30 - (index % 10) * 3));
+      inFlight -= 1;
+      if (index % 3 === 0) throw new Error("boom");
+      return { entries: [], malformedLineCount: 0 };
+    },
+  });
+  const ctx = {
+    ui: { notify() {} },
+    sessionManager: {
+      getSessionFile: () => join(sessionDir, "session.jsonl"),
+      getSessionDir: () => projectDir,
+    },
+  };
+
+  await handler("", ctx);
+
+  assert.ok(started.length > 8, "fixture must exceed the concurrency limit");
+  assert.ok(maxInFlight > 1, "files must be parsed concurrently");
+  assert.ok(maxInFlight <= 8, `at most 8 files in flight, saw ${maxInFlight}`);
+
+  const html = readFileSync(openedPath, "utf8");
+  const names = started.filter((_, i) => i % 3 === 0).map((f) => f.split(/[\\/]/).pop());
+  const positions = names.map((name) => html.indexOf(`Could not read session file ${name}: boom`));
+  assert.ok(
+    positions.every((p) => p >= 0),
+    "every failure caveat present",
+  );
+  assert.deepEqual(
+    positions,
+    [...positions].sort((a, b) => a - b),
+    "caveats keep file order",
+  );
+});

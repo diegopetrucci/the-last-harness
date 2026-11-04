@@ -237,9 +237,7 @@ function checksumForAsset(checksumsText, assetName) {
     }
     return undefined;
 }
-async function verifyGnosisArchive(args, archivePath, assetName, version) {
-    const checksumsUrl = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/checksums.txt`;
-    const checksumsText = await fetchText(checksumsUrl);
+function verifyGnosisArchive(checksumsText, archivePath, assetName) {
     const expected = checksumForAsset(checksumsText, assetName);
     if (!expected) {
         throw new Error(`Gnosis checksums did not include ${assetName}`);
@@ -358,8 +356,19 @@ async function installManagedGnosis(args, agentDir, resolvedVersion) {
         const extractDir = join(downloadTempDir, "extract");
         mkdirSync(extractDir, { recursive: true });
         logStderr(args, `Installing Gnosis ${version} into isolated profile: ${target}`);
-        await downloadToFile(url, archivePath);
-        await verifyGnosisArchive(args, archivePath, assetName, version);
+        const checksumsUrl = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/checksums.txt`;
+        // Fetch checksums concurrently with the archive; allSettled prevents an unhandled
+        // rejection if one request fails while the other is still in flight. Archive errors
+        // surface first, matching the previous sequential behavior.
+        const [archiveResult, checksumsResult] = await Promise.allSettled([
+            downloadToFile(url, archivePath),
+            fetchText(checksumsUrl),
+        ]);
+        if (archiveResult.status === "rejected")
+            throw archiveResult.reason;
+        if (checksumsResult.status === "rejected")
+            throw checksumsResult.reason;
+        verifyGnosisArchive(checksumsResult.value, archivePath, assetName);
         extractTarGzip(archivePath, extractDir);
         const extracted = findFileNamed(extractDir, "gn");
         if (!extracted)
