@@ -183,15 +183,6 @@ export function controlNotificationKey(event) {
         : undefined;
     return `${childKey}:${event.type}:${event.reason ?? "idle"}${pressureKey}${idleEpisodeKey ? `:${idleEpisodeKey}` : ""}`;
 }
-export function claimControlNotification(config, event, seenKeys) {
-    if (!shouldNotifyControlEvent(config, event))
-        return false;
-    const key = controlNotificationKey(event);
-    if (seenKeys.has(key))
-        return false;
-    seenKeys.add(key);
-    return true;
-}
 export function formatControlNoticeMessage(event) {
     const runTarget = event.runId;
     if (event.reason === "context_pressure") {

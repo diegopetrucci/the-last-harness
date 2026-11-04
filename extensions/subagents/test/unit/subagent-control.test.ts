@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildControlEvent,
-  claimControlNotification,
   controlNotificationKey,
   deriveActivityState,
   formatControlNoticeMessage,
@@ -155,7 +154,7 @@ describe("subagent control attention state", () => {
     assert.deepEqual(custom.notifyChannels, ["event", "async"]);
   });
 
-  it("short-circuits notification claims when channels are empty", () => {
+  it("short-circuits notification eligibility when channels are empty", () => {
     const custom = resolveControlConfig(undefined, {
       notifyOn: ["needs_attention"],
       notifyChannels: [],
@@ -225,19 +224,13 @@ describe("subagent control attention state", () => {
     assert.equal(controlNotificationKey(durable), "run-episode:needs_attention:context_pressure::");
   });
 
-  it("dedupes notifications once per child and attention state", () => {
+  it("keeps idle and pressure notification keys distinct", () => {
     const event = buildControlEvent({
       to: "needs_attention",
       runId: "run-1",
       agent: "worker",
       index: 0,
     });
-    const seen = new Set<string>();
-
-    assert.equal(controlNotificationKey(event), "run-1:0:needs_attention:idle");
-    assert.equal(claimControlNotification(resolveControlConfig(), event, seen), true);
-    assert.equal(claimControlNotification(resolveControlConfig(), event, seen), false);
-
     const pressureEvent = buildControlEvent({
       to: "needs_attention",
       runId: "run-1",
@@ -246,10 +239,16 @@ describe("subagent control attention state", () => {
       message: "worker context pressure",
       reason: "context_pressure",
     });
-    assert.equal(claimControlNotification(resolveControlConfig(), pressureEvent, seen), true);
+
+    assert.equal(controlNotificationKey(event), "run-1:0:needs_attention:idle");
+    assert.equal(
+      controlNotificationKey(pressureEvent),
+      "run-1:0:needs_attention:context_pressure::",
+    );
+    assert.notEqual(controlNotificationKey(event), controlNotificationKey(pressureEvent));
   });
 
-  it("dedupes warning and critical pressure events independently", () => {
+  it("parses and formats warning and critical pressure events independently", () => {
     const warning = buildControlEvent({
       to: "needs_attention",
       runId: "run-pressure",
@@ -265,21 +264,18 @@ describe("subagent control attention state", () => {
       contextPressureThreshold: "critical",
       message: "critical",
     });
-    const seen = new Set<string>();
-    assert.equal(claimControlNotification(resolveControlConfig(), warning, seen), true);
-    assert.equal(claimControlNotification(resolveControlConfig(), warning, seen), false);
-    assert.equal(claimControlNotification(resolveControlConfig(), critical, seen), true);
-    assert.equal(claimControlNotification(resolveControlConfig(), critical, seen), false);
+    assert.notEqual(controlNotificationKey(warning), controlNotificationKey(critical));
     assert.deepEqual(parseControlEvent(JSON.parse(JSON.stringify(critical))), critical);
     assert.equal(parseControlEvent({ ...critical, contextPressureSeverity: "bogus" }), undefined);
+    assert.match(formatControlNoticeMessage(warning), /Subagent context pressure: worker/);
+    assert.match(formatControlNoticeMessage(critical), /Signal: critical/);
+    assert.doesNotMatch(formatControlNoticeMessage(critical), /Nudge:/);
 
     const malformedReason = parseControlEvent({ ...critical, reason: "future_reason" });
     assert.ok(malformedReason);
     assert.equal(malformedReason.reason, undefined);
     assert.match(formatControlNoticeMessage(malformedReason), /Subagent needs attention: worker/);
     assert.equal(controlNotificationKey(malformedReason), "run-pressure:needs_attention:idle");
-    assert.equal(claimControlNotification(resolveControlConfig(), malformedReason, seen), true);
-    assert.equal(claimControlNotification(resolveControlConfig(), malformedReason, seen), false);
   });
 
   it("retains finite control-event metrics and drops JSON exponent overflow", () => {

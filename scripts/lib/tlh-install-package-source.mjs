@@ -106,11 +106,6 @@ export function criticalGitSourceSpec(source, { agentDir = "" } = {}) {
         ref: parsed.ref || "",
     };
 }
-export function formatCriticalGitSourceSpec(spec) {
-    if (!spec)
-        return "";
-    return `${spec.targetDir}\t${spec.repo}\t${spec.ref || ""}`;
-}
 export function gitSourceInstallSource(source, options = {}) {
     const text = String(source ?? "");
     const spec = criticalGitSourceSpec(text, options);

@@ -91,7 +91,6 @@ function prepareSupportFilesFromLocalRepo(config: SupportFilesConfig, localDir: 
 function supportFileDryRunMessage(variable: string): string {
   if (variable === "TLH_GNOSIS_SCRIPT") return "Would fetch Gnosis integration support files.";
   if (variable === "TLH_TICKETS_SCRIPT") return "Would fetch tlh tickets support files.";
-  if (variable === "TLH_UPDATE_SCRIPT") return "Would fetch tlh update support files.";
   if (variable === "TLH_WRAPPER_SCRIPT") return "Would fetch tlh wrapper support files.";
   if (variable === "TLH_INSTALL_STATE_SCRIPT")
     return "Would fetch tlh install-state support files.";
@@ -104,12 +103,7 @@ function warnMissingOptionalSupportFile(
   relativePath: string,
   io: SupportFilesIo = {},
 ): void {
-  if (variable === "TLH_UPDATE_SCRIPT") {
-    callWarn(
-      `tlh update support script not found for ref ${config.ref}; the wrapper update helper will be unavailable`,
-      io,
-    );
-  } else if (variable === "TLH_WRAPPER_SCRIPT") {
+  if (variable === "TLH_WRAPPER_SCRIPT") {
     callWarn(
       `tlh wrapper support script not found for ref ${config.ref}; wrapper creation will be unavailable`,
       io,

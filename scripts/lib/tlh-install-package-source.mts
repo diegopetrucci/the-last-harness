@@ -124,11 +124,6 @@ export function criticalGitSourceSpec(
   };
 }
 
-export function formatCriticalGitSourceSpec(spec?: CriticalGitSourceSpec): string {
-  if (!spec) return "";
-  return `${spec.targetDir}\t${spec.repo}\t${spec.ref || ""}`;
-}
-
 export function gitSourceInstallSource(
   source: unknown,
   options: PackageSourceOptions = {},
