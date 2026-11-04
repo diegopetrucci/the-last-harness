@@ -116,6 +116,8 @@ test("prompt variants preserve normal parity and isolate ticket-free protocols",
   );
   assert.match(normal, /For any ticket-backed dispatch, pass the approved ticket ID/);
   assert.doesNotMatch(normal, /edit source files directly in bounded steps/);
+  assert.match(normal, /## The Last Harness Defaults/);
+  assert.match(normal, /Never create a git commit on your own/);
   assert.match(ticketFree, /edit source files directly in bounded steps/);
   assert.doesNotMatch(
     ticketFree,

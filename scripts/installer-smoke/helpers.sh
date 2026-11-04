@@ -582,7 +582,7 @@ for (const [label, targetPath] of [
   ["compat_librarian_present", join(repoRoot, "config", "librarian.defaults.json")],
   ["compat_query_present", join(scriptDir, "tlh-install-query.mjs")],
   ["stale_poison_present", join(repoRoot, "poison", "stale-stage0-only.txt")],
-  ["optional_update_present", join(scriptDir, "tlh-update.mjs")],
+  ["optional_install_state_present", join(scriptDir, "tlh-install-state.mjs")],
   ["developer_prompt_present", join(repoRoot, "agents", "subagents", "developer.md")],
 ]) {
   console.log(`${label}=${existsSync(targetPath)}`);

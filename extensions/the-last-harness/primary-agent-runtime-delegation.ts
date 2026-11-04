@@ -20,14 +20,6 @@ function matchesSubagentName(value: unknown, target: string): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === target;
 }
 
-export function isSubagentResumeAction(input: unknown): boolean {
-  return isRecord(input) && matchesSubagentName(input.action, "resume");
-}
-
-export function isSubagentSteerAction(input: unknown): boolean {
-  return isRecord(input) && matchesSubagentName(input.action, "steer");
-}
-
 export function subagentCallTargetsAgent(input: unknown, target: string): boolean {
   return subagentCallTargetsMatching(input, (agent) => matchesSubagentName(agent, target));
 }
@@ -133,8 +125,4 @@ export function applyOpenRouterModelToProjectTargets(
   if (Array.isArray(input.tasks)) {
     for (const task of input.tasks) apply(task);
   }
-}
-
-export function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
-  return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }

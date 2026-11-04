@@ -109,6 +109,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Fixed temporary-root inspection false successes and removed proven-unused subagent, extension, and installer code while moving meaningful tests onto live paths.
 - Removed the union-merge Gnosis conflict guidance from `AGENTS.md`; Gnosis 0.5.5 keeps entries sorted by ID and warns on duplicates.
 - Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins` and `oxlint` 1.90.0, `oxfmt` 0.75.0, and `@types/node` 26.6.6.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.

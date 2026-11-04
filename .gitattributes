@@ -223,7 +223,6 @@ extensions/subagents/src/shared/context-diagnostics.js linguist-generated=true
 extensions/subagents/src/shared/display-text.js linguist-generated=true
 extensions/subagents/src/shared/file-coalescer.js linguist-generated=true
 extensions/subagents/src/shared/formatters.js linguist-generated=true
-extensions/subagents/src/shared/jsonl-writer.js linguist-generated=true
 extensions/subagents/src/shared/model-info.js linguist-generated=true
 extensions/subagents/src/shared/post-exit-stdio-guard.js linguist-generated=true
 extensions/subagents/src/shared/post-run-facts.js linguist-generated=true

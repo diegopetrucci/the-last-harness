@@ -158,7 +158,7 @@ test("no-developer filters only the exact bundled developer and leaves trusted e
   assert.equal(blockedMixed.agentScope, "user");
 
   const embeddedDeveloper = { agent: "embedded.developer", task: "use the trusted project agent" };
-  assertAllowed(embeddedDeveloper, { allowEmbeddedTargets: true, noDeveloperActive: true });
+  assertAllowed(embeddedDeveloper, { noDeveloperActive: true });
   assert.equal(embeddedDeveloper.agentScope, "user");
 });
 
@@ -350,40 +350,15 @@ test("isEmbeddedSubagentTarget accepts strict embedded.<slug> names and rejects 
   assert.equal(isEmbeddedSubagentTarget(42), false);
 });
 
-test("validateSubagentToolInput with allowEmbeddedTargets:false (default) rejects embedded names like unknown agents", () => {
-  // Flag off: embedded targets are rejected like any other unknown agent
-  const reason = validateSubagentToolInput({ agent: "embedded.repo-helper" });
-  assert.match(reason, /Disallowed target\(s\): embedded\.repo-helper/);
-
-  // Error message does NOT mention embedded.<slug> when flag is off
-  assert.doesNotMatch(reason, /or embedded\.<slug>/);
-
-  // Malformed embedded names are also rejected
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.Repo-helper" }),
-    /Disallowed target\(s\): embedded\.Repo-helper/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.repo.helper" }),
-    /Disallowed target\(s\): embedded\.repo\.helper/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.-x" }),
-    /Disallowed target\(s\): embedded\.-x/,
-  );
-});
-
-test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embedded targets in all execution shapes", () => {
-  const opts = { allowEmbeddedTargets: true };
-
+test("validateSubagentToolInput allows valid embedded targets in all execution shapes", () => {
   // single
   const single = { agent: "embedded.repo-helper", prompt: "inspect the repo" };
-  assertAllowed(single, opts);
+  assertAllowed(single);
   assert.equal(single.agentScope, "user");
 
   // tasks (parallel batch)
   const tasks = { tasks: [{ agent: "embedded.parallel-helper", prompt: "inspect one area" }] };
-  assertAllowed(tasks, opts);
+  assertAllowed(tasks);
   assert.equal(tasks.agentScope, "user");
 
   // mixed: bundled + embedded
@@ -393,91 +368,60 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
       { agent: "embedded.scout", prompt: "scout" },
     ],
   };
-  assertAllowed(mixed, opts);
+  assertAllowed(mixed);
   assert.equal(mixed.agentScope, "user");
 
   const explicitUser = { agent: "embedded.repo-helper", agentScope: "user" };
-  assertAllowed(explicitUser, opts);
+  assertAllowed(explicitUser);
   assert.equal(explicitUser.agentScope, "user");
   assert.match(
-    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "both" }, opts),
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "both" }),
     /may not use agentScope: "both"/,
   );
   assert.match(
-    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "project" }, opts),
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "project" }),
     /may not use agentScope: "project"/,
   );
 });
 
-test("validateSubagentToolInput with allowEmbeddedTargets:true rejects malformed embedded names", () => {
-  const opts = { allowEmbeddedTargets: true };
-
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded." }, opts),
-    /Disallowed target\(s\): embedded\./,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.Scout" }, opts),
-    /Disallowed target\(s\): embedded\.Scout/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.repo.helper" }, opts),
-    /Disallowed target\(s\): embedded\.repo\.helper/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.-x" }, opts),
-    /Disallowed target\(s\): embedded\.-x/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "x.embedded.y" }, opts),
-    /Disallowed target\(s\): x\.embedded\.y/,
-  );
+test("validateSubagentToolInput rejects malformed embedded target names", () => {
+  for (const [agent, pattern] of [
+    ["embedded.", /Disallowed target\(s\): embedded\./],
+    ["embedded.Scout", /Disallowed target\(s\): embedded\.Scout/],
+    ["embedded.repo.helper", /Disallowed target\(s\): embedded\.repo\.helper/],
+    ["embedded.-x", /Disallowed target\(s\): embedded\.-x/],
+    ["x.embedded.y", /Disallowed target\(s\): x\.embedded\.y/],
+  ]) {
+    assert.match(validateSubagentToolInput({ agent }), pattern);
+  }
 });
 
-test("validateSubagentToolInput error messages mention embedded.<slug> only when allowEmbeddedTargets is true", () => {
-  // No targets at all: message with flag off
-  const noTargetOff = validateSubagentToolInput({});
-  assert.match(noTargetOff, /must target one of:/);
-  assert.doesNotMatch(noTargetOff, /or embedded\.<slug>/);
+test("validateSubagentToolInput error messages describe embedded targets", () => {
+  const noTarget = validateSubagentToolInput({});
+  assert.match(noTarget, /must target one of:/);
+  assert.match(noTarget, /or embedded\.<slug>/);
 
-  // No targets at all: message with flag on
-  const noTargetOn = validateSubagentToolInput({}, { allowEmbeddedTargets: true });
-  assert.match(noTargetOn, /must target one of:/);
-  assert.match(noTargetOn, /or embedded\.<slug>/);
-
-  // Disallowed target: message with flag off
-  const disallowedOff = validateSubagentToolInput({ agent: "unknown-agent" });
-  assert.match(disallowedOff, /may delegate only to:/);
-  assert.doesNotMatch(disallowedOff, /or embedded\.<slug>/);
-
-  // Disallowed target: message with flag on
-  const disallowedOn = validateSubagentToolInput(
-    { agent: "unknown-agent" },
-    { allowEmbeddedTargets: true },
-  );
-  assert.match(disallowedOn, /may delegate only to:/);
-  assert.match(disallowedOn, /or embedded\.<slug>/);
+  const disallowed = validateSubagentToolInput({ agent: "unknown-agent" });
+  assert.match(disallowed, /may delegate only to:/);
+  assert.match(disallowed, /or embedded\.<slug>/);
 });
 
-test("validateSubagentToolInput: allowEmbeddedTargets does not affect management action validation", () => {
-  const opts = { allowEmbeddedTargets: true };
-
-  // list/get/resume/status/interrupt/doctor behave identically regardless of flag
+test("validateSubagentToolInput validates management actions independently of execution targets", () => {
   const list = { action: "list" };
-  assertAllowed(list, opts);
+  assertAllowed(list);
   assert.equal(list.agentScope, "user");
 
   const get = { action: "get", agentScope: "" };
-  assertAllowed(get, opts);
+  assertAllowed(get);
   assert.equal(get.agentScope, "user");
 
   for (const action of ["status", "interrupt", "doctor"]) {
-    assertAllowed({ action }, opts);
+    assertAllowed({ action });
   }
 
   // Unsafe action still blocked
   assert.match(
-    validateSubagentToolInput({ action: "delete" }, opts),
+    validateSubagentToolInput({ action: "delete" }),
     /may not use subagent management action 'delete'/,
   );
 });
