@@ -11,9 +11,14 @@ All notable changes to The Last Harness will be documented in this file.
 ### What's new
 
 - Bumped managed Gnosis (`gn`) to 0.5.5.
-- MCP now uses Pi's native support plus the bundled `project-mcp-json`; the `pi-mcp-adapter` default, `/mcp-auth`, and `tlh defaults migrate-mcp` are removed. See [Migrating from the MCP adapter](docs/mcp.md#migrating-from-the-mcp-adapter).
+- MCP now uses Pi's native support plus the bundled `project-mcp-json`; the `pi-mcp-adapter` default, `/mcp-auth`, and `tlh defaults migrate-mcp` are removed. See [Migrating from the MCP adapter](docs/mcp.md#migrating-from-the-mcp-adapter) ([#869](https://github.com/diegopetrucci/the-last-harness/pull/869)).
+- Managed Gnosis install now fetches the release checksums concurrently with the archive download, reducing install latency.
+- `/annotate-git-diff` now runs independent git lookups concurrently when opening the review window and loading file contents, reducing latency.
+- `/what-consumed-my-session-limit-and-tokens` now reads session files with bounded concurrency, reducing report latency.
+- `tlh sessions` now scans session files and resolves subagent child headers with bounded concurrency, reducing latency.
 - Suppressed Pi's extension update changelog notices at launch; TLH keeps only its own update signals ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Hid OpenAI Codex `gpt-6.1-terra` from the model picker by default ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
+- `/effort` Ctrl+S now saves a per-primary effort override (`tlh.primaryAgent.effortOverrides`) instead of the global default; `/reconcile` lists and resets effort-only overrides ([#866](https://github.com/diegopetrucci/the-last-harness/pull/866)).
 - Refreshed the bundled Herdr and tmux terminal skills to newer upstream commits.
 - Added the opt-in ticket-free Architect/no-developer workflow; see [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode) ([#854](https://github.com/diegopetrucci/the-last-harness/pull/854)).
 - Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume and cancel for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
@@ -30,6 +35,8 @@ All notable changes to The Last Harness will be documented in this file.
 - In RPC mode, TLH now publishes its subscription usage footer segment as the `tlh-usage` extension UI status (cleared with `undefined`) so hosts such as tlh-gui can render it; the docs also list the existing `fast` status key; see [docs/commands.md](docs/commands.md#usage-and-rpc-status-for-hosts).
 - TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`.
 - The `tlh` wrapper defaults `PI_PROGRAM_STATUS=0` to keep Pi 1.1.0's native OSC 7501 emitter off while TLH's effective-activity reporter remains the root owner.
+- `/annotate-last-message N` annotates an earlier reply; `N` counts completed text replies, and `1` (the default) is the latest.
+- Refreshed the `/annotate-last-message` window: each line has a note button, Esc with notes needs a second press to discard, Esc inside an inline note closes only that note, and Cancel/Submit show their shortcuts.
 
 ### Fixed
 
@@ -57,6 +64,7 @@ All notable changes to The Last Harness will be documented in this file.
 - The result watcher now rescans existing results after a restart, since results written while it was down emit no events.
 - Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
+- `/annotate-last-message` keeps a fenced code block in one section across blank lines and no longer creates an empty section for a horizontal-rule-only block.
 
 ### Changed
 

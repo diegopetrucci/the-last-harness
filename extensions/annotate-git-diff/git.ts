@@ -124,14 +124,16 @@ function isSameBranchRef(ref: string, branch: string): boolean {
 }
 
 async function findReviewBase(pi: ExtensionAPI, repoRoot: string): Promise<ReviewBaseInfo | null> {
-  const branch = await currentBranch(pi, repoRoot);
+  const [branch, upstreamRef, originHeadRef] = await Promise.all([
+    currentBranch(pi, repoRoot),
+    getUpstreamRef(pi, repoRoot),
+    getOriginHeadRef(pi, repoRoot),
+  ]);
   const candidates: string[] = [];
-  const upstreamRef = await getUpstreamRef(pi, repoRoot);
   if (upstreamRef && !isSameBranchRef(upstreamRef, branch)) {
     candidates.push(upstreamRef);
   }
 
-  const originHeadRef = await getOriginHeadRef(pi, repoRoot);
   if (originHeadRef) {
     candidates.push(originHeadRef);
   }
@@ -623,13 +625,14 @@ async function getAllReviewFiles(
   pi: ExtensionAPI,
   repoRoot: string,
   branchChanges: ChangedPath[],
+  repositoryPaths: string[],
 ): Promise<{ allFiles: ReviewFile[]; branchFiles: ReviewFile[] }> {
   const branchFiles = branchChanges.map(toBranchReviewFile);
   const branchFilesByPath = new Map(branchFiles.map((file) => [file.path, file]));
   const seenPaths = new Set<string>();
   const allFiles: ReviewFile[] = [];
 
-  for (const path of await listReviewableRepositoryPaths(pi, repoRoot)) {
+  for (const path of repositoryPaths) {
     seenPaths.add(path);
     allFiles.push(branchFilesByPath.get(path) ?? toSnapshotReviewFile(repoRoot, path));
   }
@@ -670,24 +673,52 @@ export async function getReviewWindowData(
   repositoryHasHead: boolean;
 }> {
   const repoRoot = await getRepoRoot(pi, cwd);
-  const repositoryHasHead = await hasHead(pi, repoRoot);
-  const reviewBase = repositoryHasHead ? await findReviewBase(pi, repoRoot) : null;
-  const branchComparisonBase = reviewBase?.mergeBase ?? (repositoryHasHead ? "HEAD" : null);
-  const workingTreeStatus = await getWorkingTreeStatusInfo(pi, repoRoot);
-  const branchChanges = repositoryHasHead
-    ? await getBranchReviewChanges(pi, repoRoot, branchComparisonBase, workingTreeStatus)
-    : await getWorkingTreeReviewChanges(pi, repoRoot, false);
-  const reviewableBranchChanges = branchChanges.filter(
-    (change) => (change.newPath ?? change.oldPath ?? "").length > 0,
+  // Start independent git calls together. Every started promise is joined by
+  // the Promise.all calls below so no rejection goes unhandled.
+  const repositoryPathsPromise = listReviewableRepositoryPaths(pi, repoRoot);
+  const workingTreeStatusPromise = getWorkingTreeStatusInfo(pi, repoRoot);
+  const baseInfoPromise = (async () => {
+    const repositoryHasHead = await hasHead(pi, repoRoot);
+    const reviewBase = repositoryHasHead ? await findReviewBase(pi, repoRoot) : null;
+    return { repositoryHasHead, reviewBase };
+  })();
+  const commitsPromise = baseInfoPromise.then(({ reviewBase }) =>
+    reviewBase ? listRangeCommits(pi, repoRoot, `${reviewBase.mergeBase}..HEAD`, 100) : [],
   );
-  const { allFiles: files, branchFiles } = await getAllReviewFiles(
-    pi,
-    repoRoot,
-    reviewableBranchChanges,
-  );
-  const commits = reviewBase
-    ? await listRangeCommits(pi, repoRoot, `${reviewBase.mergeBase}..HEAD`, 100)
-    : [];
+  const filesPromise = (async () => {
+    const [{ repositoryHasHead, reviewBase }, workingTreeStatus, repositoryPaths] =
+      await Promise.all([baseInfoPromise, workingTreeStatusPromise, repositoryPathsPromise]);
+    const branchComparisonBase = reviewBase?.mergeBase ?? (repositoryHasHead ? "HEAD" : null);
+    const branchChanges = repositoryHasHead
+      ? await getBranchReviewChanges(pi, repoRoot, branchComparisonBase, workingTreeStatus)
+      : await getWorkingTreeReviewChanges(pi, repoRoot, false);
+    const reviewableBranchChanges = branchChanges.filter(
+      (change) => (change.newPath ?? change.oldPath ?? "").length > 0,
+    );
+    const { allFiles, branchFiles } = await getAllReviewFiles(
+      pi,
+      repoRoot,
+      reviewableBranchChanges,
+      repositoryPaths,
+    );
+    return {
+      repositoryHasHead,
+      reviewBase,
+      workingTreeStatus,
+      branchComparisonBase,
+      files: allFiles,
+      branchFiles,
+    };
+  })();
+  const [commits, filesResult] = await Promise.all([commitsPromise, filesPromise]);
+  const {
+    repositoryHasHead,
+    reviewBase,
+    workingTreeStatus,
+    branchComparisonBase,
+    files,
+    branchFiles,
+  } = filesResult;
   const workingTreeCommit = workingTreeStatus.hasReviewableChanges
     ? [createWorkingTreeCommitInfo()]
     : [];
@@ -827,19 +858,21 @@ export async function loadReviewFileContents(
     if (scope === "commits") {
       if (!commitSha) return emptyBinaryContents;
       if (isWorkingTreeCommitSha(commitSha)) {
-        const repositoryHasHead = await hasHead(pi, repoRoot);
-        const originalSide = repositoryHasHead
-          ? await loadBinarySideFromRevision(
-              pi,
-              repoRoot,
-              "HEAD",
-              comparison.oldPath,
-              file.mimeType,
-            )
-          : { exists: false, previewUrl: null };
-        const modifiedSide = file.hasWorkingTreeFile
-          ? await loadBinarySideFromWorkingTree(repoRoot, comparison.newPath, file.mimeType)
-          : { exists: false, previewUrl: null };
+        const [originalSide, modifiedSide] = await Promise.all([
+          (async () =>
+            (await hasHead(pi, repoRoot))
+              ? await loadBinarySideFromRevision(
+                  pi,
+                  repoRoot,
+                  "HEAD",
+                  comparison.oldPath,
+                  file.mimeType,
+                )
+              : { exists: false, previewUrl: null })(),
+          file.hasWorkingTreeFile
+            ? loadBinarySideFromWorkingTree(repoRoot, comparison.newPath, file.mimeType)
+            : Promise.resolve({ exists: false, previewUrl: null }),
+        ]);
         return {
           ...emptyBinaryContents,
           originalExists: originalSide.exists,
@@ -848,20 +881,16 @@ export async function loadReviewFileContents(
           modifiedPreviewUrl: modifiedSide.previewUrl,
         };
       }
-      const originalSide = await loadBinarySideFromRevision(
-        pi,
-        repoRoot,
-        `${commitSha}^`,
-        comparison.oldPath,
-        file.mimeType,
-      );
-      const modifiedSide = await loadBinarySideFromRevision(
-        pi,
-        repoRoot,
-        commitSha,
-        comparison.newPath,
-        file.mimeType,
-      );
+      const [originalSide, modifiedSide] = await Promise.all([
+        loadBinarySideFromRevision(
+          pi,
+          repoRoot,
+          `${commitSha}^`,
+          comparison.oldPath,
+          file.mimeType,
+        ),
+        loadBinarySideFromRevision(pi, repoRoot, commitSha, comparison.newPath, file.mimeType),
+      ]);
       return {
         ...emptyBinaryContents,
         originalExists: originalSide.exists,
@@ -872,16 +901,18 @@ export async function loadReviewFileContents(
     }
 
     if (!branchMergeBaseSha) return emptyBinaryContents;
-    const originalSide = await loadBinarySideFromRevision(
-      pi,
-      repoRoot,
-      branchMergeBaseSha,
-      comparison.oldPath,
-      file.mimeType,
-    );
-    const modifiedSide = file.hasWorkingTreeFile
-      ? await loadBinarySideFromWorkingTree(repoRoot, comparison.newPath, file.mimeType)
-      : await loadBinarySideFromRevision(pi, repoRoot, "HEAD", comparison.newPath, file.mimeType);
+    const [originalSide, modifiedSide] = await Promise.all([
+      loadBinarySideFromRevision(
+        pi,
+        repoRoot,
+        branchMergeBaseSha,
+        comparison.oldPath,
+        file.mimeType,
+      ),
+      file.hasWorkingTreeFile
+        ? loadBinarySideFromWorkingTree(repoRoot, comparison.newPath, file.mimeType)
+        : loadBinarySideFromRevision(pi, repoRoot, "HEAD", comparison.newPath, file.mimeType),
+    ]);
     return {
       ...emptyBinaryContents,
       originalExists: originalSide.exists,
@@ -940,21 +971,25 @@ export async function loadReviewFileContents(
       };
     }
     if (isWorkingTreeCommitSha(commitSha)) {
-      const repositoryHasHead = await hasHead(pi, repoRoot);
-      const originalContent =
-        repositoryHasHead && comparison.oldPath != null
-          ? await getRevisionContent(pi, repoRoot, "HEAD", comparison.oldPath)
-          : "";
+      const oldPath = comparison.oldPath;
+      const newPath = comparison.newPath;
+      const [{ repositoryHasHead, originalContent }, modifiedContent] = await Promise.all([
+        (async () => {
+          const repositoryHasHead = await hasHead(pi, repoRoot);
+          const originalContent =
+            repositoryHasHead && oldPath != null
+              ? await getRevisionContent(pi, repoRoot, "HEAD", oldPath)
+              : "";
+          return { repositoryHasHead, originalContent };
+        })(),
+        newPath == null || !file.hasWorkingTreeFile
+          ? Promise.resolve("")
+          : getWorkingTreeContent(repoRoot, newPath),
+      ]);
       const modifiedExists =
         comparison.newPath != null && file.hasWorkingTreeFile
           ? hasWorkingTreeFile(repoRoot, comparison.newPath)
           : false;
-      const modifiedContent =
-        comparison.newPath == null
-          ? ""
-          : file.hasWorkingTreeFile
-            ? await getWorkingTreeContent(repoRoot, comparison.newPath)
-            : "";
       return {
         originalContent,
         modifiedContent,
@@ -966,14 +1001,14 @@ export async function loadReviewFileContents(
         modifiedPreviewUrl: null,
       };
     }
-    const originalContent =
+    const [originalContent, modifiedContent] = await Promise.all([
       comparison.oldPath == null
-        ? ""
-        : await getRevisionContent(pi, repoRoot, `${commitSha}^`, comparison.oldPath);
-    const modifiedContent =
+        ? Promise.resolve("")
+        : getRevisionContent(pi, repoRoot, `${commitSha}^`, comparison.oldPath),
       comparison.newPath == null
-        ? ""
-        : await getRevisionContent(pi, repoRoot, commitSha, comparison.newPath);
+        ? Promise.resolve("")
+        : getRevisionContent(pi, repoRoot, commitSha, comparison.newPath),
+    ]);
     return {
       originalContent,
       modifiedContent,
@@ -999,20 +1034,20 @@ export async function loadReviewFileContents(
     };
   }
 
-  const originalContent =
-    comparison.oldPath == null
-      ? ""
-      : await getRevisionContent(pi, repoRoot, branchMergeBaseSha, comparison.oldPath);
   const modifiedExists =
     comparison.newPath != null && file.hasWorkingTreeFile
       ? hasWorkingTreeFile(repoRoot, comparison.newPath)
       : false;
-  const modifiedContent =
+  const [originalContent, modifiedContent] = await Promise.all([
+    comparison.oldPath == null
+      ? Promise.resolve("")
+      : getRevisionContent(pi, repoRoot, branchMergeBaseSha, comparison.oldPath),
     comparison.newPath == null
-      ? ""
+      ? Promise.resolve("")
       : file.hasWorkingTreeFile
-        ? await getWorkingTreeContent(repoRoot, comparison.newPath)
-        : await getRevisionContent(pi, repoRoot, "HEAD", comparison.newPath);
+        ? getWorkingTreeContent(repoRoot, comparison.newPath)
+        : getRevisionContent(pi, repoRoot, "HEAD", comparison.newPath),
+  ]);
   return {
     originalContent,
     modifiedContent,

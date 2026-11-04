@@ -26,6 +26,7 @@ function assistantMessageText(messageEntry) {
             .replace(/\r\n?/g, "\n"),
     };
 }
+const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 function buildSections(lines) {
     const sections = [];
     let startIndex = null;
@@ -33,6 +34,16 @@ function buildSections(lines) {
         if (startIndex == null)
             return;
         const sectionLines = lines.slice(startIndex, endIndex + 1);
+        const blockStart = startIndex;
+        const onlyBreaks = sectionLines.every((line, offset) => {
+            if (line.trim().length === 0)
+                return true;
+            return !inFence[blockStart + offset] && THEMATIC_BREAK.test(line);
+        });
+        if (onlyBreaks) {
+            startIndex = null;
+            return;
+        }
         const previewSource = sectionLines.find((line) => line.trim().length > 0) ?? "";
         sections.push({
             id: `section-${sections.length + 1}`,
@@ -44,8 +55,31 @@ function buildSections(lines) {
         });
         startIndex = null;
     };
+    let fenceChar = "";
+    let fenceLen = 0;
+    const inFence = [];
     for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index];
+        const fence = /^ {0,3}(```+|~~~+)/.exec(line);
+        if (fenceChar === "") {
+            if (fence) {
+                fenceChar = fence[1][0];
+                fenceLen = fence[1].length;
+            }
+        }
+        else if (fence &&
+            fence[1][0] === fenceChar &&
+            fence[1].length >= fenceLen &&
+            line.slice(fence[0].length).trim().length === 0) {
+            fenceChar = "";
+            fenceLen = 0;
+        }
+        inFence[index] = fenceChar !== "";
+        if (fenceChar !== "" && line.trim().length === 0) {
+            if (startIndex == null)
+                startIndex = index;
+            continue;
+        }
         if (line.trim().length === 0) {
             flushSection(index - 1);
             continue;
@@ -57,7 +91,39 @@ function buildSections(lines) {
     flushSection(lines.length - 1);
     return sections;
 }
-export function findLastAssistantMessage(branch) {
+function buildMessageData(text) {
+    const lines = text.split("\n");
+    return {
+        text,
+        lines: lines.map((line, lineIndex) => ({ number: lineIndex + 1, text: line })),
+        sections: buildSections(lines),
+    };
+}
+function findNthCompletedReply(branch, n) {
+    let found = 0;
+    for (let index = branch.length - 1; index >= 0; index -= 1) {
+        const entry = branch[index];
+        if (entry.type !== "message")
+            continue;
+        const extracted = assistantMessageText(entry);
+        if (extracted == null || extracted.kind !== "assistant")
+            continue;
+        if (extracted.text.trim().length === 0)
+            continue;
+        found += 1;
+        if (found === n) {
+            return { ok: true, data: { ...buildMessageData(extracted.text), repliesAgo: n } };
+        }
+    }
+    return {
+        ok: false,
+        code: "missing",
+        message: `Only ${found} completed assistant ${found === 1 ? "reply" : "replies"} found on the current session branch.`,
+    };
+}
+export function findLastAssistantMessage(branch, n = 1) {
+    if (n >= 2)
+        return findNthCompletedReply(branch, n);
     for (let index = branch.length - 1; index >= 0; index -= 1) {
         const entry = branch[index];
         if (entry.type !== "message") {
@@ -83,13 +149,7 @@ export function findLastAssistantMessage(branch) {
                 message: "Latest assistant message has no text to annotate.",
             };
         }
-        const lines = text.split("\n");
-        const data = {
-            text,
-            lines: lines.map((line, lineIndex) => ({ number: lineIndex + 1, text: line })),
-            sections: buildSections(lines),
-        };
-        return { ok: true, data };
+        return { ok: true, data: buildMessageData(text) };
     }
     return {
         ok: false,

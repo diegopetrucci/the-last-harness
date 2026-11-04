@@ -68,7 +68,7 @@ const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend re
 const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION =
   "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
-  "Open a native annotation window for the latest assistant message";
+  "Open a native annotation window for the latest assistant message (optional [N] for an earlier reply)";
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 
 function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefined {

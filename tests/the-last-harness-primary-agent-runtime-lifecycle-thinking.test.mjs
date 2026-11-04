@@ -1085,3 +1085,80 @@ test("primary runtime defers missing-tool startup warnings and keeps the archite
     );
   });
 });
+
+test("per-primary effort override precedes the global default and falls back through it to bundled", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-effort-override-", {
+    cwd: true,
+    test: t,
+  });
+  const model = {
+    provider: "anthropic",
+    id: "claude-opus-5",
+    reasoning: true,
+    thinkingLevelMap: { max: "max" },
+  };
+  const architect = createPrimaryPrompt("architect", {
+    model: "anthropic/claude-opus-5",
+    thinking: "high",
+    applyModel: false,
+    applyThinking: true,
+  });
+  const context = {
+    cwd: fixture.cwd,
+    sessionManager: { getBranch: () => [] },
+    ui: { notify() {} },
+    modelRegistry: { getAvailable: () => [model] },
+    model,
+  };
+
+  async function startWith(settings) {
+    writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify(settings)}\n`);
+    const { pi, runtime } = registerRuntimeHarness({
+      primaryAgents: new Map([["architect", architect]]),
+      subagentMetadata: [],
+    });
+    await runtime.applySessionStart(context);
+    return { pi, runtime };
+  }
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const withOverride = await startWith({
+      defaultThinkingLevel: "low",
+      tlh: { primaryAgent: { effortOverrides: { architect: "max", rush: "minimal" } } },
+    });
+    assert.equal(withOverride.pi.thinkingLevel, "max");
+    const { recordOverrideBaseline, ...target } =
+      withOverride.runtime.primaryEffortPersistenceTarget(context);
+    assert.equal(typeof recordOverrideBaseline, "function");
+    assert.deepEqual(target, {
+      primary: "architect",
+      packagedEffort: "high",
+      applyThinking: true,
+    });
+
+    // An override for a different primary does not apply; the global default does.
+    const otherPrimary = await startWith({
+      defaultThinkingLevel: "low",
+      tlh: { primaryAgent: { effortOverrides: { rush: "minimal" } } },
+    });
+    assert.equal(otherPrimary.pi.thinkingLevel, "low");
+
+    // Invalid stored values are ignored.
+    const invalid = await startWith({
+      defaultThinkingLevel: "low",
+      tlh: { primaryAgent: { effortOverrides: { architect: "turbo" } } },
+    });
+    assert.equal(invalid.pi.thinkingLevel, "low");
+    const invalidNoDefault = await startWith({
+      tlh: { primaryAgent: { effortOverrides: { architect: 3 } } },
+    });
+    assert.equal(invalidNoDefault.pi.thinkingLevel, "high");
+
+    // applyThinking:false disables application and reports non-per-primary persistence.
+    const disabled = await startWith({
+      tlh: { primaryAgent: { applyThinking: false, effortOverrides: { architect: "max" } } },
+    });
+    assert.notEqual(disabled.pi.thinkingLevel, "max");
+    assert.equal(disabled.runtime.primaryEffortPersistenceTarget(context).applyThinking, false);
+  });
+});

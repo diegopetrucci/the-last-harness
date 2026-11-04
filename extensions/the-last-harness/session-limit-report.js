@@ -20,10 +20,24 @@ const PERCENT_FORMATTER = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 1,
 });
+const SESSION_PARSE_CONCURRENCY = 8;
+async function mapWithConcurrency(items, limit, fn) {
+    const results = Array.from({ length: items.length });
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next++;
+            results[index] = await fn(items[index]);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
 export function createSessionLimitReportCommandHandler(_pi, dependencies = {}) {
     const openReport = dependencies.openReport ?? openLocalReport;
     const now = dependencies.now ?? (() => new Date());
     const getSnapshot = dependencies.getSnapshot ?? (() => undefined);
+    const parseSession = dependencies.parseSession ?? parseSessionJsonl;
     return async (args, ctx) => {
         if (args.trim()) {
             ctx.ui.notify(COMMAND_HELP, "error");
@@ -46,20 +60,25 @@ export function createSessionLimitReportCommandHandler(_pi, dependencies = {}) {
             const { files, caveats: scanCaveats } = discoverSessionFiles(sessionsRoot, window.startMs);
             const parsedFiles = [];
             const parseFailureCaveats = [];
-            for (const filePath of files) {
+            const outcomes = await mapWithConcurrency(files, SESSION_PARSE_CONCURRENCY, async (filePath) => {
                 try {
-                    const parsed = await parseSessionJsonl(filePath);
-                    const slimmedEntries = slimEntries(parsed.entries);
-                    parsedFiles.push({
+                    const parsed = await parseSession(filePath);
+                    return {
                         filePath,
-                        entries: slimmedEntries,
+                        entries: slimEntries(parsed.entries),
                         malformedLineCount: parsed.malformedLineCount,
-                    });
+                    };
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
-                    parseFailureCaveats.push(`Could not read session file ${basename(filePath)}: ${message}`);
+                    return `Could not read session file ${basename(filePath)}: ${message}`;
                 }
+            });
+            for (const outcome of outcomes) {
+                if (typeof outcome === "string")
+                    parseFailureCaveats.push(outcome);
+                else
+                    parsedFiles.push(outcome);
             }
             const result = aggregateSessionUsage(window, sessionsRoot, parsedFiles, [
                 ...scanCaveats,

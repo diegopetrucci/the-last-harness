@@ -993,3 +993,93 @@ test("journey: empty-string stored primary override is treated as absent, baseli
     assert.match(notifications[0].message, /architect/, "notice must name the drifted role");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Effort-override baselines (tlh-9bri)
+// ---------------------------------------------------------------------------
+
+test("effort-only override creation records a baseline and later packaged effort change is flagged", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const packaged = (thinking) =>
+    new Map([
+      [
+        "architect",
+        createPrimaryPrompt("architect", {
+          model: "anthropic/claude-sonnet-4-6",
+          tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+          tlhAnthropicThinking: thinking,
+          applyModel: true,
+        }),
+      ],
+    ]);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { runtime } = registerRuntimeHarness({
+      primaryAgents: packaged("high"),
+      subagentMetadata: [],
+    });
+    const ctx = {
+      cwd: fixture.cwd,
+      sessionManager: { getBranch: () => [] },
+      ui: { notify() {} },
+      modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
+      model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+    };
+    await runtime.applySessionStart(ctx);
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify({ tlh: { primaryAgent: { effortOverrides: { architect: "low" } } } })}\n`,
+    );
+    runtime.primaryEffortPersistenceTarget(ctx).recordOverrideBaseline("anthropic");
+
+    assert.equal(
+      readReconcileState().acknowledgedSnapshot?.architect?.byProvider?.anthropic?.thinking,
+      "high",
+    );
+    const notifications = runStartupNotice(fixture, packaged("medium"), t);
+    assert.equal(notifications.length, 1);
+    assert.match(notifications[0].message, /architect/);
+  });
+});
+
+test("adding a model override beside an existing effort override does not re-record the baseline", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const primaryAgents = new Map([
+    [
+      "architect",
+      createPrimaryPrompt("architect", {
+        model: "anthropic/claude-sonnet-4-6",
+        tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+        applyModel: true,
+      }),
+    ],
+  ]);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify({ tlh: { primaryAgent: { effortOverrides: { architect: "low" } } } })}\n`,
+    );
+    mkdirSync(join(fixture.agent, "tlh"), { recursive: true });
+    writeFileSync(
+      join(fixture.agent, "tlh", "reconcile-state.json"),
+      `${JSON.stringify({
+        acknowledgedSnapshot: {
+          architect: { byProvider: { anthropic: { model: "anthropic/OLD-packaged-default" } } },
+        },
+      })}\n`,
+    );
+
+    await createPrimaryOverrideViaRealPath(
+      fixture,
+      primaryAgents,
+      { provider: "anthropic", id: "claude-opus-5" },
+      ANTHROPIC_TWO_MODELS,
+    );
+
+    assert.equal(
+      readReconcileState().acknowledgedSnapshot?.architect?.byProvider?.anthropic?.model,
+      "anthropic/OLD-packaged-default",
+    );
+  });
+});

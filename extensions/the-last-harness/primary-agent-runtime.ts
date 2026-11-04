@@ -34,8 +34,10 @@ import {
 import { formatHomePath, isRecord } from "./common.js";
 import {
   clearPrimaryAgentModelOverrideByName,
+  clearPrimaryAgentOverridesByName,
   isTlhPrimaryAgentSelection,
   getTlhDurableThinkingLevel,
+  getTlhPrimaryEffortOverride,
   getTlhGlobalSettings,
   getTlhPrimaryAgentConfig,
   getTlhSubagentOverrides,
@@ -174,6 +176,14 @@ type SessionThinkingOverride = {
   level: ThinkingLevel;
 };
 
+export type PrimaryEffortPersistenceTarget = {
+  primary: TlhPrimaryAgentSelection;
+  packagedEffort: ThinkingLevel | undefined;
+  applyThinking: boolean;
+  /** Record the packaged-default drift baseline for this primary and provider. */
+  recordOverrideBaseline?(provider: string | undefined): void;
+};
+
 export type TlhPrimaryAgentRuntime = {
   applySessionStart(ctx: ExtensionContext, reason?: string): Promise<void>;
   projectAgentGuidanceSnapshot(): ProjectAgentGuidanceInventory | undefined;
@@ -181,9 +191,19 @@ export type TlhPrimaryAgentRuntime = {
   activePrimaryAgentPrompt(): AgentPrompt | undefined;
   /** Remember a validated user thinking selection for this primary/session. */
   recordUserThinkingLevel?(level: ThinkingLevel): void;
+  /**
+   * Describe where /effort should persist a saved level for the active primary:
+   * the primary name, its packaged effort for the current provider, and whether
+   * TLH auto-applies thinking. `undefined` when no primary is active.
+   */
+  primaryEffortPersistenceTarget?(ctx: {
+    cwd: string;
+    model?: { provider?: string };
+  }): PrimaryEffortPersistenceTarget | undefined;
   buildLaunchSystemPrompt(ctx: ExtensionContext, baseSystemPrompt: string): string;
   /**
-   * Clear the stored model override for a named primary agent and reapply
+   * Clear the stored model and effort overrides for a named primary agent (one
+   * settings write) and reapply
    * the packaged default to the active session, matching /switch-primary-agent
    * model reset behaviour.
    *
@@ -799,6 +819,27 @@ function createTlhPrimaryAgentRuntime(
     return clamped;
   }
 
+  function primaryEffortPersistenceTarget(ctx: {
+    cwd: string;
+    model?: { provider?: string };
+  }): PrimaryEffortPersistenceTarget | undefined {
+    const primary = activePrimaryAgent();
+    if (!primary) {
+      return undefined;
+    }
+    const selection = currentPrimaryAgentSelection();
+    return {
+      primary: selection,
+      recordOverrideBaseline: (provider) => recordOverrideBaseline(selection, primary, provider),
+      packagedEffort: resolveProviderThinking(primary, ctx.model?.provider),
+      applyThinking: resolvePrimaryAutoApplySetting(
+        getTlhPrimaryAgentConfig(ctx.cwd),
+        primary,
+        "applyThinking",
+      ),
+    };
+  }
+
   type PrimaryModelSource = "project" | "existing";
 
   async function applyPrimaryModel(
@@ -849,8 +890,9 @@ function createTlhPrimaryAgentRuntime(
     model: ActiveModel | undefined,
   ): ThinkingLevel | undefined {
     const sessionThinking = sessionThinkingLevelForPrimary(selection, model);
+    const primaryOverride = getTlhPrimaryEffortOverride(getTlhPrimaryAgentConfig(cwd), selection);
     const durableThinking = getTlhDurableThinkingLevel(cwd);
-    const requestedThinking = sessionThinking ?? durableThinking ?? thinking;
+    const requestedThinking = sessionThinking ?? primaryOverride ?? durableThinking ?? thinking;
     if (requestedThinking === undefined) {
       return undefined;
     }
@@ -1007,7 +1049,8 @@ function createTlhPrimaryAgentRuntime(
     if (
       writeResult?.changed === true &&
       nextOverride !== undefined &&
-      !isMeaningfulPrimaryOverride(existingOverride)
+      !isMeaningfulPrimaryOverride(existingOverride) &&
+      getTlhPrimaryEffortOverride(primaryConfig, selection) === undefined
     ) {
       recordOverrideBaseline(selection, primary, model.provider);
     }
@@ -1020,7 +1063,7 @@ function createTlhPrimaryAgentRuntime(
     if (!isTlhPrimaryAgentSelection(agentName)) {
       return undefined;
     }
-    const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, agentName, undefined);
+    const result = clearPrimaryAgentOverridesByName(ctx.cwd, agentName);
     await applyPrimaryModeChange(ctx);
     return result;
   }
@@ -1591,6 +1634,7 @@ function createTlhPrimaryAgentRuntime(
     currentPrimaryAgentLabel,
     activePrimaryAgentPrompt: activePrimaryAgent,
     recordUserThinkingLevel,
+    primaryEffortPersistenceTarget,
     buildLaunchSystemPrompt,
     resetPrimaryAgentModelOverride,
     registerCommands,
@@ -1600,6 +1644,7 @@ function createTlhPrimaryAgentRuntime(
 
 export {
   clearPrimaryAgentModelOverrideByName,
+  clearPrimaryAgentOverridesByName,
   extractDispatchProviders,
   isHighConfidenceAuthSignatureInAttemptError,
   processSubagentRunDetails,

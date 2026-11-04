@@ -6,7 +6,7 @@ import { createPrimaryToolState, filterAvailableTools, withDirectMcpTools, } fro
 import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
-import { clearPrimaryAgentModelOverrideByName, isTlhPrimaryAgentSelection, getTlhDurableThinkingLevel, getTlhGlobalSettings, getTlhPrimaryAgentConfig, getTlhSubagentOverrides, resolvePrimaryAutoApplySetting, writeTlhPrimaryAgentDefault, writeTlhPrimaryAgentModelOverride, } from "./primary-agent-runtime-settings.js";
+import { clearPrimaryAgentModelOverrideByName, clearPrimaryAgentOverridesByName, isTlhPrimaryAgentSelection, getTlhDurableThinkingLevel, getTlhPrimaryEffortOverride, getTlhGlobalSettings, getTlhPrimaryAgentConfig, getTlhSubagentOverrides, resolvePrimaryAutoApplySetting, writeTlhPrimaryAgentDefault, writeTlhPrimaryAgentModelOverride, } from "./primary-agent-runtime-settings.js";
 import { applyOpenRouterModelToProjectTargets, applyProviderAwareModelsToNonProjectTargets, collectSubagentCallTargetsMatching, primaryToolAllowlist, rushDeveloperDelegationReason, rushResumeDelegationReason, rushSteerDelegationReason, subagentCallTargetsAgent, } from "./primary-agent-runtime-delegation.js";
 import { createTlhNoDeveloperPolicyRuntime, isTlhNoDeveloperSessionActive, noteSubagentToolExecutionEnd, noteSubagentToolExecutionStart, getTlhProjectAgentAccess, markEmbeddedOnlyToolCall, } from "./project-agent-access.mjs";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, dispatchPreflightBackoffMs, extractDispatchProviders, isHighConfidenceAuthSignatureInAttemptError, processSubagentRunDetails, } from "./primary-agent-runtime-auth.js";
@@ -387,6 +387,19 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         override.level = clamped;
         return clamped;
     }
+    function primaryEffortPersistenceTarget(ctx) {
+        const primary = activePrimaryAgent();
+        if (!primary) {
+            return undefined;
+        }
+        const selection = currentPrimaryAgentSelection();
+        return {
+            primary: selection,
+            recordOverrideBaseline: (provider) => recordOverrideBaseline(selection, primary, provider),
+            packagedEffort: resolveProviderThinking(primary, ctx.model?.provider),
+            applyThinking: resolvePrimaryAutoApplySetting(getTlhPrimaryAgentConfig(ctx.cwd), primary, "applyThinking"),
+        };
+    }
     async function applyPrimaryModel(ctx, primary, model, _source) {
         if (!model) {
             const candidateValues = [
@@ -417,8 +430,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     }
     function applyPrimaryThinking(cwd, selection, thinking, model) {
         const sessionThinking = sessionThinkingLevelForPrimary(selection, model);
+        const primaryOverride = getTlhPrimaryEffortOverride(getTlhPrimaryAgentConfig(cwd), selection);
         const durableThinking = getTlhDurableThinkingLevel(cwd);
-        const requestedThinking = sessionThinking ?? durableThinking ?? thinking;
+        const requestedThinking = sessionThinking ?? primaryOverride ?? durableThinking ?? thinking;
         if (requestedThinking === undefined) {
             return undefined;
         }
@@ -514,7 +528,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         }
         if (writeResult?.changed === true &&
             nextOverride !== undefined &&
-            !isMeaningfulPrimaryOverride(existingOverride)) {
+            !isMeaningfulPrimaryOverride(existingOverride) &&
+            getTlhPrimaryEffortOverride(primaryConfig, selection) === undefined) {
             recordOverrideBaseline(selection, primary, model.provider);
         }
     }
@@ -522,7 +537,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         if (!isTlhPrimaryAgentSelection(agentName)) {
             return undefined;
         }
-        const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, agentName, undefined);
+        const result = clearPrimaryAgentOverridesByName(ctx.cwd, agentName);
         await applyPrimaryModeChange(ctx);
         return result;
     }
@@ -906,13 +921,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         currentPrimaryAgentLabel,
         activePrimaryAgentPrompt: activePrimaryAgent,
         recordUserThinkingLevel,
+        primaryEffortPersistenceTarget,
         buildLaunchSystemPrompt,
         resetPrimaryAgentModelOverride,
         registerCommands,
         registerLifecycleHooks,
     };
 }
-export { clearPrimaryAgentModelOverrideByName, extractDispatchProviders, isHighConfidenceAuthSignatureInAttemptError, processSubagentRunDetails, };
+export { clearPrimaryAgentModelOverrideByName, clearPrimaryAgentOverridesByName, extractDispatchProviders, isHighConfidenceAuthSignatureInAttemptError, processSubagentRunDetails, };
 export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     retireTlhPrimaryAgentResourceRuntime();
     const noDeveloperPolicyRuntime = createTlhNoDeveloperPolicyRuntime();

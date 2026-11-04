@@ -71,10 +71,10 @@ These commands are registered by the TLH extension bundled with this profile.
 With no level argument in the interactive TUI, both commands use the native picker and visibly show the same controls:
 
 - **Enter** applies the selected level to this session only.
-- **Ctrl+S** applies the selected level and saves the future-session default. Pi owns this write for `/thinking`; `/effort` uses TLH's guarded isolated-profile settings path, which backs up changed settings, preserves unknown fields, and reports a session-only fallback if saving fails.
+- **Ctrl+S** applies the selected level and saves it for future sessions. Pi owns this write for `/thinking`, which saves the global `defaultThinkingLevel`. `/effort` uses TLH's guarded isolated-profile settings path, which backs up changed settings, preserves unknown fields, and reports a session-only fallback if saving fails. With an active primary and `tlh.primaryAgent.applyThinking` not `false`, `/effort` saves `tlh.primaryAgent.effortOverrides.<primary>` for that primary only, and removes the key only when the level equals what the primary would fall back to (`defaultThinkingLevel` when set, else its packaged effort for the current provider); any other level is written as an override. Otherwise it saves `defaultThinkingLevel`. The picker's default marker shows the primary's override, then `defaultThinkingLevel`.
 - **Esc** closes the picker without changing the active level or persistent default.
 
-Typed `/thinking <level>` and `/effort <level>` values, plus native thinking cycles/shortcuts, are session-only. The picker and typed commands use levels supported by the active model. For an enabled primary, TLH retains explicit choices through later turns and session-tree reapplication while that primary remains selected; a model switch clamps retained intent to a supported level. A new session or explicit primary-agent mode change clears session-only state, then uses the persisted default when present or the provider-aware packaged default otherwise.
+Typed `/thinking <level>` and `/effort <level>` values, plus native thinking cycles/shortcuts, are session-only. The picker and typed commands use levels supported by the active model. For an enabled primary, TLH retains explicit choices through later turns and session-tree reapplication while that primary remains selected; a model switch clamps retained intent to a supported level. A new session or explicit primary-agent mode change clears session-only state, then uses the per-primary override, then the persisted `defaultThinkingLevel` (a fallback below per-primary overrides), then the provider-aware packaged default. To undo a saved effort, delete the `effortOverrides.<primary>` key, re-save a level with `/effort`, or use `/reconcile` Reset.
 
 ### Model picker
 
@@ -139,8 +139,7 @@ For each subagent dispatch, the effective choices are resolved from highest to l
 1. A direct dispatch with an explicit model that already has a recognized `:effort` suffix is left unchanged; the suffix wins over any saved effort.
 2. A direct dispatch with an explicit model but no recognized suffix keeps that model. A recognized saved role effort is appended unchanged; an invalid saved value is omitted with a warning. A saved role model pin does not replace the caller's explicit model.
 3. When the dispatch has no explicit model, stored `/subagent-settings` values are resolved before bundled defaults. An available stored model pin is used, and any recognized stored effort is forwarded unchanged. A stored `model: false` means inherit the current session model and then apply the stored effort. A stored effort without a model pin applies to the resolved role model.
-4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. `code-reviewer`, `oracle`, and `contrarian` prefer an available opposite provider for independence; the other bundled roles generally follow the current session provider when TLH injects defaults.
-5. With no applicable stored override, TLH uses the bundled provider-aware role defaults. Opposite-provider selection for review roles is described in [review independence](models.md#review-independence-for-code-reviewer-oracle-and-contrarian).
+4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. Opposite-provider selection for review roles is described in [review independence](models.md#review-independence-for-code-reviewer-oracle-and-contrarian).
    A saved model pin that is no longer available is not silently replaced: TLH warns that `TLH saved minor-agent model override "<model>" is not in the available registry for <role>; forwarding the model argument to Pi for validation instead of swapping in bundled defaults. Update it with /subagent-settings set <role> model <provider/id> or clear it with /subagent-settings reset <role> model.` During dispatch, the subagents runtime uses fallback models from the role's saved `subagents.agentOverrides.<role>.fallbackModels` field or bundled agent frontmatter, together with TLH-generated provider-aware candidates. Caller-supplied `fallbackModels` are no longer accepted. Because TLH cannot observe every runtime fallback source, this warning does not claim that a dispatch will fail closed.
 
 Recognized effort overrides are forwarded unchanged on each dispatch. This includes explicit unknown models, persisted or project saved pins absent from the registry, and registry-known models whose metadata does not advertise the requested effort. Capability metadata may produce a diagnostic such as `TLH stored minor-agent effort "<level>" is not advertised by <provider/id>; the :<level> suffix is forwarded and Pi will validate it.`, but it never filters, neutralizes, or clears that suffix. An unavailable saved pin additionally reports `TLH stored minor-agent effort "<level>" had unavailable capability metadata for saved model "<provider/id>"; the :<level> suffix is forwarded and Pi will validate it for <role>.` Only syntactically invalid stored/project effort values are omitted, with an explicit invalid-effort warning naming the accepted levels.
@@ -191,7 +190,7 @@ In an interactive TLH session, `/reconcile` opens a picker listing every affecte
 For each role you have two choices:
 
 - **Keep** — acknowledges the new TLH packaged default and preserves your override unchanged. Non-destructive: nothing is written to or cleared from your settings. Keep requires a known session provider; when no provider is identified, TLH declines and asks you to rerun `/reconcile` in a session where a provider is active.
-- **Reset** — clears your stored override so the role resolves to TLH packaged defaults on the next dispatch. For primary agents, the packaged default is also applied to the active session immediately (subject to your `tlh.primaryAgent.applyModel` setting). Each reset is an independent write that creates a `settings.json.bak-*` backup; the notification shows the exact backup path.
+- **Reset** — clears your stored model and effort overrides (including effort-only primary overrides, which `/reconcile` also lists) in one backed-up write, so the role resolves to TLH packaged defaults on the next dispatch. For primary agents, the packaged default is also applied to the active session immediately (subject to your `tlh.primaryAgent.applyModel` setting). Each reset is an independent write that creates a `settings.json.bak-*` backup; the notification shows the exact backup path.
 
 **Keep is always undoable** because your override is never touched.
 
@@ -255,7 +254,7 @@ These commands ship inside the TLH package itself rather than through separately
 
 | Command                  | Extension           | Description                                                                                                                                         |
 | ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/annotate-last-message` | `the-last-harness`  | Open a native annotation window for the latest assistant message and send submitted feedback to the agent                                           |
+| `/annotate-last-message [N]` | `the-last-harness`  | Open a native annotation window for the latest (or Nth latest) assistant message and send submitted feedback to the agent                           |
 | `/annotate-git-diff`     | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
 | `/subagents-doctor`      | `subagents`         | Show first-party subagent runtime diagnostics                                                                                                       |
 
@@ -275,10 +274,11 @@ These commands ship inside the TLH package itself rather than through separately
 
 - Finds the latest completed assistant message on the active session branch and shows it with line numbers plus section-level grouping.
 - Lets you leave overall, section, and inline comments in one lightweight first-party TLH window.
-- When you submit, TLH sends a structured planning-oriented feedback prompt directly to the agent as a follow-up message. Your existing editor text is left untouched.
+- When you submit, TLH sends a structured planning-oriented feedback prompt directly to the agent as a follow-up message. Your existing editor text is left untouched. Closing the window discards unsent notes.
 - Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines.
 - It does not auto-apply code changes or silently mutate prior messages.
-- Use `/annotate-last-message` directly when you want to annotate the latest assistant reply.
+- Use `/annotate-last-message` directly when you want to annotate the latest assistant reply, or `/annotate-last-message N` (positive integer, 1 = latest) to annotate an earlier one. N ≥ 2 counts only completed text replies, skipping tool-use and empty turns; the prompt then refers to "your assistant message from N replies ago". Invalid arguments show a usage error; if fewer than N completed replies exist you get an "Only K completed assistant replies" error.
+- A section is a run of lines between blank lines. A fenced code block (` ``` ` or `~~~`) stays one section across blank lines, and a block containing only a horizontal rule is not a section.
 
 #### Extension-local notes
 
@@ -288,6 +288,7 @@ See [`extensions/the-last-harness/annotate-last-message/README.md`](../extension
 
 - `annotate-last-message requires interactive mode.` → run the command from the TLH TUI rather than a non-interactive command context.
 - `No assistant messages found on the current session branch.` → wait until the branch has an assistant reply, then rerun.
+- `Only K completed assistant replies found on the current session branch.` → rerun with a smaller `N`.
 - `Latest assistant message is incomplete (...)` → wait for the assistant turn to finish, then rerun.
 - `Latest assistant message has no text to annotate.` → rerun after a normal text reply; tool-only or empty assistant turns cannot be annotated.
 - `A last-message annotation window is already open.` → return to the existing window or close it before opening another.

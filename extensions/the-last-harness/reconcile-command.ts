@@ -11,7 +11,7 @@ import {
   type RoleDriftEntry,
 } from "./model-effort-reconcile.js";
 import {
-  clearPrimaryAgentModelOverrideByName,
+  clearPrimaryAgentOverridesByName,
   type TlhPrimaryAgentRuntime,
 } from "./primary-agent-runtime.js";
 import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
@@ -159,7 +159,7 @@ function notifyResetResult(
 function unrecognizedPrimaryOverrideMessage(agentName: string): string {
   const settingsPath = tlhSettingsPathForWrite();
   const location = settingsPath ? ` in ${formatHomePath(settingsPath)}` : "";
-  return `TLH reconcile: "${agentName}" is not a recognised TLH primary agent, so its override cannot be reset automatically. Remove it by hand from settings.tlh.primaryAgent.modelOverrides${location}.`;
+  return `TLH reconcile: "${agentName}" is not a recognised TLH primary agent, so its override cannot be reset automatically. Remove it by hand from settings.tlh.primaryAgent.modelOverrides/effortOverrides${location}.`;
 }
 
 function notifyUnrecognizedPrimaryOverride(
@@ -184,7 +184,7 @@ async function clearOverride(
     const result = await runtime.resetPrimaryAgentModelOverride(ctx, entry.name);
     return result ? { status: "cleared", result } : { status: "unrecognized" };
   }
-  const result = clearPrimaryAgentModelOverrideByName(ctx.cwd, entry.name);
+  const result = clearPrimaryAgentOverridesByName(ctx.cwd, entry.name);
   return result ? { status: "cleared", result } : { status: "unrecognized" };
 }
 
