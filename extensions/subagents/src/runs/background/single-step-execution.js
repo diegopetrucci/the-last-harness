@@ -722,7 +722,7 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
             ensureKillCleanup();
         }
         try {
-            const run = await runPiStreaming(attempt.args, path.resolve(step.cwd ?? stepCtx.cwd), stepCtx.outputFile, appendDiagnosticJsonl, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, step.maxSubagentDepth, {
+            const run = await runPiStreaming(attempt.args, path.resolve(step.cwd ?? stepCtx.cwd), stepCtx.outputFile, appendDiagnosticJsonl, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, {
                 eventsPath: setup.eventsPath,
                 runId: stepCtx.id,
                 stepIndex: stepCtx.flatIndex,

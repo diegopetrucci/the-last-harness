@@ -3,18 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.js";
 import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.js";
-import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.js";
 import { MAX_ASYNC_STATUS_BYTES } from "../shared/utils.js";
-import { ASYNC_DIR, TEMP_ROOT_DIR } from "../shared/types.js";
+import { ASYNC_DIR } from "../shared/types.js";
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const TERMINAL_ASYNC_DIR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const NESTED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
-const ROUTE_FILE = "route.json";
 const DEFAULT_PATHS = {
     asyncDir: ASYNC_DIR,
-    nestedRunsDir: NESTED_RUNS_DIR,
-    nestedEventsDir: NESTED_EVENTS_DIR,
 };
 function listDirectoryEntries(dirPath, strict) {
     if (!fs.existsSync(dirPath))
@@ -36,43 +30,7 @@ function listAsyncRunDirs(paths, strict) {
     for (const entry of listDirectoryEntries(paths.asyncDir, strict)) {
         if (!entry.isDirectory())
             continue;
-        entries.push({
-            asyncDir: path.join(paths.asyncDir, entry.name),
-            rootRunId: entry.name,
-            nested: false,
-        });
-    }
-    for (const rootEntry of listDirectoryEntries(paths.nestedRunsDir, strict)) {
-        if (!rootEntry.isDirectory())
-            continue;
-        const rootDir = path.join(paths.nestedRunsDir, rootEntry.name);
-        for (const runEntry of listDirectoryEntries(rootDir, strict)) {
-            if (!runEntry.isDirectory())
-                continue;
-            entries.push({
-                asyncDir: path.join(rootDir, runEntry.name),
-                rootRunId: rootEntry.name,
-                nested: true,
-            });
-        }
-    }
-    return entries;
-}
-function listNestedEventRoutes(nestedEventsDir, strict) {
-    const entries = [];
-    for (const entry of listDirectoryEntries(nestedEventsDir, strict)) {
-        if (!entry.isDirectory())
-            continue;
-        const dirPath = path.join(nestedEventsDir, entry.name);
-        let rootRunId;
-        try {
-            const route = JSON.parse(fs.readFileSync(path.join(dirPath, ROUTE_FILE), "utf-8"));
-            if (typeof route.rootRunId === "string" && route.rootRunId)
-                rootRunId = route.rootRunId;
-        }
-        catch {
-        }
-        entries.push({ dirPath, rootRunId, referenceMtimeMs: newestTreeMtimeMs(dirPath) });
+        entries.push({ asyncDir: path.join(paths.asyncDir, entry.name) });
     }
     return entries;
 }
@@ -245,7 +203,6 @@ function inspectAsyncDir(entry, now, kill) {
     if (invalid) {
         return {
             entry,
-            rootRunId: entry.rootRunId,
             keep: true,
             activeOrLive: false,
         };
@@ -253,15 +210,12 @@ function inspectAsyncDir(entry, now, kill) {
     if (!status) {
         return {
             entry,
-            rootRunId: entry.rootRunId,
             keep: now - dirMtimeMs < EMPTY_ASYNC_DIR_MAX_AGE_MS,
             activeOrLive: false,
         };
     }
-    const rootRunId = entry.nested ? entry.rootRunId : status.runId || entry.rootRunId;
     return {
         entry,
-        rootRunId,
         ...inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill),
     };
 }
@@ -274,42 +228,13 @@ function removeDir(dirPath) {
         return false;
     }
 }
-function removeIfEmpty(dirPath) {
-    try {
-        if (!fs.existsSync(dirPath))
-            return true;
-        const stat = fs.statSync(dirPath);
-        if (!stat.isDirectory())
-            return false;
-        if (fs.readdirSync(dirPath).length > 0)
-            return false;
-        fs.rmdirSync(dirPath);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
 function resolvePaths(paths) {
     return {
         asyncDir: paths?.asyncDir ?? DEFAULT_PATHS.asyncDir,
-        nestedRunsDir: paths?.nestedRunsDir ?? DEFAULT_PATHS.nestedRunsDir,
-        nestedEventsDir: paths?.nestedEventsDir ?? DEFAULT_PATHS.nestedEventsDir,
     };
 }
 function inspectRuntimeDirsInternal(paths, now, kill, strict) {
-    const asyncDirs = listAsyncRunDirs(paths, strict).map((entry) => inspectAsyncDir(entry, now, kill));
-    const retainedRootRunIds = new Set(asyncDirs.filter((entry) => entry.keep).map((entry) => entry.rootRunId));
-    const nestedEventRoutes = listNestedEventRoutes(paths.nestedEventsDir, strict).map((entry) => ({
-        ...entry,
-        keep: !entry.rootRunId ||
-            retainedRootRunIds.has(entry.rootRunId) ||
-            now - entry.referenceMtimeMs < UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS,
-    }));
-    return {
-        asyncDirs,
-        nestedEventRoutes,
-    };
+    return listAsyncRunDirs(paths, strict).map((entry) => inspectAsyncDir(entry, now, kill));
 }
 export function inspectRuntimeDirs(paths, deps = {}) {
     const now = deps.now?.() ?? Date.now();
@@ -317,13 +242,10 @@ export function inspectRuntimeDirs(paths, deps = {}) {
     const resolvedPaths = resolvePaths(paths);
     const inspection = inspectRuntimeDirsInternal(resolvedPaths, now, kill, true);
     return {
-        topLevelAsyncDirs: inspection.asyncDirs.filter((entry) => !entry.entry.nested).length,
-        nestedAsyncDirs: inspection.asyncDirs.filter((entry) => entry.entry.nested).length,
-        retainedAsyncDirs: inspection.asyncDirs.filter((entry) => entry.keep).length,
-        activeOrLiveAsyncDirs: inspection.asyncDirs.filter((entry) => entry.activeOrLive).length,
-        staleAsyncDirs: inspection.asyncDirs.filter((entry) => !entry.keep).length,
-        nestedEventDirs: inspection.nestedEventRoutes.length,
-        unreferencedNestedEventDirs: inspection.nestedEventRoutes.filter((entry) => !entry.keep).length,
+        asyncDirs: inspection.length,
+        retainedAsyncDirs: inspection.filter((entry) => entry.keep).length,
+        activeOrLiveAsyncDirs: inspection.filter((entry) => entry.activeOrLive).length,
+        staleAsyncDirs: inspection.filter((entry) => !entry.keep).length,
     };
 }
 export function cleanupRuntimeDirs(paths, deps = {}) {
@@ -331,35 +253,16 @@ export function cleanupRuntimeDirs(paths, deps = {}) {
     const kill = deps.kill ?? process.kill;
     const resolvedPaths = resolvePaths(paths);
     const inspection = inspectRuntimeDirsInternal(resolvedPaths, now, kill, false);
-    const retainedRootRunIds = new Set();
     let removedAsyncDirs = 0;
-    for (const entry of inspection.asyncDirs) {
-        if (entry.keep) {
-            retainedRootRunIds.add(entry.rootRunId);
+    for (const entry of inspection) {
+        if (entry.keep)
             continue;
-        }
         const latest = inspectAsyncDir(entry.entry, now, kill);
-        if (latest.keep) {
-            retainedRootRunIds.add(latest.rootRunId);
+        if (latest.keep)
             continue;
-        }
-        if (!removeDir(entry.entry.asyncDir)) {
-            retainedRootRunIds.add(entry.rootRunId);
+        if (!removeDir(entry.entry.asyncDir))
             continue;
-        }
         removedAsyncDirs += 1;
-        if (entry.entry.nested) {
-            removeIfEmpty(path.dirname(entry.entry.asyncDir));
-            removeIfEmpty(resolvedPaths.nestedRunsDir);
-        }
     }
-    let removedNestedEventDirs = 0;
-    for (const route of inspection.nestedEventRoutes) {
-        if (route.keep || (route.rootRunId && retainedRootRunIds.has(route.rootRunId)))
-            continue;
-        if (!removeDir(route.dirPath))
-            continue;
-        removedNestedEventDirs += 1;
-    }
-    return { removedAsyncDirs, removedNestedEventDirs };
+    return { removedAsyncDirs };
 }

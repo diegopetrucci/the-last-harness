@@ -114,7 +114,6 @@ describe("async post-run facts", () => {
         artifactsDir: path.join(tempDir, "artifacts"),
         artifactConfig: artifactConfig(),
         shareEnabled: false,
-        maxSubagentDepth: 2,
       });
       assert.equal(started.isError, undefined);
       await waitForMarker(startedMarker);
@@ -257,7 +256,6 @@ describe("async post-run facts", () => {
           enabled: false,
         },
         shareEnabled: false,
-        maxSubagentDepth: 2,
       });
       assert.equal(started.isError, undefined);
       await waitForAsyncResultFile(id);

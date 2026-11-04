@@ -78,12 +78,9 @@ function formatSessionLines(input) {
 function formatRuntimeDirCounts(paths) {
     const counts = inspectRuntimeDirs({
         asyncDir: paths.asyncDir,
-        nestedRunsDir: path.join(paths.tempRootDir, "nested-subagent-runs"),
-        nestedEventsDir: path.join(paths.tempRootDir, "nested-subagent-events"),
     });
-    return (`- runtime dir counts: async ${counts.topLevelAsyncDirs + counts.nestedAsyncDirs} ` +
-        `(top-level ${counts.topLevelAsyncDirs}, nested ${counts.nestedAsyncDirs}, active/live ${counts.activeOrLiveAsyncDirs}, stale ${counts.staleAsyncDirs}); ` +
-        `nested event routes ${counts.nestedEventDirs} (unreferenced ${counts.unreferencedNestedEventDirs})`);
+    return (`- runtime dir counts: async ${counts.asyncDirs} ` +
+        `(active/live ${counts.activeOrLiveAsyncDirs}, stale ${counts.staleAsyncDirs})`);
 }
 function formatStatusHealth(paths) {
     const unreadableStatuses = [];

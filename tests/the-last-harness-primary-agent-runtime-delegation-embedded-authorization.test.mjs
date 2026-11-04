@@ -313,7 +313,7 @@ function rushExecutorCaller({ fixture, owner, toolCall, hookCtx, afterHook }) {
   const executor = createSubagentExecutor({
     pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" },
     state: makeSubagentState({ baseCwd: fixture.cwd }),
-    config: { maxSubagentDepth: 2, control: {} },
+    config: { control: {} },
     tempArtifactsDir: fixture.cwd,
     getSubagentSessionRoot: () => join(fixture.cwd, "sessions"),
     expandTilde: (value) => value,

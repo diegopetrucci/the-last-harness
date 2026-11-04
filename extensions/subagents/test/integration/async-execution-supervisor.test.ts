@@ -124,7 +124,6 @@ describe("async execution supervisor", () => {
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
     const statusPath = path.join(ASYNC_DIR, id, "status.json");
     await waitForAsyncStatusPredicate(
@@ -208,7 +207,6 @@ describe("async execution supervisor", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
         });
         assert.equal(started.isError, undefined);
         const asyncDir = path.join(ASYNC_DIR, id);
@@ -352,7 +350,6 @@ describe("async execution supervisor", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
         });
         const asyncDir = path.join(ASYNC_DIR, id);
         await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
@@ -454,7 +451,6 @@ describe("async execution supervisor", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
         });
         const asyncDir = path.join(ASYNC_DIR, id);
         await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
@@ -555,7 +551,6 @@ describe("async execution supervisor", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
         });
         const asyncDir = path.join(ASYNC_DIR, id);
         await waitForAsyncState(asyncDir, "paused");
@@ -628,7 +623,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       await waitForAsyncState(asyncDir, "paused");
@@ -701,7 +695,6 @@ describe("async execution supervisor", () => {
             cleanupDays: 7,
           },
           sessionRoot: path.join(tempDir, "sessions"),
-          maxSubagentDepth: 2,
         });
         const asyncDir = path.join(ASYNC_DIR, id);
         await waitForAsyncState(asyncDir, "paused");
@@ -788,7 +781,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       await waitForAsyncState(asyncDir, "paused");
@@ -858,7 +850,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       await waitForAsyncState(asyncDir, "paused");
@@ -966,7 +957,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       const pausingStatus = await waitForAsyncStatusPredicate(
@@ -1048,7 +1038,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       const runningStatus = await waitForAsyncStatusPredicate(
@@ -1126,7 +1115,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const asyncDir = path.join(ASYNC_DIR, id);
       const pausingStatus = await waitForAsyncStatusPredicate(
@@ -1215,7 +1203,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const supervisorFirstDir = path.join(ASYNC_DIR, supervisorFirstId);
       const pausing = await waitForAsyncStatusPredicate(
@@ -1263,7 +1250,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const interruptFirstDir = path.join(ASYNC_DIR, interruptFirstId);
       const running = await waitForAsyncStatusPredicate(
@@ -1324,7 +1310,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const progressPayload = await readAsyncPayload(progressId);
       assert.equal(progressPayload.state, "complete");
@@ -1357,7 +1342,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       const nativeUpdatePayload = await readAsyncPayload(nativeUpdateId);
       assert.equal(nativeUpdatePayload.state, "complete");
@@ -1432,7 +1416,6 @@ describe("async execution supervisor", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
       assert.equal(started.isError, undefined);
       const resultPromise = readAsyncPayload(cohortId);

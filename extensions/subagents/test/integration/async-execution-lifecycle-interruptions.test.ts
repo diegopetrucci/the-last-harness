@@ -290,7 +290,6 @@ describe("async execution lifecycle interruptions", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          maxSubagentDepth: 2,
         });
 
         // Startup may expire before the preload reaches readyPath; the terminal
@@ -361,7 +360,6 @@ describe("async execution lifecycle interruptions", () => {
           cleanupDays: 7,
         },
         shareEnabled: false,
-        maxSubagentDepth: 2,
       });
 
       await waitForMockPiCall(mockPi, 2);
@@ -442,7 +440,6 @@ describe("async execution lifecycle interruptions", () => {
             cleanupDays: 7,
           },
           shareEnabled: false,
-          maxSubagentDepth: 2,
           sessionRoot,
         });
 
@@ -541,7 +538,6 @@ describe("async execution lifecycle interruptions", () => {
             cleanupDays: 7,
           },
           shareEnabled: false,
-          maxSubagentDepth: 2,
           sessionRoot,
         });
 
@@ -627,7 +623,6 @@ describe("async execution lifecycle interruptions", () => {
           cleanupDays: 7,
         },
         shareEnabled: false,
-        maxSubagentDepth: 2,
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 2_000,
@@ -721,7 +716,6 @@ describe("async execution lifecycle interruptions", () => {
           cleanupDays: 7,
         },
         shareEnabled: false,
-        maxSubagentDepth: 2,
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 2_000,
@@ -828,7 +822,6 @@ describe("async execution lifecycle interruptions", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     await waitForMockPiCall(mockPi, 0);
@@ -910,7 +903,6 @@ describe("async execution lifecycle interruptions", () => {
           cleanupDays: 7,
         },
         shareEnabled: false,
-        maxSubagentDepth: 2,
       });
       await waitForMockPiCall(mockPi, 0);
 
@@ -964,7 +956,6 @@ describe("async execution lifecycle interruptions", () => {
           cleanupDays: 7,
         },
         shareEnabled: false,
-        maxSubagentDepth: 2,
       });
       assert.equal(launch.isError, undefined);
       assert.equal(launch.details.timeoutMs, undefined);
@@ -1053,7 +1044,6 @@ describe("async execution lifecycle interruptions", () => {
             cleanupDays: 7,
           },
           shareEnabled: false,
-          maxSubagentDepth: 2,
           ...options,
         });
 
@@ -1157,7 +1147,6 @@ describe("async execution lifecycle interruptions", () => {
       },
       shareEnabled: false,
       sessionRoot,
-      maxSubagentDepth: 2,
     });
 
     await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -1205,7 +1194,6 @@ describe("async execution lifecycle interruptions", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -1260,7 +1248,6 @@ describe("async execution lifecycle interruptions", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -1292,7 +1279,6 @@ describe("async execution lifecycle interruptions", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     await waitForMockPiCall(mockPi, 0);

@@ -82,7 +82,6 @@ describe("subagent telemetry persistence", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
       controlConfig: controls,
       telemetryProvenance: provenance,
     });
@@ -141,7 +140,7 @@ describe("subagent telemetry persistence", () => {
     const executor = createSubagentExecutor({
       pi: makeExtensionAPI(),
       state,
-      config: { maxSubagentDepth: 2 },
+      config: {},
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       tempArtifactsDir: tempDir,
       getSubagentSessionRoot: () => tempDir,

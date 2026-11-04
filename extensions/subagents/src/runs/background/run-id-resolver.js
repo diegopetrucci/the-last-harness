@@ -3,7 +3,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
 import { findAsyncRunPrefixMatches } from "./async-resume.js";
-import { assertSafeNestedId } from "../shared/nested-events.js";
+function isSafeRunId(value) {
+    return (typeof value === "string" &&
+        value.length > 0 &&
+        value.length <= 128 &&
+        !path.isAbsolute(value) &&
+        !value.includes("/") &&
+        !value.includes("\\") &&
+        !value.includes(".."));
+}
+function assertSafeRunId(label, value) {
+    if (!isSafeRunId(value))
+        throw new Error(`${label} must be a non-empty safe id token.`);
+}
 function exactAsyncLocation(id, asyncDirRoot, resultsDir) {
     const asyncDir = path.join(asyncDirRoot, id);
     const resultPath = path.join(resultsDir, `${id}.json`);
@@ -16,7 +28,7 @@ function exactAsyncLocation(id, asyncDirRoot, resultsDir) {
     };
 }
 export function resolveSubagentRunId(id, deps = {}) {
-    assertSafeNestedId("id", id);
+    assertSafeRunId("id", id);
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
     const resultsDir = deps.resultsDir ?? RESULTS_DIR;
     const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);

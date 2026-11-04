@@ -75,7 +75,6 @@ describe("async execution runner deadlines and process failures", () => {
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(result.isError, undefined);
@@ -110,7 +109,6 @@ describe("async execution runner deadlines and process failures", () => {
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(result.isError, undefined);
@@ -162,7 +160,6 @@ describe("async execution runner deadlines and process failures", () => {
       ctx,
       artifactConfig,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
     assert.equal(parallel.isError, undefined);
     await assertConfig(parallelId, undefined);
@@ -176,7 +173,6 @@ describe("async execution runner deadlines and process failures", () => {
       ctx,
       artifactConfig,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
     assert.equal(singleRun.isError, undefined);
     await assertConfig(singleRunId, undefined);
@@ -190,7 +186,6 @@ describe("async execution runner deadlines and process failures", () => {
       ctx,
       artifactConfig,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
     assert.equal(singleRole.isError, undefined);
     await assertConfig(singleRoleId, maxSafeDuration);
@@ -458,7 +453,6 @@ describe("async execution runner deadlines and process failures", () => {
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(result.isError, undefined);
@@ -671,7 +665,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
 
     const asyncDir = path.join(ASYNC_DIR, id);
@@ -713,7 +706,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
 
     // A role timeout may fire before the mock process publishes its call record
@@ -760,7 +752,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
 
     await waitForMockPiCall(mockPi, 0, scaleTestTimeout(10_000), {
@@ -808,7 +799,6 @@ describe("async execution runner deadlines and process failures", () => {
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(result.isError, true);
@@ -835,7 +825,6 @@ describe("async execution runner deadlines and process failures", () => {
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(singleResult.isError, true);
@@ -857,7 +846,6 @@ describe("async execution runner deadlines and process failures", () => {
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(parallelResult.isError, true);
@@ -887,7 +875,6 @@ describe("async execution runner deadlines and process failures", () => {
           cleanupDays: 7,
         },
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       assert.equal(result.isError, true);

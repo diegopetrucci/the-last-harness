@@ -4,7 +4,6 @@ import { appendSubagentTelemetryContinuation, continuationTelemetryMetadata, nor
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.js";
-import { resolveCurrentMaxSubagentDepth, checkSubagentDepth } from "../../shared/types.js";
 import { getArtifactsDir } from "../../shared/artifacts.js";
 import { UNCHANGED_SUPERVISOR_RESUME_MESSAGE } from "../../shared/pause-messages.js";
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
@@ -691,19 +690,6 @@ export async function resumeAsyncRun(input) {
             };
         }
     }
-    const { blocked, depth, maxDepth } = checkSubagentDepth(input.deps.config.maxSubagentDepth);
-    if (blocked) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: `Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`,
-                },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-        };
-    }
     const effectiveCwd = persistedProjectAuthorization?.canonicalCwd ?? target.cwd ?? input.requestCwd;
     const scope = resolveExecutionAgentScope(input.params.agentScope);
     const discovered = persistedProjectAuthorization
@@ -831,7 +817,6 @@ export async function resumeAsyncRun(input) {
             activeRuntimeMs,
             ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
             outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
-            maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
             controlConfig: resolveControlConfig(input.deps.config.control),
             availableModels,
             providerFallbackModels: providerFallbackModelsForTarget(input.params),

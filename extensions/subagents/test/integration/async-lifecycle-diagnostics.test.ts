@@ -179,7 +179,6 @@ async function runLifecycleFaultCase(
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     const runningStatus = await waitForAsyncStatusPredicate(
@@ -332,7 +331,6 @@ async function runParallelLifecycleFaultCase(
         cleanupDays: 7,
       },
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
     assert.equal(started.isError, undefined);
 

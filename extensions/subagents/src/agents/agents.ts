@@ -51,6 +51,7 @@ const KNOWN_FIELDS = new Set([
   "defaultProgress",
   // Accepted as a retired definition field but deliberately not stored or executed.
   "interactive",
+  // Accepted but ignored: the subagent depth limit was removed.
   "maxSubagentDepth",
   "maxExecutionTimeMs",
   "supervisorBridge",
@@ -126,7 +127,6 @@ export interface AgentConfig {
   output?: string;
   defaultReads?: string[];
   defaultProgress?: boolean;
-  maxSubagentDepth?: number;
   /** When false, omit generic native supervisor guidance and contact_supervisor runtime support. */
   supervisorBridge?: boolean;
   maxExecutionTimeMs?: number;
@@ -776,7 +776,6 @@ export function parseAgentDefinition(
   for (const [key, value] of Object.entries(frontmatter)) {
     if (!KNOWN_FIELDS.has(key)) extraFields[key] = value;
   }
-  const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
   const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(
     frontmatter.maxExecutionTimeMs,
     "maxExecutionTimeMs",
@@ -809,10 +808,6 @@ export function parseAgentDefinition(
     output: frontmatter.output,
     defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
     defaultProgress: frontmatter.defaultProgress === "true",
-    maxSubagentDepth:
-      Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
-        ? parsedMaxSubagentDepth
-        : undefined,
     supervisorBridge,
     maxExecutionTimeMs,
     extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,

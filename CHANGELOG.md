@@ -106,6 +106,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
 - Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
 - Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
+- Removed the subagent depth limit (`maxSubagentDepth`, `PI_SUBAGENT_DEPTH`/`PI_SUBAGENT_MAX_DEPTH`; stale values are ignored and `maxSubagentDepth: 0` no longer disables dispatch) and the retired nested-directory cleanup ([#870](https://github.com/diegopetrucci/the-last-harness/pull/870)).
 
 ### Internal
 

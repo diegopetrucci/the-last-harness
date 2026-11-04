@@ -141,7 +141,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot,
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -242,7 +241,6 @@ describe("async execution model restoration and fallback", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const payload = JSON.parse(
@@ -300,7 +298,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
     const payload = JSON.parse(
       fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
@@ -368,7 +365,6 @@ describe("async execution model restoration and fallback", () => {
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       const resultPath = await waitForAsyncResultFile(id);
@@ -431,7 +427,6 @@ describe("async execution model restoration and fallback", () => {
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       await waitForAsyncStatusPredicate(
@@ -497,7 +492,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
     const payload = JSON.parse(
       fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
@@ -538,7 +532,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -605,7 +598,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -677,7 +669,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     // Simulated crash window: the second (fallback) attempt is running but the
@@ -761,7 +752,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -811,7 +801,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -861,7 +850,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     const payload = JSON.parse(
@@ -917,7 +905,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     await waitForAsyncResultFile(id, scaleTestTimeout(15_000));
@@ -975,7 +962,6 @@ describe("async execution model restoration and fallback", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -1027,7 +1013,6 @@ describe("async execution model restoration and fallback", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -1088,7 +1073,6 @@ describe("async execution model restoration and fallback", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -1225,7 +1209,6 @@ describe("async execution model restoration and fallback", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -1281,7 +1264,6 @@ describe("async execution model restoration and fallback", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -1329,7 +1311,6 @@ describe("async execution model restoration and fallback", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -1383,7 +1364,6 @@ describe("async execution model restoration and fallback", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);

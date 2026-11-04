@@ -24,13 +24,12 @@ function readPackageBinPath(packageJson: unknown): string | undefined {
 export function buildSubagentSpawnEnv(
   inheritedEnv: NodeJS.ProcessEnv,
   explicitEnv: Record<string, string | undefined> | undefined,
-  depthEnv: Record<string, string>,
 ): NodeJS.ProcessEnv {
   // Pane lifecycle state belongs to the TUI session that owns the pane, never an inherited child process.
   const filteredInheritedEnv = Object.fromEntries(
     Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("HERDR_")),
   );
-  return { ...filteredInheritedEnv, ...explicitEnv, ...depthEnv };
+  return { ...filteredInheritedEnv, ...explicitEnv };
 }
 
 function findPiPackageRootFromEntry(entryPoint: string): string | undefined {

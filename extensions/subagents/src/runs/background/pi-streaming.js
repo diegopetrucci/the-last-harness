@@ -1,7 +1,7 @@
 // Generated from extensions/subagents/src/runs/background/pi-streaming.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
-import { getSubagentDepthEnv, } from "../../shared/types.js";
+import {} from "../../shared/types.js";
 import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.js";
 import { CHILD_PROTOCOL_HARD_KILL_GRACE_MS, appendBoundedChildMessage, boundChildError, boundChildStderrError, claimChildTerminalReason, childUsageNumber, createBoundedBytePrefix, createBoundedByteTail, createBoundedLineReader, formatBoundedRawStdout, formatBoundedStderr, formatProtocolOutputLimit, formatStderrLineOverflow, formatStderrTailOverflow, MAX_CHILD_RAW_STDOUT_BYTES, MAX_CHILD_STDERR_LINE_BYTES, parseChildProtocolInput, } from "../shared/child-protocol.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
@@ -71,10 +71,10 @@ export function terminateLiveChildGroups(graceMs = LIVE_CHILD_GROUP_TERM_GRACE_M
         poll();
     });
 }
-export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env, piPackageRoot, piArgv1, maxSubagentDepth, childEventContext, registerInterrupt, onChildEvent, transcriptWriter, registerTimeout, timeoutMessage, onChildProtocolOutputLimit, context) {
+export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env, piPackageRoot, piArgv1, childEventContext, registerInterrupt, onChildEvent, transcriptWriter, registerTimeout, timeoutMessage, onChildProtocolOutputLimit, context) {
     return new Promise((resolve) => {
         const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
-        const spawnEnv = buildSubagentSpawnEnv(process.env, env, getSubagentDepthEnv(maxSubagentDepth));
+        const spawnEnv = buildSubagentSpawnEnv(process.env, env);
         const spawnSpec = getPiSpawnCommand(args, {
             ...(piPackageRoot ? { piPackageRoot } : {}),
             ...(piArgv1 ? { argv1: piArgv1 } : {}),
