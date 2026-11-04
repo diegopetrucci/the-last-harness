@@ -117,7 +117,7 @@ All notable changes to The Last Harness will be documented in this file.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 - Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
 - The test process-liveness probe now treats a `/proc/<pid>/stat` read that fails with `ENOENT`/`ESRCH` after a successful `kill(pid, 0)` as the process being gone, fixing a reap-race flake in detached-child cleanup tests ([#865](https://github.com/diegopetrucci/the-last-harness/pull/865)).
-- The subagent mock-pi test helper now keeps its 500ms force-exit cap only on Windows and uses 10s elsewhere, so large async pipe writes (e.g. on macOS) are no longer truncated before the parent reads them.
+- The subagent mock-pi test helper now keeps its 500ms force-exit cap only on Windows and uses 10s elsewhere, so large async pipe writes (e.g. on macOS) are no longer truncated before the parent reads them ([#872](https://github.com/diegopetrucci/the-last-harness/pull/872)).
 
 ## [0.46.0] - 2026-10-20
 
