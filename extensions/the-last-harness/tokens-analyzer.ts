@@ -1,6 +1,6 @@
 import type { ExtensionContext, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { computeMedian, pairToolCalls } from "./tool-pairing.js";
-import { getMcpToolKind } from "./mcp-tools.js";
+import { getMcpToolKind, readNestedToolCalls } from "./mcp-tools.js";
 
 // Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats.
 // See ../../docs/upstream-sync-inventory.md for sync/review guidance.
@@ -83,7 +83,7 @@ export type TlhSanitizedReference = {
 type TlhToolSourceEstimate = {
   key: string;
   label: string;
-  kind: "built-in" | "extension" | "mcp-proxy" | "mcp-direct" | "unknown";
+  kind: "built-in" | "extension" | "mcp" | "codemode" | "unknown";
   source?: string;
   scope?: string;
   origin?: string;
@@ -310,10 +310,15 @@ export type TlhSessionUsageAnalysis = {
     totalCalls: number;
     totalResults: number;
     totalErrors: number;
+    /** Native MCP calls: model-issued plus calls made from codemode scripts, each counted once. */
     mcpCalls: number;
-    mcpProxyCalls: number;
+    /** Native MCP calls the model issued itself (transcript tool calls). */
     mcpDirectCalls: number;
-    /** Estimated tokens across all MCP tool calls and results combined. */
+    /** Native MCP calls made from codemode scripts (`nestedCalls` records; not in the transcript). */
+    mcpCodemodeCalls: number;
+    /** Invocations of the native codemode tool. */
+    codemodeCalls: number;
+    /** Estimated tokens across model-issued native MCP tool calls and results combined. */
     mcpApproxTokens: number;
     /** Estimated tokens across all tool calls and results combined. */
     totalToolApproxTokens: number;
@@ -412,8 +417,12 @@ export function analyzeSessionEntries(
   let currentTurn: MutableTurn | undefined;
   let totalToolResults = 0;
   let totalToolErrors = 0;
-  let mcpProxyCalls = 0;
   let mcpDirectCalls = 0;
+  let mcpCodemodeCalls = 0;
+  let codemodeCalls = 0;
+  // Nested (codemode) calls are counted once, by call id, whether they arrive as a transcript
+  // message carrying `parentToolCallId` or as a `nestedCalls` record on the parent result.
+  const countedNestedCallIds = new Set<string>();
 
   // Cache-miss detection is kept separate so the session aggregation below only coordinates it.
   const cacheMissAnalyzer = createCacheMissAnalyzer(priceSource);
@@ -557,7 +566,7 @@ export function analyzeSessionEntries(
             resultCount: 0,
             errorCount: 0,
             approxTokens: 0,
-            mcp: source.kind === "mcp-proxy" || source.kind === "mcp-direct",
+            mcp: source.kind === "mcp",
             source,
           };
           existing.callCount += 1;
@@ -578,13 +587,11 @@ export function analyzeSessionEntries(
 
           turn.toolCalls.total += 1;
           turn.toolCallCounts.set(block.name, (turn.toolCallCounts.get(block.name) ?? 0) + 1);
-          if (source.kind === "mcp-proxy" || source.kind === "mcp-direct") {
+          if (source.kind === "mcp") {
             turn.toolCalls.mcp += 1;
-            if (source.kind === "mcp-proxy") {
-              mcpProxyCalls += 1;
-            } else {
-              mcpDirectCalls += 1;
-            }
+            mcpDirectCalls += 1;
+          } else if (source.kind === "codemode") {
+            codemodeCalls += 1;
           }
         }
       }
@@ -593,6 +600,37 @@ export function analyzeSessionEntries(
 
     if (message.role !== "toolResult") {
       continue;
+    }
+
+    // Codemode nested calls never reach the transcript as their own tool results. Count native
+    // MCP calls from the parent's `nestedCalls` record, and ignore any nested result message
+    // (`parentToolCallId`) so a call is never counted as both model-issued and nested. Their
+    // arguments and results are not attributed tokens: only the codemode script's own arguments
+    // and result are model-visible, and those are already counted under the codemode tool.
+    const countNestedMcpCall = (id: string | undefined, name: unknown) => {
+      if (typeof name !== "string" || getMcpToolKind(name, toolCatalogByName.get(name)) !== "mcp") {
+        return;
+      }
+      if (id !== undefined) {
+        if (countedNestedCallIds.has(id)) {
+          return;
+        }
+        countedNestedCallIds.add(id);
+      }
+      mcpCodemodeCalls += 1;
+      if (currentTurn) {
+        currentTurn.toolCalls.mcp += 1;
+      }
+    };
+    if (typeof (message as { parentToolCallId?: unknown }).parentToolCallId === "string") {
+      countNestedMcpCall(
+        typeof message.toolCallId === "string" ? message.toolCallId : undefined,
+        message.toolName,
+      );
+      continue;
+    }
+    for (const nested of readNestedToolCalls(message)) {
+      countNestedMcpCall(nested.id, nested.name);
     }
 
     totalToolResults += 1;
@@ -614,7 +652,7 @@ export function analyzeSessionEntries(
         resultCount: 0,
         errorCount: 0,
         approxTokens: 0,
-        mcp: source.kind === "mcp-proxy" || source.kind === "mcp-direct",
+        mcp: source.kind === "mcp",
         source,
       };
       existing.resultCount += 1;
@@ -721,9 +759,10 @@ export function analyzeSessionEntries(
       totalCalls: [...toolUsage.values()].reduce((sum, tool) => sum + tool.callCount, 0),
       totalResults: totalToolResults,
       totalErrors: totalToolErrors,
-      mcpCalls: mcpProxyCalls + mcpDirectCalls,
-      mcpProxyCalls,
+      mcpCalls: mcpDirectCalls + mcpCodemodeCalls,
       mcpDirectCalls,
+      mcpCodemodeCalls,
+      codemodeCalls,
       byTool: [...toolUsage.values()].sort(
         (left, right) =>
           right.approxTokens - left.approxTokens ||
@@ -1140,15 +1179,11 @@ function estimateToolSource(
 ): TlhToolSourceEstimate {
   const mcpKind = getMcpToolKind(toolName, catalogEntry);
 
-  if (mcpKind === "proxy") {
+  if (mcpKind === "mcp") {
     return {
-      key: catalogEntry?.sourceInfo?.source
-        ? `mcp-proxy:${catalogEntry.sourceInfo.source}`
-        : "mcp-proxy",
-      label: catalogEntry?.sourceInfo?.source
-        ? `MCP proxy (${catalogEntry.sourceInfo.source})`
-        : "MCP proxy",
-      kind: "mcp-proxy",
+      key: "mcp",
+      label: "MCP",
+      kind: "mcp",
       source: catalogEntry?.sourceInfo?.source,
       scope: catalogEntry?.sourceInfo?.scope,
       origin: catalogEntry?.sourceInfo?.origin,
@@ -1156,15 +1191,11 @@ function estimateToolSource(
     };
   }
 
-  if (mcpKind === "direct") {
+  if (mcpKind === "codemode") {
     return {
-      key: catalogEntry?.sourceInfo?.source
-        ? `mcp-direct:${catalogEntry.sourceInfo.source}`
-        : `mcp-direct:${toolName}`,
-      label: catalogEntry?.sourceInfo?.source
-        ? `MCP direct (${catalogEntry.sourceInfo.source})`
-        : `MCP direct (${toolName})`,
-      kind: "mcp-direct",
+      key: "codemode",
+      label: "Codemode",
+      kind: "codemode",
       source: catalogEntry?.sourceInfo?.source,
       scope: catalogEntry?.sourceInfo?.scope,
       origin: catalogEntry?.sourceInfo?.origin,

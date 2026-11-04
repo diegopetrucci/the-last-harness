@@ -109,6 +109,7 @@ export default function theLastHarness(pi) {
     let activeTlhHeaderSessionToken = 0;
     let activeTlhHeaderComponentId = 0;
     let tlhHeaderComponentGeneration = 0;
+    let refreshActiveLaunchContext;
     const invalidateActiveTlhHeaderSession = () => {
         activeTlhHeaderSessionToken += 1;
         activeTlhHeader = undefined;
@@ -276,6 +277,9 @@ export default function theLastHarness(pi) {
     pi.on("turn_start", (_event, ctx) => {
         setTlhTerminalTitle(ctx);
     });
+    pi.on("agent_start", (_event, ctx) => {
+        refreshActiveLaunchContext?.(ctx);
+    });
     pi.on("turn_end", (_event, ctx) => {
         setTlhTerminalTitle(ctx);
         refreshSubscriptionUsage(ctx);
@@ -404,13 +408,13 @@ export default function theLastHarness(pi) {
                     sessionState.requestFooterRender?.();
                 },
             }).catch(() => undefined);
-            const launchContextInputs = (() => {
+            const captureLaunchContextInputs = (captureCtx) => {
                 try {
-                    const baseSystemPrompt = ctx.getSystemPrompt();
+                    const baseSystemPrompt = captureCtx.getSystemPrompt();
                     return {
-                        contextWindow: ctx.model?.contextWindow,
+                        contextWindow: captureCtx.model?.contextWindow,
                         baseSystemPrompt,
-                        launchSystemPrompt: primaryAgentRuntime.buildLaunchSystemPrompt(ctx, baseSystemPrompt),
+                        launchSystemPrompt: primaryAgentRuntime.buildLaunchSystemPrompt(captureCtx, baseSystemPrompt),
                         activeToolNames: pi.getActiveTools(),
                         allTools: pi.getAllTools(),
                     };
@@ -418,7 +422,36 @@ export default function theLastHarness(pi) {
                 catch {
                     return undefined;
                 }
-            })();
+            };
+            let launchContextInputs = captureLaunchContextInputs(ctx);
+            let promptMetadata;
+            const applyLaunchContext = () => {
+                let launchContextAllocation;
+                try {
+                    launchContextAllocation =
+                        launchContextInputs && promptMetadata
+                            ? estimateTlhLaunchContextAllocation({ ...launchContextInputs, promptMetadata })
+                            : undefined;
+                }
+                catch {
+                }
+                sessionState.launchContextAllocation = launchContextAllocation;
+                sessionState.header?.setLaunchContextAllocation(launchContextAllocation);
+                sessionState.requestRender?.();
+            };
+            refreshActiveLaunchContext = (runCtx) => {
+                if (activeTlhHeaderSessionToken !== sessionToken) {
+                    return;
+                }
+                const refreshed = captureLaunchContextInputs(runCtx);
+                if (!refreshed) {
+                    return;
+                }
+                launchContextInputs = refreshed;
+                if (promptMetadata) {
+                    applyLaunchContext();
+                }
+            };
             void startupResourceCollector(ctx.cwd, {
                 projectTrusted: getActiveProjectTrustDecision(ctx),
                 projectAgentGuidance: primaryAgentRuntime.projectAgentGuidanceSnapshot(),
@@ -427,22 +460,10 @@ export default function theLastHarness(pi) {
                 if (activeTlhHeaderSessionToken !== sessionToken) {
                     return;
                 }
-                let launchContextAllocation;
-                try {
-                    launchContextAllocation = launchContextInputs
-                        ? estimateTlhLaunchContextAllocation({
-                            ...launchContextInputs,
-                            promptMetadata: snapshot.promptMetadata,
-                        })
-                        : undefined;
-                }
-                catch {
-                }
+                promptMetadata = snapshot.promptMetadata;
                 sessionState.resources = snapshot.resources;
-                sessionState.launchContextAllocation = launchContextAllocation;
                 sessionState.header?.setResources(snapshot.resources);
-                sessionState.header?.setLaunchContextAllocation(launchContextAllocation);
-                sessionState.requestRender?.();
+                applyLaunchContext();
             })
                 .catch(() => {
             });

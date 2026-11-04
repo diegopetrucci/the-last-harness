@@ -1,28 +1,34 @@
-import { appendFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import readline from "node:readline";
 
-const pidFile = process.env.FIXTURE_PID_FILE;
+// Minimal stdio MCP server. FIXTURE_NAME namespaces its replies; FIXTURE_LOG receives one
+// JSON line per observed event so tests can prove what actually reached the server process.
+const name = process.env.FIXTURE_NAME;
 const logFile = process.env.FIXTURE_LOG;
-const record = (event) => {
-  if (logFile) appendFileSync(logFile, `${event}\n`);
-};
-const cleanup = () => {
-  if (pidFile && existsSync(pidFile)) unlinkSync(pidFile);
-};
-const stop = () => {
-  cleanup();
-  process.exit(0);
-};
-
-if (!pidFile || !logFile) throw new Error("fixture paths are required");
-writeFileSync(pidFile, `${process.pid}\n`);
+if (!name || !logFile) throw new Error("FIXTURE_NAME and FIXTURE_LOG are required");
+const record = (event, extra = {}) =>
+  appendFileSync(
+    logFile,
+    `${JSON.stringify({ server: name, pid: process.pid, event, ...extra })}\n`,
+  );
+const stop = () => process.exit(0);
 record("started");
-process.once("exit", cleanup);
 process.once("SIGTERM", stop);
 process.once("SIGINT", stop);
 
-const output = (id, result) =>
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+const tools = [
+  ["read_fixture", "Read deterministic fixture"],
+  ["fail_fixture", "Return an MCP isError result"],
+  ["slow_fixture", "Never answers until the call is cancelled"],
+].map(([toolName, description]) => ({
+  name: toolName,
+  description,
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+}));
+const send = (message) =>
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+const slowCalls = new Set();
+
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on("line", (line) => {
   let message;
@@ -31,28 +37,38 @@ input.on("line", (line) => {
   } catch {
     return;
   }
-  record(message.method ?? "notification");
+  record(message.method ?? "response");
   if (message.method === "initialize") {
-    output(message.id, {
-      protocolVersion: "2025-06-18",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "tlh-test-fixture", version: "1.0.0" },
+    send({
+      id: message.id,
+      result: {
+        protocolVersion: message.params?.protocolVersion ?? "2025-06-18",
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: `tlh-test-fixture-${name}`, version: "1.0.0" },
+      },
     });
   } else if (message.method === "tools/list") {
-    output(message.id, {
-      tools: [
-        {
-          name: "read_fixture",
-          description: "Read deterministic fixture",
-          inputSchema: { type: "object", properties: {}, additionalProperties: false },
-        },
-      ],
-    });
+    send({ id: message.id, result: { tools } });
   } else if (message.method === "tools/call") {
-    record("tools/call:read_fixture");
-    output(message.id, { content: [{ type: "text", text: "FIXTURE_MCP_OK" }], isError: false });
+    const tool = message.params?.name;
+    record("tools/call", { tool });
+    if (tool === "read_fixture") {
+      send({ id: message.id, result: { content: [{ type: "text", text: `FIXTURE_OK:${name}` }] } });
+    } else if (tool === "fail_fixture") {
+      send({
+        id: message.id,
+        result: { content: [{ type: "text", text: `FIXTURE_ERROR:${name}` }], isError: true },
+      });
+    } else if (tool === "slow_fixture") {
+      slowCalls.add(message.id);
+    } else {
+      send({ id: message.id, error: { code: -32601, message: `unknown tool ${tool}` } });
+    }
+  } else if (message.method === "notifications/cancelled") {
+    const requestId = message.params?.requestId;
+    if (slowCalls.delete(requestId)) record("slow_fixture:cancelled");
   } else if (message.method === "ping") {
-    output(message.id, {});
+    send({ id: message.id, result: {} });
   }
 });
 input.once("close", stop);

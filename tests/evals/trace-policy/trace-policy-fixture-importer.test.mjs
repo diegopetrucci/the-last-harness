@@ -470,12 +470,8 @@ test("trace-policy fixture importer preserves MCP connect_failed details.error a
             {
               type: "toolCall",
               id: "call_mcp_1",
-              name: "mcp",
-              arguments: {
-                server: "repo-checks",
-                tool: "check_status",
-                args: "{}",
-              },
+              name: "codemode",
+              arguments: { script: "return await tools.mcp__repo_checks__check_status({});" },
             },
           ],
         },
@@ -496,8 +492,8 @@ test("trace-policy fixture importer preserves MCP connect_failed details.error a
     { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
     {
       type: "tool",
-      tool: "mcp",
-      input: { server: "repo-checks", tool: "check_status", args: "{}" },
+      tool: "codemode",
+      input: { script: "return await tools.mcp__repo_checks__check_status({});" },
       ok: false,
       status: "failed",
       details: { error: "connect_failed" },
@@ -506,7 +502,10 @@ test("trace-policy fixture importer preserves MCP connect_failed details.error a
   ]);
   fixture.transcript.metadata = {
     assignedValidationSteps: [
-      { kind: "mcp", input: { server: "repo-checks", tool: "check_status", args: "{}" } },
+      {
+        kind: "codemode",
+        input: { script: "return await tools.mcp__repo_checks__check_status({});" },
+      },
       { kind: "shell", command: "npm test" },
     ],
   };
@@ -542,15 +541,15 @@ test("trace-policy fixture importer preserves MCP details.error failures across 
               {
                 type: "toolCall",
                 id: "call_mcp_1",
-                name: "mcp",
-                arguments: { server: "repo-checks" },
+                name: "codemode",
+                arguments: { script: "return await describeNamespace('repo_checks');" },
               },
             ],
           },
           {
             role: "toolResult",
             toolCallId: "call_mcp_1",
-            toolName: "mcp",
+            toolName: "codemode",
             details: { error },
           },
         ],
@@ -561,8 +560,8 @@ test("trace-policy fixture importer preserves MCP details.error failures across 
       { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
       {
         type: "tool",
-        tool: "mcp",
-        input: { server: "repo-checks" },
+        tool: "codemode",
+        input: { script: "return await describeNamespace('repo_checks');" },
         ok: false,
         status: "failed",
         details: { error },
@@ -574,7 +573,7 @@ test("trace-policy fixture importer preserves MCP details.error failures across 
     for (const imported of [firstImport, reimport]) {
       imported.transcript.metadata = {
         assignedValidationSteps: [
-          { kind: "mcp", input: { server: "repo-checks" } },
+          { kind: "codemode", input: { script: "return await describeNamespace('repo_checks');" } },
           { kind: "shell", command: "npm test" },
         ],
       };
@@ -611,15 +610,15 @@ test("trace-policy fixture importer keeps nested MCP failure when top-level erro
               {
                 type: "toolCall",
                 id: "call_mcp_1",
-                name: "mcp",
-                arguments: { server: "repo-checks" },
+                name: "codemode",
+                arguments: { script: "return await describeNamespace('repo_checks');" },
               },
             ],
           },
           {
             role: "toolResult",
             toolCallId: "call_mcp_1",
-            toolName: "mcp",
+            toolName: "codemode",
             error,
             details: { error: "tool_error" },
           },
@@ -635,8 +634,8 @@ test("trace-policy fixture importer keeps nested MCP failure when top-level erro
           { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
           {
             type: "tool",
-            tool: "mcp",
-            input: { server: "repo-checks" },
+            tool: "codemode",
+            input: { script: "return await describeNamespace('repo_checks');" },
             ok: false,
             status: "failed",
             details: { error: "tool_error" },
@@ -646,7 +645,7 @@ test("trace-policy fixture importer keeps nested MCP failure when top-level erro
       );
       imported.transcript.metadata = {
         assignedValidationSteps: [
-          { kind: "mcp", input: { server: "repo-checks" } },
+          { kind: "codemode", input: { script: "return await describeNamespace('repo_checks');" } },
           { kind: "shell", command: "npm test" },
         ],
       };
@@ -683,15 +682,15 @@ test("trace-policy fixture importer preserves top-level and details status=error
               {
                 type: "toolCall",
                 id: "call_mcp_1",
-                name: "mcp",
-                arguments: { server: "repo-checks", tool: "check_status", args: "{}" },
+                name: "codemode",
+                arguments: { script: "return await tools.mcp__repo_checks__check_status({});" },
               },
             ],
           },
           {
             role: "toolResult",
             toolCallId: "call_mcp_1",
-            toolName: "mcp",
+            toolName: "codemode",
             ...result,
           },
           {
@@ -703,7 +702,10 @@ test("trace-policy fixture importer preserves top-level and details status=error
     );
     fixture.transcript.metadata = {
       assignedValidationSteps: [
-        { kind: "mcp", input: { server: "repo-checks", tool: "check_status", args: "{}" } },
+        {
+          kind: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
+        },
         { kind: "shell", command: "npm test" },
       ],
     };
@@ -712,8 +714,8 @@ test("trace-policy fixture importer preserves top-level and details status=error
       { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
       {
         type: "tool",
-        tool: "mcp",
-        input: { server: "repo-checks", tool: "check_status", args: "{}" },
+        tool: "codemode",
+        input: { script: "return await tools.mcp__repo_checks__check_status({});" },
         ok: false,
         status: "error",
       },
@@ -733,8 +735,8 @@ test("trace-policy fixture importer narrows nested failure details and redacts r
       steps: [
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           details: {
             ok: false,
             status: "error",
@@ -772,11 +774,7 @@ test("trace-policy fixture importer narrows nested failure details and redacts r
 });
 
 test("trace-policy fixture importer preserves top-level failure flags through re-import", () => {
-  const input = {
-    server: "repo-checks",
-    tool: "check_status",
-    args: "{}",
-  };
+  const input = { script: "return await tools.mcp__repo_checks__check_status({});" };
   const cases = [
     { name: "isError", failure: { isError: true } },
     {
@@ -791,7 +789,7 @@ test("trace-policy fixture importer preserves top-level failure flags through re
         agent: "test-runner",
         steps: [
           { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-          { type: "tool", tool: "mcp", input, ...failure },
+          { type: "tool", tool: "codemode", input, ...failure },
           { type: "tool", tool: "bash", command: "npm test" },
         ],
       }),
@@ -811,7 +809,7 @@ test("trace-policy fixture importer preserves top-level failure flags through re
     for (const imported of [firstImport, reimport]) {
       imported.transcript.metadata = {
         assignedValidationSteps: [
-          { kind: "mcp", input },
+          { kind: "codemode", input },
           { kind: "shell", command: "npm test" },
         ],
       };
@@ -841,19 +839,19 @@ test("trace-policy fixture importer ignores falsy tool-result errors", () => {
         messages: [
           {
             role: "assistant",
-            content: [{ type: "toolCall", id: toolCallId, name: "mcp", arguments: {} }],
+            content: [{ type: "toolCall", id: toolCallId, name: "codemode", arguments: {} }],
           },
           {
             role: "toolResult",
             toolCallId,
-            toolName: "mcp",
+            toolName: "codemode",
             error,
           },
         ],
       }),
     );
 
-    assert.deepEqual(fixture.transcript.steps, [{ type: "tool", tool: "mcp" }], name);
+    assert.deepEqual(fixture.transcript.steps, [{ type: "tool", tool: "codemode" }], name);
   }
 });
 
@@ -874,13 +872,13 @@ test("trace-policy fixture importer canonicalizes ordered MCP status calls", () 
             {
               type: "toolCall",
               id: "call_mcp_status_1",
-              name: "mcp",
+              name: "codemode",
               arguments: {},
             },
             {
               type: "toolCall",
               id: "call_mcp_call_1",
-              name: "mcp",
+              name: "codemode",
               arguments: { tool: "check_status", args: "{}" },
             },
           ],
@@ -890,17 +888,17 @@ test("trace-policy fixture importer canonicalizes ordered MCP status calls", () 
   );
   fixture.transcript.metadata = {
     assignedValidationSteps: [
-      { kind: "mcp", input: {} },
-      { kind: "mcp", input: { tool: "check_status", args: "{}" } },
+      { kind: "codemode", input: {} },
+      { kind: "codemode", input: { tool: "check_status", args: "{}" } },
     ],
   };
 
   assert.deepEqual(fixture.transcript.steps, [
     { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
-    { type: "tool", tool: "mcp" },
+    { type: "tool", tool: "codemode" },
     {
       type: "tool",
-      tool: "mcp",
+      tool: "codemode",
       input: { tool: "check_status", args: "{}" },
     },
   ]);

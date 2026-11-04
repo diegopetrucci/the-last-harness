@@ -377,18 +377,16 @@ test("test-runner final-validation allows tk show, exact shell validation comman
   assert.deepEqual(result.violations, []);
 });
 
-test("test-runner allows ordered shell and generic MCP validation steps", () => {
+test("test-runner allows ordered shell and codemode MCP validation steps", () => {
   const result = evaluateTracePolicy({
     agent: "test-runner",
     metadata: {
       assignedValidationSteps: [
         { kind: "shell", command: "npm run validate" },
         {
-          kind: "mcp",
+          kind: "codemode",
           input: {
-            server: "repo-checks",
-            tool: "check_status",
-            args: '{"scope":"working-tree"}',
+            script: "return await tools.mcp__repo_checks__check_status({ scope: 'working-tree' });",
           },
         },
       ],
@@ -398,11 +396,9 @@ test("test-runner allows ordered shell and generic MCP validation steps", () => 
       { type: "tool", tool: "bash", command: "npm run validate" },
       {
         type: "tool",
-        tool: "mcp",
+        tool: "codemode",
         input: {
-          server: "repo-checks",
-          tool: "check_status",
-          args: '{"scope":"working-tree"}',
+          script: "return await tools.mcp__repo_checks__check_status({ scope: 'working-tree' });",
         },
       },
     ],
@@ -412,7 +408,7 @@ test("test-runner allows ordered shell and generic MCP validation steps", () => 
   assert.deepEqual(result.violations, []);
 });
 
-test("test-runner rejects unassigned generic MCP validation after ticket inspection", () => {
+test("test-runner rejects unassigned codemode MCP validation after ticket inspection", () => {
   assert.deepEqual(
     violationCodes({
       agent: "test-runner",
@@ -420,8 +416,8 @@ test("test-runner rejects unassigned generic MCP validation after ticket inspect
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
         },
       ],
     }),
@@ -429,24 +425,33 @@ test("test-runner rejects unassigned generic MCP validation after ticket inspect
   );
 });
 
-test("test-runner rejects generic MCP validation with empty assignment metadata", () => {
+test("test-runner rejects codemode MCP validation with empty assignment metadata", () => {
   assert.deepEqual(
     violationCodes({
       agent: "test-runner",
       metadata: { assignedValidationSteps: [] },
       steps: [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-        { type: "tool", tool: "mcp", input: {} },
+        {
+          type: "tool",
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__list({});" },
+        },
       ],
     }),
     ["test-runner.read_only"],
   );
 });
 
-test("test-runner rejects generic MCP validation with malformed assignment metadata", () => {
+test("test-runner rejects codemode MCP validation with malformed assignment metadata", () => {
   for (const metadata of [
     { assignedValidationSteps: "npm run validate" },
-    { assignedValidationSteps: [{ kind: "mcp", input: {} }, null] },
+    {
+      assignedValidationSteps: [
+        { kind: "codemode", input: { script: "return await tools.mcp__repo_checks__list({});" } },
+        null,
+      ],
+    },
   ]) {
     assert.deepEqual(
       violationCodes({
@@ -456,8 +461,8 @@ test("test-runner rejects generic MCP validation with malformed assignment metad
           { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
           {
             type: "tool",
-            tool: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            tool: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
         ],
       }),
@@ -483,7 +488,11 @@ test("test-runner keeps legacy validation commands shell-only", () => {
     metadata: { assignedValidationCommands: ["npm run validate"] },
     steps: [
       { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-      { type: "tool", tool: "mcp", input: { server: "repo-checks" } },
+      {
+        type: "tool",
+        tool: "codemode",
+        input: { script: "return await describeNamespace('repo_checks');" },
+      },
     ],
   });
   assert.deepEqual(
@@ -492,15 +501,17 @@ test("test-runner keeps legacy validation commands shell-only", () => {
   );
 });
 
-test("test-runner accepts adapter status, discovery, search, and connect MCP shapes", () => {
+test("test-runner accepts codemode MCP script shapes", () => {
   const assignedValidationSteps = [
-    { kind: "mcp", input: {} },
-    { kind: "mcp", input: { server: "repo-checks" } },
-    { kind: "mcp", input: { search: "check status" } },
-    { kind: "mcp", input: { connect: "repo-checks" } },
+    { kind: "codemode", input: { script: "return await tools.mcp__repo_checks__list({});" } },
+    { kind: "codemode", input: { script: "return await describeNamespace('repo_checks');" } },
+    { kind: "codemode", input: { script: "return await searchTools('check status');" } },
+    { kind: "codemode", input: { script: "return await tools.mcp__repo_checks__ping({});" } },
     {
-      kind: "mcp",
-      input: { server: "repo-checks", tool: "check_status", args: '{"scope":"working-tree"}' },
+      kind: "codemode",
+      input: {
+        script: "return await tools.mcp__repo_checks__check_status({ scope: 'working-tree' });",
+      },
     },
   ];
   const result = evaluateTracePolicy({
@@ -508,7 +519,11 @@ test("test-runner accepts adapter status, discovery, search, and connect MCP sha
     metadata: { assignedValidationSteps },
     steps: [
       { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-      ...assignedValidationSteps.map((step) => ({ type: "tool", tool: "mcp", input: step.input })),
+      ...assignedValidationSteps.map((step) => ({
+        type: "tool",
+        tool: "codemode",
+        input: step.input,
+      })),
     ],
   });
 
@@ -516,15 +531,15 @@ test("test-runner accepts adapter status, discovery, search, and connect MCP sha
   assert.deepEqual(result.violations, []);
 });
 
-test("test-runner stops after a failed generic MCP validation step", () => {
+test("test-runner stops after a failed codemode MCP validation step", () => {
   assert.deepEqual(
     violationCodes({
       agent: "test-runner",
       metadata: {
         assignedValidationSteps: [
           {
-            kind: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            kind: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
           { kind: "shell", command: "npm test" },
         ],
@@ -533,8 +548,8 @@ test("test-runner stops after a failed generic MCP validation step", () => {
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           status: "error",
         },
         { type: "tool", tool: "bash", command: "npm test" },
@@ -544,15 +559,15 @@ test("test-runner stops after a failed generic MCP validation step", () => {
   );
 });
 
-test("test-runner stops after an imported generic MCP details.error failure", () => {
+test("test-runner stops after an imported codemode MCP details.error failure", () => {
   assert.deepEqual(
     violationCodes({
       agent: "test-runner",
       metadata: {
         assignedValidationSteps: [
           {
-            kind: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            kind: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
           { kind: "shell", command: "npm test" },
         ],
@@ -561,8 +576,8 @@ test("test-runner stops after an imported generic MCP details.error failure", ()
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           details: { error: "tool_error" },
         },
         { type: "tool", tool: "bash", command: "npm test" },
@@ -586,13 +601,18 @@ test("test-runner stops after any meaningful MCP details.error", () => {
       agent: "test-runner",
       metadata: {
         assignedValidationSteps: [
-          { kind: "mcp", input: { server: "repo-checks" } },
+          { kind: "codemode", input: { script: "return await describeNamespace('repo_checks');" } },
           { kind: "shell", command: "npm test" },
         ],
       },
       steps: [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-        { type: "tool", tool: "mcp", input: { server: "repo-checks" }, details: { error } },
+        {
+          type: "tool",
+          tool: "codemode",
+          input: { script: "return await describeNamespace('repo_checks');" },
+          details: { error },
+        },
         { type: "tool", tool: "bash", command: "npm test" },
       ],
     });
@@ -612,7 +632,10 @@ test("test-runner does not let a falsy top-level error mask an MCP failure detai
         agent: "test-runner",
         metadata: {
           assignedValidationSteps: [
-            { kind: "mcp", input: { server: "repo-checks" } },
+            {
+              kind: "codemode",
+              input: { script: "return await describeNamespace('repo_checks');" },
+            },
             { kind: "shell", command: "npm test" },
           ],
         },
@@ -620,8 +643,8 @@ test("test-runner does not let a falsy top-level error mask an MCP failure detai
           { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
           {
             type: "tool",
-            tool: "mcp",
-            input: { server: "repo-checks" },
+            tool: "codemode",
+            input: { script: "return await describeNamespace('repo_checks');" },
             error,
             details: { error: "tool_error" },
           },
@@ -641,7 +664,10 @@ test("test-runner does not stop after falsy nested MCP details.error", () => {
         agent: "test-runner",
         metadata: {
           assignedValidationSteps: [
-            { kind: "mcp", input: { server: "repo-checks" } },
+            {
+              kind: "codemode",
+              input: { script: "return await describeNamespace('repo_checks');" },
+            },
             { kind: "shell", command: "npm test" },
           ],
         },
@@ -649,8 +675,8 @@ test("test-runner does not stop after falsy nested MCP details.error", () => {
           { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
           {
             type: "tool",
-            tool: "mcp",
-            input: { server: "repo-checks" },
+            tool: "codemode",
+            input: { script: "return await describeNamespace('repo_checks');" },
             details: { error },
           },
           { type: "tool", tool: "bash", command: "npm test" },
@@ -662,17 +688,15 @@ test("test-runner does not stop after falsy nested MCP details.error", () => {
   }
 });
 
-test("test-runner allows assigned generic MCP tools that change server state but rejects direct tools", () => {
+test("test-runner allows assigned codemode MCP tools that change server state but rejects direct tools", () => {
   const mutatingResult = evaluateTracePolicy({
     agent: "test-runner",
     metadata: {
       assignedValidationSteps: [
         {
-          kind: "mcp",
+          kind: "codemode",
           input: {
-            server: "repo-checks",
-            tool: "write_report",
-            args: '{"report":"validation"}',
+            script: "return await tools.mcp__repo_checks__write_report({ report: 'validation' });",
           },
         },
       ],
@@ -681,11 +705,9 @@ test("test-runner allows assigned generic MCP tools that change server state but
       { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
       {
         type: "tool",
-        tool: "mcp",
+        tool: "codemode",
         input: {
-          server: "repo-checks",
-          tool: "write_report",
-          args: '{"report":"validation"}',
+          script: "return await tools.mcp__repo_checks__write_report({ report: 'validation' });",
         },
         mutates: true,
       },
@@ -698,7 +720,7 @@ test("test-runner allows assigned generic MCP tools that change server state but
     agent: "test-runner",
     steps: [
       { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-      { type: "tool", tool: "mcp:repo-checks", input: {} },
+      { type: "tool", tool: "mcp__repo_checks__check_status", input: {} },
     ],
   });
   assert.deepEqual(

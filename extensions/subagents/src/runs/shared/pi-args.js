@@ -166,6 +166,9 @@ function buildPiArgsInternal(input, onTempDirCreated) {
             if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {
                 allowedToolNames.push(CONTACT_SUPERVISOR_TOOL_NAME);
             }
+            if (allowedToolNames.includes("codemode") && !allowedToolNames.includes("mcp__*")) {
+                allowedToolNames.push("mcp__*");
+            }
             if (allowedToolNames.length > 0) {
                 args.push("--tools", allowedToolNames.join(","));
             }
@@ -254,7 +257,6 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     if (input.childIndex !== undefined) {
         env[SUBAGENT_CHILD_INDEX_ENV] = String(input.childIndex);
     }
-    env.MCP_DIRECT_TOOLS = "__none__";
     if (input.steerInboxDir) {
         env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
     }

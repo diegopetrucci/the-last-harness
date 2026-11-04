@@ -8,11 +8,9 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
-import { packageIdentity, readDefaultExtensions } from "./lib/default-extensions.mjs";
-import { mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
 import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
 import { LEGACY_MANAGED_PROFILE_ARTIFACTS, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
-import { mcpAdapterCutoverHeldForInstall, pinnedNpmInstallPresent, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
+import { pinnedNpmInstallPresent, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
 import { MIN_NODE_VERSIONS, NODE_REQUIREMENT_TEXT, assertSupportedNodeRuntime, assignRequiredEqualsValue, nodeVersionMeetsMinimum, outputLines, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
@@ -1079,14 +1077,10 @@ function updateDefaultExtensionSourcesBestEffort(config, sources) {
     }
     return failures;
 }
-function updateNonCriticalDefaultExtensions(config, sources, { mcpAdapterHeld = false } = {}) {
+function updateNonCriticalDefaultExtensions(config, sources) {
     if (sources.length === 0)
         return 0;
     const fallbackDescription = `${sources.length} non-critical bundled default source(s)`;
-    if (mcpAdapterHeld) {
-        verboseLog(config, "MCP adapter cutover is held; skipping the settings-wide extension refresh and updating only non-MCP defaults.");
-        return updateDefaultExtensionSourcesBestEffort(config, sources);
-    }
     if (config.dryRun) {
         log(config, "Dry run: settings-wide extension refresh will run from merged settings.");
     }
@@ -1155,38 +1149,18 @@ function installDefaultExtensions(config, batched = false) {
         criticalSourcesOutput = "";
     }
     const { criticalSources, nonCriticalSources } = splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput);
-    const mcpAdapterHeld = mcpAdapterCutoverHeldForInstall(config);
-    const mcpExtension = (() => {
-        try {
-            return readDefaultExtensions(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE).find((entry) => entry.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID);
-        }
-        catch {
-            return undefined;
-        }
-    })();
-    const heldMcpIdentities = mcpAdapterHeld
-        ? mcpAdapterPackageIdentities(mcpExtension)
-        : new Set();
-    const safeSource = (source) => {
-        const identity = packageIdentity(source);
-        return identity === undefined || !heldMcpIdentities.has(identity);
-    };
-    const safeCriticalSources = criticalSources.filter(safeSource);
-    const safeNonCriticalSources = nonCriticalSources.filter(safeSource);
-    const safeSources = [...safeCriticalSources, ...safeNonCriticalSources];
-    if (safeSources.length === 0) {
+    const allSources = [...criticalSources, ...nonCriticalSources];
+    if (allSources.length === 0) {
         log(config, "No bundled default extensions are enabled.");
         return;
     }
     log(config, "Installing bundled default extensions...");
-    verboseLog(config, `Installing bundled default extensions (${safeSources.length})...`);
-    preflightCriticalDefaultExtensionTargets(config, safeCriticalSources);
-    const failures = updateNonCriticalDefaultExtensions(config, safeNonCriticalSources, {
-        mcpAdapterHeld,
-    });
+    verboseLog(config, `Installing bundled default extensions (${allSources.length})...`);
+    preflightCriticalDefaultExtensionTargets(config, criticalSources);
+    const failures = updateNonCriticalDefaultExtensions(config, nonCriticalSources);
     if (failures !== 0)
         warn(`${failures} bundled default extension package(s) failed to update`);
-    for (const source of safeCriticalSources)
+    for (const source of criticalSources)
         installCriticalDefaultExtension(config, source, batched);
     if (failures === 0)
         verboseLog(config, "Bundled default extensions installed.");

@@ -120,7 +120,7 @@ export function buildTokensReportHtml(analysis, options = {}) {
             '<div class="grid cards four">',
             renderMetricCard("Tool calls", formatInteger(analysis.tools.totalCalls), `${formatInteger(analysis.tools.totalResults)} results`),
             renderMetricCard("Tool errors", formatInteger(analysis.tools.totalErrors), `${formatErrorRate(analysis.tools.totalErrors, analysis.tools.totalResults)} result error rate`),
-            renderMetricCard("MCP calls", formatInteger(analysis.tools.mcpCalls), `${formatInteger(analysis.tools.mcpProxyCalls)} proxy • ${formatInteger(analysis.tools.mcpDirectCalls)} direct`),
+            renderMetricCard("MCP calls", formatInteger(analysis.tools.mcpCalls), `${formatInteger(analysis.tools.mcpDirectCalls)} direct • ${formatInteger(analysis.tools.mcpCodemodeCalls)} via codemode`),
             renderMetricCard("Source precision", analysis.tools.precision, "Estimated from tool names and current catalog"),
             renderMetricCard("MCP est. tokens", formatInteger(analysis.tools.mcpApproxTokens), `${formatInteger(analysis.tools.totalToolApproxTokens)} all-tools est.`),
             "</div>",

@@ -1,9 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
-  repoRoot,
   runHelper,
   scrubInstallerEnv,
   TLH_PINNED_PI_VERSION,
@@ -27,23 +26,6 @@ export function setupTicketsEnabledWrapperFixture(t) {
   mkdirSync(packageRoot, { recursive: true });
   mkdirSync(cwdDir, { recursive: true });
 
-  // Populate the fake package root with the real startup guard and its
-  // relative imports so the wrapper's guard check runs as in a real install.
-  const pkgScriptsLib = join(packageRoot, "scripts", "lib");
-  mkdirSync(pkgScriptsLib, { recursive: true });
-  for (const name of [
-    "mcp-adapter-cutover.mjs",
-    "default-extensions.mjs",
-    "tlh-install-package-source.mjs",
-  ]) {
-    copyFileSync(join(repoRoot, "scripts", "lib", name), join(pkgScriptsLib, name));
-  }
-  const pkgConfig = join(packageRoot, "config");
-  mkdirSync(pkgConfig, { recursive: true });
-  copyFileSync(
-    join(repoRoot, "config", "default-extensions.json"),
-    join(pkgConfig, "default-extensions.json"),
-  );
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   writeFakePi(

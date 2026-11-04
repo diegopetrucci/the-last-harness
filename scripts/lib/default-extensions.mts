@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import type { JsonValue } from "@earendil-works/pi-ai";
 
@@ -172,6 +173,14 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
   // notify is now bundled first-party; the npm package must be removed to prevent
   // two notify extensions running in parallel and every notification firing twice.
   "npm:@diegopetrucci/pi-notify",
+  // The MCP adapter (including user-installed copies) is replaced by Pi's native
+  // /mcp plus the project-mcp-json default. Identities ignore version/ref, so
+  // every pin (2.x, v5, git tags) is removed. Recovery: reinstall a prior TLH
+  // release tag.
+  "npm:@diegopetrucci/pi-mcp-adapter",
+  "npm:pi-mcp-adapter",
+  "git:github.com/diegopetrucci/pi-mcp-adapter",
+  "git:github.com/nicobailon/pi-mcp-adapter",
 ]);
 
 const WHOLE_EXTENSION_DISABLING_FILTERS = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
@@ -436,4 +445,143 @@ export function managedDefaultExtensionPackageIdentities(
   }
 
   return managedIdentities;
+}
+
+export const MCP_MIGRATION_DOC_URL = "docs/mcp.md#migrating-from-the-mcp-adapter";
+
+export interface LegacyMcpConfigFindings {
+  /** Servers whose `auth` is a string (native Pi rejects the server). */
+  stringAuthServers: number;
+  /** Config files with a non-empty adapter `imports` (ignored natively). */
+  importsFiles: number;
+  /** Servers with adapter-only `lifecycle` (ignored natively). */
+  lifecycleServers: number;
+  /** Servers with adapter-only `directTools` (ignored natively). */
+  directToolsServers: number;
+  /** mcp-adapter.json files (never read natively). */
+  adapterConfigFiles: number;
+  /** ~/.config/mcp/mcp.json and ~/.agents/mcp.json (never read natively). */
+  unreadSharedConfigFiles: number;
+  /** MCP adapter packages still selected in isolated settings. */
+  adapterPackages: number;
+  /** A `-builtin:mcp` exclusion not owned by TLH (disables native MCP). */
+  unmanagedBuiltinMcpExclusion: number;
+}
+
+function readJsonObjectQuietly(path: string): PlainObject | undefined {
+  try {
+    if (!existsSync(path)) return undefined;
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    return isPlainObject(parsed) ? (parsed as PlainObject) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read-only, count-only scan for adapter-era MCP state that native Pi ignores
+ * or rejects. Never returns names, URLs, paths, or values.
+ */
+export function detectLegacyMcpConfig(options: {
+  agentDir: string;
+  projectDir?: string;
+  homeDir?: string;
+  settings?: unknown;
+}): LegacyMcpConfigFindings {
+  const findings: LegacyMcpConfigFindings = {
+    stringAuthServers: 0,
+    importsFiles: 0,
+    lifecycleServers: 0,
+    directToolsServers: 0,
+    adapterConfigFiles: 0,
+    unreadSharedConfigFiles: 0,
+    adapterPackages: 0,
+    unmanagedBuiltinMcpExclusion: 0,
+  };
+  const nativeFiles = [join(options.agentDir, "mcp.json")];
+  const adapterFiles = [join(options.agentDir, "mcp-adapter.json")];
+  if (options.projectDir) {
+    nativeFiles.push(
+      join(options.projectDir, ".mcp.json"),
+      join(options.projectDir, ".pi", "mcp.json"),
+    );
+    adapterFiles.push(join(options.projectDir, ".pi", "mcp-adapter.json"));
+  }
+  const sharedFiles = options.homeDir
+    ? [
+        join(options.homeDir, ".config", "mcp", "mcp.json"),
+        join(options.homeDir, ".agents", "mcp.json"),
+      ]
+    : [];
+
+  const scan = (path: string, countImports: boolean): void => {
+    const parsed = readJsonObjectQuietly(path);
+    if (!parsed) return;
+    if (countImports && Array.isArray(parsed.imports) && parsed.imports.length > 0) {
+      findings.importsFiles += 1;
+    }
+    if (!isPlainObject(parsed.mcpServers)) return;
+    for (const server of Object.values(parsed.mcpServers as PlainObject)) {
+      if (!isPlainObject(server)) continue;
+      if (typeof server.auth === "string") findings.stringAuthServers += 1;
+      if (server.lifecycle !== undefined) findings.lifecycleServers += 1;
+      if (server.directTools !== undefined) findings.directToolsServers += 1;
+    }
+  };
+
+  for (const path of nativeFiles) scan(path, true);
+  for (const path of adapterFiles) {
+    if (existsSync(path)) findings.adapterConfigFiles += 1;
+  }
+  for (const path of sharedFiles) {
+    if (existsSync(path)) findings.unreadSharedConfigFiles += 1;
+  }
+
+  const settings = options.settings;
+  if (isPlainObject(settings)) {
+    const raw = settings as RawSettings;
+    if (Array.isArray(raw.packages)) {
+      const adapterIdentities = new Set(
+        FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES.filter((source) =>
+          source.includes("pi-mcp-adapter"),
+        ).map((source) => packageIdentity(source)),
+      );
+      for (const entry of raw.packages) {
+        const identity = packageIdentity(entry);
+        if (identity && adapterIdentities.has(identity)) findings.adapterPackages += 1;
+      }
+    }
+    const tlh = isPlainObject(raw.tlh) ? (raw.tlh as PlainObject) : undefined;
+    if (
+      Array.isArray(raw.extensions) &&
+      raw.extensions.includes("-builtin:mcp") &&
+      tlh?.builtinMcpExclusionManaged !== true
+    ) {
+      findings.unmanagedBuiltinMcpExclusion = 1;
+    }
+  }
+  return findings;
+}
+
+/** One concise, count-only line, or undefined when nothing needs attention. */
+export function formatLegacyMcpConfigNotice(findings: LegacyMcpConfigFindings): string | undefined {
+  const parts: string[] = [];
+  const add = (count: number, text: string) => {
+    if (count > 0) parts.push(`${count} ${text}`);
+  };
+  add(findings.adapterPackages, "MCP adapter package(s) still installed (run a full `tlh update`)");
+  if (findings.unmanagedBuiltinMcpExclusion > 0) {
+    parts.push('"-builtin:mcp" exclusion disables native MCP (remove it from settings extensions)');
+  }
+  add(findings.stringAuthServers, "server(s) with string auth (native MCP rejects them)");
+  add(findings.importsFiles, "config file(s) using imports (ignored)");
+  add(findings.lifecycleServers, "server(s) using lifecycle (ignored)");
+  add(findings.directToolsServers, "server(s) using directTools (ignored)");
+  add(findings.adapterConfigFiles, "mcp-adapter.json file(s) (not read)");
+  add(
+    findings.unreadSharedConfigFiles,
+    "shared MCP config file(s) in ~/.config/mcp or ~/.agents (not read)",
+  );
+  if (parts.length === 0) return undefined;
+  return `Legacy MCP adapter state found: ${parts.join("; ")}. See ${MCP_MIGRATION_DOC_URL}`;
 }

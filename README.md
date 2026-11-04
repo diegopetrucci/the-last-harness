@@ -49,7 +49,7 @@ Again, the core idea: explore and plan with the architect. Double check with the
 
 A few quick-fire tips to get the most of the architect:
 
-- If the planned work is too big, ask the architect to delegate even just one tk ticket at a time to the developer. Final-validation tickets go to the execution-only test-runner, which can run exact shell and generic MCP steps. You don't need to go all the way at all times.
+- If the planned work is too big, ask the architect to delegate even just one tk ticket at a time to the developer. Final-validation tickets go to the execution-only test-runner, which can run exact shell steps and `codemode` MCP scripts. You don't need to go all the way at all times.
 - `/annotate-last-message` opens a simple native window where you can write comments to specific parts of the architect's last message
 - `/tree` lets you go back and forth in the conversation tree. It's similar to Claude Code's `/btw`, but much, much more powerful. I often use it to explore smaller parts of the conversation, and after having done so, I return to the last "clean" message to clear up context (you can do so with or without generated summaries of your nested conversation).
 - `/annotate-git-diff`: similar to `/annotate-last-message`, but for git diffs (even tickets!).
@@ -142,7 +142,7 @@ This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: 
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
-- MCP usage, guarded migration, and rollback: [`docs/mcp.md`](docs/mcp.md)
+- Native MCP setup, migrating from the MCP adapter, and undo: [`docs/mcp.md`](docs/mcp.md)
 - Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
 - Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
 - Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)

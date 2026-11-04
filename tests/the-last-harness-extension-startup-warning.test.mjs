@@ -997,6 +997,41 @@ test("startup installs the header before delayed resource collection resolves an
   }
 });
 
+test("launch-context attributes the mcp_servers section Pi adds after session_start", async () => {
+  const scheduledTasks = [];
+  const harness = await createExtensionHarness({
+    deferredStartupTaskScheduler: (task) => scheduledTasks.push(task),
+    startupResourceCollector: async () =>
+      startupSnapshot({ context: [], skills: [], prompts: [], extensions: [], themes: [] }),
+  });
+
+  try {
+    const session = await harness.startSession({
+      reason: "startup",
+      projectTrusted: true,
+      model: TEST_CONTEXT_MODEL,
+      systemPrompt: "Pi base prompt",
+    });
+    const header = session.buildHeader();
+    await scheduledTasks[0]();
+    await new Promise((resolve) => setImmediate(resolve));
+    const collapsedText = () => {
+      header.setExpanded(false);
+      return header.render(200).join("\n");
+    };
+    assert.doesNotMatch(collapsedText(), /MCP/, "session_start prompt has no mcp_servers section");
+
+    // Pi 1.5.0 adds the section in before_agent_start; agent_start follows preparation.
+    session.ctx.getSystemPrompt = () =>
+      `Pi base prompt\n\n<mcp_servers>\n${"server description ".repeat(300)}\n</mcp_servers>`;
+    await harness.emit("agent_start", { type: "agent_start" }, session.ctx);
+
+    assert.match(collapsedText(), /MCP ~?\d+%/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("stale startup resource completion stays isolated from the replacement session", async () => {
   const scheduledTasks = [];
   const firstDeferred = createDeferred();

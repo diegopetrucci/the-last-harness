@@ -41,6 +41,24 @@ export function filterAvailableTools(toolNames, availableToolNames) {
   return toolNames.filter((toolName) => available.has(toolName));
 }
 
+/**
+ * Keeps native MCP direct-exposure tools (`mcp__*` with `exposure: "direct"`) reachable when a
+ * primary allowlist includes `codemode`, mirroring the restricted-child argv. Tools with
+ * codemode, deferred, or hidden exposure are never activated here.
+ *
+ * @param {string[]} validTools
+ * @param {Iterable<{ name: string, exposure?: string }>} allTools `pi.getAllTools()` entries
+ */
+export function withDirectMcpTools(validTools, allTools) {
+  if (!validTools.includes("codemode")) {
+    return validTools;
+  }
+  const directTools = [...allTools]
+    .filter((tool) => tool.name.startsWith("mcp__") && tool.exposure === "direct")
+    .map((tool) => tool.name);
+  return mergeMissingTools(validTools, directTools);
+}
+
 export function createPrimaryToolState() {
   let prePrimaryActiveTools;
   let appliedPrimaryTools;

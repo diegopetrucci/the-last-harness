@@ -108,20 +108,12 @@ test("rendered wrapper: launch environment carries the runtime wrapper name only
   }
 });
 
-test("renderWrapper: MCP adapter startup guard runs before the pinned pi exec", () => {
+test("renderWrapper: no MCP adapter startup guard is rendered", () => {
   const rendered = renderWrapper(PINNED_ARGS);
-  const guardIndex = rendered.indexOf(
-    'scripts/lib/mcp-adapter-cutover.mjs" --startup-guard --agent-dir "${default_agent_dir}"',
-  );
-  const piExecIndex = rendered.indexOf('exec "${default_pi_cmd}" "$@"');
-
-  assert.ok(guardIndex >= 0, "rendered wrapper must invoke the MCP adapter startup guard");
-  assert.ok(piExecIndex >= 0, "rendered wrapper must exec the pinned pi runtime");
-  assert.ok(guardIndex < piExecIndex, "startup guard must run before the pinned pi runtime");
-  assert.ok(
-    rendered.includes("tlh_package_mcp_adapter_guard_is_usable()"),
-    "rendered wrapper must validate the startup guard support graph",
-  );
+  assert.ok(!rendered.includes("mcp-adapter-cutover"));
+  assert.ok(!rendered.includes("--startup-guard"));
+  assert.ok(!rendered.includes("tlh_package_mcp_adapter_guard_is_usable"));
+  assert.ok(rendered.includes('exec "${default_pi_cmd}" "$@"'));
 });
 
 test("renderWrapper: NODE_COMPILE_CACHE export is present exactly once in the pi exec path", () => {
@@ -293,13 +285,11 @@ test("renderWrapper: NODE_COMPILE_CACHE export uses tlh_pinned_dir%/* (strip bin
   );
 });
 
-test("renderWrapper: version subcommand is wired before the MCP guard and pi exec", () => {
+test("renderWrapper: version subcommand is wired before the pi exec", () => {
   const rendered = renderWrapper(PINNED_ARGS);
   const versionIndex = rendered.indexOf('if [[ "${1:-}" == "version" ]]; then');
-  const guardIndex = rendered.indexOf("tlh_mcp_adapter_guard_required=1");
   const piExecIndex = rendered.indexOf('exec "${default_pi_cmd}" "$@"');
   assert.ok(versionIndex >= 0, "version block must be present");
-  assert.ok(versionIndex < guardIndex, "version block must precede the MCP guard");
   assert.ok(versionIndex < piExecIndex, "version block must precede the pi exec");
   assert.ok(
     rendered.includes(
@@ -315,7 +305,7 @@ test("renderWrapper: version subcommand is wired before the MCP guard and pi exe
 
 test("renderWrapper: --version is still handled outside the version subcommand", () => {
   const rendered = renderWrapper(PINNED_ARGS);
-  assert.ok(rendered.includes("--version|-v|install|remove|uninstall|list|mcp)"));
+  assert.ok(!rendered.includes("--version|-v|install|remove|uninstall|list|mcp)"));
   assert.ok(!rendered.includes('"${1:-}" == "--version"'));
 });
 

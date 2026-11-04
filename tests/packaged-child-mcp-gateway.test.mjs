@@ -1,29 +1,44 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { buildPiArgs } from "../extensions/subagents/src/runs/shared/pi-args.js";
+
+// Go/no-go gate for Pi-native MCP: a restricted child (explicit --tools allowlist plus
+// `codemode` and `mcp__*`) must reach MCP servers through the real pinned Pi runtime. Every
+// assertion is derived from Pi's `--mode json` / `--mode rpc` event stream or from what the
+// fixture server processes themselves observed; the model is a deterministic faux provider.
 const testsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(testsDir, "..");
 const supportDir = join(testsDir, "support");
 const fixtureServerPath = join(supportDir, "packaged-child-mcp-gateway-fixture.mjs");
-const childCliPath = join(supportDir, "packaged-child-mcp-gateway-child.mjs");
-const parentRunnerPath = join(supportDir, "packaged-child-mcp-gateway-runner.mjs");
+const fauxProviderPath = join(supportDir, "packaged-child-mcp-gateway-faux-provider.mjs");
+const piBinPath = join(
+  repoRoot,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "pi.cmd" : "pi",
+);
 
-function isolatedEnv(root, agentDir) {
+// The restricted child's `--tools` value comes from TLH's real child argv builder for an agent
+// that declares `read, codemode`, so this gate covers the argv TLH actually emits.
+const builtChildArgs = buildPiArgs({
+  baseArgs: ["-p"],
+  task: "go",
+  sessionEnabled: false,
+  inheritProjectContext: false,
+  inheritSkills: false,
+  supervisorBridge: false,
+  tools: ["read", "codemode"],
+}).args;
+const RESTRICTED_TOOLS = builtChildArgs[builtChildArgs.indexOf("--tools") + 1];
+const READ_ONLY_TOOLS = "read,codemode";
+
+function isolatedEnv(root, extra) {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (
@@ -35,303 +50,319 @@ function isolatedEnv(root, agentDir) {
     }
     env[key] = value;
   }
-  delete env.MCP_DIRECT_TOOLS;
   return {
     ...env,
     HOME: join(root, "home"),
     USERPROFILE: join(root, "home"),
-    PI_CODING_AGENT_DIR: agentDir,
-    TLH_AGENT_DIR: agentDir,
+    PI_CODING_AGENT_DIR: join(root, "agent"),
     PI_OFFLINE: "1",
+    PI_SKIP_VERSION_CHECK: "1",
     TLH_SKIP_TELEMETRY: "1",
     TLH_SKIP_UPDATE_CHECK: "1",
     TMPDIR: join(root, "tmp"),
-    npm_config_userconfig: join(root, "npmrc"),
-    npm_config_cache: join(root, "npm-cache"),
-    npm_config_audit: "false",
-    npm_config_fund: "false",
-    npm_config_update_notifier: "false",
+    ...extra,
   };
 }
 
-function runChecked(command, args, options) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    ...options,
+/** Creates a temp profile with two fixture servers: `cm` (codemode exposure) and `dir` (direct). */
+function createProfile() {
+  const root = mkdtempSync(join(tmpdir(), "tlh-native-mcp-gateway-"));
+  for (const dir of ["agent", "workspace", "home", "tmp"]) mkdirSync(join(root, dir));
+  const logPath = join(root, "fixture.log");
+  const server = (name, exposure) => ({
+    command: process.execPath,
+    args: [fixtureServerPath],
+    env: { FIXTURE_NAME: name, FIXTURE_LOG: logPath },
+    exposure,
   });
-  assert.equal(
-    result.status,
-    0,
-    `${command} ${args.join(" ")} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  writeFileSync(
+    join(root, "agent", "mcp.json"),
+    `${JSON.stringify({ mcpServers: { cm: server("cm", "codemode"), dir: server("dir", "direct") } })}\n`,
   );
-  return result;
+  const readLog = () =>
+    existsSync(logPath)
+      ? readFileSync(logPath, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : [];
+  return { root, cwd: join(root, "workspace"), readLog };
 }
 
-function packLocalCandidate(packDir, env) {
-  const result = runChecked("npm", ["pack", "--json", "--pack-destination", packDir], {
-    cwd: repoRoot,
-    env,
-    timeout: 180_000,
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function waitFor(predicate, description, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`timed out waiting for ${description}`);
+}
+
+/** Spawns the real pinned `pi` with the faux model and collects its JSONL event stream. */
+function startPi(profile, { mode, tools, steps }) {
+  const stepsPath = join(profile.root, "steps.json");
+  writeFileSync(stepsPath, JSON.stringify(steps));
+  const args = [
+    ...(mode === "json" ? ["-p", "--mode", "json"] : ["--mode", "rpc"]),
+    "--no-session",
+    "--extension",
+    fauxProviderPath,
+    "--model",
+    "faux/child",
+    "--tools",
+    tools,
+    ...(mode === "json" ? ["go"] : []),
+  ];
+  const child = spawn(piBinPath, args, {
+    cwd: profile.cwd,
+    env: isolatedEnv(profile.root, { FAUX_STEPS: stepsPath }),
+    stdio: ["pipe", "pipe", "pipe"],
   });
-  const [pack] = JSON.parse(result.stdout);
-  assert.ok(pack?.filename, "npm pack must return a candidate tarball");
-  return join(packDir, pack.filename);
+  const events = [];
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+    let newline = stdout.indexOf("\n");
+    while (newline !== -1) {
+      const line = stdout.slice(0, newline);
+      stdout = stdout.slice(newline + 1);
+      if (line.trim()) events.push(JSON.parse(line));
+      newline = stdout.indexOf("\n");
+    }
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => (stderr += chunk));
+  const exited = new Promise((resolve) =>
+    child.once("close", (code, signal) => resolve({ code, signal })),
+  );
+  const send = (command) => child.stdin.write(`${JSON.stringify(command)}\n`);
+  if (mode === "json") child.stdin.end();
+  return {
+    child,
+    events,
+    send,
+    exited,
+    stderr: () => stderr,
+    debug: () => JSON.stringify({ stderr, events: events.map((event) => event.type) }),
+  };
 }
 
-function readMcporterPackageSpec(packageRoot) {
-  const defaultExtensions = JSON.parse(
-    readFileSync(join(packageRoot, "config", "default-extensions.json"), "utf8"),
-  );
-  const source = defaultExtensions.find((extension) => extension?.id === "mcporter")?.source;
-  assert.equal(typeof source, "string", "packed candidate must declare mcporter source");
-  assert.match(source, /^npm:/, "mcporter source must be an npm package spec");
-  const spec = source.slice("npm:".length);
-  const separator = spec.lastIndexOf("@");
-  assert.ok(separator > 0, `mcporter source must include a package name and version: ${source}`);
-  const name = spec.slice(0, separator);
-  const version = spec.slice(separator + 1);
-  assert.match(
-    version,
-    /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:[+][0-9A-Za-z.-]+)?$/,
-    `mcporter source must pin an exact npm version: ${source}`,
-  );
-  return { spec, name, version };
+const toolEnds = (events, toolName) =>
+  events.filter((event) => event.type === "tool_execution_end" && event.toolName === toolName);
+const resultText = (event) => event.result.content.map((part) => part.text ?? "").join("\n");
+
+async function runToCompletion(profile, options) {
+  const pi = startPi(profile, { mode: "json", ...options });
+  const { code } = await pi.exited;
+  assert.equal(code, 0, pi.debug());
+  return pi;
 }
 
-function packPinnedAdapter(packDir, env, packageSpec) {
-  const result = runChecked(
-    "npm",
-    ["pack", "--json", "--pack-destination", packDir, packageSpec.spec],
-    { env, timeout: 180_000 },
-  );
-  const [pack] = JSON.parse(result.stdout);
-  assert.deepEqual(
-    { name: pack?.name, version: pack?.version },
-    { name: packageSpec.name, version: packageSpec.version },
-    "npm pack must return the configured mcporter package identity",
-  );
-  assert.ok(pack?.filename, "npm pack must return the pinned adapter tarball");
-  return join(packDir, pack.filename);
+function assertNoFixtureProcessesLeft(profile) {
+  const pids = [...new Set(profile.readLog().map((entry) => entry.pid))];
+  assert.ok(pids.length > 0, "fixture servers must have started");
+  for (const pid of pids) {
+    assert.equal(isAlive(pid), false, `fixture server pid ${pid} must exit with the child`);
+  }
 }
 
-async function stopFixture(pidFile) {
-  if (!existsSync(pidFile)) return true;
-  const pid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
-  const isAlive = () => {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
+function withProfile(body) {
+  return async () => {
+    const profile = createProfile();
     try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      if (error?.code === "ESRCH") return false;
-      throw error;
+      await body(profile);
+    } finally {
+      // Never leave stray fixture servers behind, even when an assertion failed.
+      for (const pid of new Set(profile.readLog().map((entry) => entry.pid))) {
+        if (isAlive(pid)) process.kill(pid, "SIGKILL");
+      }
+      rmSync(profile.root, { recursive: true, force: true });
+      assert.equal(existsSync(profile.root), false, "temp profile must be removed");
     }
   };
-  if (isAlive()) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
-    }
-  }
-  let alive = isAlive();
-  const deadline = Date.now() + 2_000;
-  while (alive && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    alive = isAlive();
-  }
-  if (alive) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    alive = isAlive();
-  }
-  if (existsSync(pidFile)) unlinkSync(pidFile);
-  return !alive;
 }
 
 test(
-  "packaged read-only child reaches a real local MCP fixture through the restricted gateway",
-  { timeout: 300_000 },
-  async () => {
-    const root = mkdtempSync(join(tmpdir(), "tlh-packaged-child-mcp-gateway-"));
-    const packDir = join(root, "pack");
-    const adapterPackDir = join(root, "adapter-pack");
-    const adapterInstallDir = join(root, "adapter-install");
-    const extractDir = join(root, "extract");
-    const cwd = join(root, "workspace");
-    const agentDir = join(root, "agent");
-    const homeDir = join(root, "home");
-    const tmpDir = join(root, "tmp");
-    const fixturePidPath = join(root, "fixture.pid");
-    const fixtureLogPath = join(root, "fixture.log");
-    const evidencePath = join(root, "child-evidence.json");
-    const env = isolatedEnv(root, agentDir);
-    try {
-      for (const path of [
-        packDir,
-        adapterPackDir,
-        adapterInstallDir,
-        extractDir,
-        cwd,
-        agentDir,
-        homeDir,
-        tmpDir,
-      ]) {
-        mkdirSync(path, { recursive: true });
+  "restricted child calls a codemode-exposure MCP server from codemode and sees isError resolve",
+  { timeout: 120_000 },
+  withProfile(async (profile) => {
+    const code = `
+      const ok = await tools.mcp__cm__read_fixture({});
+      const failed = await tools.mcp__cm__fail_fixture({});
+      return JSON.stringify({ ok: ok.content[0].text, failedIsError: failed.isError, failed: failed.content[0].text });
+    `;
+    const pi = await runToCompletion(profile, {
+      tools: RESTRICTED_TOOLS,
+      steps: [{ tool: "codemode", args: { code } }, { text: "done" }],
+    });
+
+    const [script] = toolEnds(pi.events, "codemode");
+    assert.equal(script.isError, false, resultText(script));
+    assert.match(resultText(script), /^Script completed/);
+    const returned = JSON.parse(resultText(script).split("\n").at(-1));
+    assert.deepEqual(returned, {
+      ok: "FIXTURE_OK:cm",
+      failedIsError: true,
+      failed: "FIXTURE_ERROR:cm",
+    });
+
+    // The MCP calls came from the codemode script, through Pi's tool pipeline.
+    const scriptCallId = script.toolCallId;
+    for (const name of ["mcp__cm__read_fixture", "mcp__cm__fail_fixture"]) {
+      const [end] = toolEnds(pi.events, name);
+      assert.equal(end.parentToolCallId, scriptCallId, `${name} must be a codemode child call`);
+    }
+    assert.equal(toolEnds(pi.events, "mcp__cm__fail_fixture")[0].isError, true);
+    const calls = profile.readLog().filter((entry) => entry.event === "tools/call" && entry.tool);
+    assert.deepEqual(
+      calls.map((entry) => `${entry.server}:${entry.tool}`),
+      ["cm:read_fixture", "cm:fail_fixture"],
+    );
+    assertNoFixtureProcessesLeft(profile);
+  }),
+);
+
+test(
+  "restricted child reaches a direct-exposure MCP server only because --tools has mcp__*",
+  { timeout: 120_000 },
+  withProfile(async (profile) => {
+    const pi = await runToCompletion(profile, {
+      tools: RESTRICTED_TOOLS,
+      steps: [{ tool: "mcp__dir__read_fixture" }, { text: "done" }],
+    });
+    const [direct] = toolEnds(pi.events, "mcp__dir__read_fixture");
+    assert.equal(direct.isError, false, resultText(direct));
+    assert.equal(resultText(direct), "FIXTURE_OK:dir");
+    assert.equal(direct.parentToolCallId, undefined, "the call must be a direct model call");
+    assertNoFixtureProcessesLeft(profile);
+  }),
+);
+
+test(
+  "without an mcp__ entry the same direct-exposure tool is not callable by the model",
+  { timeout: 120_000 },
+  withProfile(async (profile) => {
+    const pi = await runToCompletion(profile, {
+      tools: READ_ONLY_TOOLS,
+      steps: [{ tool: "mcp__dir__read_fixture" }, { text: "done" }],
+    });
+    const [direct] = toolEnds(pi.events, "mcp__dir__read_fixture");
+    assert.equal(
+      direct.isError,
+      true,
+      "direct tool must be rejected without an mcp__ allowlist entry",
+    );
+    assert.equal(
+      profile.readLog().some((entry) => entry.event === "tools/call" && entry.tool),
+      false,
+      "the fixture server must never receive a call",
+    );
+    assertNoFixtureProcessesLeft(profile);
+  }),
+);
+
+test(
+  "tools outside the allowlist are not callable from codemode",
+  { timeout: 120_000 },
+  withProfile(async (profile) => {
+    const code = `
+      const outcome = {};
+      for (const name of ["write", "edit", "bash"]) {
+        try {
+          await tools[name]({ path: "escape.txt", content: "x", command: "true" });
+          outcome[name] = "called";
+        } catch (error) {
+          outcome[name] = String(error.message);
+        }
       }
-      const candidateTarball = packLocalCandidate(packDir, env);
-      runChecked("tar", ["-xzf", candidateTarball, "-C", extractDir], { env });
-      const packageRoot = realpathSync(join(extractDir, "package"));
-      symlinkSync(join(repoRoot, "node_modules"), join(packageRoot, "node_modules"), "dir");
-
-      const mcporterPackage = readMcporterPackageSpec(packageRoot);
-      const adapterTarball = packPinnedAdapter(adapterPackDir, env, mcporterPackage);
-      runChecked(
-        "npm",
-        [
-          "install",
-          "--ignore-scripts",
-          "--no-package-lock",
-          "--no-save",
-          "--no-audit",
-          "--no-fund",
-          "--prefix",
-          adapterInstallDir,
-          adapterTarball,
-        ],
-        { env, timeout: 180_000 },
-      );
-      const adapterRoot = realpathSync(
-        join(adapterInstallDir, "node_modules", ...mcporterPackage.name.split("/")),
-      );
-      const installedAdapter = JSON.parse(readFileSync(join(adapterRoot, "package.json"), "utf8"));
-      assert.deepEqual(
-        { name: installedAdapter.name, version: installedAdapter.version },
-        { name: mcporterPackage.name, version: mcporterPackage.version },
-        "installed mcporter package must match the configured identity",
-      );
-
-      const packagedRepoScoutPath = join(packageRoot, "agents", "subagents", "repo-scout.md");
-      assert.ok(existsSync(packagedRepoScoutPath), "packed candidate must contain repo-scout");
-      const packagedRepoScout = readFileSync(packagedRepoScoutPath, "utf8");
-      const toolsLine = packagedRepoScout.match(/^tools: .+$/m)?.[0];
-      assert.ok(toolsLine, "packed repo-scout must declare its tools");
-      const directTool = "mcp:fixture_read_fixture";
-      const restrictedRepoScout = packagedRepoScout.replace(
-        toolsLine,
-        `${toolsLine}, ${directTool}`,
-      );
-      const canonicalAgentsDir = join(agentDir, "tlh", "agents", "subagents");
-      mkdirSync(canonicalAgentsDir, { recursive: true });
-      writeFileSync(join(canonicalAgentsDir, "repo-scout.md"), restrictedRepoScout);
+      outcome.listed = ALL_TOOLS.map((tool) => tool.name).filter((name) => !name.startsWith("mcp__"));
+      return JSON.stringify(outcome);
+    `;
+    const pi = await runToCompletion(profile, {
+      tools: RESTRICTED_TOOLS,
+      steps: [{ tool: "codemode", args: { code } }, { text: "done" }],
+    });
+    const [script] = toolEnds(pi.events, "codemode");
+    const outcome = JSON.parse(resultText(script).split("\n").at(-1));
+    for (const name of ["write", "edit", "bash"]) {
       assert.match(
-        readFileSync(join(canonicalAgentsDir, "repo-scout.md"), "utf8"),
-        /mcp:fixture_read_fixture/,
+        outcome[name],
+        /does not exist/,
+        `${name} must not be callable: ${resultText(script)}`,
       );
+    }
+    assert.deepEqual(outcome.listed, ["read"]);
+    assert.equal(
+      toolEnds(pi.events, "write").length +
+        toolEnds(pi.events, "edit").length +
+        toolEnds(pi.events, "bash").length,
+      0,
+    );
+    assert.equal(existsSync(join(profile.cwd, "escape.txt")), false);
+    assertNoFixtureProcessesLeft(profile);
+  }),
+);
 
-      writeFileSync(
-        join(agentDir, "settings.json"),
-        `${JSON.stringify(
-          {
-            packages: [packageRoot, adapterRoot],
-            tlh: {
-              primaryAgent: { applyModel: false, applyThinking: false },
-              telemetry: { enabled: false },
-              updateCheck: { enabled: false },
-            },
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      writeFileSync(
-        join(agentDir, "mcp.json"),
-        `${JSON.stringify(
-          {
-            mcpServers: {
-              fixture: {
-                command: process.execPath,
-                args: [fixtureServerPath],
-                env: {
-                  FIXTURE_PID_FILE: fixturePidPath,
-                  FIXTURE_LOG: fixtureLogPath,
-                },
-              },
-            },
-          },
-          null,
-          2,
-        )}\n`,
-      );
-
-      const runtimeResult = spawnSync(
-        process.execPath,
-        [parentRunnerPath, packageRoot, adapterRoot, cwd, agentDir, childCliPath, evidencePath],
+test(
+  "aborting a running codemode MCP call ends it and cancels it on the server",
+  { timeout: 120_000 },
+  withProfile(async (profile) => {
+    const pi = startPi(profile, {
+      mode: "rpc",
+      tools: RESTRICTED_TOOLS,
+      steps: [
         {
-          cwd,
-          encoding: "utf8",
-          env,
-          timeout: 120_000,
+          tool: "codemode",
+          args: { code: "return JSON.stringify(await tools.mcp__cm__slow_fixture({}));" },
         },
+        { text: "unreachable after abort" },
+      ],
+    });
+    try {
+      pi.send({ type: "prompt", message: "go" });
+      await waitFor(
+        () =>
+          profile
+            .readLog()
+            .some((entry) => entry.event === "tools/call" && entry.tool === "slow_fixture"),
+        `the slow MCP call to reach the fixture\n${pi.debug()}`,
       );
-      assert.equal(runtimeResult.status, 0, runtimeResult.stderr || runtimeResult.stdout);
-      const runtimeEvidence = JSON.parse(runtimeResult.stdout.trim());
-      const childEvidence = JSON.parse(readFileSync(evidencePath, "utf8"));
-      const fixtureLog = readFileSync(fixtureLogPath, "utf8").trim().split("\n").filter(Boolean);
+      assert.equal(toolEnds(pi.events, "codemode").length, 0, "the script must still be running");
 
-      const childArtifactPath = runtimeEvidence.childResult.match(/Output artifact: (.+)$/m)?.[1];
-      const childArtifact =
-        childArtifactPath && existsSync(childArtifactPath)
-          ? readFileSync(childArtifactPath, "utf8")
-          : "missing";
-      const debugEvidence = JSON.stringify({ runtimeEvidence, childEvidence, childArtifact });
-      assert.match(runtimeEvidence.parentResponse, /PARENT_MCP_CHILD_OK/, debugEvidence);
-      assert.match(runtimeEvidence.childResult, /FIXTURE_MCP_OK/, debugEvidence);
-      assert.ok(
-        runtimeEvidence.parentExtensions.some(
-          (extension) =>
-            extension.path.startsWith(packageRoot) && extension.tools.includes("subagent"),
-        ),
-        "the parent must exercise the packaged subagent extension",
+      pi.send({ type: "abort" });
+      await waitFor(
+        () => pi.events.some((event) => event.type === "agent_settled"),
+        "agent_settled",
       );
-      assert.equal(childEvidence.env.mcpDirectTools, "__none__");
-      assert.equal(childEvidence.env.child, "1");
-      assert.equal(childEvidence.argvTools.includes("mcp"), true);
-      assert.equal(
-        childEvidence.argvTools.some((tool) => tool.startsWith("mcp:")),
-        false,
-        "direct mcp:* declarations must not reach the child allowlist",
-      );
-      const childMcpTools = childEvidence.allTools.filter(
-        (tool) =>
-          tool === "mcp" || tool.startsWith("mcp:") || tool.includes("fixture_read_fixture"),
-      );
-      assert.deepEqual(childMcpTools, ["mcp"]);
-      assert.ok(
-        childEvidence.extensions.some(
-          (extension) => extension.path.startsWith(adapterRoot) && extension.tools.includes("mcp"),
-        ),
-        "the restricted child must load the real pinned adapter from the isolated package",
-      );
-      assert.ok(fixtureLog.includes("started"));
-      assert.ok(fixtureLog.includes("tools/list"));
-      assert.equal(fixtureLog.filter((event) => event === "tools/call:read_fixture").length, 1);
-      assert.equal(existsSync(fixturePidPath), false, "fixture server must exit with the child");
-      assert.equal(existsSync(join(cwd, "pi-shim")), false, "child shim must be removed");
-      assert.equal(
-        existsSync(join(cwd, "pi-shim.cmd")),
-        false,
-        "Windows child shim must be removed",
+      assert.equal(pi.events.find((event) => event.type === "agent_settled").aborted, true);
+      const [script] = toolEnds(pi.events, "codemode");
+      assert.ok(script, `the aborted codemode call must end\n${pi.debug()}`);
+      assert.equal(script.isError, true);
+      await waitFor(
+        () => profile.readLog().some((entry) => entry.event === "slow_fixture:cancelled"),
+        "the server to observe the MCP cancellation",
       );
     } finally {
-      const fixtureStopped = await stopFixture(fixturePidPath);
-      rmSync(root, { recursive: true, force: true });
-      assert.equal(existsSync(root), false, "all packaged smoke artifacts must be removed");
-      assert.equal(fixtureStopped, true, "fixture server process must be stopped");
+      pi.child.stdin.end();
     }
-  },
+    const { code } = await pi.exited;
+    assert.equal(code, 0, pi.debug());
+    assertNoFixtureProcessesLeft(profile);
+  }),
 );
+
+test("buildPiArgs emits codemode and mcp__* for a codemode-declaring agent", () => {
+  assert.equal(RESTRICTED_TOOLS, "read,codemode,mcp__*");
+});

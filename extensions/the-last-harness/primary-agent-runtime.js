@@ -2,7 +2,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getAgentDir, parseArgs, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
-import { createPrimaryToolState, filterAvailableTools, } from "../the-last-harness-primary-tools.mjs";
+import { createPrimaryToolState, filterAvailableTools, withDirectMcpTools, } from "../the-last-harness-primary-tools.mjs";
 import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
@@ -249,8 +249,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     }
     function getValidPrimaryTools(ctx, primary, warnOnMissing = true) {
         const desiredTools = primaryToolAllowlist(primary);
-        const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
-        const validTools = filterAvailableTools(desiredTools, allToolNames);
+        const allTools = pi.getAllTools();
+        const allToolNames = new Set(allTools.map((tool) => tool.name));
+        const validTools = withDirectMcpTools(filterAvailableTools(desiredTools, allToolNames), allTools);
         const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
         if (warnOnMissing && missingTools.length > 0) {
             warnOnce(ctx, `missing-primary-tools-${primary?.name ?? DEFAULT_PRIMARY_AGENT}`, `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);

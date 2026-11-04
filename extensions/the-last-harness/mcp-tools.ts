@@ -1,60 +1,76 @@
 /**
- * Shared MCP tool identity module.
+ * Shared native MCP / codemode tool identity module.
  *
- * The /mcp/i check applies only to scheme-prefixed package identifiers (`npm:`
- * or `git:`). Pi sets sourceInfo.source to an absolute filesystem path for
- * locally-loaded packages, and a bare path such as
- * "/work/mcp-experiments/tools" carries no reliable MCP evidence.
+ * Pi 1.5.0 ships MCP and codemode as built-in extensions (dist/extensions/index.js), so their
+ * tools carry `sourceInfo.path` of `builtin:mcp` / `builtin:codemode` (dist/core/source-info.js,
+ * BUILTIN_PATH_PREFIX). MCP server tools are named `mcp__<server>__<tool>`
+ * (dist/extensions/mcp/tools.js) and the resource tools `list_mcp_resources`,
+ * `list_mcp_resource_templates`, and `read_mcp_resource` register from the same extension
+ * (dist/core/mcp-servers.js). The codemode tool is named `codemode`.
+ *
+ * Codemode scripts call other tools through `ctx.executeTool()`. Those nested calls carry
+ * `parentToolCallId`, never appear as transcript tool calls or results, and are recorded only as
+ * `nestedCalls` on the codemode tool result message (docs/extensions.md "Calling Other Tools").
  */
 
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 
-/**
- * Returns true when a tool-result `details` payload carries the server/tool
- * fields that the Pi MCP adapter persists for direct MCP tool results, and the
- * names match the expected `toolName` naming conventions.
- *
- * This is used as a heuristic to recover MCP provenance for direct tool calls
- * that were not in the live catalog at scan time.
- */
-export function hasPersistedDirectMcpResultDetails(toolName: string, details: unknown): boolean {
-  if (!details || typeof details !== "object") {
-    return false;
-  }
-  const candidate = details as { server?: unknown; tool?: unknown };
-  if (
-    typeof candidate.server !== "string" ||
-    candidate.server.length === 0 ||
-    typeof candidate.tool !== "string" ||
-    candidate.tool.length === 0
-  ) {
-    return false;
-  }
-  const serverPrefix = candidate.server.replaceAll("-", "_");
-  const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
-  return new Set([
-    candidate.tool,
-    `${serverPrefix}_${candidate.tool}`,
-    `${shortPrefix}_${candidate.tool}`,
-  ]).has(toolName);
-}
+export const MCP_SERVERS_SECTION_NAME = "mcp_servers";
+
+const MCP_BUILTIN_PATH = "builtin:mcp";
+const CODEMODE_BUILTIN_PATH = "builtin:codemode";
+const CODEMODE_TOOL_NAME = "codemode";
+const MCP_TOOL_NAME_PREFIX = "mcp__";
+
+export type McpToolKind = "mcp" | "codemode";
 
 /**
- * Classifies a tool as an MCP proxy, a direct MCP tool, or non-MCP.
+ * Classifies a tool as a native MCP tool (`mcp__*` or `builtin:mcp` source), the native codemode
+ * tool, or non-MCP (undefined).
  *
- * Returns "proxy" when the tool name is "mcp", "direct" when sourceInfo.source
- * matches /^(npm|git):/ and /mcp/i, and undefined otherwise.
+ * Without a catalog entry the tool name alone decides. With one, a tool named `codemode` is only
+ * the native tool when it comes from `builtin:codemode`, so a replacement extension is not
+ * counted as the built-in.
  */
 export function getMcpToolKind(
   toolName: string,
   toolInfo?: Pick<ToolInfo, "sourceInfo">,
-): "proxy" | "direct" | undefined {
-  if (toolName === "mcp") {
-    return "proxy";
+): McpToolKind | undefined {
+  const path = toolInfo?.sourceInfo?.path;
+  if (toolName.startsWith(MCP_TOOL_NAME_PREFIX) || path === MCP_BUILTIN_PATH) {
+    return "mcp";
   }
-  const source = toolInfo?.sourceInfo?.source;
-  if (typeof source === "string" && /^(npm|git):/.test(source) && /mcp/i.test(source)) {
-    return "direct";
+  if (path === CODEMODE_BUILTIN_PATH) {
+    return "codemode";
+  }
+  if (toolName === CODEMODE_TOOL_NAME && typeof path !== "string") {
+    return "codemode";
   }
   return undefined;
+}
+
+export type NestedToolCallRecord = { id?: string; name: string };
+
+/**
+ * Reads the bounded nested-call record Pi attaches to a tool result message (`nestedCalls`).
+ * Malformed entries are skipped.
+ */
+export function readNestedToolCalls(message: unknown): NestedToolCallRecord[] {
+  const nested = (message as { nestedCalls?: unknown } | null | undefined)?.nestedCalls;
+  const calls = Array.isArray(nested)
+    ? nested
+    : Array.isArray((nested as { calls?: unknown } | null | undefined)?.calls)
+      ? (nested as { calls: unknown[] }).calls
+      : [];
+  const records: NestedToolCallRecord[] = [];
+  for (const call of calls) {
+    const candidate = call as { id?: unknown; name?: unknown } | null;
+    if (candidate && typeof candidate.name === "string") {
+      records.push({
+        name: candidate.name,
+        ...(typeof candidate.id === "string" ? { id: candidate.id } : {}),
+      });
+    }
+  }
+  return records;
 }

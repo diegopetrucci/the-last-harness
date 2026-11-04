@@ -1,9 +1,7 @@
 {
   "mcpServers": {
     "telemetrydeck": {
-      "url": "https://mcp.telemetrydeckapi.com/",
-      "auth": "oauth",
-      "lifecycle": "lazy"
+      "url": "https://mcp.telemetrydeckapi.com/"
     }
   }
 }

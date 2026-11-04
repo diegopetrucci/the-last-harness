@@ -1,7 +1,7 @@
 export const TRACE_POLICY_MCP_FIXTURES = [
   {
     id: "test-runner-valid-mixed-final-validation",
-    name: "test-runner valid if ordered shell and generic MCP validation steps match the assignment",
+    name: "test-runner valid if ordered shell and codemode MCP validation steps match the assignment",
     expectedResult: "allow",
     transcript: {
       agent: "test-runner",
@@ -11,16 +11,15 @@ export const TRACE_POLICY_MCP_FIXTURES = [
             kind: "shell",
             command: "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs",
           },
-          { kind: "mcp", input: {} },
-          { kind: "mcp", input: { server: "repo-checks" } },
-          { kind: "mcp", input: { search: "check status" } },
-          { kind: "mcp", input: { connect: "repo-checks" } },
+          { kind: "codemode", input: { script: "return await tools.mcp__repo_checks__list({});" } },
+          { kind: "codemode", input: { script: "return await describeNamespace('repo_checks');" } },
+          { kind: "codemode", input: { script: "return await searchTools('check status');" } },
+          { kind: "codemode", input: { script: "return await tools.mcp__repo_checks__ping({});" } },
           {
-            kind: "mcp",
+            kind: "codemode",
             input: {
-              server: "repo-checks",
-              tool: "check_status",
-              args: '{"scope":"working-tree"}',
+              script:
+                "return await tools.mcp__repo_checks__check_status({ scope: 'working-tree' });",
             },
           },
           { kind: "shell", command: "npm run validate" },
@@ -33,17 +32,31 @@ export const TRACE_POLICY_MCP_FIXTURES = [
           tool: "bash",
           command: "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs",
         },
-        { type: "tool", tool: "mcp", input: {} },
-        { type: "tool", tool: "mcp", input: { server: "repo-checks" } },
-        { type: "tool", tool: "mcp", input: { search: "check status" } },
-        { type: "tool", tool: "mcp", input: { connect: "repo-checks" } },
         {
           type: "tool",
-          tool: "mcp",
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__list({});" },
+        },
+        {
+          type: "tool",
+          tool: "codemode",
+          input: { script: "return await describeNamespace('repo_checks');" },
+        },
+        {
+          type: "tool",
+          tool: "codemode",
+          input: { script: "return await searchTools('check status');" },
+        },
+        {
+          type: "tool",
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__ping({});" },
+        },
+        {
+          type: "tool",
+          tool: "codemode",
           input: {
-            server: "repo-checks",
-            tool: "check_status",
-            args: '{"scope":"working-tree"}',
+            script: "return await tools.mcp__repo_checks__check_status({ scope: 'working-tree' });",
           },
         },
         { type: "tool", tool: "bash", command: "npm run validate" },
@@ -52,7 +65,7 @@ export const TRACE_POLICY_MCP_FIXTURES = [
   },
   {
     id: "test-runner-invalid-mcp-before-ticket-show",
-    name: "test-runner invalid if it invokes generic MCP before a successful ticket inspection",
+    name: "test-runner invalid if it invokes codemode MCP before a successful ticket inspection",
     expectedResult: "reject",
     expectedCodes: ["test-runner.ticket_source_required"],
     transcript: {
@@ -60,16 +73,16 @@ export const TRACE_POLICY_MCP_FIXTURES = [
       metadata: {
         assignedValidationSteps: [
           {
-            kind: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            kind: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
         ],
       },
       steps: [
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
         },
       ],
     },
@@ -84,8 +97,8 @@ export const TRACE_POLICY_MCP_FIXTURES = [
       metadata: {
         assignedValidationSteps: [
           {
-            kind: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            kind: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
           { kind: "shell", command: "npm run validate" },
         ],
@@ -94,8 +107,8 @@ export const TRACE_POLICY_MCP_FIXTURES = [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           isError: true,
         },
         { type: "tool", tool: "bash", command: "npm run validate" },
@@ -104,15 +117,15 @@ export const TRACE_POLICY_MCP_FIXTURES = [
   },
   {
     id: "test-runner-valid-mcp-validation-failure-stops",
-    name: "test-runner valid if a failed generic MCP validation step is terminal",
+    name: "test-runner valid if a failed codemode MCP validation step is terminal",
     expectedResult: "allow",
     transcript: {
       agent: "test-runner",
       metadata: {
         assignedValidationSteps: [
           {
-            kind: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            kind: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
           { kind: "shell", command: "npm run validate" },
         ],
@@ -121,8 +134,8 @@ export const TRACE_POLICY_MCP_FIXTURES = [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           ok: false,
         },
         {
@@ -142,8 +155,8 @@ export const TRACE_POLICY_MCP_FIXTURES = [
       metadata: {
         assignedValidationSteps: [
           {
-            kind: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            kind: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
           { kind: "shell", command: "npm test" },
         ],
@@ -152,8 +165,8 @@ export const TRACE_POLICY_MCP_FIXTURES = [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           details: { error: "tool_error" },
         },
         { type: "tool", tool: "bash", command: "npm test" },
@@ -162,7 +175,7 @@ export const TRACE_POLICY_MCP_FIXTURES = [
   },
   {
     id: "test-runner-invalid-mixed-validation-order",
-    name: "test-runner invalid if shell and generic MCP validation steps are reordered",
+    name: "test-runner invalid if shell and codemode MCP validation steps are reordered",
     expectedResult: "reject",
     expectedCodes: ["test-runner.validation_command_order_required"],
     transcript: {
@@ -171,8 +184,8 @@ export const TRACE_POLICY_MCP_FIXTURES = [
         assignedValidationSteps: [
           { kind: "shell", command: "npm run validate" },
           {
-            kind: "mcp",
-            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+            kind: "codemode",
+            input: { script: "return await tools.mcp__repo_checks__check_status({});" },
           },
         ],
       },
@@ -180,8 +193,8 @@ export const TRACE_POLICY_MCP_FIXTURES = [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
-          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          tool: "codemode",
+          input: { script: "return await tools.mcp__repo_checks__check_status({});" },
         },
         { type: "tool", tool: "bash", command: "npm run validate" },
       ],
@@ -196,24 +209,23 @@ export const TRACE_POLICY_MCP_FIXTURES = [
       agent: "test-runner",
       steps: [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-        { type: "tool", tool: "mcp:repo-checks", input: {} },
+        { type: "tool", tool: "mcp__repo_checks__check_status", input: {} },
       ],
     },
   },
   {
     id: "test-runner-valid-mutating-mcp-validation",
-    name: "test-runner valid if an assigned generic MCP validation tool changes server state",
+    name: "test-runner valid if an assigned codemode MCP validation tool changes server state",
     expectedResult: "allow",
     transcript: {
       agent: "test-runner",
       metadata: {
         assignedValidationSteps: [
           {
-            kind: "mcp",
+            kind: "codemode",
             input: {
-              server: "repo-checks",
-              tool: "write_report",
-              args: '{"report":"validation"}',
+              script:
+                "return await tools.mcp__repo_checks__write_report({ report: 'validation' });",
             },
           },
         ],
@@ -222,11 +234,9 @@ export const TRACE_POLICY_MCP_FIXTURES = [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         {
           type: "tool",
-          tool: "mcp",
+          tool: "codemode",
           input: {
-            server: "repo-checks",
-            tool: "write_report",
-            args: '{"report":"validation"}',
+            script: "return await tools.mcp__repo_checks__write_report({ report: 'validation' });",
           },
           mutates: true,
         },

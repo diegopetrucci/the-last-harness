@@ -129,10 +129,9 @@ function parseArgs(argv) {
 //     Verified 2026-08-30.
 //
 //   the-last-harness/mcp-tools.js
-//     2 pure exported functions (getMcpToolKind,
-//     hasPersistedDirectMcpResultDetails). Imports only a type from
-//     pi-coding-agent (erased at runtime). No module-level mutable state.
-//     Verified 2026-08-16: eagerly reachable via launch-context.js / footer.js
+//     2 pure exported functions (getMcpToolKind, readNestedToolCalls) and one
+//     constant. Imports only a type from pi-coding-agent (erased at runtime).
+//     No module-level mutable state. Eagerly reachable via launch-context.js
 //     in the-last-harness.js, and also transitively reachable via the lazy
 //     import of tokens.js → tokens-analyzer.js → mcp-tools.js.
 //     Added in origin/main commit #518 (Add MCP segment to launch context header).
