@@ -220,7 +220,6 @@ const requiredFiles = [
   "agents/primary/architect.md",
   "agents/subagents/developer.md",
   "agents/subagents/test-runner.md",
-  "config/APPEND_SYSTEM.md",
   "config/pi-runtime/package.json",
   "config/pi-runtime/package-lock.json",
   "config/settings.defaults.json",

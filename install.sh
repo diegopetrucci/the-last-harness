@@ -652,7 +652,6 @@ required|scripts/lib/mcp-adapter-migration.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
 required|scripts/tlh-recover-update.mjs
-optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
 optional|scripts/tlh-install-state.mjs
 required|config/settings.defaults.json
@@ -786,9 +785,6 @@ require_supported_node_stage0() {
 warn_missing_optional_support_file() {
   local relative_path="$1"
   case "${relative_path}" in
-    scripts/tlh-update.mjs)
-      warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
-      ;;
     scripts/tlh-wrapper.mjs)
       warn "tlh wrapper support script not found for ref ${REF}; wrapper creation will be unavailable"
       ;;
@@ -979,7 +975,6 @@ dry_run_without_stage1() {
   fi
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh tickets support files."
-  log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."
   log "Dry run only; no support files were downloaded."

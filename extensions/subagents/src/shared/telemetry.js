@@ -756,61 +756,6 @@ export function transitionSubagentRunTelemetryLifecycle(input) {
         outcome,
     };
 }
-export function telemetryFromSingleResults(input) {
-    const runOutcome = input.outcome ??
-        (input.mode === "parallel"
-            ? resolveParallelSubagentTelemetryOutcome(input.results.map((result, index) => ({
-                index: input.stepIndexes?.[index] ?? index,
-                agent: result.agent,
-                state: result.cancel ? "cancelled" : result.pause ? "paused" : undefined,
-                success: result.exitCode === 0 && !result.interrupted,
-                interrupted: result.interrupted,
-                timedOut: result.timedOut,
-                terminationReason: result.terminationReason,
-            })))
-            : undefined);
-    return buildSubagentRunTelemetry({
-        ...input,
-        execution: "foreground",
-        outcome: runOutcome,
-        steps: input.results.map((result, index) => {
-            const activityValues = {
-                ...(result.usage ? { turns: result.usage.turns } : {}),
-                ...(result.progressSummary?.toolCount !== undefined
-                    ? { toolCalls: result.progressSummary.toolCount }
-                    : {}),
-            };
-            const timingValues = {
-                ...(result.progressSummary?.durationMs !== undefined
-                    ? { durationMs: result.progressSummary.durationMs }
-                    : {}),
-                ...(result.activeRuntimeMs !== undefined
-                    ? { activeRuntimeMs: result.activeRuntimeMs }
-                    : {}),
-            };
-            return {
-                index: input.stepIndexes?.[index] ?? index,
-                agent: result.agent,
-                model: modelForTelemetryStep({
-                    model: result.modelIdentity,
-                    attemptedModels: result.attemptedModels,
-                    modelAttempts: result.modelAttempts,
-                }),
-                usage: result.usage,
-                ...(Object.keys(activityValues).length > 0 ? { activity: activityValues } : {}),
-                ...(Object.keys(timingValues).length > 0 ? { timing: timingValues } : {}),
-                outcome: resolveSubagentTelemetryOutcome({
-                    state: result.cancel ? "cancelled" : result.pause ? "paused" : undefined,
-                    success: result.exitCode === 0 && !result.interrupted,
-                    interrupted: result.interrupted,
-                    timedOut: result.timedOut,
-                    terminationReason: result.terminationReason,
-                    acceptanceStatus: result.acceptance?.status,
-                }),
-            };
-        }),
-    });
-}
 function usageFromAttempts(attempts) {
     if (!attempts || attempts.length === 0)
         return undefined;

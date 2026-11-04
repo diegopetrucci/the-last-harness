@@ -341,7 +341,15 @@ export async function main(argv = process.argv.slice(2)) {
 
     try {
       exitCode = await runLanes(lanes, { baseHomeDir, cwd: repoRoot }, { timing });
-      const leaks = findLeaks(tmpdirRoot);
+      let leaks = [];
+      try {
+        leaks = findLeaks(tmpdirRoot);
+      } catch (error) {
+        process.stderr.write(
+          `[tlh] could not inspect CI shard temp-dir root ${tmpdirRoot}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        if (exitCode === 0) exitCode = 1;
+      }
       if (leaks.length > 0) {
         process.stderr.write(
           `[tlh] temp-dir leaks detected in CI shard:\n${leaks.map((n) => `  ${n}`).join("\n")}\n`,

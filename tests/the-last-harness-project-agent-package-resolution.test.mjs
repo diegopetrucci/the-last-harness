@@ -100,9 +100,9 @@ Loaded from the staged package.
     "utf8",
   );
 
-  const bridge = await import(
+  const { loadProjectAgent, resolveProjectAgentTrust } = await import(
     pathToFileURL(
-      join(packageRoot, "extensions", "the-last-harness", "project-agent-loader-bridge.mjs"),
+      join(packageRoot, "extensions", "subagents", "src", "agents", "project-agent-loader.js"),
     ).href
   );
   const access = await import(
@@ -111,7 +111,7 @@ Loaded from the staged package.
   );
   await assert.rejects(
     () =>
-      bridge.loadProjectAgent({
+      loadProjectAgent({
         cwd: projectRoot,
         slug: "trusted",
         agentDir,
@@ -119,7 +119,7 @@ Loaded from the staged package.
     /trust-store dependency is unavailable/i,
   );
 
-  const result = await bridge.loadProjectAgent({
+  const result = await loadProjectAgent({
     cwd: projectRoot,
     slug: "trusted",
     agentDir,
@@ -135,11 +135,9 @@ Loaded from the staged package.
     root: canonicalProjectRoot,
     cwd: canonicalProjectRoot,
   });
-  const reauthorized = await bridge.reauthorizeTlhProjectAgentTrust(projectRoot, {
+  const reauthorized = await resolveProjectAgentTrust(projectRoot, {
     agentDir,
-    trustDependencies: {
-      createProjectTrustStore: (trustAgentDir) => new ProjectTrustStore(trustAgentDir),
-    },
+    createProjectTrustStore: (trustAgentDir) => new ProjectTrustStore(trustAgentDir),
   });
   assert.equal(reauthorized.trusted, true);
   access.setTlhProjectAgentAccessProvider(() => ({ staged: true }));

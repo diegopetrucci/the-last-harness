@@ -255,18 +255,6 @@ export function controlNotificationKey(event: ControlEvent): string {
   return `${childKey}:${event.type}:${event.reason ?? "idle"}${pressureKey}${idleEpisodeKey ? `:${idleEpisodeKey}` : ""}`;
 }
 
-export function claimControlNotification(
-  config: ResolvedControlConfig,
-  event: ControlEvent,
-  seenKeys: Set<string>,
-): boolean {
-  if (!shouldNotifyControlEvent(config, event)) return false;
-  const key = controlNotificationKey(event);
-  if (seenKeys.has(key)) return false;
-  seenKeys.add(key);
-  return true;
-}
-
 export function formatControlNoticeMessage(event: ControlEvent): string {
   const runTarget = event.runId;
   if (event.reason === "context_pressure") {

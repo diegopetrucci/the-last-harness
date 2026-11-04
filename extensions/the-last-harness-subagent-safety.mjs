@@ -181,21 +181,15 @@ function forceExecutionAgentScope(input) {
   return forceUserAgentScope(input, "execution");
 }
 
-function validateExecutionBearingTargets(
-  input,
-  allowedSubagents,
-  allowedSubagentSet,
-  allowEmbeddedTargets,
-) {
-  const embeddedSuffix = allowEmbeddedTargets ? ", or embedded.<slug>" : "";
+function validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet) {
+  const embeddedSuffix = ", or embedded.<slug>";
   const targets = collectSubagentTargets(input);
   if (targets.length === 0) {
     return `TLH primary-agent subagent execution must target one of: ${allowedSubagents.join(", ")}${embeddedSuffix}.`;
   }
 
   const disallowed = targets.filter(
-    (agent) =>
-      !allowedSubagentSet.has(agent) && !(allowEmbeddedTargets && isEmbeddedSubagentTarget(agent)),
+    (agent) => !allowedSubagentSet.has(agent) && !isEmbeddedSubagentTarget(agent),
   );
   if (disallowed.length > 0) {
     return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}${embeddedSuffix}. Disallowed target(s): ${disallowed.join(", ")}.`;
@@ -264,12 +258,7 @@ export function validateSubagentToolInput(input, options = {}) {
     return scopeReason;
   }
 
-  return validateExecutionBearingTargets(
-    input,
-    allowedSubagents,
-    allowedSubagentSet,
-    Boolean(options.allowEmbeddedTargets),
-  );
+  return validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet);
 }
 
 /**

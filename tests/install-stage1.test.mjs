@@ -32,6 +32,7 @@ import {
 
 import { buildInstallConfig, parseArgs, usage } from "../scripts/tlh-install.mjs";
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
+import { supportFileManifest } from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 const repoNestedFixtureParent = join(repoRoot, ".symphony", "tlh-sessions");
 
@@ -554,6 +555,51 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
   assert.match(output, /Skipping settings\/keybinding merge \(--no-settings\)\./);
   assert.match(output, /Skipping Gnosis integration \(TLH_SKIP_GNOSIS_INSTALL is set\)\./);
   assert.doesNotMatch(output, /Skipping Gnosis integration \(--no-settings\)\./);
+});
+
+test("support manifests omit redundant package updater downloads while update entrypoints remain usable", (t) => {
+  const root = makeTempDir();
+  const homeDir = join(root, "home");
+  mkdirSync(homeDir, { recursive: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const supportFiles = supportFileManifest({ noSettings: true });
+  assert.equal(
+    supportFiles.some((file) => file.relativePath === "scripts/tlh-update.mjs"),
+    false,
+  );
+  assert.ok(
+    supportFiles.some(
+      (file) =>
+        file.relativePath === "scripts/tlh-recover-update.mjs" &&
+        file.installName === "recover-update.mjs",
+    ),
+  );
+  assert.ok(
+    supportFiles.some(
+      (file) => file.relativePath === "scripts/tlh-wrapper.mjs" && file.requirement === "optional",
+    ),
+  );
+  assert.ok(
+    supportFiles.some(
+      (file) =>
+        file.relativePath === "scripts/tlh-install-state.mjs" && file.requirement === "optional",
+    ),
+  );
+  const installerSource = readFileSync(join(repoRoot, "install.sh"), "utf8");
+  assert.doesNotMatch(installerSource, /\|scripts\/tlh-update\.mjs/);
+  assert.doesNotMatch(installerSource, /Would fetch tlh update support files/);
+
+  for (const relativePath of ["scripts/tlh-update.mjs", "scripts/tlh-recover-update.mjs"]) {
+    const result = spawnSync(process.execPath, [join(repoRoot, relativePath), "--help"], {
+      cwd: repoRoot,
+      env: scrubInstallerEnv({ HOME: homeDir }),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(result.status, 0, `${relativePath}: ${result.stderr}`);
+    assert.match(result.stdout, /Usage: tlh update/);
+  }
 });
 
 test("stage-1 copies only the profile recovery launcher into the isolated profile", (t) => {

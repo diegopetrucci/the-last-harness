@@ -157,13 +157,6 @@ const BASE_SUPPORT_FILES = Object.freeze([
         installName: "recover-update.mjs",
     },
     {
-        variable: "TLH_UPDATE_SCRIPT",
-        requirement: OPTIONAL,
-        relativePath: "scripts/tlh-update.mjs",
-        tempPath: "tlh-update.mjs",
-        installName: "",
-    },
-    {
         variable: "TLH_WRAPPER_SCRIPT",
         requirement: OPTIONAL,
         relativePath: "scripts/tlh-wrapper.mjs",

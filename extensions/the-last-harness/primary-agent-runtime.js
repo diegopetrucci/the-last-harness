@@ -825,10 +825,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
                 return { block: true, reason: rushDeveloperDelegationReason() };
             }
-            const allowEmbeddedTargets = true;
             const reason = validateSubagentToolInput(event.input, {
                 allowedSubagents,
-                allowEmbeddedTargets,
             });
             if (reason) {
                 return { block: true, reason };

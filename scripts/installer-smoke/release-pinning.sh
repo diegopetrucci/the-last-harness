@@ -46,6 +46,9 @@ run_release_pinning_smoke() {
   local manifest_file="${case_dir}/stage0-manifest.txt"
   local _ relative_path
   extract_stage0_support_manifest false >"${manifest_file}"
+  assert_not_contains "${manifest_file}" "scripts/tlh-update.mjs"
+  assert_contains "${manifest_file}" "scripts/tlh-recover-update.mjs"
+  assert_contains "${manifest_file}" "scripts/tlh-install-state.mjs"
   while IFS='|' read -r _ relative_path; do
     [[ -n "${relative_path}" ]] || continue
     mkdir -p "${dist_dir}/$(dirname "${relative_path}")"
@@ -175,7 +178,7 @@ NODE_RELEASE_TARGET_BOUNDARY
 
   output_file="$(run_release_integrity_asset_case clean "${clean_root}" "${asset_path}" "${official_base}" 0 "" "")"
   assert_contains "${output_file}" "fake_stage1=ok"
-  assert_contains "${output_file}" "optional_update_present=true"
+  assert_contains "${output_file}" "optional_install_state_present=true"
   assert_contains "${output_file}" "developer_prompt_present=true"
   assert_not_contains "${output_file}" "integrity not enforced"
   assert_not_contains "${output_file}" "Refreshing installer"
@@ -187,7 +190,7 @@ NODE_RELEASE_TARGET_BOUNDARY
   rm -f "${RELEASE_INTEGRITY_FAKEBIN}/node"
   assert_contains "${output_file}" "ambient_node_options_verifier=commonjs"
   assert_contains "${output_file}" "fake_stage1=ok"
-  assert_contains "${output_file}" "optional_update_present=true"
+  assert_contains "${output_file}" "optional_install_state_present=true"
   assert_not_contains "${output_file}" "integrity not enforced"
   assert_not_contains "${output_file}" "error:"
 
@@ -219,19 +222,19 @@ NODE_RELEASE_TARGET_BOUNDARY
   assert_not_contains "${output_file}" "fake_stage1=ok"
 
   cp -R "${release_source_root}" "${optional_missing_root}"
-  rm -f "${optional_missing_root}/scripts/tlh-update.mjs"
+  rm -f "${optional_missing_root}/scripts/tlh-install-state.mjs"
   output_file="$(run_release_integrity_asset_case optional-missing "${optional_missing_root}" "${asset_path}" "${official_base}" 0 "" "")"
-  assert_contains "${output_file}" "tlh update support script not found"
-  assert_contains "${output_file}" "optional_update_present=false"
+  assert_contains "${output_file}" "tlh install-state support script not found"
+  assert_contains "${output_file}" "optional_install_state_present=false"
   assert_not_contains "${output_file}" "integrity not enforced"
 
   cp -R "${release_source_root}" "${optional_tamper_root}"
-  printf '\ntampered optional support\n' >>"${optional_tamper_root}/scripts/tlh-update.mjs"
+  printf '\ntampered optional support\n' >>"${optional_tamper_root}/scripts/tlh-install-state.mjs"
   printf '\ntampered bundled prompt\n' >>"${optional_tamper_root}/agents/subagents/developer.md"
   output_file="$(run_release_integrity_asset_case optional-tamper "${optional_tamper_root}" "${asset_path}" "${official_base}" 0 "" "")"
-  assert_contains "${output_file}" "failed SHA-256 integrity check and was removed: scripts/tlh-update.mjs"
+  assert_contains "${output_file}" "failed SHA-256 integrity check and was removed: scripts/tlh-install-state.mjs"
   assert_contains "${output_file}" "failed SHA-256 integrity check and was removed: agents/subagents/developer.md"
-  assert_contains "${output_file}" "optional_update_present=false"
+  assert_contains "${output_file}" "optional_install_state_present=false"
   assert_contains "${output_file}" "developer_prompt_present=false"
 
   cp -R "${release_source_root}" "${required_tamper_root}"
@@ -283,8 +286,8 @@ NODE_RELEASE_INCOMPLETE
   assert_contains "${case_dir}/unsafe.log" "Unsafe release support stage-0 manifest path"
 
   cp -R "${release_source_root}" "${symlink_root}"
-  rm -f "${symlink_root}/scripts/tlh-update.mjs"
-  ln -s "tlh-install.mjs" "${symlink_root}/scripts/tlh-update.mjs"
+  rm -f "${symlink_root}/scripts/tlh-install-state.mjs"
+  ln -s "tlh-install.mjs" "${symlink_root}/scripts/tlh-install-state.mjs"
   if node scripts/generate-release-installer.mjs --tag "${tag}" --root "${symlink_root}" --output "${case_dir}/symlink.sh" >"${case_dir}/symlink.log" 2>&1; then
     fail "release generator accepted a symlinked support file"
   fi

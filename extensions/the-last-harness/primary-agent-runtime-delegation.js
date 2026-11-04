@@ -10,12 +10,6 @@ export function primaryToolAllowlist(primary) {
 function matchesSubagentName(value, target) {
     return typeof value === "string" && value.trim().toLowerCase() === target;
 }
-export function isSubagentResumeAction(input) {
-    return isRecord(input) && matchesSubagentName(input.action, "resume");
-}
-export function isSubagentSteerAction(input) {
-    return isRecord(input) && matchesSubagentName(input.action, "steer");
-}
 export function subagentCallTargetsAgent(input, target) {
     return subagentCallTargetsMatching(input, (agent) => matchesSubagentName(agent, target));
 }
@@ -77,7 +71,4 @@ export function applyOpenRouterModelToProjectTargets(input, projectTargets, curr
         for (const task of input.tasks)
             apply(task);
     }
-}
-export function isOpaqueSubagentManagementActionInput(input) {
-    return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }
