@@ -618,7 +618,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     liveDetailController,
     poller: null,
     watcher: null,
-    watcherRestartTimer: null,
     resultFileCoalescer: {
       schedule: () => false,
       clear: () => {},

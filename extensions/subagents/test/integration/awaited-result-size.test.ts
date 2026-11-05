@@ -56,7 +56,6 @@ function makeState(cwd: string) {
     lastUiContext: null,
     poller: null,
     watcher: null,
-    watcherRestartTimer: null,
     resultFileCoalescer: {
       schedule: () => false,
       clear: () => {},

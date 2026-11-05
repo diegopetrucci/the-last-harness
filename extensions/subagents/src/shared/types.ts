@@ -917,7 +917,6 @@ export interface SubagentState {
   liveDetailController?: SubagentLiveDetailController;
   poller: NodeJS.Timeout | null;
   watcher: FSWatcher | null;
-  watcherRestartTimer: ReturnType<typeof setTimeout> | null;
   resultFileCoalescer: {
     schedule(file: string, delayMs?: number): boolean;
     clear(): void;

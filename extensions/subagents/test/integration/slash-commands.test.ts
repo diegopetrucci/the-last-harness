@@ -35,7 +35,6 @@ interface RegisterSlashCommandsModule {
       lastUiContext: unknown;
       poller: NodeJS.Timeout | null;
       watcher: unknown;
-      watcherRestartTimer: ReturnType<typeof setTimeout> | null;
       resultFileCoalescer: { schedule(file: string, delayMs?: number): boolean; clear(): void };
     },
     config: unknown,
