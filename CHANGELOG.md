@@ -39,6 +39,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
 - Restored Herdr panes now relaunch the same TLH session instead of a plain shell; see [docs/integrations.md](docs/integrations.md) ([#864](https://github.com/diegopetrucci/the-last-harness/pull/864)).
 - The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.

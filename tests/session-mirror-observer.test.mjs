@@ -466,3 +466,124 @@ test("an active snapshot bypass is consumed by one publication attempt", () => {
   runScheduled(state);
   assert.equal(state.calls.sink, 1);
 });
+
+function startedHarness(options) {
+  const state = harness(options);
+  state.runtime.sessionStart();
+  runScheduled(state);
+  return state;
+}
+
+test("start, settle, start before the worker drains ends active and unpublished", () => {
+  const state = startedHarness();
+  state.runtime.agentStart();
+  state.runtime.agentSettled();
+  state.runtime.agentStart();
+  runScheduled(state);
+
+  const result = state.runtime.getState();
+  assert.equal(result.status, "active");
+  assert.equal(result.settled, false);
+  assert.equal(state.calls.sink, 0);
+});
+
+test("settle, start, settle before the worker drains ends idle and publishes idle", () => {
+  const state = startedHarness();
+  state.runtime.agentSettled();
+  state.runtime.agentStart();
+  state.runtime.agentSettled();
+  runScheduled(state);
+
+  const result = state.runtime.getState();
+  assert.equal(result.status, "idle");
+  assert.equal(result.settled, true);
+  assert.equal(state.published.at(-1)?.message.snapshot.status, "idle");
+});
+
+test("repeated identical lifecycle events keep status stable", () => {
+  const state = startedHarness();
+  state.runtime.agentStart();
+  state.runtime.agentStart();
+  runScheduled(state);
+  assert.equal(state.runtime.getState().status, "active");
+  assert.equal(state.calls.sink, 0);
+
+  state.runtime.agentSettled();
+  state.runtime.agentSettled();
+  runScheduled(state);
+  assert.equal(state.runtime.getState().status, "idle");
+  assert.equal(state.calls.sink, 1);
+});
+
+test("queue overflow keeps the live status while requiring a snapshot", () => {
+  const state = startedHarness({ queueCapacity: 2 });
+  state.runtime.agentStart();
+  state.runtime.messageEnd();
+  state.runtime.turnEnd();
+  assert.equal(state.runtime.getState().snapshotRequired, true);
+  runScheduled(state);
+  assert.equal(state.runtime.getState().status, "active");
+  assert.equal(state.runtime.getState().settled, false);
+  assert.equal(state.calls.sink, 0);
+});
+
+test("a snapshot request supersedes a queued settle without changing status", () => {
+  const state = startedHarness();
+  state.runtime.agentStart();
+  state.runtime.agentSettled();
+  state.runtime.agentStart();
+  state.runtime.sessionTree();
+  runScheduled(state);
+
+  assert.equal(state.runtime.getState().status, "active");
+  assert.equal(state.runtime.getState().settled, false);
+  assert.equal(state.calls.sink, 0);
+});
+
+test("lifecycle events during an in-flight publish own status after it completes", async () => {
+  let resolveSink;
+  const pending = new Promise((resolve) => {
+    resolveSink = resolve;
+  });
+  let sinkCalls = 0;
+  const state = startedHarness({
+    sink: () => {
+      sinkCalls += 1;
+      return sinkCalls === 1 ? pending : undefined;
+    },
+  });
+  state.runtime.agentSettled();
+  runScheduled(state);
+  assert.equal(sinkCalls, 1);
+
+  state.runtime.agentStart();
+  state.runtime.agentSettled();
+  state.runtime.agentStart();
+  runScheduled(state);
+  assert.equal(state.runtime.getState().status, "active");
+
+  resolveSink();
+  await pending;
+  runScheduled(state);
+  assert.equal(state.runtime.getState().status, "active");
+  assert.equal(state.runtime.getState().settled, false);
+  assert.equal(sinkCalls, 1);
+});
+
+test("session restart during pending markers is not overwritten by stale markers", () => {
+  const state = startedHarness();
+  state.runtime.agentStart();
+  state.runtime.agentSettled();
+  state.runtime.sessionStart();
+  runScheduled(state);
+
+  assert.equal(state.runtime.getState().status, "idle");
+  assert.equal(state.runtime.getState().settled, true);
+
+  state.runtime.agentStart();
+  state.runtime.sessionStart();
+  state.runtime.agentStart();
+  runScheduled(state);
+  assert.equal(state.runtime.getState().status, "active");
+  assert.equal(state.runtime.getState().settled, false);
+});

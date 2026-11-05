@@ -555,15 +555,11 @@ export function createSessionMirrorObserverRuntime(options = {}) {
                         attestGeneration(token);
                         break;
                     case "agent-start":
-                        state.status = "active";
-                        state.settled = false;
                         break;
                     case "dirty":
                         state.dirty = true;
                         break;
                     case "agent-settled":
-                        state.status = "idle";
-                        state.settled = true;
                         publicationRequested = true;
                         break;
                     case "snapshot-required":
