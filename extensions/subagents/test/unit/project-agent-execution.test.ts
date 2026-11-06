@@ -725,6 +725,95 @@ Profile developer prompt.
         });
       }
     }
+
+    // The model-override throw happens before the seam sees the locally generated run id, so
+    // count retained references by scanning hex prefixes (run ids are UUIDs).
+    const retainedReferenceCount = (): number => {
+      let count = 0;
+      for (const prefix of "0123456789abcdef") {
+        const found = lookupProjectAgentRunReference(prefix);
+        if (found.status === "found") count += 1;
+        else if (found.status === "ambiguous") count += found.runIds.length;
+      }
+      return count;
+    };
+
+    for (const dispatch of dispatchKinds) {
+      it(`${dispatch.label} dispatch releases the run reference when the seam throws`, async () => {
+        const projectRoot = makeProject();
+        const snapshot = registerSnapshot(projectRoot);
+        let seenRunId: string | undefined;
+        const seam = (runId: string): Record<string, unknown> => {
+          seenRunId = runId;
+          assert.equal(lookupProjectAgentRunReference(runId).status, "found");
+          throw new Error("seam exploded");
+        };
+        const executor = makeExecutor(
+          projectRoot,
+          snapshot.capability,
+          snapshot.expected,
+          { count: 0 },
+          true,
+          { executeAsyncSingle: seam, executeAsyncParallel: seam },
+        );
+        try {
+          const result = await executor.execute(
+            `project-reference-${dispatch.label}-seam-throw`,
+            dispatch.params(projectRoot) as never,
+            new AbortController().signal,
+            undefined,
+            makeContext(projectRoot),
+          );
+          assert.equal(result.isError, true);
+          assert.match(resultText(result), /seam exploded/);
+          assert.ok(seenRunId, "expected the launch seam to be called");
+          assert.equal(lookupProjectAgentRunReference(seenRunId).status, "missing");
+        } finally {
+          if (seenRunId) releaseProjectAgentRunReference(seenRunId);
+        }
+      });
+
+      it(`${dispatch.label} dispatch releases the run reference when the model override throws`, async () => {
+        const projectRoot = makeProject();
+        const profileDir = path.join(projectRoot, "profile");
+        process.env.PI_CODING_AGENT_DIR = profileDir;
+        fs.mkdirSync(profileDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(profileDir, "settings.json"),
+          JSON.stringify({ subagents: { modelScope: { enforce: true, allow: ["anthropic/*"] } } }),
+          "utf8",
+        );
+        const snapshot = registerSnapshot(projectRoot);
+        const seam = () => {
+          throw new Error("seam must not be reached");
+        };
+        const executor = makeExecutor(
+          projectRoot,
+          snapshot.capability,
+          snapshot.expected,
+          { count: 0 },
+          true,
+          { executeAsyncSingle: seam, executeAsyncParallel: seam },
+        );
+        const base = dispatch.params(projectRoot);
+        const params =
+          "tasks" in base
+            ? { ...base, tasks: base.tasks.map((task) => ({ ...task, model: "openai/gpt-5" })) }
+            : { ...base, model: "openai/gpt-5" };
+        const before = retainedReferenceCount();
+        const result = await executor.execute(
+          `project-reference-${dispatch.label}-model-throw`,
+          params as never,
+          new AbortController().signal,
+          undefined,
+          makeContext(projectRoot, { provider: "anthropic", id: "claude" }),
+        );
+        assert.equal(result.isError, true);
+        assert.doesNotMatch(resultText(result), /seam must not be reached/);
+        assert.match(resultText(result), /openai\/gpt-5/);
+        assert.equal(retainedReferenceCount(), before, "run reference must be released");
+      });
+    }
   });
 
   it("allows disabled mode to initiate a project run only with explicit capability access", async () => {

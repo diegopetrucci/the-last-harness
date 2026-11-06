@@ -554,159 +554,173 @@ function runAsyncPath(
     return result;
   };
 
-  if (hasTasks && params.tasks) {
-    const agentConfigs = params.tasks.map((task) =>
-      agents.find((agent) => agent.name === task.agent),
-    );
-    const modelOverrides = params.tasks.map((task, index) =>
-      resolveSubagentModelOverride(
-        task.model ?? agentConfigs[index]?.model,
+  try {
+    if (hasTasks && params.tasks) {
+      const agentConfigs = params.tasks.map((task) =>
+        agents.find((agent) => agent.name === task.agent),
+      );
+      const modelOverrides = params.tasks.map((task, index) =>
+        resolveSubagentModelOverride(
+          task.model ?? agentConfigs[index]?.model,
+          ctx.model,
+          availableModels,
+          currentProvider,
+          { scope: data.modelScope, source: task.model ? "explicit" : "inherited" },
+        ),
+      );
+      const parallelTasks = params.tasks.map((task, index) => ({
+        agent: task.agent,
+        task: task.task,
+        cwd: task.cwd,
+        ...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
+        ...(providerFallbackModelsForTarget(task)
+          ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
+          : {}),
+        ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
+        ...(task.output === true
+          ? agentConfigs[index]?.output
+            ? { output: agentConfigs[index]!.output }
+            : {}
+          : task.output !== undefined
+            ? { output: task.output }
+            : {}),
+        ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
+      }));
+      // Validate: reject duplicate output paths before any async launch side effects.
+      // Resolution must mirror the runner: use agent-default outputs and resolve relative
+      // paths against the artifact output directory when artifacts are enabled.
+      const outputBaseDir = artifactConfig.enabled
+        ? path.join(artifactsDir, "outputs", id)
+        : undefined;
+      const seenAsyncOutputPaths = new Map<string, { index: number; agent: string }>();
+      for (let asyncTaskIdx = 0; asyncTaskIdx < parallelTasks.length; asyncTaskIdx++) {
+        const asyncTask = parallelTasks[asyncTaskIdx]!;
+        const agentCfg = agentConfigs[asyncTaskIdx];
+        // Use resolveStepBehavior (the runner\'s own resolution function) to get the
+        // effective output, including agent-default fallback when no task override is set.
+        const effectiveOutput: string | false = agentCfg
+          ? resolveStepBehavior(agentCfg, {
+              output: asyncTask.output as string | false | undefined,
+            }).output
+          : asyncTask.output || false;
+        if (!effectiveOutput) continue;
+        const taskCwd = asyncTask.cwd ? path.resolve(effectiveCwd, asyncTask.cwd) : effectiveCwd;
+        const outputPath = resolveSingleOutputPath(
+          effectiveOutput,
+          ctx.cwd,
+          taskCwd,
+          outputBaseDir,
+        );
+        if (!outputPath) continue;
+        const previous = seenAsyncOutputPaths.get(outputPath);
+        if (previous) {
+          return releaseAsyncProjectRunOnError(
+            buildParallelModeError(
+              `Parallel tasks ${previous.index + 1} (${previous.agent}) and ${asyncTaskIdx + 1} (${asyncTask.agent}) resolve output to the same path: ${outputPath}. Use distinct output paths.`,
+            ),
+          );
+        }
+        seenAsyncOutputPaths.set(outputPath, { index: asyncTaskIdx, agent: asyncTask.agent });
+      }
+      const executeAsyncParallelFn = deps.executeAsyncParallel ?? executeAsyncParallel;
+      return releaseAsyncProjectRunOnError(
+        executeAsyncParallelFn(id, {
+          tasks: parallelTasks,
+          concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
+          agents,
+          ctx: asyncCtx,
+          availableModels,
+          modelRegistry: modelRegistrySnapshot.evidence,
+          cwd: effectiveCwd,
+          artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
+          artifactConfig,
+          sessionRoot,
+          sessionFilesByFlatIndex: params.tasks.map((task, index) =>
+            sessionFileForTask(task.agent, index),
+          ),
+          maxSubagentDepth: currentMaxSubagentDepth,
+          controlConfig,
+          telemetryProvenance: data.telemetryProvenance,
+          telemetryLineage: data.telemetryLineage,
+          timeoutMs: data.timeoutMs,
+          projectAgentCaptures: data.projectAgentCaptures,
+        }),
+      );
+    }
+
+    if (hasSingle) {
+      const a = agents.find((x) => x.name === params.agent);
+      if (!a) {
+        return {
+          content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+          isError: true,
+          details: { mode: "single" as const, results: [] },
+        };
+      }
+      const rawOutput = params.output !== undefined ? params.output : a.output;
+      const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
+      const effectiveOutputMode = params.outputMode ?? "inline";
+      const skills = a.skills;
+      const maxSubagentDepth = resolveChildMaxSubagentDepth(
+        currentMaxSubagentDepth,
+        a.maxSubagentDepth,
+      );
+      const modelOverride = resolveSubagentModelOverride(
+        (params.model as string | undefined) ?? a.model,
         ctx.model,
         availableModels,
         currentProvider,
-        { scope: data.modelScope, source: task.model ? "explicit" : "inherited" },
-      ),
-    );
-    const parallelTasks = params.tasks.map((task, index) => ({
-      agent: task.agent,
-      task: task.task,
-      cwd: task.cwd,
-      ...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
-      ...(providerFallbackModelsForTarget(task)
-        ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
-        : {}),
-      ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
-      ...(task.output === true
-        ? agentConfigs[index]?.output
-          ? { output: agentConfigs[index]!.output }
-          : {}
-        : task.output !== undefined
-          ? { output: task.output }
-          : {}),
-      ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-    }));
-    // Validate: reject duplicate output paths before any async launch side effects.
-    // Resolution must mirror the runner: use agent-default outputs and resolve relative
-    // paths against the artifact output directory when artifacts are enabled.
-    const outputBaseDir = artifactConfig.enabled
-      ? path.join(artifactsDir, "outputs", id)
-      : undefined;
-    const seenAsyncOutputPaths = new Map<string, { index: number; agent: string }>();
-    for (let asyncTaskIdx = 0; asyncTaskIdx < parallelTasks.length; asyncTaskIdx++) {
-      const asyncTask = parallelTasks[asyncTaskIdx]!;
-      const agentCfg = agentConfigs[asyncTaskIdx];
-      // Use resolveStepBehavior (the runner\'s own resolution function) to get the
-      // effective output, including agent-default fallback when no task override is set.
-      const effectiveOutput: string | false = agentCfg
-        ? resolveStepBehavior(agentCfg, {
-            output: asyncTask.output as string | false | undefined,
-          }).output
-        : asyncTask.output || false;
-      if (!effectiveOutput) continue;
-      const taskCwd = asyncTask.cwd ? path.resolve(effectiveCwd, asyncTask.cwd) : effectiveCwd;
-      const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, taskCwd, outputBaseDir);
-      if (!outputPath) continue;
-      const previous = seenAsyncOutputPaths.get(outputPath);
-      if (previous) {
-        return releaseAsyncProjectRunOnError(
-          buildParallelModeError(
-            `Parallel tasks ${previous.index + 1} (${previous.agent}) and ${asyncTaskIdx + 1} (${asyncTask.agent}) resolve output to the same path: ${outputPath}. Use distinct output paths.`,
+        {
+          scope: data.modelScope,
+          source: (params.model as string | undefined) ? "explicit" : "inherited",
+        },
+      );
+      const executeAsyncSingleFn = deps.executeAsyncSingle ?? executeAsyncSingle;
+      return releaseAsyncProjectRunOnError(
+        executeAsyncSingleFn(id, {
+          agent: params.agent!,
+          task: params.task ?? "",
+          agentConfig: a,
+          ctx: asyncCtx,
+          availableModels,
+          modelRegistry: modelRegistrySnapshot.evidence,
+          cwd: effectiveCwd,
+          artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
+          artifactConfig,
+          sessionRoot,
+          sessionFile: sessionFileForTask(params.agent!, 0),
+          skills,
+          output: effectiveOutput,
+          outputMode: effectiveOutputMode,
+          outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, id),
+          modelOverride,
+          providerFallbackModels: providerFallbackModelsForTarget(params),
+          modelFallbackNotice: params.modelFallbackNotice,
+          maxSubagentDepth,
+          controlConfig,
+          telemetryProvenance: data.telemetryProvenance,
+          telemetryLineage: data.telemetryLineage,
+          timeoutMs: data.timeoutMs,
+          projectAgent: data.projectAgentCaptures?.find(
+            (capture) => capture.provenance.agent === params.agent,
           ),
-        );
-      }
-      seenAsyncOutputPaths.set(outputPath, { index: asyncTaskIdx, agent: asyncTask.agent });
+        }),
+      );
     }
-    const executeAsyncParallelFn = deps.executeAsyncParallel ?? executeAsyncParallel;
-    return releaseAsyncProjectRunOnError(
-      executeAsyncParallelFn(id, {
-        tasks: parallelTasks,
-        concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
-        agents,
-        ctx: asyncCtx,
-        availableModels,
-        modelRegistry: modelRegistrySnapshot.evidence,
-        cwd: effectiveCwd,
-        artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-        artifactConfig,
-        sessionRoot,
-        sessionFilesByFlatIndex: params.tasks.map((task, index) =>
-          sessionFileForTask(task.agent, index),
-        ),
-        maxSubagentDepth: currentMaxSubagentDepth,
-        controlConfig,
-        telemetryProvenance: data.telemetryProvenance,
-        telemetryLineage: data.telemetryLineage,
-        timeoutMs: data.timeoutMs,
-        projectAgentCaptures: data.projectAgentCaptures,
-      }),
-    );
-  }
 
-  if (hasSingle) {
-    const a = agents.find((x) => x.name === params.agent);
-    if (!a) {
-      return {
-        content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
-        isError: true,
-        details: { mode: "single" as const, results: [] },
-      };
+    if (projectRunRetained) {
+      releaseProjectAgentRunReference(id);
+      projectRunRetained = false;
     }
-    const rawOutput = params.output !== undefined ? params.output : a.output;
-    const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
-    const effectiveOutputMode = params.outputMode ?? "inline";
-    const skills = a.skills;
-    const maxSubagentDepth = resolveChildMaxSubagentDepth(
-      currentMaxSubagentDepth,
-      a.maxSubagentDepth,
-    );
-    const modelOverride = resolveSubagentModelOverride(
-      (params.model as string | undefined) ?? a.model,
-      ctx.model,
-      availableModels,
-      currentProvider,
-      {
-        scope: data.modelScope,
-        source: (params.model as string | undefined) ? "explicit" : "inherited",
-      },
-    );
-    const executeAsyncSingleFn = deps.executeAsyncSingle ?? executeAsyncSingle;
-    return releaseAsyncProjectRunOnError(
-      executeAsyncSingleFn(id, {
-        agent: params.agent!,
-        task: params.task ?? "",
-        agentConfig: a,
-        ctx: asyncCtx,
-        availableModels,
-        modelRegistry: modelRegistrySnapshot.evidence,
-        cwd: effectiveCwd,
-        artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-        artifactConfig,
-        sessionRoot,
-        sessionFile: sessionFileForTask(params.agent!, 0),
-        skills,
-        output: effectiveOutput,
-        outputMode: effectiveOutputMode,
-        outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, id),
-        modelOverride,
-        providerFallbackModels: providerFallbackModelsForTarget(params),
-        modelFallbackNotice: params.modelFallbackNotice,
-        maxSubagentDepth,
-        controlConfig,
-        telemetryProvenance: data.telemetryProvenance,
-        telemetryLineage: data.telemetryLineage,
-        timeoutMs: data.timeoutMs,
-        projectAgent: data.projectAgentCaptures?.find(
-          (capture) => capture.provenance.agent === params.agent,
-        ),
-      }),
-    );
+    return null;
+  } catch (error) {
+    // Prelaunch threw before a receipt: no watcher event will reclaim the reference.
+    if (projectRunRetained) {
+      releaseProjectAgentRunReference(id);
+      projectRunRetained = false;
+    }
+    throw error;
   }
-
-  if (projectRunRetained) {
-    releaseProjectAgentRunReference(id);
-    projectRunRetained = false;
-  }
-  return null;
 }
 
 function inferExecutionMode(params: SubagentParamsLike): SubagentRunMode {
