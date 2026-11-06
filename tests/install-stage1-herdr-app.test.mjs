@@ -59,7 +59,10 @@ function fileMode(path) {
  * ~/.config/herdr-app. `run()` may be called repeatedly against the same
  * directories to exercise rerun/idempotency behavior.
  */
-function setupHerdrInstall(t, { appHome = "env", createAppHome = false, programsJson } = {}) {
+function setupHerdrInstall(
+  t,
+  { appHome = "env", createAppHome = false, programsJson, appHomeRelativeToHome } = {},
+) {
   const root = makeTempDir("tlh-install-herdr-app-test-");
   const homeDir = join(root, "home");
   const agentDir = join(root, "agent");
@@ -77,7 +80,11 @@ function setupHerdrInstall(t, { appHome = "env", createAppHome = false, programs
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const appHomePath =
-    appHome === "default" ? join(homeDir, ".config", "herdr-app") : join(root, "herdr-app");
+    appHomeRelativeToHome !== undefined
+      ? join(homeDir, appHomeRelativeToHome)
+      : appHome === "default"
+        ? join(homeDir, ".config", "herdr-app")
+        : join(root, "herdr-app");
   if (createAppHome) mkdirSync(appHomePath, { recursive: true });
   if (programsJson !== undefined) {
     mkdirSync(appHomePath, { recursive: true });
@@ -89,7 +96,8 @@ function setupHerdrInstall(t, { appHome = "env", createAppHome = false, programs
     PATH: `${fakebin}:${process.env.PATH || ""}`,
     TLH_PACKAGE_SOURCE: packageDir,
     TLH_SKIP_GNOSIS_INSTALL: "1",
-    HERDR_APP_HOME: appHome === "default" ? undefined : appHomePath,
+    HERDR_APP_HOME:
+      appHome === "default" && appHomeRelativeToHome === undefined ? undefined : appHomePath,
   });
 
   const run = ({ cliArgs = [], wrapper = false } = {}) => {
@@ -106,7 +114,7 @@ function setupHerdrInstall(t, { appHome = "env", createAppHome = false, programs
     return runInstaller(args, env);
   };
 
-  return { run, root, homeDir, agentDir, binDir, appHomePath };
+  return { run, root, homeDir, agentDir, binDir, appHomePath, env };
 }
 
 function assertInstalled(result) {
@@ -391,13 +399,14 @@ test("herdr: empty file, BOM-prefixed file, and non-directory app home", (t) => 
   assert.equal(readFileSync(file.appHomePath, "utf8"), "not a dir");
 });
 
-function runStage0DryRun(t, { herdrAppHome, createDir }) {
+function runStage0DryRun(t, { herdrAppHome, createDir, beforeRun }) {
   const root = makeTempDir("tlh-install-herdr-stage0-test-");
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home");
   mkdirSync(home, { recursive: true });
   const target = join(home, "herdr dir");
   if (createDir) mkdirSync(target, { recursive: true });
+  beforeRun?.(home);
   const env = scrubInstallerEnv({ HOME: home, HERDR_APP_HOME: herdrAppHome(home) });
   // `bash -s` with the script on stdin has no local checkout, so it takes the
   // stage-0 dry_run_without_stage1 path.
@@ -409,7 +418,7 @@ function runStage0DryRun(t, { herdrAppHome, createDir }) {
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /Bootstrap-level/);
   assert.equal(existsSync(join(target, "programs.json")), false);
-  return { out: result.stdout, target };
+  return { out: result.stdout, target, home };
 }
 
 test("herdr: stage-0 dry-run expands ~ and trims whitespace in HERDR_APP_HOME", (t) => {
@@ -421,6 +430,20 @@ test("herdr: stage-0 dry-run expands ~ and trims whitespace in HERDR_APP_HOME", 
   const missing = runStage0DryRun(t, { herdrAppHome: () => "~/herdr dir", createDir: false });
   assert.match(missing.out, /Would skip the Herdr\.app program entry: app home not found/);
   assert.equal(existsSync(missing.target), false);
+});
+
+test("herdr: stage-0 dry-run skips a protected app home under ~/.pi without writing", (t) => {
+  const protectedRun = runStage0DryRun(t, {
+    herdrAppHome: (h) => `${h}/.pi/agent`,
+    createDir: false,
+    beforeRun: (h) => mkdirSync(join(h, ".pi", "agent"), { recursive: true }),
+  });
+  assert.match(
+    protectedRun.out,
+    /Would skip the Herdr\.app program entry: protected location \(.*\.pi\/agent\)/,
+  );
+  assert.doesNotMatch(protectedRun.out, /Would merge the TLH program entry/);
+  assert.deepEqual(readdirSync(join(protectedRun.home, ".pi", "agent")), []);
 });
 
 test("herdr: test env helpers never resolve HERDR_APP_HOME under the real user home", () => {
@@ -458,3 +481,69 @@ test("herdr: an app home removed before the write is not recreated", (t) => {
   assertInstalled(result);
   assert.equal(existsSync(fixture.appHomePath), false);
 });
+
+for (const [label, relative] of [
+  ["under ~/.pi", ".pi/agent"],
+  ["equal to $HOME", ""],
+]) {
+  test(`herdr: a protected app home (${label}) is skipped with a warning and nothing is written`, (t) => {
+    const fixture = setupHerdrInstall(t, { appHomeRelativeToHome: relative, createAppHome: true });
+    writeFileSync(join(fixture.appHomePath, "programs.json"), '{"programs":{}}');
+    const result = fixture.run();
+    assertInstalled(result);
+    assert.match(result.stderr, /skipping Herdr\.app program entry: app home .* is protected/);
+    assert.equal(
+      readFileSync(join(fixture.appHomePath, "programs.json"), "utf8"),
+      '{"programs":{}}',
+    );
+    assert.equal(existsSync(join(fixture.appHomePath, "tlh")), false);
+    assert.deepEqual(herdrBackupFiles(fixture.appHomePath), []);
+  });
+}
+
+test("herdr: an app home inside the agent dir is skipped even when the agent dir is $HOME", (t) => {
+  const fixture = setupHerdrInstall(t, {
+    appHomeRelativeToHome: "herdr-inside",
+    createAppHome: true,
+  });
+  const result = runInstaller(
+    ["--agent-dir", fixture.homeDir, "--bin-dir", fixture.binDir, "--no-wrapper"],
+    fixture.env,
+  );
+  assert.match(result.stderr, /is protected/, `${result.stdout}\n${result.stderr}`);
+  assert.equal(existsSync(join(fixture.appHomePath, "programs.json")), false);
+  assert.equal(existsSync(join(fixture.appHomePath, "tlh")), false);
+});
+
+test("herdr: an app home reached through a symlink into ~/.pi is skipped", (t) => {
+  const fixture = setupHerdrInstall(t, { appHomeRelativeToHome: ".pi/agent", createAppHome: true });
+  const link = join(fixture.root, "alias");
+  symlinkSync(fixture.appHomePath, link);
+  const result = runInstaller(
+    ["--agent-dir", fixture.agentDir, "--bin-dir", fixture.binDir, "--no-wrapper"],
+    { ...fixture.env, HERDR_APP_HOME: join(link, "..", "alias") },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /is protected/);
+  assert.equal(existsSync(join(fixture.appHomePath, "tlh")), false);
+});
+
+for (const viaLink of [true, false]) {
+  test(`herdr: a symlinked ~/.pi/agent pointing outside ~/.pi is protected (${viaLink ? "via link" : "resolved target"})`, (t) => {
+    const fixture = setupHerdrInstall(t, { createAppHome: false });
+    const outside = join(fixture.root, "outside-agent");
+    const child = join(outside, "child");
+    mkdirSync(child, { recursive: true });
+    mkdirSync(join(fixture.homeDir, ".pi"), { recursive: true });
+    symlinkSync(outside, join(fixture.homeDir, ".pi", "agent"));
+    const appHome = viaLink ? join(fixture.homeDir, ".pi", "agent", "child") : child;
+    const result = runInstaller(
+      ["--agent-dir", fixture.agentDir, "--bin-dir", fixture.binDir, "--no-wrapper"],
+      { ...fixture.env, HERDR_APP_HOME: appHome },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /is protected/);
+    assert.equal(existsSync(join(child, "programs.json")), false);
+    assert.equal(existsSync(join(child, "tlh")), false);
+  });
+}

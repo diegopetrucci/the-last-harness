@@ -52,7 +52,7 @@ function run(
     [
       join(repoRoot, "uninstall.sh"),
       "--agent-dir",
-      join(ctx.root, "agent"),
+      join(ctx.root, "profile", "agent"),
       "--bin-dir",
       join(ctx.root, "bin"),
       ...args,
@@ -99,7 +99,7 @@ test("keeps an emptied programs object and the app home", (t) => {
 test("runs regardless of the herdrApp opt-out setting", (t) => {
   const ctx = setup(t);
   seedEntry(ctx.appHome);
-  const agentDir = join(ctx.root, "agent");
+  const agentDir = join(ctx.root, "profile", "agent");
   mkdirSync(join(agentDir, "tlh"), { recursive: true });
   writeFileSync(join(agentDir, "tlh", "install-state.json"), "{}");
   writeFileSync(join(agentDir, "settings.json"), '{"tlh":{"herdrApp":{"enabled":false}}}');
@@ -141,13 +141,96 @@ test("no-op when app home, programs.json, or the key is absent", (t) => {
   assert.equal(backups(ctx.appHome).length, 0);
 });
 
-test("removes a leftover icon folder when the entry is already absent", (t) => {
+test("keeps a leftover icon folder, with a note, when the entry is already absent", (t) => {
   const ctx = setup(t);
   writeFileSync(join(ctx.appHome, "programs.json"), '{"programs":{}}');
   mkdirSync(join(ctx.appHome, "tlh"));
-  assert.equal(run(ctx).status, 0);
-  assert.equal(existsSync(join(ctx.appHome, "tlh")), false);
+  writeFileSync(join(ctx.appHome, "tlh", "tlh.svg"), "<svg/>");
+  const result = run(ctx);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(join(ctx.appHome, "tlh", "tlh.svg")), true);
+  assert.match(result.stdout, /Leaving the Herdr\.app icon folder in place/);
   assert.equal(backups(ctx.appHome).length, 0);
+});
+
+test("keeps a leftover icon folder when programs.json is absent", (t) => {
+  const ctx = setup(t);
+  mkdirSync(join(ctx.appHome, "tlh"));
+  const result = run(ctx);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(join(ctx.appHome, "tlh")), true);
+});
+
+test("removes only tlh.svg and keeps the folder when it holds foreign files", (t) => {
+  const ctx = setup(t);
+  seedEntry(ctx.appHome);
+  writeFileSync(join(ctx.appHome, "tlh", "mine.txt"), "keep");
+  const result = run(ctx);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(join(ctx.appHome, "tlh", "tlh.svg")), false);
+  assert.equal(readFileSync(join(ctx.appHome, "tlh", "mine.txt"), "utf8"), "keep");
+  assert.match(result.stdout, /Kept Herdr\.app icon folder \(not empty\)/);
+});
+
+function protectedCase(label, prepare) {
+  test(`refuses a protected app home: ${label}`, (t) => {
+    const ctx = setup(t);
+    const target = prepare(ctx);
+    const programs = join(target, "programs.json");
+    const before = existsSync(programs) ? readFileSync(programs, "utf8") : undefined;
+    const result = run(ctx, { env: { HERDR_APP_HOME: ctx.appHomeOverride ?? target } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /protected location/);
+    assert.equal(existsSync(join(target, "tlh", "tlh.svg")), true);
+    if (before !== undefined) assert.equal(readFileSync(programs, "utf8"), before);
+    assert.equal(backups(target).length, 0);
+  });
+}
+
+protectedCase("~/.pi/agent", (ctx) => {
+  const dir = join(ctx.homeDir, ".pi", "agent");
+  mkdirSync(dir, { recursive: true });
+  seedEntry(dir);
+  return dir;
+});
+
+protectedCase("symlinked ancestor into ~/.pi", (ctx) => {
+  const dir = join(ctx.homeDir, ".pi", "agent");
+  mkdirSync(dir, { recursive: true });
+  seedEntry(dir);
+  symlinkSync(join(ctx.homeDir, ".pi"), join(ctx.root, "alias"));
+  ctx.appHomeOverride = join(ctx.root, "alias", "agent");
+  return dir;
+});
+
+function symlinkedAgentCase(ctx) {
+  const outside = join(ctx.root, "outside-agent");
+  const child = join(outside, "child");
+  mkdirSync(child, { recursive: true });
+  seedEntry(child);
+  mkdirSync(join(ctx.homeDir, ".pi"), { recursive: true });
+  symlinkSync(outside, join(ctx.homeDir, ".pi", "agent"));
+  return child;
+}
+
+protectedCase("symlinked ~/.pi/agent outside ~/.pi (via link)", (ctx) => {
+  const child = symlinkedAgentCase(ctx);
+  ctx.appHomeOverride = join(ctx.homeDir, ".pi", "agent", "child");
+  return child;
+});
+
+protectedCase("symlinked ~/.pi/agent outside ~/.pi (resolved target)", symlinkedAgentCase);
+
+protectedCase("$HOME itself", (ctx) => {
+  seedEntry(ctx.homeDir);
+  return ctx.homeDir;
+});
+
+protectedCase("inside the TLH profile root", (ctx) => {
+  const dir = join(ctx.root, "profile", "runtime", "app");
+  mkdirSync(dir, { recursive: true });
+  seedEntry(dir);
+  return dir;
 });
 
 test("--dry-run reports only", (t) => {
@@ -157,7 +240,8 @@ test("--dry-run reports only", (t) => {
   const result = run(ctx, { args: ["--dry-run"] });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /would remove the TLH entry from Herdr\.app programs\.json/);
-  assert.match(result.stdout, /would run: rm -rf .*tlh/);
+  assert.match(result.stdout, /would remove the TLH icon file: .*tlh\.svg/);
+  assert.match(result.stdout, /icon folder only if it is empty/);
   assert.equal(readFileSync(join(ctx.appHome, "programs.json"), "utf8"), before);
   assert.equal(existsSync(join(ctx.appHome, "tlh", "tlh.svg")), true);
   assert.equal(backups(ctx.appHome).length, 0);
@@ -236,7 +320,9 @@ test("without node, leaves entry and icon and prints manual steps", (t) => {
   const result = run(ctx, { path: SYSTEM_PATH });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /node not found on PATH/);
-  assert.match(result.stderr, /rm -rf -- .*tlh/);
+  assert.match(result.stderr, /only if .*"run" is exactly .* \(or absent\)/);
+  assert.match(result.stderr, /not a symlink/);
+  assert.match(result.stderr, /rmdir -- .*tlh.* if it is empty/);
   assert.equal(readPrograms(ctx.appHome).programs.tlh.name, "TLH");
   assert.equal(existsSync(join(ctx.appHome, "tlh", "tlh.svg")), true);
 });

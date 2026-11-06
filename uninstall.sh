@@ -468,6 +468,7 @@ removal_run() {
 HERDR_ACTED=false
 HERDR_TLH_PROGRAM_KEY="tlh"
 HERDR_TLH_ICON_DIRECTORY="tlh"
+HERDR_TLH_ICON_FILENAME="tlh.svg"
 HERDR_PROGRAMS_BACKUP_MARKER="herdr"
 
 # Node helper (JSON edit). Reads HERDR_PROGRAMS_PATH, HERDR_PROGRAM_KEY,
@@ -556,6 +557,22 @@ try {
 process.stdout.write("removed\n");
 '
 
+# Returns 0 when the physically resolved app home (symlinked ancestors included) is
+# normal Pi config, inside/equal to the TLH agent dir, profile root, or runtime dir
+# being uninstalled, or equals $HOME or /.
+herdr_app_home_protected() {
+  local phys root
+  phys="$(realpath_for_compare "$1")"
+  [[ "${phys}" == "/" || "${phys}" == "${HOME_COMPARE}" ]] && return 0
+  path_is_protected_pi_config "${phys}" && return 0
+  for root in "${AGENT_DIR_COMPARE}" "${PROFILE_ROOT_COMPARE}" "$(realpath_for_compare "${RUNTIME_DIR}")"; do
+    # A profile root equal to $HOME must not make the whole home protected.
+    [[ "${root}" == "${HOME_COMPARE}" || "${root}" == "/" ]] && continue
+    path_within_or_equal "${root}" "${phys}" && return 0
+  done
+  return 1
+}
+
 herdr_app_cleanup() {
   local configured app_home programs_path icon_dir state="absent" node_out node_err node_status line
   configured="${HERDR_APP_HOME:-}"
@@ -568,6 +585,11 @@ herdr_app_cleanup() {
   fi
   [[ -d "${app_home}" ]] || return 0
 
+  if herdr_app_home_protected "${app_home}"; then
+    warn "not touching Herdr.app files: the app home (${app_home}) resolves to a protected location (normal Pi config, the TLH profile being uninstalled, \$HOME, or /); check HERDR_APP_HOME"
+    return 0
+  fi
+
   programs_path="${app_home}/programs.json"
   icon_dir="${app_home}/${HERDR_TLH_ICON_DIRECTORY}"
 
@@ -577,7 +599,7 @@ herdr_app_cleanup() {
   elif [[ -e "${programs_path}" ]]; then
     if ! command -v node >/dev/null 2>&1; then
       warn "node not found on PATH; the Herdr.app TLH entry and icon were left in place."
-      warn "To remove manually: delete the \"${HERDR_TLH_PROGRAM_KEY}\" entry from \"programs\" in ${programs_path} (back it up first), then run: rm -rf -- $(printf '%q' "${icon_dir}")"
+      warn "To remove manually: only if the \"${HERDR_TLH_PROGRAM_KEY}\" entry's \"run\" is exactly ${WRAPPER_PATH} (or absent), delete that entry from \"programs\" in ${programs_path} (back up programs.json first). Then, only if ${icon_dir} is a real directory (not a symlink), remove $(printf '%q' "${icon_dir}/${HERDR_TLH_ICON_FILENAME}") and rmdir -- $(printf '%q' "${icon_dir}") if it is empty."
       return 0
     fi
     node_err="$(mktemp)"
@@ -613,18 +635,39 @@ herdr_app_cleanup() {
     esac
   fi
 
+  local icon_file="${icon_dir}/${HERDR_TLH_ICON_FILENAME}"
+  if [[ "${state}" != "removed" && "${state}" != "would-remove" ]]; then
+    # This run did not remove an entry it owns, so the icon folder is not ours to delete.
+    if [[ -e "${icon_dir}" || -L "${icon_dir}" ]]; then
+      say "Leaving the Herdr.app icon folder in place (no TLH entry was removed by this run): ${icon_dir}"
+    fi
+    return 0
+  fi
+
   if [[ -L "${icon_dir}" ]]; then
     warn "not removing Herdr.app icon folder: refusing to remove a symlink (${icon_dir})"
   elif [[ -d "${icon_dir}" ]]; then
     HERDR_ACTED=true
     if [[ "${DRY_RUN}" == "true" ]]; then
-      say "would run: rm -rf ${icon_dir}"
+      if [[ -f "${icon_file}" && ! -L "${icon_file}" ]]; then
+        say "would remove the TLH icon file: ${icon_file}"
+      fi
+      say "would remove the Herdr.app icon folder only if it is empty: ${icon_dir}"
     elif [[ -L "${app_home}" || ! -d "${app_home}" || -L "${icon_dir}" || ! -d "${icon_dir}" ]]; then
       # Re-check right before the removal: the paths may have changed since above.
       warn "not removing Herdr.app icon folder: ${icon_dir} or the app home changed during uninstall"
     else
-      say "Removing Herdr.app TLH icon folder: ${icon_dir}"
-      removal_run rm -rf -- "${icon_dir}"
+      if [[ -L "${icon_file}" ]]; then
+        warn "not removing Herdr.app icon file: refusing to remove a symlink (${icon_file})"
+      elif [[ -f "${icon_file}" ]]; then
+        say "Removing Herdr.app TLH icon: ${icon_file}"
+        removal_run rm -f -- "${icon_file}"
+      fi
+      if removal_run rmdir -- "${icon_dir}" 2>/dev/null; then
+        say "Removed empty Herdr.app TLH icon folder: ${icon_dir}"
+      else
+        say "Kept Herdr.app icon folder (not empty): ${icon_dir}"
+      fi
     fi
   elif [[ -e "${icon_dir}" ]]; then
     warn "not removing Herdr.app icon path: ${icon_dir} is not a directory"
@@ -678,9 +721,10 @@ Options:
   --verbose              Print each removal command before executing it.
   -h, --help             Show this help.
 
-The Herdr.app TLH program entry and icon folder (HERDR_APP_HOME, default
-~/.config/herdr-app) are removed too, regardless of tlh.herdrApp.enabled,
-but only when this install owns the entry (no run, or run is this wrapper).
+The Herdr.app TLH program entry (HERDR_APP_HOME, default ~/.config/herdr-app)
+is removed too, regardless of tlh.herdrApp.enabled, but only when this install
+owns it (no run, or run is this wrapper); then tlh/tlh.svg is deleted and tlh/
+removed if empty. Protected app homes (~/.pi, the TLH profile, $HOME, /) are refused.
 
 Notes:
   --force-include-pi and --keep-pi are mutually exclusive.

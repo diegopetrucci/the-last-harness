@@ -10,7 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
-- The installer and `tlh update` now register TLH (name, icon, launcher) in an existing Herdr.app home; opt out with `tlh.herdrApp.enabled: false`, and uninstall removes the entry. See [Herdr.app integration](docs/install.md#herdrapp-integration).
+- The installer and `tlh update` now register TLH (name, icon, launcher) in an existing Herdr.app home; opt out with `tlh.herdrApp.enabled: false`, and uninstall removes the entry it owns (and its icon file) without ever deleting unowned folders; protected app homes such as `~/.pi` are refused. See [Herdr.app integration](docs/install.md#herdrapp-integration).
 - Bumped managed Gnosis (`gn`) to 0.5.5.
 - Managed Gnosis install now fetches the release checksums concurrently with the archive download, reducing install latency.
 - `/annotate-git-diff` now runs independent git lookups concurrently when opening the review window and loading file contents, reducing latency.

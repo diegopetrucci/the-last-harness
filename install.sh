@@ -998,7 +998,18 @@ dry_run_without_stage1() {
   log "Would fetch tlh tickets support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."
-  if [[ -d "${herdr_app_home}" ]]; then
+  local herdr_physical herdr_physical_home herdr_physical_agent herdr_protected=""
+  herdr_physical="$(realpath_for_compare_stage0 "${herdr_app_home}")"
+  herdr_physical_home="$(realpath_for_compare_stage0 "${HOME}")"
+  herdr_physical_agent="$(realpath_for_compare_stage0 "${agent_dir}")"
+  if [[ "${herdr_physical}" == "/" || "${herdr_physical}" == "${herdr_physical_home}" ]] \
+    || path_is_protected_pi_config_stage0 "${herdr_physical}" \
+    || path_within_or_equal_stage0 "${herdr_physical_agent}" "${herdr_physical}"; then
+    herdr_protected="true"
+  fi
+  if [[ "${herdr_protected}" == "true" ]]; then
+    log "Would skip the Herdr.app program entry: protected location (${herdr_app_home})"
+  elif [[ -d "${herdr_app_home}" ]]; then
     log "Would merge the TLH program entry into the Herdr.app programs.json: ${herdr_programs_path} (backup first; icon in ${herdr_app_home%/}/tlh/; skipped if tlh.herdrApp.enabled is false)"
   else
     log "Would skip the Herdr.app program entry: app home not found (${herdr_app_home})."

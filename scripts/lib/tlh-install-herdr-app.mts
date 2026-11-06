@@ -11,9 +11,14 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
-import { isSymlink } from "./tlh-install-paths.mjs";
+import {
+  isSymlink,
+  pathIsProtectedPiConfig,
+  pathWithinOrEqual,
+  realpathForCompare,
+} from "./tlh-install-paths.mjs";
 import { backupPathWithTimestamp, expandHomePath } from "./tlh-install-utils.mjs";
 
 // ---------------------------------------------------------------------------
@@ -184,6 +189,23 @@ function assertHerdrPathsSafe(appHome: string, paths: string[]): void {
   }
 }
 
+// The app home is user-configurable (HERDR_APP_HOME), so refuse locations that
+// are never a Herdr.app home: normal Pi config, the isolated agent dir, $HOME, `/`.
+// Compared physically (symlinked ancestors resolved).
+function protectedAppHomeReason(appHome: string, config: HerdrAppConfig): string | undefined {
+  const physical = realpathForCompare(appHome);
+  const home = realpathForCompare(config.homeDir);
+  if (physical === sep || physical === home) return "it is the home directory or filesystem root";
+  if (pathIsProtectedPiConfig(physical, { homeDir: config.homeDir, alreadyNormalized: true })) {
+    return "it is inside the normal Pi config (~/.pi)";
+  }
+  const agentDir = realpathForCompare(dirname(config.settingsPath));
+  if (pathWithinOrEqual(agentDir, physical)) {
+    return "it is inside the isolated TLH agent directory";
+  }
+  return undefined;
+}
+
 // Any Herdr failure is a warning, never an install failure: branding is auxiliary.
 export function configureHerdrPrograms(config: HerdrAppConfig, io: HerdrAppIo): void {
   try {
@@ -210,6 +232,13 @@ function mergeHerdrProgramEntry(config: HerdrAppConfig, io: HerdrAppIo): void {
     return;
   }
   const appHome = herdrAppHomePath(config);
+  const protectedReason = protectedAppHomeReason(appHome, config);
+  if (protectedReason) {
+    io.warn(
+      `skipping Herdr.app program entry: app home ${appHome} is protected (${protectedReason})`,
+    );
+    return;
+  }
   const kind = herdrAppHomeKind(appHome);
   if (kind === "missing") {
     io.log(`Skipping Herdr.app program entry (app home not found: ${appHome}).`);
