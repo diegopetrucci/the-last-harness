@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
+- In a Rex terminal, TLH now gives the primary agent Rex's session-start context; see [Rex integration](docs/integrations.md#rex-integration).
 - Bumped managed Gnosis (`gn`) to 0.5.5.
 - Managed Gnosis install now fetches the release checksums concurrently with the archive download, reducing install latency.
 - `/annotate-git-diff` now runs independent git lookups concurrently when opening the review window and loading file contents, reducing latency.

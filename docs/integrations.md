@@ -70,3 +70,9 @@ The `tlh` wrapper also sets `PI_PROGRAM_STATUS=0` by default because the pinned 
 Herdr only accepts native session references from its own official source and agent pairs, so a session reference reported by TLH is ignored. Instead, TLH reports `resume_argv` on its activity reports: the command `<wrapper> --session <session file>`, where `<wrapper>` is the `tlh` wrapper name. After a Herdr restore or reboot, the pane reopens in the saved directory and runs that command, so the same TLH session continues. This requires the `tlh` wrapper to be on the `PATH` of the login shell Herdr restores into. Only the command is restored; per-launch environment such as `PI_OFFLINE=1` is not. Exiting TLH on purpose does not relaunch it, because Herdr clears the reported command once the pane is back at its shell prompt. To opt out, set `[session] resume_agents_on_restore = false` in your Herdr config.
 
 This bridge is session-scoped only. TLH does not install, enable, or reconfigure Herdr, cmux, or any other external integration for you, and it does not write persistent external config as part of this bridge. If your terminal setup does not already support this status handoff, nothing new is installed.
+
+## Rex integration
+
+When TLH runs in a Rex terminal (`REX_SESSION` set), the primary agent's system prompt includes the output of `rex __internal session-start --agent pi --autostart=false`: the same session-start context Rex's SessionStart hook gives Claude Code and Codex (Rex reports Pi hooks as unsupported). It runs once per session and never starts a Rex server. If `rex` is unavailable or the command fails, TLH silently skips it. Subagents do not receive it. There is no opt-out setting.
+
+The context follows Rex's session-naming default, so it asks the agent to name the Rex session. TLH does not bundle a Rex skill; `rex skill setup` installs it into `~/.agents/skills`, which TLH already reads.
