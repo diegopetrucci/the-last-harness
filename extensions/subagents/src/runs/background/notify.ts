@@ -1370,11 +1370,17 @@ export default function registerSubagentNotify(
     string,
     { ownerSessionId: string; batcher: CompletionBatcher<NotifyBatchItem> }
   >();
+  // EventIds currently held by a batcher awaiting emission. A re-emitted
+  // result (for example after session re-entry re-primes the watcher) must not
+  // be queued twice. Cleared as soon as a batch leaves the batcher, so a failed
+  // send or dropped batch can still be redelivered later.
+  const queuedEventIds = new Map<string, string>();
   let shuttingDownSessionId: string | null = null;
   globalStore[batcherStoreKey] = {
     dispose() {
       for (const entry of batchers.values()) entry.batcher.dispose();
       batchers.clear();
+      queuedEventIds.clear();
     },
   };
 
@@ -1409,6 +1415,7 @@ export default function registerSubagentNotify(
       const batcher = createCompletionBatcher<NotifyBatchItem>({
         config: batchConfig,
         emit: (batchItems) => {
+          for (const item of batchItems) queuedEventIds.delete(item.eventId);
           const lifecycleFlush = shuttingDownSessionId === ownerSessionId;
           if (state.currentSessionId !== ownerSessionId && !lifecycleFlush) {
             // Session switched before the batch fired. Items are dropped without
@@ -1468,6 +1475,8 @@ export default function registerSubagentNotify(
       );
       return;
     }
+    if (queuedEventIds.has(eventId)) return;
+    queuedEventIds.set(eventId, batchKey);
     batcherEntry.batcher.push({ details, eventId, timestamp: now, onPersisted: ack });
   };
 
@@ -1476,6 +1485,7 @@ export default function registerSubagentNotify(
     if (typeof ownerSessionId !== "string" || ownerSessionId.length === 0) {
       for (const entry of batchers.values()) entry.batcher.dispose();
       batchers.clear();
+      queuedEventIds.clear();
       return;
     }
     shuttingDownSessionId = ownerSessionId;
@@ -1484,6 +1494,10 @@ export default function registerSubagentNotify(
         if (entry.ownerSessionId !== ownerSessionId) {
           entry.batcher.dispose();
           batchers.delete(key);
+          // Disposed items never emit; forget them so they can be redelivered.
+          for (const [queuedId, queuedKey] of queuedEventIds) {
+            if (queuedKey === key) queuedEventIds.delete(queuedId);
+          }
           continue;
         }
         // P2 fix: catch per-batcher flush failures so a failed chunk does not
@@ -1499,6 +1513,7 @@ export default function registerSubagentNotify(
       shuttingDownSessionId = null;
       for (const entry of batchers.values()) entry.batcher.dispose();
       batchers.clear();
+      queuedEventIds.clear();
     }
   });
 

@@ -779,12 +779,14 @@ export default function registerSubagentNotify(pi, state, options = {}) {
     const nowFn = options.now ?? Date.now;
     const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
     const batchers = new Map();
+    const queuedEventIds = new Map();
     let shuttingDownSessionId = null;
     globalStore[batcherStoreKey] = {
         dispose() {
             for (const entry of batchers.values())
                 entry.batcher.dispose();
             batchers.clear();
+            queuedEventIds.clear();
         },
     };
     const handleComplete = (data) => {
@@ -807,6 +809,8 @@ export default function registerSubagentNotify(pi, state, options = {}) {
             const batcher = createCompletionBatcher({
                 config: batchConfig,
                 emit: (batchItems) => {
+                    for (const item of batchItems)
+                        queuedEventIds.delete(item.eventId);
                     const lifecycleFlush = shuttingDownSessionId === ownerSessionId;
                     if (state.currentSessionId !== ownerSessionId && !lifecycleFlush) {
                         batchers.delete(batchKey);
@@ -851,6 +855,9 @@ export default function registerSubagentNotify(pi, state, options = {}) {
             ], { triggerTurn: true, isIdle });
             return;
         }
+        if (queuedEventIds.has(eventId))
+            return;
+        queuedEventIds.set(eventId, batchKey);
         batcherEntry.batcher.push({ details, eventId, timestamp: now, onPersisted: ack });
     };
     pi.on("session_shutdown", () => {
@@ -859,6 +866,7 @@ export default function registerSubagentNotify(pi, state, options = {}) {
             for (const entry of batchers.values())
                 entry.batcher.dispose();
             batchers.clear();
+            queuedEventIds.clear();
             return;
         }
         shuttingDownSessionId = ownerSessionId;
@@ -867,6 +875,10 @@ export default function registerSubagentNotify(pi, state, options = {}) {
                 if (entry.ownerSessionId !== ownerSessionId) {
                     entry.batcher.dispose();
                     batchers.delete(key);
+                    for (const [queuedId, queuedKey] of queuedEventIds) {
+                        if (queuedKey === key)
+                            queuedEventIds.delete(queuedId);
+                    }
                     continue;
                 }
                 try {
@@ -881,6 +893,7 @@ export default function registerSubagentNotify(pi, state, options = {}) {
             for (const entry of batchers.values())
                 entry.batcher.dispose();
             batchers.clear();
+            queuedEventIds.clear();
         }
     });
     globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
