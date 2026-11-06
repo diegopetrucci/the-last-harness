@@ -39,6 +39,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
 - Restored Herdr panes now relaunch the same TLH session instead of a plain shell; see [docs/integrations.md](docs/integrations.md) ([#864](https://github.com/diegopetrucci/the-last-harness/pull/864)).
 - The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.
@@ -64,6 +65,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
 - `/annotate-last-message` keeps a fenced code block in one section across blank lines and no longer creates an empty section for a horizontal-rule-only block.
+- Subagent run status writes no longer bypass the lifecycle lock: the lock-exhaustion fallback only writes while holding the lock, and continuation gate rejection now persists through a generation-checked locked transition, preserving newer committed states.
 
 ### Changed
 
@@ -110,6 +112,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Made the subagent result watcher transport mode (native watch, restart wait, polling, stopped) an explicit local state union and removed the shared `watcherRestartTimer` slot.
 - Fixed temporary-root inspection false successes and removed proven-unused subagent, extension, and installer code while moving meaningful tests onto live paths.
 - Removed the union-merge Gnosis conflict guidance from `AGENTS.md`; Gnosis 0.5.5 keeps entries sorted by ID and warns on duplicates.
 - Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins` and `oxlint` 1.90.0, `oxfmt` 0.75.0, and `@types/node` 26.6.6.

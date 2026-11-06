@@ -221,7 +221,6 @@ export function makeSubagentState(overrides: Partial<SubagentState> = {}): Subag
     lastUiContext: null,
     poller: null,
     watcher: null,
-    watcherRestartTimer: null,
     resultFileCoalescer: {
       schedule: () => false,
       clear: () => {},
