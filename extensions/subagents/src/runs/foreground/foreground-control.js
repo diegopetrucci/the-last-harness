@@ -8,7 +8,7 @@ import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { readStatus } from "../../shared/utils.js";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { hasProjectAgentControlMarker, isRecordValue, projectRunAuthorizationError, authorizePersistedProjectAgentRun, } from "./project-agent-control.js";
-export { trimRememberedForegroundRuns, rememberForegroundRun, updateRememberedForegroundChild, resolveRememberedForegroundRun, cancelPersistedPausedForegroundRun, } from "./foreground-run-state.js";
+export { trimRememberedForegroundRuns, resolveRememberedForegroundRun, cancelPersistedPausedForegroundRun, } from "./foreground-run-state.js";
 export { buildResumeModelResolution, enrichPersistedPausedForegroundSingleRun, recoverFailedPausedForegroundTransition, resumeAsyncRun, } from "./foreground-resume.js";
 export { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "./foreground-support.js";
 function isAsyncInterruptFailure(result) {

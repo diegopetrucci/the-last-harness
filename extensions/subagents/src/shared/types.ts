@@ -8,7 +8,6 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
 import type { ProjectAgentRunCapture } from "../agents/project-agent-snapshot.ts";
 import type { ChildLocationSnapshot } from "./child-location.ts";
@@ -1096,90 +1095,6 @@ export type SubagentAsyncRestoredEvent = {
   sessionId: string;
   jobs: readonly SubagentAsyncRestoredJob[];
 };
-
-// ============================================================================
-// Execution Options
-// ============================================================================
-
-export interface RunSyncOptions {
-  /** Session id of the direct parent session for permission-system ask forwarding. */
-  parentSessionId?: string;
-  /** Parent-captured provenance forwarded unchanged to foreground finalization. */
-  telemetryProvenance?: import("./telemetry.ts").SubagentTelemetryProvenance;
-  /** Canonical run start timestamp captured at dispatch. */
-  startedAt?: number;
-  /** Envelope mode for this child when runSync is used by a parallel parent. */
-  telemetryMode?: SubagentRunMode;
-  /** Existing lineage metadata, when this execution is a continuation/nested run. */
-  telemetryLineage?: import("./telemetry.ts").SubagentTelemetryLineage;
-  /** Exact approved project-agent config/provenance; never includes a capability. */
-  projectAgent?: ProjectAgentRunCapture;
-  tkTicket?: TkTicketMetadata;
-  /** Validated per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
-  onSupervisorPauseTransition?: (
-    input:
-      | { stage: "pausing"; result: SingleResult; ownerPid?: number }
-      | { stage: "paused"; result: SingleResult },
-  ) => void;
-  cwd?: string;
-  signal?: AbortSignal;
-  interruptSignal?: AbortSignal;
-  /** Internal resolved allowance used by the process/deadline transport. */
-  timeoutMs?: number;
-  /** Internal diagnostic selected by the execution boundary that owns the deadline. */
-  timeoutMessage?: string;
-  deadlineAt?: number;
-  toolBudget?: ResolvedToolBudget;
-  pauseBlockingSupervisor?: boolean;
-  onUpdate?: (r: SubagentToolResult<Details>) => void;
-  onControlEvent?: (event: ControlEvent) => void;
-  controlConfig?: ResolvedControlConfig;
-  maxOutput?: MaxOutputConfig;
-  artifactsDir?: string;
-  artifactConfig?: ResolvedArtifactConfig;
-  runId: string;
-  index?: number;
-  sessionDir?: string;
-  sessionFile?: string;
-  outputPath?: string;
-  outputMode?: OutputMode;
-  maxSubagentDepth?: number;
-  /** Override the agent's default model (format: "provider/id" or just "id") */
-  modelOverride?: string;
-  /** Durable explanation for a restored or explicitly overridden model selection. */
-  modelResolution?: SubagentModelResolution;
-  /** Provider-aware fallback candidates generated for this dispatch target. */
-  providerFallbackModels?: string[];
-  /** Latest persisted display projection restored for the same execution segment. */
-  contextPressure?: ContextPressureProjection;
-  /** Thresholds already crossed in this execution, used for restart-safe deduplication. */
-  contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  /** Optional bounded notice for a supplied fallback retry and/or registry filtering. */
-  modelFallbackNotice?: string;
-  /** Registry models available for model resolution and thinking-capability checks */
-  availableModels?: import("./model-info.ts").ModelInfo[];
-  /** Catalog/error evidence used to conservatively filter unavailable fallbacks. */
-  modelRegistry?: import("../runs/shared/model-fallback.ts").ModelRegistryEvidence;
-  /** Current parent-session provider to prefer for ambiguous bare model ids */
-  preferredModelProvider?: string;
-  /** Optional subagent model-scope enforcement for fallback candidates */
-  modelScope?: ModelScopeConfig;
-  /** Resolved skills selected from the agent definition by the trusted dispatcher. */
-  skills?: string[];
-  steerInboxDir?: string;
-  acceptance?: AcceptanceInput;
-  acceptanceContext?: {
-    mode?: SubagentRunMode;
-    async?: boolean;
-  };
-  /**
-   * Dispatch-time child-location snapshot computed by the caller before
-   * invoking runSync. When present, it is attached to the initial SingleResult
-   * and survives streaming progress updates via object spread.
-   */
-  childLocation?: ChildLocationSnapshot;
-}
 
 interface TopLevelParallelConfig {
   maxTasks?: number;

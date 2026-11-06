@@ -5,7 +5,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import { formatToolCall } from "./formatters.ts";
 import {
   getConfigDirName,
   getProjectConfigDir,
@@ -13,16 +12,7 @@ import {
   resolveConfigDirName,
 } from "./config-dir.ts";
 import { getPiAgentDir } from "./profile.ts";
-import type {
-  AgentProgress,
-  AsyncStatus,
-  Details,
-  DisplayItem,
-  ErrorInfo,
-  SingleResult,
-  ToolCallSummary,
-  Usage,
-} from "./types.ts";
+import type { AsyncStatus, DisplayItem, ErrorInfo, SingleResult } from "./types.ts";
 import {
   createAsyncStatusJsonParseError,
   createAsyncStatusUnsafeError,
@@ -421,108 +411,6 @@ export function getDisplayItems(messages: Message[] | undefined): DisplayItem[] 
     }
   }
   return items;
-}
-
-function compactCompletedProgress(progress: AgentProgress): AgentProgress {
-  if (progress.status === "running") return progress;
-  return {
-    index: progress.index,
-    agent: progress.agent,
-    status: progress.status,
-    activityState: progress.activityState,
-    idleEpisodeId: progress.idleEpisodeId,
-    durableAttentionReasons: progress.durableAttentionReasons
-      ? [...progress.durableAttentionReasons]
-      : undefined,
-    compaction: progress.compaction ? { ...progress.compaction } : undefined,
-    task: progress.task,
-    skills: progress.skills,
-    toolCount: progress.toolCount,
-    tokens: progress.tokens,
-    durationMs: progress.durationMs,
-    error: progress.error,
-    failedTool: progress.failedTool,
-    recentTools: [],
-    recentOutput: [],
-  };
-}
-
-function toolCallSummary(text: string, expandedText: string): ToolCallSummary {
-  return expandedText === text ? { text } : { text, expandedText };
-}
-
-function normalizeToolCallSummaries(toolCalls: ToolCallSummary[]): ToolCallSummary[] {
-  return toolCalls.map((toolCall) =>
-    toolCall.expandedText !== undefined && toolCall.expandedText === toolCall.text
-      ? { text: toolCall.text }
-      : { ...toolCall },
-  );
-}
-
-function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSummary[] {
-  if (!messages?.length) return [];
-  const summaries: ToolCallSummary[] = [];
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    for (const part of msg.content) {
-      if (part.type !== "toolCall") continue;
-      const args =
-        typeof part.arguments === "object" &&
-        part.arguments !== null &&
-        !Array.isArray(part.arguments)
-          ? part.arguments
-          : {};
-      const text = formatToolCall(part.name, args);
-      const expandedText = formatToolCall(part.name, args, true);
-      summaries.push(toolCallSummary(text, expandedText));
-    }
-  }
-  return summaries;
-}
-
-export function sumResultsUsage(results: SingleResult[]): Usage {
-  const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-  for (const result of results) {
-    usage.input += result.usage.input;
-    usage.output += result.usage.output;
-    usage.cacheRead += result.usage.cacheRead;
-    usage.cacheWrite += result.usage.cacheWrite;
-    usage.cost += result.usage.cost;
-    usage.turns += result.usage.turns;
-  }
-  return usage;
-}
-
-/** Sum input tokens, output tokens, and cost across a set of SingleResults. */
-export function sumResultsCost(results: SingleResult[]): NonNullable<Details["totalCost"]> {
-  const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-  for (const result of results) {
-    total.inputTokens += result.usage.input;
-    total.outputTokens += result.usage.output;
-    total.costUsd += result.usage.cost;
-  }
-  return total;
-}
-
-export function compactForegroundResult(result: SingleResult): SingleResult {
-  if (result.progress?.status === "running") return result;
-  const toolCalls = result.toolCalls?.length
-    ? normalizeToolCallSummaries(result.toolCalls)
-    : extractToolCallSummaries(result.messages);
-  return {
-    ...result,
-    messages: undefined,
-    progress: undefined,
-    toolCalls: toolCalls.length ? toolCalls : undefined,
-  };
-}
-
-export function compactForegroundDetails(details: Details): Details {
-  return {
-    ...details,
-    results: details.results.map(compactForegroundResult),
-    progress: details.progress ? details.progress.map(compactCompletedProgress) : undefined,
-  };
 }
 
 /**

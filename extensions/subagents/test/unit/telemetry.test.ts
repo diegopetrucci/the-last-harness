@@ -11,7 +11,6 @@ import {
   resolveParallelSubagentTelemetryOutcome,
   resolveSubagentTelemetryOutcome,
   telemetryFromRunnerResults,
-  telemetryFromSingleResults,
   type SubagentRunTelemetry,
   type SubagentTelemetryControls,
   type SubagentTelemetryProvenance,
@@ -21,6 +20,7 @@ import type {
   ResolvedControlConfig,
   SingleResult,
 } from "../../src/shared/types.ts";
+import { telemetryFromSingleResults } from "../support/telemetry-fixtures.ts";
 import { captureSubagentTelemetryProvenance } from "../../src/extension/telemetry-provenance.ts";
 
 const provenance: SubagentTelemetryProvenance = {

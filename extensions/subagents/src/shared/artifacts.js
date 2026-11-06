@@ -107,20 +107,11 @@ export function getArtifactPaths(artifactsDir, runId, agent, index) {
         metadataPath: path.join(artifactsDir, `${base}_meta.json`),
     };
 }
-export function ensureArtifactsDir(dir) {
-    fs.mkdirSync(dir, { recursive: true });
-}
-export function writeArtifact(filePath, content) {
-    fs.writeFileSync(filePath, content, "utf-8");
-}
 export function writeArtifactWithFloor(filePath, computedContent, rawOutput, isArchive) {
     const content = !isArchive && rawOutput.trim() && isEffectivelyEmpty(computedContent)
         ? rawOutput
         : computedContent;
     fs.writeFileSync(filePath, content, "utf-8");
-}
-export function writeMetadata(filePath, metadata) {
-    fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
 }
 export function appendJsonl(filePath, line) {
     fs.appendFileSync(filePath, `${line}\n`);

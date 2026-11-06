@@ -8,9 +8,8 @@ import { parseContextPressureCrossedThresholds, parseContextPressureProjection, 
 import { readStatus } from "../../shared/utils.js";
 import {} from "../../shared/types.js";
 import { transitionSubagentRunTelemetryLifecycle, } from "../../shared/telemetry.js";
-import { isClaimedPausedLifecycle, pausedForegroundStatusPath, pausedForegroundTerminationReason, } from "./foreground-pause-state.js";
+import { isClaimedPausedLifecycle, pausedForegroundStatusPath } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
-import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { projectRunAuthorizationError } from "./project-agent-control.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
@@ -61,139 +60,6 @@ export function trimRememberedForegroundRuns(state) {
             scheduleForegroundProjectReferenceRelease(oldest.runId);
         }
     }
-}
-export function rememberForegroundRun(state, input) {
-    state.foregroundRuns ??= new Map();
-    const updatedAt = Date.now();
-    state.foregroundRuns.set(input.runId, {
-        runId: input.runId,
-        mode: input.mode,
-        cwd: input.cwd,
-        updatedAt,
-        ...(input.telemetry ? { telemetry: input.telemetry } : {}),
-        children: input.results.map((result, index) => {
-            const activeRuntimeMs = normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
-                normalizeActiveRuntimeMs(result.progress?.durationMs);
-            const child = {
-                agent: result.agent,
-                ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
-                ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
-                    ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
-                    : {}),
-                index,
-                status: resolveSubagentResultStatus({
-                    exitCode: result.exitCode,
-                    interrupted: result.interrupted,
-                }),
-                updatedAt,
-                ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-                ...(result.model ? { model: result.model } : {}),
-                ...(result.thinking ? { thinking: result.thinking } : {}),
-                ...(result.modelIdentity ? { modelIdentity: result.modelIdentity } : {}),
-                ...(result.modelResolution ? { modelResolution: result.modelResolution } : {}),
-                ...(result.finalOutput ? { finalOutput: result.finalOutput } : {}),
-                ...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
-                ...(result.artifactPaths ? { artifactPaths: result.artifactPaths } : {}),
-                ...(result.transcriptPath ? { transcriptPath: result.transcriptPath } : {}),
-                ...(result.transcriptError ? { transcriptError: result.transcriptError } : {}),
-                ...(result.acceptance ? { acceptance: result.acceptance } : {}),
-                ...(result.pause ? { pause: result.pause } : {}),
-                ...(result.cancel ? { cancel: result.cancel } : {}),
-                ...(result.progress?.activityState ? { activityState: result.progress.activityState } : {}),
-                ...(result.progress?.idleEpisodeId ? { idleEpisodeId: result.progress.idleEpisodeId } : {}),
-                ...(result.progress?.durableAttentionReasons
-                    ? { durableAttentionReasons: [...result.progress.durableAttentionReasons] }
-                    : {}),
-                ...(result.progress?.compaction ? { compaction: { ...result.progress.compaction } } : {}),
-                ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
-                ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
-                ...(result.contextPressureCrossedThresholds
-                    ? { contextPressureCrossedThresholds: [...result.contextPressureCrossedThresholds] }
-                    : {}),
-                ...(pausedForegroundTerminationReason(result)
-                    ? { terminationReason: pausedForegroundTerminationReason(result) }
-                    : {}),
-                ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-                ...(normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) !== undefined
-                    ? {
-                        activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt),
-                    }
-                    : {}),
-            };
-            return child;
-        }),
-    });
-    trimRememberedForegroundRuns(state);
-}
-export function updateRememberedForegroundChild(state, input) {
-    state.foregroundRuns ??= new Map();
-    const updatedAt = Date.now();
-    let run = state.foregroundRuns.get(input.runId);
-    if (!run) {
-        run = { runId: input.runId, mode: input.mode, cwd: input.cwd, updatedAt, children: [] };
-        state.foregroundRuns.set(input.runId, run);
-    }
-    run.updatedAt = updatedAt;
-    if (input.telemetry)
-        run.telemetry = input.telemetry;
-    const child = run.children[input.index] ?? {
-        agent: input.result.agent,
-        index: input.index,
-    };
-    const activeRuntimeMs = normalizeActiveRuntimeMs(input.result.activeRuntimeMs) ??
-        normalizeActiveRuntimeMs(input.result.progress?.durationMs);
-    run.children[input.index] = {
-        ...child,
-        agent: input.result.agent,
-        ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
-        ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
-            ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
-            : {}),
-        index: input.index,
-        status: resolveSubagentResultStatus({
-            exitCode: input.result.exitCode,
-            interrupted: input.result.interrupted,
-        }),
-        updatedAt,
-        ...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
-        ...(input.result.model ? { model: input.result.model } : {}),
-        ...(input.result.thinking ? { thinking: input.result.thinking } : {}),
-        ...(input.result.modelIdentity ? { modelIdentity: input.result.modelIdentity } : {}),
-        ...(input.result.modelResolution ? { modelResolution: input.result.modelResolution } : {}),
-        ...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
-        ...(input.result.sessionFile ? { sessionFile: input.result.sessionFile } : {}),
-        ...(input.result.artifactPaths ? { artifactPaths: input.result.artifactPaths } : {}),
-        ...(input.result.transcriptPath ? { transcriptPath: input.result.transcriptPath } : {}),
-        ...(input.result.transcriptError ? { transcriptError: input.result.transcriptError } : {}),
-        ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
-        ...(input.result.pause ? { pause: input.result.pause } : {}),
-        ...(input.result.cancel ? { cancel: input.result.cancel } : {}),
-        activityState: input.result.progress?.activityState,
-        idleEpisodeId: input.result.progress?.idleEpisodeId,
-        durableAttentionReasons: input.result.progress?.durableAttentionReasons
-            ? [...input.result.progress.durableAttentionReasons]
-            : undefined,
-        compaction: input.result.progress?.compaction
-            ? { ...input.result.progress.compaction }
-            : undefined,
-        ...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
-        ...(input.result.contextPressure
-            ? { contextPressure: { ...input.result.contextPressure } }
-            : {}),
-        ...(input.result.contextPressureCrossedThresholds
-            ? { contextPressureCrossedThresholds: [...input.result.contextPressureCrossedThresholds] }
-            : {}),
-        ...(pausedForegroundTerminationReason(input.result)
-            ? { terminationReason: pausedForegroundTerminationReason(input.result) }
-            : {}),
-        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-        ...(normalizeActiveRuntimeCheckpointAt(input.result.activeRuntimeCheckpointAt) !== undefined
-            ? {
-                activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(input.result.activeRuntimeCheckpointAt),
-            }
-            : {}),
-    };
-    trimRememberedForegroundRuns(state);
 }
 export function resolveRememberedForegroundRun(params, state) {
     const requested = params.id?.trim();

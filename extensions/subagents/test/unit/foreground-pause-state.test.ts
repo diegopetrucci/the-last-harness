@@ -18,11 +18,9 @@ import {
   buildPausedStepFromResult,
   persistPausedForegroundCohortRun,
   persistPausedForegroundSingleRun,
-} from "../../src/runs/foreground/foreground-pause-state.ts";
-import {
-  rememberForegroundRun,
-  resolveForegroundResumeTarget,
-} from "../../src/runs/foreground/foreground-run-state.ts";
+} from "../support/foreground-pause-fixtures.ts";
+import { rememberForegroundRun } from "../support/foreground-run-fixtures.ts";
+import { resolveForegroundResumeTarget } from "../../src/runs/foreground/foreground-run-state.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import {

@@ -28,8 +28,6 @@ import {
 } from "./project-agent-control.ts";
 export {
   trimRememberedForegroundRuns,
-  rememberForegroundRun,
-  updateRememberedForegroundChild,
   resolveRememberedForegroundRun,
   cancelPersistedPausedForegroundRun,
 } from "./foreground-run-state.ts";

@@ -227,11 +227,9 @@ function normalizeRepeatedParallelCounts(params) {
     return { params };
 }
 function runAsyncPath(data, deps) {
-    const { params, effectiveCwd, agents, ctx, sessionRoot, sessionFileForTask, artifactConfig, artifactsDir, effectiveAsync, controlConfig, } = data;
+    const { params, effectiveCwd, agents, ctx, sessionRoot, sessionFileForTask, artifactConfig, artifactsDir, controlConfig, } = data;
     const hasTasks = (params.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(params.agent);
-    if (!effectiveAsync)
-        return null;
     if (hasTasks && params.tasks) {
         const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
         if (params.tasks.length > maxParallelTasks) {
@@ -858,7 +856,6 @@ export function createSubagentExecutor(deps) {
         const validationError = validateExecutionInput(effectiveParams, agents, discovered.agentDiagnostics, hasTasks, hasSingle);
         if (validationError)
             return validationError;
-        const effectiveAsync = true;
         const controlConfig = resolveControlConfig(deps.config.control);
         const artifactConfig = {
             ...configuredArtifactConfig,
@@ -876,15 +873,10 @@ export function createSubagentExecutor(deps) {
         }
         const sessionDirForIndex = (idx) => path.join(sessionRoot, `run-${idx ?? 0}`);
         const childSessionFileForTask = (_agentName, idx) => path.join(sessionDirForIndex(idx), "session.jsonl");
-        const childSessionFileForIndex = (idx) => path.join(sessionDirForIndex(idx), "session.jsonl");
-        const onUpdateWithContext = onUpdate;
-        const runStartedAt = Date.now();
         const execData = {
             params: effectiveParams,
             effectiveCwd,
             ctx,
-            signal,
-            onUpdate: onUpdateWithContext,
             agents,
             ...(projectResolution.projectAgentCapability
                 ? { projectAgentCapability: projectResolution.projectAgentCapability }
@@ -894,15 +886,11 @@ export function createSubagentExecutor(deps) {
                 : {}),
             runId,
             sessionRoot,
-            sessionDirForIndex,
-            sessionFileForIndex: childSessionFileForIndex,
             sessionFileForTask: childSessionFileForTask,
             artifactConfig,
             artifactsDir,
-            effectiveAsync,
             controlConfig,
             telemetryProvenance: deps.telemetryProvenance,
-            startedAt: runStartedAt,
             timeoutMs: runTimeoutMs,
             modelScope,
         };

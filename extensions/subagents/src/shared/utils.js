@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { formatToolCall } from "./formatters.js";
 import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, } from "./config-dir.js";
 import { getPiAgentDir } from "./profile.js";
 import { createAsyncStatusJsonParseError, createAsyncStatusUnsafeError, } from "../runs/background/async-status-corruption.js";
@@ -291,101 +290,6 @@ export function getDisplayItems(messages) {
         }
     }
     return items;
-}
-function compactCompletedProgress(progress) {
-    if (progress.status === "running")
-        return progress;
-    return {
-        index: progress.index,
-        agent: progress.agent,
-        status: progress.status,
-        activityState: progress.activityState,
-        idleEpisodeId: progress.idleEpisodeId,
-        durableAttentionReasons: progress.durableAttentionReasons
-            ? [...progress.durableAttentionReasons]
-            : undefined,
-        compaction: progress.compaction ? { ...progress.compaction } : undefined,
-        task: progress.task,
-        skills: progress.skills,
-        toolCount: progress.toolCount,
-        tokens: progress.tokens,
-        durationMs: progress.durationMs,
-        error: progress.error,
-        failedTool: progress.failedTool,
-        recentTools: [],
-        recentOutput: [],
-    };
-}
-function toolCallSummary(text, expandedText) {
-    return expandedText === text ? { text } : { text, expandedText };
-}
-function normalizeToolCallSummaries(toolCalls) {
-    return toolCalls.map((toolCall) => toolCall.expandedText !== undefined && toolCall.expandedText === toolCall.text
-        ? { text: toolCall.text }
-        : { ...toolCall });
-}
-function extractToolCallSummaries(messages) {
-    if (!messages?.length)
-        return [];
-    const summaries = [];
-    for (const msg of messages) {
-        if (msg.role !== "assistant")
-            continue;
-        for (const part of msg.content) {
-            if (part.type !== "toolCall")
-                continue;
-            const args = typeof part.arguments === "object" &&
-                part.arguments !== null &&
-                !Array.isArray(part.arguments)
-                ? part.arguments
-                : {};
-            const text = formatToolCall(part.name, args);
-            const expandedText = formatToolCall(part.name, args, true);
-            summaries.push(toolCallSummary(text, expandedText));
-        }
-    }
-    return summaries;
-}
-export function sumResultsUsage(results) {
-    const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-    for (const result of results) {
-        usage.input += result.usage.input;
-        usage.output += result.usage.output;
-        usage.cacheRead += result.usage.cacheRead;
-        usage.cacheWrite += result.usage.cacheWrite;
-        usage.cost += result.usage.cost;
-        usage.turns += result.usage.turns;
-    }
-    return usage;
-}
-export function sumResultsCost(results) {
-    const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-    for (const result of results) {
-        total.inputTokens += result.usage.input;
-        total.outputTokens += result.usage.output;
-        total.costUsd += result.usage.cost;
-    }
-    return total;
-}
-export function compactForegroundResult(result) {
-    if (result.progress?.status === "running")
-        return result;
-    const toolCalls = result.toolCalls?.length
-        ? normalizeToolCallSummaries(result.toolCalls)
-        : extractToolCallSummaries(result.messages);
-    return {
-        ...result,
-        messages: undefined,
-        progress: undefined,
-        toolCalls: toolCalls.length ? toolCalls : undefined,
-    };
-}
-export function compactForegroundDetails(details) {
-    return {
-        ...details,
-        results: details.results.map(compactForegroundResult),
-        progress: details.progress ? details.progress.map(compactCompletedProgress) : undefined,
-    };
 }
 export function detectSubagentError(messages) {
     let lastAssistantTextIndex = -1;
