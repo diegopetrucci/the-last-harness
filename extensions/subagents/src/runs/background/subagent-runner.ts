@@ -961,6 +961,7 @@ async function runSubagentWithInput(
       normalizeActiveRuntimeCheckpointAt(stepEndTime) ?? 0,
     );
     const completionGuardActive =
+      controlConfig.enabled &&
       singleResult.completionGuardTriggered === true &&
       !singleResult.interrupted &&
       !singleResult.timedOut &&
@@ -1257,6 +1258,7 @@ async function runSubagentWithInput(
             }),
           );
           const completionGuardActive =
+            controlConfig.enabled &&
             singleResult.completionGuardTriggered === true &&
             !singleResult.interrupted &&
             !singleResult.timedOut &&

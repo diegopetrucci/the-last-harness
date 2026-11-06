@@ -753,7 +753,8 @@ async function runSubagentWithInput(config, plan) {
         const sequentialAggregateRuntime = statusPayload.steps.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
         statusPayload.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0, sequentialAggregateRuntime);
         statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(stepEndTime) ?? 0);
-        const completionGuardActive = singleResult.completionGuardTriggered === true &&
+        const completionGuardActive = controlConfig.enabled &&
+            singleResult.completionGuardTriggered === true &&
             !singleResult.interrupted &&
             !singleResult.timedOut &&
             !stepTimedOut &&
@@ -982,7 +983,8 @@ async function runSubagentWithInput(config, plan) {
                     exitCode: stepTimedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
                     durationMs: taskDuration,
                 }));
-                const completionGuardActive = singleResult.completionGuardTriggered === true &&
+                const completionGuardActive = controlConfig.enabled &&
+                    singleResult.completionGuardTriggered === true &&
                     !singleResult.interrupted &&
                     !singleResult.timedOut &&
                     !stepTimedOut &&

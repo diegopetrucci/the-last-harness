@@ -1120,6 +1120,90 @@ describe("async execution health", () => {
     assert.equal(payload.results?.[0]?.durableAttentionReasons, undefined);
   });
 
+  it("does not surface completion-guard attention when control is disabled", async () => {
+    mockPi.onCall({ output: "I will plan the implementation before making edits." });
+    const id = `async-completion-guard-disabled-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Implement the approved fixes",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: false,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    // The completion guard's run-failure outcome is unchanged.
+    assert.equal(payload.success, false);
+    assert.equal(status.state, "failed");
+    assert.doesNotMatch(eventText, /"type":"subagent\.control"/);
+    assert.doesNotMatch(eventText, /completion_guard/);
+    assert.equal(status.activityState, undefined);
+    assert.equal(status.steps?.[0]?.activityState, undefined);
+    assert.equal(status.steps?.[0]?.durableAttentionReasons, undefined);
+    assert.equal(payload.results?.[0]?.activityState, undefined);
+    assert.equal(payload.results?.[0]?.durableAttentionReasons, undefined);
+  });
+
+  it("does not surface parallel completion-guard attention when control is disabled", async () => {
+    mockPi.onCall({ output: "I will plan the implementation before making edits." });
+    const id = `async-parallel-completion-guard-disabled-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncParallel(id, {
+      tasks: [{ agent: "worker", task: "Implement the approved fixes" }],
+      agents: [makeAgent("worker")],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      availableModels: [
+        { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+      ],
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: false,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    assert.equal(payload.success, false);
+    assert.equal(status.state, "failed");
+    assert.doesNotMatch(eventText, /"type":"subagent\.control"/);
+    assert.doesNotMatch(eventText, /completion_guard/);
+    assert.equal(status.steps?.[0]?.activityState, undefined);
+    assert.equal(status.steps?.[0]?.durableAttentionReasons, undefined);
+  });
+
   it("resets background idle episode identity across fallback attempts", async () => {
     const markerDir = path.join(tempDir, "async-fallback-health-markers");
     fs.mkdirSync(markerDir, { recursive: true });
