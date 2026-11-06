@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -231,7 +232,18 @@ function mergeHerdrProgramEntry(config: HerdrAppConfig, io: HerdrAppIo): void {
     io.log("Skipping Herdr.app program entry (tlh.herdrApp.enabled is false in settings).");
     return;
   }
-  const appHome = herdrAppHomePath(config);
+  const configuredAppHome = herdrAppHomePath(config);
+  // The app home may itself be a symlink (dotfile managers): resolve it once and
+  // use the physical path for every check, write, and re-check below.
+  let appHome = configuredAppHome;
+  try {
+    appHome = realpathSync(configuredAppHome);
+  } catch {
+    // Missing or unresolvable: reported as "missing" below.
+  }
+  if (appHome !== configuredAppHome) {
+    io.detail(`Herdr.app home ${configuredAppHome} resolves to ${appHome}`);
+  }
   const protectedReason = protectedAppHomeReason(appHome, config);
   if (protectedReason) {
     io.warn(

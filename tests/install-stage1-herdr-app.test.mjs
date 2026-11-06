@@ -547,3 +547,31 @@ for (const viaLink of [true, false]) {
     assert.equal(existsSync(join(child, "tlh")), false);
   });
 }
+
+test("herdr: a symlinked app home is resolved and the entry and icon land in its target", (t) => {
+  const fixture = setupHerdrInstall(t, { createAppHome: true });
+  const link = join(fixture.root, "app-home-link");
+  symlinkSync(fixture.appHomePath, link);
+  const result = runInstaller(
+    ["--agent-dir", fixture.agentDir, "--bin-dir", fixture.binDir, "--no-wrapper"],
+    { ...fixture.env, HERDR_APP_HOME: link },
+  );
+  assertInstalled(result);
+  assert.doesNotMatch(result.stderr, /no longer a directory|app home/i);
+  assert.equal(readJson(join(fixture.appHomePath, "programs.json")).programs.tlh.name, "TLH");
+  assert.equal(existsSync(join(fixture.appHomePath, "tlh", "tlh.svg")), true);
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+});
+
+test("herdr: a symlinked app home whose target is inside ~/.pi is refused", (t) => {
+  const fixture = setupHerdrInstall(t, { appHomeRelativeToHome: ".pi/herdr", createAppHome: true });
+  const link = join(fixture.root, "app-home-link");
+  symlinkSync(fixture.appHomePath, link);
+  const result = runInstaller(
+    ["--agent-dir", fixture.agentDir, "--bin-dir", fixture.binDir, "--no-wrapper"],
+    { ...fixture.env, HERDR_APP_HOME: link },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /is protected/);
+  assert.equal(existsSync(join(fixture.appHomePath, "tlh")), false);
+});

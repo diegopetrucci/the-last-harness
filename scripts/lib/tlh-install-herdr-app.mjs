@@ -1,6 +1,6 @@
 // Generated from scripts/lib/tlh-install-herdr-app.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
-import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, } from "node:fs";
+import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { isSymlink, pathIsProtectedPiConfig, pathWithinOrEqual, realpathForCompare, } from "./tlh-install-paths.mjs";
 import { backupPathWithTimestamp, expandHomePath } from "./tlh-install-utils.mjs";
@@ -180,7 +180,19 @@ function mergeHerdrProgramEntry(config, io) {
         io.log("Skipping Herdr.app program entry (tlh.herdrApp.enabled is false in settings).");
         return;
     }
-    const appHome = herdrAppHomePath(config);
+    const configuredAppHome = herdrAppHomePath(config);
+    // The app home may itself be a symlink (dotfile managers): resolve it once and
+    // use the physical path for every check, write, and re-check below.
+    let appHome = configuredAppHome;
+    try {
+        appHome = realpathSync(configuredAppHome);
+    }
+    catch {
+        // Missing or unresolvable: reported as "missing" below.
+    }
+    if (appHome !== configuredAppHome) {
+        io.detail(`Herdr.app home ${configuredAppHome} resolves to ${appHome}`);
+    }
     const protectedReason = protectedAppHomeReason(appHome, config);
     if (protectedReason) {
         io.warn(`skipping Herdr.app program entry: app home ${appHome} is protected (${protectedReason})`);

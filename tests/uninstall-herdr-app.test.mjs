@@ -465,3 +465,18 @@ test("keeps entry and icon when run is a relative path", (t) => {
   assert.equal(existsSync(join(ctx.appHome, "tlh", "tlh.svg")), true);
   assert.match(result.stdout, /owned by another install/);
 });
+
+test("removes the owned entry and icon through a symlinked app home", (t) => {
+  const ctx = setup(t);
+  seedEntry(ctx.appHome);
+  const link = join(ctx.root, "app-home-link");
+  symlinkSync(ctx.appHome, link);
+  const result = run(ctx, { env: { HERDR_APP_HOME: link } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readPrograms(ctx.appHome), {
+    version: 1,
+    programs: { other: { name: "Other" } },
+  });
+  assert.equal(existsSync(join(ctx.appHome, "tlh")), false);
+  assert.equal(backups(ctx.appHome).length, 1);
+});

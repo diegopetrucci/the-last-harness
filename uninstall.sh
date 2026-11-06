@@ -585,6 +585,16 @@ herdr_app_cleanup() {
   fi
   [[ -d "${app_home}" ]] || return 0
 
+  # The app home may itself be a symlink (dotfile managers): resolve it once and
+  # use the physical path for every check, edit, and removal below.
+  local physical_home
+  physical_home="$(realpath_for_compare "${app_home}")"
+  if [[ "${physical_home}" != "${app_home}" ]]; then
+    log "Herdr.app home ${app_home} resolves to ${physical_home}"
+    app_home="${physical_home}"
+  fi
+  [[ -d "${app_home}" ]] || return 0
+
   if herdr_app_home_protected "${app_home}"; then
     warn "not touching Herdr.app files: the app home (${app_home}) resolves to a protected location (normal Pi config, the TLH profile being uninstalled, \$HOME, or /); check HERDR_APP_HOME"
     return 0

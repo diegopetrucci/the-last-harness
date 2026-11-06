@@ -1010,6 +1010,11 @@ dry_run_without_stage1() {
   if [[ "${herdr_protected}" == "true" ]]; then
     log "Would skip the Herdr.app program entry: protected location (${herdr_app_home})"
   elif [[ -d "${herdr_app_home}" ]]; then
+    if [[ "${herdr_physical}" != "${herdr_app_home%/}" ]]; then
+      log "Herdr.app home ${herdr_app_home} resolves to ${herdr_physical}"
+      herdr_app_home="${herdr_physical}"
+      herdr_programs_path="${herdr_app_home}/programs.json"
+    fi
     log "Would merge the TLH program entry into the Herdr.app programs.json: ${herdr_programs_path} (backup first; icon in ${herdr_app_home%/}/tlh/; skipped if tlh.herdrApp.enabled is false)"
   else
     log "Would skip the Herdr.app program entry: app home not found (${herdr_app_home})."
