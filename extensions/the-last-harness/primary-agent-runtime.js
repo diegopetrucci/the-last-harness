@@ -13,6 +13,7 @@ import { SUBAGENT_ASYNC_COMPLETE_EVENT, dispatchPreflightBackoffMs, extractDispa
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt, isTlhExperimentalFeatureEnabled, NO_DEVELOPER_FEATURE, } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
+import { getRexSessionContext } from "./rex-context.js";
 import { followsOpenrouterSession, formatProviderModelReference, listAgentModelDefaultReferences, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionPersistenceSession, claimTlhModelSelectionDefaults, endTlhModelSelectionPersistenceSession, installTlhModelSelectionPersistenceOverride, isTlhPersistedModelSelection, updateTlhModelSelectionPersistenceContext, } from "./model-selection-scope.js";
@@ -211,6 +212,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         if (shouldAppendGnosisPrompt(cwd)) {
             prompts.push(GNOSIS_PROMPT);
         }
+        prompts.push(getRexSessionContext());
         return prompts.filter(Boolean).join("\n\n");
     }
     function buildLaunchSystemPrompt(ctx, baseSystemPrompt) {

@@ -83,6 +83,7 @@ import {
   NO_DEVELOPER_FEATURE,
 } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
+import { getRexSessionContext } from "./rex-context.js";
 import {
   followsOpenrouterSession,
   formatProviderModelReference,
@@ -566,6 +567,7 @@ function createTlhPrimaryAgentRuntime(
     if (shouldAppendGnosisPrompt(cwd)) {
       prompts.push(GNOSIS_PROMPT);
     }
+    prompts.push(getRexSessionContext());
     return prompts.filter(Boolean).join("\n\n");
   }
 

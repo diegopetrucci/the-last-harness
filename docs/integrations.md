@@ -68,3 +68,9 @@ TLH intentionally does not send `progress` or `kind=auth` (login is Pi-native, [
 The `tlh` wrapper also sets `PI_PROGRAM_STATUS=0` by default because the pinned Pi runtime includes its own native OSC 7501 emitter. TLH keeps the root record so effective activity, including active background children, remains represented by one writer. You can explicitly set `PI_PROGRAM_STATUS=1` to enable Pi's native writer; that can create competing root records unless you deliberately pair it with `TLH_PROGRAM_STATUS=0` to transfer root ownership to Pi. The Herdr and cmux bridges remain active until those integrations consume OSC 7501 directly ([#747](https://github.com/diegopetrucci/the-last-harness/issues/747)).
 
 This bridge is session-scoped only. TLH does not install, enable, or reconfigure Herdr, cmux, or any other external integration for you, and it does not write persistent external config as part of this bridge. If your terminal setup does not already support this status handoff, nothing new is installed.
+
+## Rex integration
+
+When TLH runs in a Rex terminal (`REX_SESSION` set), the primary agent's system prompt includes the output of `rex __internal session-start --agent pi --autostart=false`: the same session-start context Rex's SessionStart hook gives Claude Code and Codex (Rex reports Pi hooks as unsupported). It runs once per session and never starts a Rex server. If `rex` is unavailable or the command fails, TLH silently skips it. Subagents do not receive it. There is no opt-out setting.
+
+The context follows Rex's session-naming default, so it asks the agent to name the Rex session. TLH does not bundle a Rex skill; `rex skill setup` installs it into `~/.agents/skills`, which TLH already reads.
