@@ -60,6 +60,7 @@
         "scripts/lib/mcp-adapter-migration.mjs",
         "scripts/lib/session-analysis.mjs",
         "scripts/lib/tlh-install-git.mjs",
+        "scripts/lib/tlh-install-herdr-app.mjs",
         "scripts/lib/tlh-install-npm.mjs",
         "scripts/lib/tlh-install-package-source.mjs",
         "scripts/lib/tlh-install-profile-cleanup.mjs",

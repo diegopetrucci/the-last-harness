@@ -23,6 +23,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 ## Safety Requirements
 
 - Never overwrite or mutate normal Pi config at `~/.pi/agent`.
+- Narrow exception: the installer may merge a TLH-managed `programs.tlh` entry and `tlh/` icon into an existing Herdr.app home, and the uninstaller removes them; the rules and opt-out are owned by [docs/install.md](docs/install.md#herdrapp-integration).
 - Installer Pi commands must set `PI_CODING_AGENT_DIR` to the isolated profile directory.
 - Default isolated profile path: `~/.the-last-harness/agent`.
 - Default wrapper path: `~/.local/bin/tlh`.

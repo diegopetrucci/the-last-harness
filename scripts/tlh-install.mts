@@ -75,6 +75,7 @@ import {
   migrateSubagentExtensionConfig,
   missingTlhSubagentPrompts,
 } from "./lib/tlh-install-subagents.mjs";
+import { configureHerdrPrograms } from "./lib/tlh-install-herdr-app.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
 type GitInstallConfig = gitInstall.GitInstallConfig;
 import {
@@ -1881,6 +1882,17 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   configureGnosis(config);
   configureTickets(config);
   await writeWrapper(config);
+  configureHerdrPrograms(
+    {
+      ...config,
+      iconSourcePath: config.supportFilePaths.TLH_HERDR_ICON_FILE || "",
+    },
+    {
+      log: (message) => log(config, message),
+      detail: (message) => detailLog(config, message),
+      warn,
+    },
+  );
   pruneRuntimeCache(config, profileCleanupIo(config, config), runtimePrefix);
   printSummary(config);
 }

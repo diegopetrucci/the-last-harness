@@ -459,6 +459,178 @@ removal_run() {
   "$@"
 }
 
+# ── Herdr.app program entry cleanup ────────────────────────────────────────────
+# Removes programs.tlh from <app home>/programs.json and the <app home>/tlh/ icon
+# folder. Mirrors the installer's app-home resolution (scripts/lib/tlh-install-herdr-app.mts):
+# trimmed HERDR_APP_HOME with ~ expansion, else ~/.config/herdr-app. Runs regardless
+# of the tlh.herdrApp.enabled opt-out. The app home and existing backups are kept.
+
+HERDR_ACTED=false
+HERDR_TLH_PROGRAM_KEY="tlh"
+HERDR_TLH_ICON_DIRECTORY="tlh"
+HERDR_PROGRAMS_BACKUP_MARKER="herdr"
+
+# Node helper (JSON edit). Reads HERDR_PROGRAMS_PATH, HERDR_PROGRAM_KEY,
+# HERDR_BACKUP_MARKER, HERDR_DRY_RUN, HERDR_OWN_WRAPPER. Prints one status on stdout:
+#   absent | removed | would-remove | foreign: <run> (entry owned by another install) ; exits 3 with a reason on stderr when the
+# file must be left untouched.
+HERDR_NODE_SCRIPT='
+const fs = require("node:fs");
+const path = require("node:path");
+const { randomUUID } = require("node:crypto");
+const target = process.env.HERDR_PROGRAMS_PATH;
+const appHome = path.dirname(target);
+const isLink = (p) => { try { return fs.lstatSync(p).isSymbolicLink(); } catch { return false; } };
+const safe = () => {
+  if (isLink(appHome) || !fs.statSync(appHome).isDirectory()) throw new Error("app home is not a directory");
+  if (isLink(target)) throw new Error("programs.json is a symlink");
+};
+const key = process.env.HERDR_PROGRAM_KEY;
+const physical = (p) => {
+  let candidate = path.resolve(p);
+  const tail = [];
+  for (;;) {
+    try { return path.join(fs.realpathSync(candidate), ...tail); } catch {}
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return path.resolve(p);
+    tail.unshift(path.basename(candidate));
+    candidate = parent;
+  }
+};
+const fail = (reason) => { process.stderr.write(reason + "\n"); process.exit(3); };
+let raw;
+try { raw = fs.readFileSync(target, "utf8").replace(/^\uFEFF/, ""); }
+catch (error) { fail("unreadable (" + error.message + ")"); }
+let doc;
+try { doc = JSON.parse(raw); } catch (error) { fail("invalid JSON (" + error.message + ")"); }
+const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+if (!isObject(doc)) fail("JSON root is not an object");
+if (doc.programs !== undefined && !isObject(doc.programs)) fail("\"programs\" is not an object");
+if (!isObject(doc.programs) || !Object.prototype.hasOwnProperty.call(doc.programs, key)) {
+  process.stdout.write("absent\n");
+  process.exit(0);
+}
+const entry = doc.programs[key];
+const run = isObject(entry) ? entry.run : undefined;
+if (run !== undefined) {
+  // Resolve live: this runs before any wrapper/profile deletion.
+  const single = Array.isArray(run) && run.length === 1 && typeof run[0] === "string";
+  // Raw segments: a "." or ".." would be collapsed lexically before symlinks resolve.
+  const plain = single && run[0] !== "" && path.isAbsolute(run[0]) &&
+    !run[0].split(/[\\/]+/).some((segment) => segment === "." || segment === "..");
+  const own = plain && physical(run[0]) === physical(process.env.HERDR_OWN_WRAPPER);
+  if (!own) {
+    const shown = Array.isArray(run) ? run.map(String).join(" ") : JSON.stringify(run);
+    process.stdout.write("foreign: " + shown.replace(/\s+/g, " ") + "\n");
+    process.exit(0);
+  }
+}
+if (process.env.HERDR_DRY_RUN === "true") {
+  process.stdout.write("would-remove\n");
+  process.exit(0);
+}
+try {
+  safe();
+  const mode = fs.statSync(target).mode & 0o777;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const base = target + ".backup-" + process.env.HERDR_BACKUP_MARKER + "-" + stamp;
+  let backup = null;
+  for (let n = 0; n < 100 && backup === null; n += 1) {
+    const candidate = n === 0 ? base : base + "-" + n;
+    try { fs.copyFileSync(target, candidate, fs.constants.COPYFILE_EXCL); backup = candidate; }
+    catch (error) { if (error.code !== "EEXIST") throw error; }
+  }
+  if (backup === null) throw new Error("no free backup name");
+  process.stderr.write("backup: " + backup + "\n");
+  const { [key]: _removed, ...programs } = doc.programs;
+  const next = JSON.stringify({ ...doc, programs }, null, 2) + "\n";
+  const temp = path.join(path.dirname(target), "." + path.basename(target) + "." + randomUUID() + ".tmp");
+  try {
+    safe();
+    fs.writeFileSync(temp, next, { flag: "wx", mode });
+    fs.chmodSync(temp, mode);
+    safe();
+    fs.renameSync(temp, target);
+  } catch (error) { fs.rmSync(temp, { force: true }); throw error; }
+} catch (error) { fail("failed to update (" + error.message + ")"); }
+process.stdout.write("removed\n");
+'
+
+herdr_app_cleanup() {
+  local configured app_home programs_path icon_dir state="absent" node_out node_err node_status line
+  configured="${HERDR_APP_HOME:-}"
+  configured="${configured#"${configured%%[![:space:]]*}"}"
+  configured="${configured%"${configured##*[![:space:]]}"}"
+  if [[ -n "${configured}" ]]; then
+    app_home="$(normalize_path "${configured}")"
+  else
+    app_home="${HOME}/.config/herdr-app"
+  fi
+  [[ -d "${app_home}" ]] || return 0
+
+  programs_path="${app_home}/programs.json"
+  icon_dir="${app_home}/${HERDR_TLH_ICON_DIRECTORY}"
+
+  if [[ -L "${programs_path}" ]]; then
+    warn "not editing Herdr.app programs.json: refusing to modify a symlink (${programs_path}); leaving the TLH entry and icon in place"
+    return 0
+  elif [[ -e "${programs_path}" ]]; then
+    if ! command -v node >/dev/null 2>&1; then
+      warn "node not found on PATH; the Herdr.app TLH entry and icon were left in place."
+      warn "To remove manually: delete the \"${HERDR_TLH_PROGRAM_KEY}\" entry from \"programs\" in ${programs_path} (back it up first), then run: rm -rf -- $(printf '%q' "${icon_dir}")"
+      return 0
+    fi
+    node_err="$(mktemp)"
+    node_status=0
+    node_out="$(HERDR_PROGRAMS_PATH="${programs_path}" HERDR_PROGRAM_KEY="${HERDR_TLH_PROGRAM_KEY}" \
+      HERDR_BACKUP_MARKER="${HERDR_PROGRAMS_BACKUP_MARKER}" HERDR_DRY_RUN="${DRY_RUN}" \
+      HERDR_OWN_WRAPPER="${WRAPPER_PATH}" node -e "${HERDR_NODE_SCRIPT}" 2>"${node_err}")" || node_status=$?
+    if [[ "${node_status}" -ne 0 ]]; then
+      warn "not editing Herdr.app programs.json (${programs_path}): $(tr '\n' ' ' < "${node_err}"); leaving the TLH entry and icon in place"
+      rm -f "${node_err}"
+      return 0
+    fi
+    while IFS= read -r line; do
+      if [[ "${line}" == backup:* ]]; then
+        log "Backed up Herdr.app programs.json to: ${line#backup: }"
+      fi
+    done < "${node_err}"
+    rm -f "${node_err}"
+    state="${node_out}"
+    case "${state}" in
+      foreign:*)
+        say "Leaving the Herdr.app TLH entry and icon folder untouched: the entry is owned by another install (run:${state#foreign:}), not this wrapper (${WRAPPER_PATH})"
+        return 0
+        ;;
+      removed)
+        HERDR_ACTED=true
+        say "Removed the TLH entry from Herdr.app programs.json: ${programs_path}"
+        ;;
+      would-remove)
+        HERDR_ACTED=true
+        say "would remove the TLH entry from Herdr.app programs.json: ${programs_path}"
+        ;;
+    esac
+  fi
+
+  if [[ -L "${icon_dir}" ]]; then
+    warn "not removing Herdr.app icon folder: refusing to remove a symlink (${icon_dir})"
+  elif [[ -d "${icon_dir}" ]]; then
+    HERDR_ACTED=true
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      say "would run: rm -rf ${icon_dir}"
+    elif [[ -L "${app_home}" || ! -d "${app_home}" || -L "${icon_dir}" || ! -d "${icon_dir}" ]]; then
+      # Re-check right before the removal: the paths may have changed since above.
+      warn "not removing Herdr.app icon folder: ${icon_dir} or the app home changed during uninstall"
+    else
+      say "Removing Herdr.app TLH icon folder: ${icon_dir}"
+      removal_run rm -rf -- "${icon_dir}"
+    fi
+  elif [[ -e "${icon_dir}" ]]; then
+    warn "not removing Herdr.app icon path: ${icon_dir} is not a directory"
+  fi
+}
+
 # ── advisory section ───────────────────────────────────────────────────────────
 # Always printed at end, regardless of --quiet.
 
@@ -505,6 +677,10 @@ Options:
   --quiet                Suppress non-essential output (errors and summary always shown).
   --verbose              Print each removal command before executing it.
   -h, --help             Show this help.
+
+The Herdr.app TLH program entry and icon folder (HERDR_APP_HOME, default
+~/.config/herdr-app) are removed too, regardless of tlh.herdrApp.enabled,
+but only when this install owns the entry (no run, or run is this wrapper).
 
 Notes:
   --force-include-pi and --keep-pi are mutually exclusive.
@@ -877,7 +1053,10 @@ fi
 # ── idempotency: nothing to remove ────────────────────────────────────────────
 
 if [[ "${WRAPPER_EXISTS}" == "false" && "${AGENT_DIR_EXISTS}" == "false" && -z "${AGENT_DIR_SKIP_REASON}" && "${REMOVE_PI}" == "false" ]]; then
-  say "Nothing to remove."
+  herdr_app_cleanup
+  if [[ "${HERDR_ACTED}" != "true" ]]; then
+    say "Nothing to remove."
+  fi
   print_advisory
   exit 0
 fi
@@ -985,6 +1164,7 @@ say "  - Normal Pi config at ~/.pi (if any)"
 say "  - Repo-local .gnosis/ and .tickets/ data (per-repo, untouched)"
 
 if [[ "${DRY_RUN}" == "true" ]]; then
+  herdr_app_cleanup
   print_advisory
   if [[ -n "${AGENT_DIR_SKIP_REASON}" ]]; then
     exit 1
@@ -993,6 +1173,9 @@ if [[ "${DRY_RUN}" == "true" ]]; then
 fi
 
 # ── execute removals ───────────────────────────────────────────────────────────
+
+# Resolve Herdr.app ownership live, before the wrapper/profile/runtime are removed.
+herdr_app_cleanup
 
 say ""
 

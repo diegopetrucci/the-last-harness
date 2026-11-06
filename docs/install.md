@@ -105,7 +105,7 @@ tlh update --track latest-release
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-Normal updates keep Gnosis and ticket integration enabled and refresh the managed `gn` and `tk` when their pins change; see [Gnosis integration](integrations.md#gnosis-integration) and [Ticket integration](integrations.md#ticket-integration) for the behavior, opt-outs, and fallbacks. Existing repo-local `.gnosis` and `.tickets` data is left in place.
+Normal updates keep Gnosis and ticket integration enabled and refresh the managed `gn` and `tk` when their pins change; see [Gnosis integration](integrations.md#gnosis-integration) and [Ticket integration](integrations.md#ticket-integration) for the behavior, opt-outs, and fallbacks. Existing repo-local `.gnosis` and `.tickets` data is left in place. `tlh update` also refreshes the TLH entry in Herdr.app unless you opted out; see [Herdr.app integration](#herdrapp-integration).
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
@@ -217,6 +217,35 @@ Install and update use the usual append-if-missing merge: the value is written o
 
 Summaries still grow with the session, so very long sessions can leave little room for a summary, particularly in small windows.
 
+## Herdr.app integration
+
+Install and `tlh update` register TLH in the [Herdr](https://herdr.dev) desktop app so it shows TLH's own name, icon, and launcher. This is the only installer write outside the isolated TLH profile.
+
+What is written, in the Herdr.app home (`$HERDR_APP_HOME` when set, otherwise `~/.config/herdr-app`):
+
+- A `programs.tlh` entry in `programs.json`: `{"name": "TLH", "icon": "tlh/tlh.svg", "tint": false, "run": ["<wrapper path>"]}`. `run` is the actual wrapper path the installer wrote, so it differs for installs with a non-default wrapper (for example `tlh-main` for `main`-ref installs). With `--no-wrapper`, `run` is omitted. TLH owns the whole `programs.tlh` object and replaces it on each run; all other programs and top-level keys are preserved.
+- The icon at `tlh/tlh.svg` inside the app home. It lives in a TLH-owned `tlh/` folder because Herdr rewrites its own `icons/` folder on start.
+
+Safety bounds:
+
+- The app home is never created. If it does not exist (Herdr.app is not installed), the step is skipped with a note.
+- An existing `programs.json` is backed up (`programs.json.backup-herdr-<timestamp>`) before its first change. An entry that is already current writes nothing and creates no backup.
+- Invalid JSON, a non-object root, a non-object `programs` value, a non-directory `tlh/` path, or a symlinked `programs.json`, `tlh/`, or icon file is reported and left untouched.
+- Writes are atomic (temp file, then rename), and an existing file's permissions are kept.
+- Any failure is a warning, never an install failure. `--dry-run` only reports what would change.
+
+Opt out by setting this in `~/.the-last-harness/agent/settings.json`:
+
+```json
+{ "tlh": { "herdrApp": { "enabled": false } } }
+```
+
+The opt-out is persistent, so it applies to later `tlh update` runs too. It skips install/update writes only: it does not remove an existing entry, and it does not stop [uninstall](#uninstall) cleanup.
+
+Herdr has a single `programs.tlh` key. Multiple TLH installs on one machine (for example a `tlh-main` dev install alongside a release install, or a fork) overwrite each other's `run`. Uninstall only removes the entry (and the `tlh/` icon folder) when this install owns it: `run` is absent or points to this install's wrapper (both compared as physical paths). If `run` points elsewhere, it leaves both untouched and prints a note naming the other run path. Set the opt-out in installs that should not own it.
+
+To undo manually, delete the `tlh` key from `programs` in `programs.json` (back it up first) and remove the `tlh/` folder from the app home.
+
 ## Doctor
 
 Run `tlh doctor` to inspect the active isolated TLH profile. It is read-only by default: it reports settings drift, missing bundled subagent prompt copies, managed-helper/runtime hints, and prerequisite issues without modifying the profile, creating backups, or touching normal `~/.pi/agent`.
@@ -241,6 +270,8 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 ```
 
 The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. If the agent dir exists without its TLH install-state marker, it is preserved while independently owned runtime and managed-wrapper cleanup can continue; the uninstaller prints an actionable warning and exits nonzero so the incomplete cleanup is visible. A legacy `~/.local` pi is handled separately (see [Pi removal decision](#pi-removal-decision)). The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
+
+The uninstaller also removes the TLH entry and `tlh/` icon folder from the Herdr.app home, backing up `programs.json` first and keeping the app home and existing backups; see [Herdr.app integration](#herdrapp-integration). It does this even when `tlh.herdrApp.enabled` is `false`, and removes a leftover `tlh/` icon folder when the `programs.tlh` key is already absent. If another install owns the entry (its `run` is not this wrapper), the entry and icon folder are left in place with a note. It runs even when there is no wrapper or agent dir left to remove.
 
 The uninstaller also accepts the default profile through a symlinked `HOME` or a symlinked ancestor on `HOME`'s own path, after validating its physical target. Exact platform root aliases remain supported; other symlinked profile parents, symlinked agent roots, and profile descendants remain refused. For an explicit agent path reached through an unrelated alias, pass its canonical physical path instead; this keeps symlink aliases from expanding recursive deletion authority.
 
@@ -317,4 +348,4 @@ The `librarian` subagent performs read-only GitHub research using the `gh` CLI a
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`. Managed Gnosis and `tk` pins live in the installer scripts, and `tk` is copied from the pinned `wedow/ticket` source tarball only after SHA-256 verification (see [integrations.md](integrations.md#gnosis-integration)); TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the [update-check opt-outs](#update-checks-and-opt-outs). This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, write a wrapper command, and (unless opted out) add a TLH program entry to an existing Herdr.app home (see [Herdr.app integration](#herdrapp-integration)). Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`. Managed Gnosis and `tk` pins live in the installer scripts, and `tk` is copied from the pinned `wedow/ticket` source tarball only after SHA-256 verification (see [integrations.md](integrations.md#gnosis-integration)); TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the [update-check opt-outs](#update-checks-and-opt-outs). This repo does not create, read, or modify API keys or auth files.

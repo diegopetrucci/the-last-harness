@@ -66,6 +66,7 @@ const PROCESS_GROUP_POLL_MS = 25;
 export const TMPDIR_ALLOWLIST = [
   "jiti", // jiti transform cache
   "node-compile-cache", // Node module compile cache
+  "herdr-app-home", // pinned HERDR_APP_HOME for tests (see guardEnv)
 ];
 
 /**
@@ -254,7 +255,15 @@ export async function runWithTmpdirGuard({
   }
 
   const root = mkdtempSync(join(tmpdir(), "tlh-test-run-"));
-  const guardEnv = { ...env, TMPDIR: root, TMP: root, TEMP: root };
+  // Pin HERDR_APP_HOME inside the per-run root so no test can reach the real
+  // ~/.config/herdr-app through an inherited environment.
+  const guardEnv = {
+    ...env,
+    TMPDIR: root,
+    TMP: root,
+    TEMP: root,
+    HERDR_APP_HOME: join(root, "herdr-app-home"),
+  };
   // Ambient subagent-child markers (e.g. PI_SUBAGENT_CHILD) must not leak into
   // tests; tests that need child mode set these explicitly.
   for (const key of Object.keys(guardEnv)) {

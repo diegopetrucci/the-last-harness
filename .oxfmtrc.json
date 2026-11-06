@@ -22,6 +22,7 @@
     "scripts/lib/subagent-analysis-validation.mjs",
     "scripts/lib/subagent-analysis-wakeup.mjs",
     "scripts/lib/tlh-install-git.mjs",
+    "scripts/lib/tlh-install-herdr-app.mjs",
     "scripts/lib/tlh-install-npm.mjs",
     "scripts/lib/tlh-install-runtime.mjs",
     "scripts/lib/tlh-install-package-source.mjs",
