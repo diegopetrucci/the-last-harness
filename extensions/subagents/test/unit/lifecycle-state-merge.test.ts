@@ -1640,4 +1640,85 @@ describe("lifecycle state helpers", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  describe("lock-exhaustion fallback", () => {
+    const DEAD_PID = 2_147_483_646;
+    const seed = (asyncDir: string, id: string) => {
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: id,
+        mode: "single" as const,
+        state: "running" as const,
+        startedAt: 100,
+        pid: 4242,
+        steps: [{ agent: "worker", status: "running" as const }],
+        lifecycle: { generation: 0 },
+      });
+      const lock = path.join(asyncDir, ".lifecycle-transition.lock");
+      fs.mkdirSync(lock);
+      fs.writeFileSync(
+        path.join(lock, "owner.json"),
+        JSON.stringify({ token: "other-writer", pid: DEAD_PID, acquiredAt: 1 }),
+      );
+      return lock;
+    };
+    const failedInMemory = (id: string) => ({
+      runId: id,
+      mode: "single" as const,
+      state: "failed" as const,
+      startedAt: 100,
+      endedAt: 300,
+      error: "runner crashed",
+      steps: [{ agent: "worker", status: "failed" as const }],
+      lifecycle: { generation: 0 },
+    });
+
+    it("does not write status.json while another writer still owns the lock", () => {
+      const root = tempRoot("pi-lifecycle-fallback-held-");
+      try {
+        const asyncDir = path.join(root, "run-held");
+        const lock = seed(asyncDir, "run-held");
+        // The other writer's pid looks alive to lock acquisition but dead to a
+        // snapshot check: the old fallback treated the snapshot as ownership.
+        const written = mergeAndWriteSourceRunnerStatus(asyncDir, failedInMemory("run-held"), {
+          retryDelaysMs: [],
+          kill: () => true,
+        });
+        const persisted = readStatus(asyncDir, { cache: false });
+        assert.equal(persisted?.state, "running");
+        assert.equal(lifecycleGeneration(persisted), 0);
+        assert.equal(written.state, "running");
+        assert.ok(fs.existsSync(lock), "foreign lock must stay untouched");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("writes the failure only after acquiring the lock, then releases it", () => {
+      const root = tempRoot("pi-lifecycle-fallback-acquired-");
+      try {
+        const asyncDir = path.join(root, "run-acquired");
+        const lock = seed(asyncDir, "run-acquired");
+        let probes = 0;
+        const written = mergeAndWriteSourceRunnerStatus(asyncDir, failedInMemory("run-acquired"), {
+          retryDelaysMs: [],
+          // First acquisition sees a live owner (exhausted); the owner then
+          // disappears, so the fallback must acquire the lock for real.
+          kill: () => {
+            probes += 1;
+            if (probes === 1) return true;
+            const error = new Error("gone") as NodeJS.ErrnoException;
+            error.code = "ESRCH";
+            throw error;
+          },
+        });
+        const persisted = readStatus(asyncDir, { cache: false });
+        assert.equal(persisted?.state, "failed");
+        assert.equal(lifecycleGeneration(persisted), 1);
+        assert.equal(written.state, "failed");
+        assert.equal(fs.existsSync(lock), false, "fallback lock must be released");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
 });

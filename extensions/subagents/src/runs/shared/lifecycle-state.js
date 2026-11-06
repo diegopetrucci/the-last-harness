@@ -303,17 +303,6 @@ export function checkPidLiveness(pid, kill = process.kill) {
         return codeOf(error) === "ESRCH" ? "dead" : "unknown";
     }
 }
-function liveLock(asyncDir) {
-    try {
-        const snapshot = lockSnapshot(asyncDir);
-        if (!snapshot)
-            return false;
-        return !completeOwner(snapshot) || checkPidLiveness(snapshot.pid) !== "dead";
-    }
-    catch {
-        return true;
-    }
-}
 function recoverLock(asyncDir, options) {
     const snapshot = lockSnapshot(asyncDir);
     if (!snapshot)
@@ -609,7 +598,7 @@ function mergeStatusMonotonicRuntime(current, memory, changed) {
     merged.steps?.forEach((step, index) => maxRuntimeEvidence(step, current.steps?.[index], memory.steps?.[index]));
     return merged;
 }
-export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
+export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory, lockOptions) {
     const memoryGeneration = lifecycleGeneration(inMemory);
     try {
         return withLifecycleStatusLock(asyncDir, (persisted) => {
@@ -617,42 +606,52 @@ export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
                 return writeNormalizedLifecycleStatus(asyncDir, inMemory);
             const current = normalizeAsyncLifecycleStatus(persisted);
             return writeNormalizedLifecycleStatus(asyncDir, mergeStatusMonotonicRuntime(current, inMemory, lifecycleGeneration(current) !== memoryGeneration));
-        });
+        }, lockOptions);
     }
     catch (error) {
         if (!(error instanceof LifecycleLockExhaustedError))
             throw error;
-        const persisted = readStatus(asyncDir, { cache: false });
-        if (persisted &&
-            inMemory.state === "failed" &&
-            isActiveLifecycleState(persisted.state) &&
-            lifecycleGeneration(persisted) === memoryGeneration &&
-            !liveLock(asyncDir)) {
-            const merged = mergeStatusMonotonicRuntime(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
-            return writeNormalizedLifecycleStatus(asyncDir, {
-                ...persisted,
-                state: "failed",
-                pid: undefined,
-                pause: undefined,
-                activityState: undefined,
-                currentTool: undefined,
-                currentToolStartedAt: undefined,
-                currentPath: undefined,
-                error: inMemory.error,
-                endedAt: inMemory.endedAt ?? persisted.endedAt,
-                lastUpdate: maxNumber(persisted.lastUpdate, inMemory.lastUpdate),
-                lifecycle: {
-                    ...persisted.lifecycle,
-                    ...(inMemory.lifecycle?.resumeBlockedReason
-                        ? { resumeBlockedReason: inMemory.lifecycle.resumeBlockedReason }
-                        : {}),
-                    generation: memoryGeneration + 1,
-                },
-                steps: merged.steps ?? persisted.steps,
-            });
+        if (inMemory.state !== "failed")
+            return readFallback(asyncDir, inMemory);
+        try {
+            return withLifecycleStatusLock(asyncDir, (persisted) => {
+                if (!persisted ||
+                    !isActiveLifecycleState(persisted.state) ||
+                    lifecycleGeneration(persisted) !== memoryGeneration)
+                    return persisted ?? normalizeAsyncLifecycleStatus(inMemory);
+                const merged = mergeStatusMonotonicRuntime(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
+                return writeNormalizedLifecycleStatus(asyncDir, {
+                    ...persisted,
+                    state: "failed",
+                    pid: undefined,
+                    pause: undefined,
+                    activityState: undefined,
+                    currentTool: undefined,
+                    currentToolStartedAt: undefined,
+                    currentPath: undefined,
+                    error: inMemory.error,
+                    endedAt: inMemory.endedAt ?? persisted.endedAt,
+                    lastUpdate: maxNumber(persisted.lastUpdate, inMemory.lastUpdate),
+                    lifecycle: {
+                        ...persisted.lifecycle,
+                        ...(inMemory.lifecycle?.resumeBlockedReason
+                            ? { resumeBlockedReason: inMemory.lifecycle.resumeBlockedReason }
+                            : {}),
+                        generation: memoryGeneration + 1,
+                    },
+                    steps: merged.steps ?? persisted.steps,
+                });
+            }, { ...lockOptions, retryDelaysMs: [] });
         }
-        return persisted ?? normalizeAsyncLifecycleStatus(inMemory);
+        catch (retryError) {
+            if (!(retryError instanceof LifecycleLockExhaustedError))
+                throw retryError;
+            return readFallback(asyncDir, inMemory);
+        }
     }
+}
+function readFallback(asyncDir, inMemory) {
+    return readStatus(asyncDir, { cache: false }) ?? normalizeAsyncLifecycleStatus(inMemory);
 }
 function continuationTargetExists(sourceAsyncDir, id, options) {
     const root = path.resolve(options.asyncDirRoot ?? path.dirname(path.resolve(sourceAsyncDir)));

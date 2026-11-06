@@ -65,6 +65,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
 - `/annotate-last-message` keeps a fenced code block in one section across blank lines and no longer creates an empty section for a horizontal-rule-only block.
+- Subagent run status writes no longer bypass the lifecycle lock: the lock-exhaustion fallback only writes while holding the lock, and continuation gate rejection now persists through a generation-checked locked transition, preserving newer committed states.
 
 ### Changed
 
