@@ -20,8 +20,14 @@ import { normalizeTkTicketId } from "../../src/runs/shared/tk-ticket.ts";
 import {
   cloneForegroundPauseHealth,
   pausedForegroundStatusPath,
-  pausedForegroundTerminationReason,
 } from "../../src/runs/foreground/foreground-pause-state.ts";
+
+export function pausedForegroundTerminationReason(
+  result: SingleResult,
+  pauseProjected = false,
+): NonNullable<SingleResult["terminationReason"]> | undefined {
+  return pauseProjected || result.pause ? "paused" : result.terminationReason;
+}
 
 /**
  * Legacy-fixture writers (tlhf-bm99): production no longer pauses foreground runs,

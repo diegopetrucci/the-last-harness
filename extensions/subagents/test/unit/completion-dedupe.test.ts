@@ -87,7 +87,7 @@ describe("getGlobalSeenMap", () => {
 });
 
 describe("COMPLETION_DELIVERY", () => {
-  it("B: symbol key is unique and does not appear in JSON.stringify output", () => {
+  it("symbol key is unique and does not appear in JSON.stringify output", () => {
     const meta: CompletionDeliveryMetadata = {
       eventId: "test-uuid-1234",
       acknowledgeDelivery: () => {},
@@ -101,7 +101,7 @@ describe("COMPLETION_DELIVERY", () => {
     assert.doesNotMatch(json, /completion-delivery/, "symbol description must not appear");
   });
 
-  it("B: getCompletionDelivery returns metadata only for payloads with the Symbol key", () => {
+  it("getCompletionDelivery returns metadata only for payloads with the Symbol key", () => {
     const meta: CompletionDeliveryMetadata = {
       eventId: "ev-abc",
       acknowledgeDelivery: () => {},
@@ -119,7 +119,7 @@ describe("COMPLETION_DELIVERY", () => {
     assert.equal(getCompletionDelivery("string"), undefined, "must handle non-object gracefully");
   });
 
-  it("B: onAcknowledged callbacks are called when acknowledgeDelivery fires", () => {
+  it("onAcknowledged callbacks are called when acknowledgeDelivery fires", () => {
     let ackCount = 0;
     let cbCount = 0;
     const meta: CompletionDeliveryMetadata = {

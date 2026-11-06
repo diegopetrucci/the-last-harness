@@ -149,7 +149,7 @@ export function createCompletionBatcher<T>(
     options.emit(items);
   };
 
-  // P2: Timer callbacks must not let a send failure escape into the event loop
+  // Timer callbacks must not let a send failure escape into the event loop
   // and crash the parent process.  emitGroup is also called from flush() where
   // the caller can handle the exception directly, so only this wrapper adds the
   // safety net.  Result files are retained because ack only fires after

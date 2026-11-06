@@ -319,12 +319,12 @@ export function createResultWatcher(
     const resultPath = path.join(resultsDir, file);
     if (!fsApi.existsSync(resultPath)) return;
     try {
-      // A: Read raw bytes once; derive eventId from data.eventId (stamped by
+      // Read raw bytes once; derive eventId from data.eventId (stamped by
       // the writer) or, for legacy files, from a sha256 content digest so every
       // file always has a durable identity.
       const rawBytes = fsApi.readFileSync(resultPath, "utf-8");
       const data = JSON.parse(rawBytes) as ResultFileData;
-      // A: Durable eventId: prefer the field stamped at write time; fall back
+      // Durable eventId: prefer the field stamped at write time; fall back
       // to sha256(file-bytes) for files written before this field was introduced.
       const eventId: string =
         typeof data.eventId === "string" && data.eventId.length > 0
@@ -380,13 +380,13 @@ export function createResultWatcher(
         },
       );
 
-      // D: Dedup keyed by eventId — both the watcher completionSeen map and
+      // Dedup keyed by eventId — both the watcher completionSeen map and
       // the pendingAcks in-flight set use the durable eventId as key.
       if (isSeenWithTtl(state.completionSeen, eventId, now, completionTtlMs)) {
         // Already delivered (ack marked completionSeen).  The file survived
         // (transient unlink failure or crash-rewrite).  Clean it up without
         // re-emitting — but only if the on-disk eventId still matches what we
-        // just observed (C: safe-unlink guard).
+        // just observed (safe-unlink guard).
         try {
           const currentRaw = fsApi.readFileSync(resultPath, "utf-8");
           const currentData = JSON.parse(currentRaw) as ResultFileData;
@@ -413,7 +413,7 @@ export function createResultWatcher(
       let ackReceived = false;
       let ackFired = false;
 
-      // C: Safe unlink — re-read the file and verify its current eventId matches
+      // Safe unlink — re-read the file and verify its current eventId matches
       // the one we emitted before deleting.  This prevents destroying a file that
       // was atomically replaced with a new write (different eventId) while
       // delivery was in-flight.
@@ -492,20 +492,20 @@ export function createResultWatcher(
       }, completionTtlMs);
       unrefTimer(orphanTimer);
 
-      // B: onAcknowledged callbacks — registered by consumers (e.g. async-job-tracker)
+      // onAcknowledged callbacks — registered by consumers (e.g. async-job-tracker)
       // to defer side effects (project-reference management) to after confirmed delivery.
       const onAcknowledgedCallbacks: Array<() => void> = [];
 
-      // B: acknowledgeDelivery is called by notify.ts after each sendMessage.
+      // acknowledgeDelivery is called by notify.ts after each sendMessage.
       // Only then do we mark completionSeen, release the in-flight slot, run
       // project-reference management, fire onAcknowledged callbacks, and unlink.
       const acknowledgeDelivery = () => {
         if (ackReceived) return; // Idempotent.
         ackReceived = true;
-        // D: Key completionSeen on eventId.
+        // Key completionSeen on eventId.
         markSeen(state.completionSeen, eventId, now);
         pendingAcks.delete(eventId);
-        // F: Fire onAcknowledged callbacks (e.g. tracker project-ref management).
+        // Fire onAcknowledged callbacks (e.g. tracker project-ref management).
         for (const cb of onAcknowledgedCallbacks) {
           try {
             cb();
@@ -518,7 +518,7 @@ export function createResultWatcher(
         tryUnlinkResultFile();
       };
 
-      // B: onAcknowledged registration function passed to consumers via the Symbol metadata.
+      // onAcknowledged registration function passed to consumers via the Symbol metadata.
       // If acknowledgement already happened (e.g. notify ran synchronously before the
       // tracker could register), invoke the callback immediately (once) so late
       // registrations do not silently miss their side-effect window.
@@ -534,10 +534,10 @@ export function createResultWatcher(
         onAcknowledgedCallbacks.push(cb);
       };
 
-      // D: Register as in-flight before emitting (keyed by eventId).
+      // Register as in-flight before emitting (keyed by eventId).
       pendingAcks.add(eventId);
       const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
-      // B: Attach delivery metadata under the Symbol key so it never serialises
+      // Attach delivery metadata under the Symbol key so it never serialises
       // into message details, telemetry, or session entries.
       const deliveryMetadata: CompletionDeliveryMetadata = {
         eventId,
@@ -727,13 +727,13 @@ export function createResultWatcher(
           continue;
         }
 
-        // D: Derive eventId from data.eventId or sha256 digest.
+        // Derive eventId from data.eventId or sha256 digest.
         const fileEventId: string =
           typeof data.eventId === "string" && data.eventId.length > 0
             ? data.eventId
             : createHash("sha256").update(rawBytes).digest("hex");
 
-        // Fix 1: Never sweep an undelivered result owned by the current session.
+        // Never sweep an undelivered result owned by the current session.
         // primeExistingResults() will deliver it; deleting it here would destroy
         // the report before any delivery attempt.  A session that has been active
         // for more than seven days can legitimately own result files this old.
@@ -745,16 +745,16 @@ export function createResultWatcher(
           continue;
         }
 
-        // G: Skip files with a pending in-flight ack \ the delivery is already
+        // Skip files with a pending in-flight ack \ the delivery is already
         // in progress and will handle cleanup when it completes.
         if (pendingAcks.has(fileEventId)) continue;
 
         const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
 
-        // D: Check delivery status keyed by eventId.
+        // Check delivery status keyed by eventId.
         if (isSeenWithTtl(state.completionSeen, fileEventId, now, completionTtlMs)) {
           // Already delivered (ack was recorded).  Delete if it survived.
-          // C: Re-read to verify the on-disk eventId still matches before unlinking
+          // Re-read to verify the on-disk eventId still matches before unlinking
           // (a concurrent write may have replaced the file with a new eventId).
           try {
             const currentRaw = fsApi.readFileSync(resultPath, "utf-8");
@@ -772,7 +772,7 @@ export function createResultWatcher(
           continue;
         }
 
-        // G: Conservative sweep \ only delete if every logical child has a
+        // Conservative sweep \ only delete if every logical child has a
         // verifiably readable backup source so the output is not lost.
         // status.json is NOT a full-report backup (recentOutput keeps only
         // ~50 lines); only per-child artifact files and session transcripts count.
@@ -836,7 +836,7 @@ export function createResultWatcher(
         })();
 
         if (!hasVerifiableReport) {
-          // G: No readable backup \ keep the file and log once.
+          // No readable backup \ keep the file and log once.
           console.error(
             `sweepStaleResultFiles: skipping '${resultPath}' (aged past retention but no verifiable full-report source found; will retry on next sweep).`,
           );
@@ -850,7 +850,7 @@ export function createResultWatcher(
         } else if (data.state === "complete" || data.state === "failed") {
           scheduleProjectReferenceRelease(data, runId);
         }
-        // C: Re-read and compare eventId immediately before unlinking, just as
+        // Re-read and compare eventId immediately before unlinking, just as
         // the already-delivered branch does.  A concurrent write may have
         // replaced the file with a new result (new eventId) during the backup
         // checks above; deleting it would silently discard an undelivered report.

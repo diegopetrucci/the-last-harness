@@ -1,5 +1,5 @@
 import { trimRememberedForegroundRuns } from "../../src/runs/foreground/foreground-run-state.ts";
-import { pausedForegroundTerminationReason } from "../../src/runs/foreground/foreground-pause-state.ts";
+import { pausedForegroundTerminationReason } from "./foreground-pause-fixtures.ts";
 import {
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,

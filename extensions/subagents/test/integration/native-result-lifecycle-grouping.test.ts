@@ -197,7 +197,7 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-      // The executor returns a receipt; the save failure surfaces in the async result (item 5a).
+      // The executor returns a receipt; the save failure surfaces in the async result.
       assert.equal(result.isError, undefined);
       assert.match(result.content[0]?.text ?? "", /Background run started/);
       // Item 5 (tlhf-5veu review): file-only output-save failure diagnostics must reach the
@@ -219,7 +219,7 @@ describe(
       // Removed foreground-only assertions (no async equivalent):
       //   - /Status: completed/, /\[TRUNCATED:/, /parallel visible line/
       //   - /Output file error:/, saveError field, finalOutput, text.length <= 8_000
-      // Item 5b (tlhf-5veu review): save-error diagnostics now verified in the async result.
+      // Save-error diagnostics now verified in the async result.
       const blockedParent = path.join(tempDir, "parallel-not-a-directory");
       fs.writeFileSync(blockedParent, "blocking file", "utf-8");
       const requestedOutput = path.join(blockedParent, "report.md");
@@ -246,7 +246,7 @@ describe(
       );
       assert.equal(result.isError, undefined);
       assert.match(result.content[0]?.text ?? "", /Background run started/);
-      // Item 5b: parallel save-failure diagnostics must also reach the async result.
+      // Parallel save-failure diagnostics must also reach the async result.
       const parallelAsyncId = result.details?.asyncId;
       assert.ok(parallelAsyncId, "expected asyncId in parallel receipt");
       const parallelPayload = await readAsyncPayload(parallelAsyncId);

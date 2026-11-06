@@ -25,9 +25,9 @@ function withDelivery(
   return Object.assign({}, payload, { [COMPLETION_DELIVERY]: meta });
 }
 
-describe("registerSubagentNotify flush-hardening (P2)", () => {
-  it("P2 flush-catch: non-completion flush failure does not abort the urgent notice", () => {
-    // P2 fix: if the held-success flush throws, the failure/pause notice must
+describe("registerSubagentNotify flush-hardening", () => {
+  it("non-completion flush failure does not abort the urgent notice", () => {
+    // if the held-success flush throws, the failure/pause notice must
     // still be sent.  Previously the finally block re-ran before the notice.
     const testSessionId = `session-flush-catch-${Date.now()}`;
     const fcListeners = new Map<string, Set<(d: unknown) => void>>();
@@ -94,8 +94,8 @@ describe("registerSubagentNotify flush-hardening (P2)", () => {
     );
   });
 
-  it("P2 flush-catch: session_shutdown flush failure does not crash the shutdown handler", () => {
-    // P2 fix: a batcher flush failure during session_shutdown must not escape
+  it("session_shutdown flush failure does not crash the shutdown handler", () => {
+    // a batcher flush failure during session_shutdown must not escape
     // the shutdown handler.  Unacked items retain their files for recovery.
     const testSessionId = `session-shutdown-flush-fail-${Date.now()}`;
     const ssdListeners = new Map<string, Set<(d: unknown) => void>>();

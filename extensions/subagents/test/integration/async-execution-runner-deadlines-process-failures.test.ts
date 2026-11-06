@@ -933,6 +933,7 @@ describe("async execution runner deadlines and process failures", () => {
       assert.equal(payload.state, "failed");
       assert.equal(payload.success, false);
       assert.equal(payload.timedOut, true);
+      assert.equal(payload.results.length, 2);
       for (const result of payload.results) {
         assert.equal(result.timedOut, true);
         assert.equal(result.error, "Subagent exceeded the configured maximum execution time.");

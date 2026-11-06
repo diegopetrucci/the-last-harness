@@ -67,10 +67,3 @@ export function isClaimedPausedLifecycle(
 export function pausedForegroundStatusPath(runId: string): string {
   return path.join(ASYNC_DIR, runId);
 }
-
-export function pausedForegroundTerminationReason(
-  result: SingleResult,
-  pauseProjected = false,
-): NonNullable<SingleResult["terminationReason"]> | undefined {
-  return pauseProjected || result.pause ? "paused" : result.terminationReason;
-}

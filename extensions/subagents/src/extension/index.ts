@@ -798,10 +798,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       // Clear in-flight pending-ack slots before scanning so that result files
       // for this (re-)entering session are always eligible for re-emission.
       clearPendingAcks();
-      // Fix 2: Sweep stale result files BEFORE priming so that prime only
-      // schedules files that survived the sweep.  Result files written by the
-      // current session are always recent (<7 days) and are never swept here;
-      // only genuinely aged files from previous sessions are removed.
+      // Sweep aged result files BEFORE priming so prime only schedules survivors.
+      // Only files past the retention window are considered; an undelivered file
+      // owned by the current session is always kept for delivery, regardless of age.
       sweepStaleResultFiles();
       // Prime after sweep so the owner session gets a delivery attempt on all
       // remaining (non-stale) result files.

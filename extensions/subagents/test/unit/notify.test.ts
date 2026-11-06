@@ -319,6 +319,9 @@ describe("registerSubagentNotify", () => {
     assert.match(content, /^Background task failed: \*\*parallel:urgent\*\*/);
     assert.match(content, /Children: 8 completed, 1 failed, 1 paused/);
     assert.match(content, /… \[2 child results omitted\]/);
+    // A single parallel run is one item: its preview shows at most 8 children (the rest omitted).
+    assert.doesNotMatch(content, /\b7\/10\. worker-6/);
+    assert.doesNotMatch(content, /\b8\/10\. worker-7/);
     assert.match(content, /9\/10\. worker-8 — failed/);
     assert.match(content, /10\/10\. worker-9 — paused/);
     assert.match(content, /Async id: notify-urgent-1/);
@@ -1011,7 +1014,7 @@ describe("registerSubagentNotify", () => {
         },
       ],
     );
-    // P1 fix: every chunk has display:true and its own prose.
+    // every chunk has display:true and its own prose.
     assert.equal(batches[0]!.display, true);
     assert.equal(batches[1]!.display, true);
     assert.ok(batches[0]!.content.length > 0, "chunk 0 must have prose");
@@ -1100,14 +1103,14 @@ describe("registerSubagentNotify", () => {
           : [MAX_COMPLETION_BATCH_CHUNKS, 1];
       assert.equal(messages.length, Math.ceil(entryCount / MAX_GROUPED_ENTRIES));
       assert.equal(sentUserMessages.length, 1, "one nudge must cover the overall flush");
-      // P1 fix: every chunk has display:true with its own prose.
+      // every chunk has display:true with its own prose.
       assert.equal(
         messages.filter(({ display }) => display).length,
         messages.length,
         "every chunk must have display:true",
       );
       assert.equal(messages.filter(({ details }) => details.triggersTurn).length, 1);
-      // P1 fix: every chunk has non-empty prose.
+      // every chunk has non-empty prose.
       assert.ok(
         messages.every(({ content }) => content.length > 0),
         "every chunk must have non-empty prose",
@@ -1547,8 +1550,8 @@ describe("registerSubagentNotify", () => {
     );
   });
 
-  it("E: sendMessage ok + nudge throws → item is acked and not re-sent", () => {
-    // E: A failing sendUserMessage (nudge) must NOT prevent acknowledgeDelivery.
+  it("sendMessage ok + nudge throws → item is acked and not re-sent", () => {
+    // A failing sendUserMessage (nudge) must NOT prevent acknowledgeDelivery.
     const testSessionId = `session-nudge-throw-${Date.now()}`;
     let ackCalled = false;
     let sendMessageCalled = 0;
@@ -1596,8 +1599,8 @@ describe("registerSubagentNotify", () => {
     assert.equal(ackCalled, true, "ack must fire even when nudge throws");
   });
 
-  it("E: chunk-1 send throws → only chunk-0 items acked, chunk-1 item stays recoverable", () => {
-    // P1 fix: each chunk has its own prose and is acked independently.
+  it("chunk-1 send throws → only chunk-0 items acked, chunk-1 item stays recoverable", () => {
+    // each chunk has its own prose and is acked independently.
     // When chunk 1's sendMessage throws, only the MAX_GROUPED_ENTRIES items in
     // chunk 0 are acked (their prose was already model-visible). The single item
     // in chunk 1 remains unacked and stays recoverable without re-sending chunk 0.
@@ -1648,7 +1651,7 @@ describe("registerSubagentNotify", () => {
       );
     }
     assert.deepEqual(chunkAcks, {}, "no acks before batcher fires");
-    // P2: emitGroupSafe catches the exception so clock.advance returns normally.
+    // emitGroupSafe catches the exception so clock.advance returns normally.
     clock1.advance(200);
     assert.equal(sendCount, 2, "sendMessage called for chunk 0 (ok) and chunk 1 (throw)");
     // Chunk 0 items (0..MAX_GROUPED_ENTRIES-1) must all be acked.
@@ -1663,7 +1666,7 @@ describe("registerSubagentNotify", () => {
     );
   });
 
-  it("E: grouped send chunk-0 throws → no items acked, all recovered once", () => {
+  it("grouped send chunk-0 throws → no items acked, all recovered once", () => {
     const testSessionId = `session-chunk0-throw-${Date.now()}`;
     const chunkAcks: Record<number, boolean> = {};
     const chunk0Listeners = new Map<string, Set<(d: unknown) => void>>();
@@ -1709,14 +1712,14 @@ describe("registerSubagentNotify", () => {
       );
     }
     assert.deepEqual(chunkAcks, {}, "no acks before batcher fires");
-    // P2: emitGroupSafe catches the exception; clock.advance returns normally.
+    // emitGroupSafe catches the exception; clock.advance returns normally.
     clock0.advance(200);
     assert.equal(sendCount0, 1, "sendMessage called once (chunk 0 threw)");
     assert.deepEqual(chunkAcks, {}, "no items acked when chunk 0 throws");
   });
 
-  it("P2: batcher timer exception is caught and does not escape the event loop", async () => {
-    // P2: Verify the P2 fix using a real timer (not a fake clock).
+  it("batcher timer exception is caught and does not escape the event loop", async () => {
+    // Verify the timer catch using a real timer (not a fake clock).
     // A send failure inside the batcher's setTimeout callback must not escape
     // and crash the parent process.
     const testSessionId = `session-p2-real-timer-${Date.now()}`;
@@ -1739,7 +1742,7 @@ describe("registerSubagentNotify", () => {
       on(_e: string, _h: (...args: unknown[]) => void) {},
       sendMessage(_m: unknown) {
         sendCalled++;
-        throw new Error("P2 simulated send failure");
+        throw new Error("simulated send failure");
       },
       sendUserMessage(_c: unknown) {},
     };
@@ -1759,16 +1762,16 @@ describe("registerSubagentNotify", () => {
         p2AckCalled = true;
       }),
     );
-    // Wait for the real timer to fire (and be caught by P2 fix).
+    // Wait for the real timer to fire (and be caught).
     await new Promise((resolve) => setTimeout(resolve, 200));
-    // If P2 is broken, an uncaught exception would have crashed the process
+    // If the catch were missing, an uncaught exception would have crashed the process
     // before reaching here.  Reaching here proves the exception was caught.
     assert.equal(sendCalled, 1, "sendMessage was called inside the batcher timer");
     assert.equal(p2AckCalled, false, "ack must not fire when sendMessage throws");
   });
 
-  it("P2 recovery: after batcher timer exception is caught, re-emitting the item delivers it exactly once", async () => {
-    // After the P2 fix catches the batcher-timer exception, the item ack is not
+  it("after batcher timer exception is caught, re-emitting the item delivers it exactly once", async () => {
+    // After the catch handles the batcher-timer exception, the item ack is not
     // called.  Re-emitting the event (simulating the orphan-timer coalescer
     // rescan from fix 1) must deliver it exactly once, not duplicate it.
     const testSessionId = `session-p2-recovery-${Date.now()}`;
@@ -1793,7 +1796,7 @@ describe("registerSubagentNotify", () => {
       on(_e: string, _h: (...args: unknown[]) => void) {},
       sendMessage(m: { content?: string }) {
         sendCalled++;
-        if (shouldThrow) throw new Error("P2 simulated send failure");
+        if (shouldThrow) throw new Error("simulated send failure");
         sentContents.push(m.content ?? "");
       },
       sendUserMessage(_c: unknown) {},
@@ -1819,7 +1822,7 @@ describe("registerSubagentNotify", () => {
     // First batcher fire: sendMessage throws, ack not called.
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(sendCalled, 1, "first send attempted");
-    assert.equal(ackCount, 0, "no ack after P2 throw");
+    assert.equal(ackCount, 0, "no ack after throw");
     assert.equal(sentContents.length, 0, "no model-visible content yet");
 
     // Allow sends; re-emit the same item (simulating coalescer retry).
@@ -1835,8 +1838,8 @@ describe("registerSubagentNotify", () => {
     );
   });
 
-  it("5a: 20 completions — each marker appears in exactly one chunk (P1 fix)", () => {
-    // P1 fix: each chunk has its own prose, so every item's marker appears in
+  it("20 completions — each marker appears in exactly one chunk", () => {
+    // each chunk has its own prose, so every item's marker appears in
     // exactly ONE chunk's content.  Within that chunk it may appear multiple
     // times (header, body, summary); the guarantee is no item leaks into another
     // chunk's prose.
@@ -1859,7 +1862,7 @@ describe("registerSubagentNotify", () => {
     // 20 items / 8 per chunk = 3 chunks.
     assert.equal(sentMessages.length, 3, "20 items split into 3 chunks");
     const contents = sentMessages.map(({ message }) => (message as { content: string }).content);
-    // Every chunk must have non-empty prose (P1 fix).
+    // Every chunk must have non-empty prose.
     for (const c of contents) {
       assert.ok(c.length > 0, "every chunk must have model-visible prose");
     }
@@ -1882,7 +1885,7 @@ describe("registerSubagentNotify", () => {
       assert.ok(contents[2]!.includes(markers[i]!), `item ${i} must be in chunk 2`);
   });
 
-  it("5a boundary: MAX_COMPLETION_BATCH_ENTRIES+1 items — each sampled marker in exactly one chunk", () => {
+  it("MAX_COMPLETION_BATCH_ENTRIES+1 items — each sampled marker in exactly one chunk", () => {
     // Crossing MAX_COMPLETION_BATCH_ENTRIES (512 → 513 items) splits into two
     // logical batches.  Each item's marker must still appear in exactly one chunk.
     const clock = createFakeClock();

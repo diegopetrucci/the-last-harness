@@ -680,7 +680,7 @@ export function createAsyncJobTracker(
       return;
     const asyncId = result.id;
     if (!asyncId) return;
-    // B+D: Replay protection keyed on eventId from COMPLETION_DELIVERY Symbol metadata.
+    // Replay protection keyed on eventId from COMPLETION_DELIVERY Symbol metadata.
     // Only guard watcher-sourced events (those carrying metadata); direct handleComplete
     // calls (tests, in-process signals) without metadata are never blocked.
     const meta = getCompletionDelivery(data);
@@ -705,7 +705,7 @@ export function createAsyncJobTracker(
       job.updatedAt = Date.now();
       if (result.asyncDir) job.asyncDir = result.asyncDir;
     }
-    // F: Project-reference management deferred to after delivery confirmation
+    // Project-reference management deferred to after delivery confirmation
     // when the event carries COMPLETION_DELIVERY metadata.  For events without
     // metadata (legacy, direct calls), run immediately (backward-compatible).
     const asyncDir = job?.asyncDir ?? result.asyncDir;

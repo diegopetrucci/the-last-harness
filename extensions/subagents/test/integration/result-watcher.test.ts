@@ -1280,7 +1280,7 @@ describe("result watcher", () => {
   });
 
   it("sweepStaleResultFiles keeps stale file when status.json exists but child has no readable source", () => {
-    // G: status.json alone is not enough; file must be kept.
+    // status.json alone is not enough; file must be kept.
     const resultsDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pi-result-watcher-sweep-status-only-"),
     );
@@ -1311,7 +1311,7 @@ describe("result watcher", () => {
       );
       try {
         watcher.sweepStaleResultFiles();
-        // G: status.json alone is not enough \ file must be kept.
+        // status.json alone is not enough \ file must be kept.
         assert.equal(
           fs.existsSync(resultPath),
           true,
@@ -1504,7 +1504,7 @@ describe("result watcher", () => {
     }
   });
 
-  it("C: stale-sweep replacement-between-check-and-unlink: re-read verifies eventId before unlink", () => {
+  it("stale-sweep replacement-between-check-and-unlink: re-read verifies eventId before unlink", () => {
     // Tests that sweepStaleResultFiles re-reads the eventId before unlinking,
     // preventing destruction of a newly-written file with a different eventId.
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-sweep-replace-"));
@@ -1591,8 +1591,8 @@ describe("result watcher", () => {
     }
   });
 
-  it("C: undelivered stale-sweep: replacement between backup-check and unlink is not deleted", () => {
-    // Fix 3: The undelivered stale-unlink branch must re-read and compare
+  it("undelivered stale-sweep: replacement between backup-check and unlink is not deleted", () => {
+    // The undelivered stale-unlink branch must re-read and compare
     // eventId immediately before unlinking (just like the already-delivered branch).
     // When a concurrent write replaces the file during the backup checks, the
     // sweep must leave the new file intact.
@@ -1676,7 +1676,7 @@ describe("result watcher", () => {
       try {
         watcher.sweepStaleResultFiles();
         // The file was replaced with a new eventId during the backup check.
-        // Fix 3: the re-read detects the mismatch and skips the unlink.
+        // the re-read detects the mismatch and skips the unlink.
         assert.equal(
           fs.existsSync(resultPath),
           true,
@@ -1690,8 +1690,8 @@ describe("result watcher", () => {
     }
   });
 
-  it("Fix 2: orphan-timer retry is suppressed after stopResultWatcher()", async () => {
-    // P2 fix: after stopResultWatcher(), orphan timers must not reschedule
+  it("orphan-timer retry is suppressed after stopResultWatcher()", async () => {
+    // after stopResultWatcher(), orphan timers must not reschedule
     // files via the coalescer.  Without the fix three or more emissions occur.
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-orphan-stop-"));
     const emitCount: string[] = [];
@@ -1760,7 +1760,7 @@ describe("result watcher", () => {
     }
   });
 
-  it("Fix 1: sweep-before-prime with aged owner-session result — delivered exactly once with model-visible content", async () => {
+  it("sweep-before-prime with aged owner-session result — delivered exactly once with model-visible content", async () => {
     // Regression test: the production session-start ordering is
     // sweepStaleResultFiles() then primeExistingResults().  An eight-day-old
     // result file owned by the CURRENT session must survive the sweep and be
@@ -1849,19 +1849,19 @@ describe("result watcher", () => {
     }
   });
 
-  it("3a: watcher-backed first-chunk failure recovery with 9 distinct content markers (production retry path)", async () => {
+  it("watcher-backed first-chunk failure recovery with 9 distinct content markers (production retry path)", async () => {
     // All 9 items' orphan timers fire after TTL, reschedule via the coalescer,
     // and all 9 are delivered exactly once with model-visible content.
-    const sessionId = `session-3a-${Date.now()}`;
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rw-3a-first-"));
+    const sessionId = `session-first-chunk-${Date.now()}`;
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rw-first-chunk-"));
     const totalItems = MAX_GROUPED_ENTRIES + 1; // 9: chunk-0 has 8, chunk-1 has 1
     const markers = Array.from({ length: totalItems }, (_, i) => `ZQX3A${i}ZQXEND`);
 
     for (let i = 0; i < totalItems; i++) {
       fs.writeFileSync(
-        path.join(resultsDir, `result-3a-${i}.json`),
+        path.join(resultsDir, `result-first-chunk-${i}.json`),
         JSON.stringify({
-          id: `3a-run-${i}`,
+          id: `first-chunk-run-${i}`,
           agent: markers[i]!,
           success: true,
           state: "complete",
