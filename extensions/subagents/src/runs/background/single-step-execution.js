@@ -75,19 +75,18 @@ function prepareSingleStepSetup(step, ctx) {
     const stepTimeoutMessage = stepOwnsDeadline
         ? `Subagent timed out after ${step.timeoutMs}ms.`
         : ctx.timeoutMessage;
-    const stepTimeoutTimer = childDeadlineAt !== undefined
-        ? scheduleDeadline(childDeadlineAt, () => {
-            try {
-                ctx.onTimeout?.(stepTimeoutMessage);
-            }
-            catch (error) {
-                console.error(`Failed to record timeout status for run '${ctx.id}' step ${ctx.flatIndex}; continuing timeout cleanup:`, error);
-            }
-            runtimeTracker.freeze(Date.now());
-            stepTimeoutController.abort();
-            activeTimeoutInterrupt?.();
-        })
-        : undefined;
+    const expireDeadline = () => {
+        try {
+            ctx.onTimeout?.(stepTimeoutMessage);
+        }
+        catch (error) {
+            console.error(`Failed to record timeout status for run '${ctx.id}' step ${ctx.flatIndex}; continuing timeout cleanup:`, error);
+        }
+        runtimeTracker.freeze(Date.now());
+        stepTimeoutController.abort();
+        activeTimeoutInterrupt?.();
+    };
+    const stepTimeoutTimer = childDeadlineAt !== undefined ? scheduleDeadline(childDeadlineAt, expireDeadline) : undefined;
     const parentRegisterTimeout = ctx.registerTimeout;
     const stepContext = {
         ...ctx,
@@ -157,6 +156,7 @@ function prepareSingleStepSetup(step, ctx) {
         relayInheritedTimeout,
         parentRegisterTimeout,
         childDeadlineAt,
+        expireDeadline,
         ctx: stepContext,
         task,
         taskForCompletionGuard,
@@ -715,6 +715,13 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
                 error: attempt.buildError,
                 finalOutput: attempt.buildError,
             };
+            break;
+        }
+        if (setup.childDeadlineAt !== undefined && Date.now() >= setup.childDeadlineAt) {
+            setup.stepTimeoutTimer?.cancel();
+            setup.expireDeadline();
+            cleanupTempDir(attempt.tempDir);
+            stepCtx.onAttemptEnd?.();
             break;
         }
         let stopAttempt = false;

@@ -888,6 +888,56 @@ describe("async execution runner deadlines and process failures", () => {
       assert.equal(status.steps?.[0]?.status, "failed");
       assert.equal(status.steps?.[0]?.timedOut, true);
       assert.equal(mockPi.callCount(), 0, "an expired deadline must not spawn a child");
+      assert.equal(mockPi.spawnCount(), 0, "no child process may be spawned at all");
+      assert.deepEqual(
+        fs.readdirSync(isolatedTmpDir),
+        [],
+        "prepared prompt temp files must be removed",
+      );
+    } finally {
+      if (previousTmpDir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpDir;
+    }
+  });
+
+  it("never spawns children for any parallel task once the run deadline has expired", async () => {
+    const isolatedTmpDir = path.join(tempDir, "parallel-pre-spawn-timeout-tmp");
+    fs.mkdirSync(isolatedTmpDir);
+    const previousTmpDir = process.env.TMPDIR;
+    process.env.TMPDIR = isolatedTmpDir;
+    const id = `async-parallel-timeout-before-spawn-${Date.now().toString(36)}`;
+    try {
+      mockPi.onCall({ output: "must never run" });
+      const launch = executeAsyncParallel(id, {
+        tasks: [
+          { agent: "echo", task: "First" },
+          { agent: "echo", task: "Second" },
+        ],
+        agents: [makeAgent("echo", { systemPrompt: "temporary system prompt" })],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+        timeoutMs: 1,
+      });
+      assert.equal(launch.isError, undefined);
+
+      const payload = await readAsyncPayload(id);
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.success, false);
+      assert.equal(payload.timedOut, true);
+      for (const result of payload.results) {
+        assert.equal(result.timedOut, true);
+        assert.equal(result.error, "Subagent exceeded the configured maximum execution time.");
+      }
+      assert.equal(mockPi.spawnCount(), 0, "no child process may be spawned at all");
       assert.deepEqual(
         fs.readdirSync(isolatedTmpDir),
         [],

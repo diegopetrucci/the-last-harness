@@ -234,6 +234,8 @@ interface SingleStepSetup {
   relayInheritedTimeout: () => void;
   parentRegisterTimeout?: (interrupt: (() => void) | undefined) => void;
   childDeadlineAt?: number;
+  /** Records the timeout, freezes runtime, and aborts the step; shared with the deadline timer. */
+  expireDeadline: () => void;
   ctx: SingleStepContext;
   task: string;
   taskForCompletionGuard: string;
@@ -283,30 +285,29 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
   const stepTimeoutMessage = stepOwnsDeadline
     ? `Subagent timed out after ${step.timeoutMs}ms.`
     : ctx.timeoutMessage;
+  const expireDeadline = () => {
+    // Record the timeout before signaling or reaping the child so later
+    // terminal signals cannot replace its canonical classification. Status
+    // persistence is best effort: a synchronous write failure must not
+    // prevent the deadline abort or child cleanup below.
+    try {
+      ctx.onTimeout?.(stepTimeoutMessage);
+    } catch (error) {
+      console.error(
+        `Failed to record timeout status for run '${ctx.id}' step ${ctx.flatIndex}; continuing timeout cleanup:`,
+        error,
+      );
+    }
+    // A step-owned deadline ends the active segment before signaling or
+    // reaping the child. This prevents the timeout/cleanup grace window
+    // from being carried into a later continuation budget. The parent
+    // runner owns the equivalent freeze for a run-level deadline.
+    runtimeTracker.freeze(Date.now());
+    stepTimeoutController.abort();
+    activeTimeoutInterrupt?.();
+  };
   const stepTimeoutTimer =
-    childDeadlineAt !== undefined
-      ? scheduleDeadline(childDeadlineAt, () => {
-          // Record the timeout before signaling or reaping the child so later
-          // terminal signals cannot replace its canonical classification. Status
-          // persistence is best effort: a synchronous write failure must not
-          // prevent the deadline abort or child cleanup below.
-          try {
-            ctx.onTimeout?.(stepTimeoutMessage);
-          } catch (error) {
-            console.error(
-              `Failed to record timeout status for run '${ctx.id}' step ${ctx.flatIndex}; continuing timeout cleanup:`,
-              error,
-            );
-          }
-          // A step-owned deadline ends the active segment before signaling or
-          // reaping the child. This prevents the timeout/cleanup grace window
-          // from being carried into a later continuation budget. The parent
-          // runner owns the equivalent freeze for a run-level deadline.
-          runtimeTracker.freeze(Date.now());
-          stepTimeoutController.abort();
-          activeTimeoutInterrupt?.();
-        })
-      : undefined;
+    childDeadlineAt !== undefined ? scheduleDeadline(childDeadlineAt, expireDeadline) : undefined;
   const parentRegisterTimeout = ctx.registerTimeout;
   const stepContext: SingleStepContext = {
     ...ctx,
@@ -381,6 +382,7 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
     relayInheritedTimeout,
     parentRegisterTimeout,
     childDeadlineAt,
+    expireDeadline,
     ctx: stepContext,
     task,
     taskForCompletionGuard,
@@ -1132,6 +1134,17 @@ export async function runSingleStep(
         error: attempt.buildError,
         finalOutput: attempt.buildError,
       };
+      break;
+    }
+    // An already-expired deadline must not reach the spawn: the timer callback
+    // is asynchronous, so the child would otherwise start before the abort lands.
+    // Use the same timeout recording as the timer, then fall through to normal
+    // finalization without a child attempt.
+    if (setup.childDeadlineAt !== undefined && Date.now() >= setup.childDeadlineAt) {
+      setup.stepTimeoutTimer?.cancel();
+      setup.expireDeadline();
+      cleanupTempDir(attempt.tempDir);
+      stepCtx.onAttemptEnd?.();
       break;
     }
     let stopAttempt = false;

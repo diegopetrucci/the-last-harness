@@ -45,6 +45,12 @@ export interface MockPi {
   onCall(response: MockPiResponse): void;
   reset(): void;
   callCount(): number;
+  /**
+   * Number of pi agent child processes the code under test attempted to spawn.
+   * Counted at the spawn call itself, so it includes children killed before they
+   * initialized (unlike callCount, which counts records written by the child).
+   */
+  spawnCount(): number;
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -53,6 +59,8 @@ const CALL_PREFIX = "call-";
 const DEFAULT_RESPONSE_FILE = "default-response.json";
 const CURRENT_GENERATION_FILE = "current-generation.txt";
 const QUEUED_PREFIX = "pending-";
+const SPAWN_LOG_FILE = "spawns.jsonl";
+const SPAWN_RECORDER_PATH = path.join(__dirname, "mock-pi-spawn-recorder.cjs");
 
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
@@ -108,6 +116,8 @@ export function createMockPi(): MockPi {
   let originalArgv1: string | undefined;
   let originalQueueEnv: string | undefined;
   let originalGenerationEnv: string | undefined;
+  let originalNodeOptions: string | undefined;
+  let originalSpawnLogEnv: string | undefined;
 
   const publishGeneration = () => {
     ensureDir(queueDir);
@@ -128,6 +138,15 @@ export function createMockPi(): MockPi {
       process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
       process.env.MOCK_PI_QUEUE_DIR = queueDir;
       publishGeneration();
+      originalNodeOptions = process.env.NODE_OPTIONS;
+      originalSpawnLogEnv = process.env.MOCK_PI_SPAWN_LOG;
+      process.env.MOCK_PI_SPAWN_LOG = path.join(queueDir, SPAWN_LOG_FILE);
+      process.env.NODE_OPTIONS = [
+        originalNodeOptions,
+        `--require=${JSON.stringify(SPAWN_RECORDER_PATH)}`,
+      ]
+        .filter(Boolean)
+        .join(" ");
       originalArgv1 = process.argv[1];
       process.argv[1] = cliScriptPath;
     },
@@ -140,6 +159,10 @@ export function createMockPi(): MockPi {
       else process.env.MOCK_PI_QUEUE_DIR = originalQueueEnv;
       if (originalGenerationEnv === undefined) delete process.env.MOCK_PI_GENERATION;
       else process.env.MOCK_PI_GENERATION = originalGenerationEnv;
+      if (originalNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = originalNodeOptions;
+      if (originalSpawnLogEnv === undefined) delete process.env.MOCK_PI_SPAWN_LOG;
+      else process.env.MOCK_PI_SPAWN_LOG = originalSpawnLogEnv;
       if (originalArgv1 === undefined) delete process.argv[1];
       else process.argv[1] = originalArgv1;
       try {
@@ -177,6 +200,16 @@ export function createMockPi(): MockPi {
     },
     callCount() {
       return listQueueFiles(queueDir, CALL_PREFIX).length;
+    },
+    spawnCount() {
+      try {
+        return fs
+          .readFileSync(path.join(queueDir, SPAWN_LOG_FILE), "utf-8")
+          .split("\n")
+          .filter(Boolean).length;
+      } catch {
+        return 0;
+      }
     },
   };
 }
