@@ -7,10 +7,12 @@ All notable changes to The Last Harness will be documented in this file.
 ### Breaking
 
 - Node.js 22 is no longer supported. The installer and package now require Node.js `^24.22.1 || >=26.12.1` (24.x from 24.22.1, and 26.12.1 or newer); Node.js 25.x and older releases are rejected, as are Node.js prerelease/nightly builds. Upgrade Node.js, then rerun the installer.
+- Subagent resume now goes through a per-session ownership record. Runs started before this release have no record and cannot be resumed; dispatch them fresh. See [One live writer per child session](docs/subagents.md#one-live-writer-per-child-session).
 
 ### What's new
 
 - The installer and `tlh update` now register TLH (name, icon, launcher) in an existing Herdr.app home; opt out with `tlh.herdrApp.enabled: false`, and uninstall removes the entry it owns (and its icon file) without ever deleting unowned folders; protected app homes such as `~/.pi` are refused. See [Herdr.app integration](docs/install.md#herdrapp-integration) ([#876](https://github.com/diegopetrucci/the-last-harness/pull/876)).
+- In a Rex terminal, TLH now gives the primary agent Rex's session-start context; see [Rex integration](docs/integrations.md#rex-integration).
 - Bumped managed Gnosis (`gn`) to 0.5.5.
 - Managed Gnosis install now fetches the release checksums concurrently with the archive download, reducing install latency.
 - `/annotate-git-diff` now runs independent git lookups concurrently when opening the review window and loading file contents, reducing latency.
@@ -40,6 +42,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
+- Concurrent resumes of one subagent run no longer start two writers on one session. The runner takes an exclusive session lease, and resume refuses retired, held, abandoned, record-less, corrupt and unreadable sessions with distinct messages and no resume hints (#829, #823, #874).
+- Resuming an older run ID can no longer bypass cumulative runtime, role-timeout retirement or the 80% context block, and retirement survives lifecycle-directory cleanup (#829, #830).
+- A subagent run whose runner died without a clean finish, or whose session file was never written, is no longer advertised as a resumable pause.
 - Restored Herdr panes now relaunch the same TLH session instead of a plain shell; see [docs/integrations.md](docs/integrations.md) ([#864](https://github.com/diegopetrucci/the-last-harness/pull/864)).
 - The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.
@@ -65,6 +71,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
 - `/annotate-last-message` keeps a fenced code block in one section across blank lines and no longer creates an empty section for a horizontal-rule-only block.
+- Subagent run status writes no longer bypass the lifecycle lock: the lock-exhaustion fallback only writes while holding the lock, and continuation gate rejection now persists through a generation-checked locked transition, preserving newer committed states.
 
 ### Changed
 
@@ -111,6 +118,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Made the subagent result watcher transport mode (native watch, restart wait, polling, stopped) an explicit local state union and removed the shared `watcherRestartTimer` slot.
 - Fixed temporary-root inspection false successes and removed proven-unused subagent, extension, and installer code while moving meaningful tests onto live paths.
 - Removed the union-merge Gnosis conflict guidance from `AGENTS.md`; Gnosis 0.5.5 keeps entries sorted by ID and warns on duplicates.
 - Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins` and `oxlint` 1.90.0, `oxfmt` 0.75.0, and `@types/node` 26.6.6.

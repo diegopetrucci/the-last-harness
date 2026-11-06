@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -62,6 +63,7 @@ function writeRun(state: "complete" | "running"): string {
   const sessionFile = path.join(asyncDir, "worker.jsonl");
   fs.mkdirSync(asyncDir, { recursive: true });
   fs.writeFileSync(sessionFile, "", "utf-8");
+  seedSessionRecord(sessionFile);
   const projectAgent: ProjectAgentIdentity = { slug: "worker", root, cwd: root };
   writeJson(path.join(asyncDir, "status.json"), {
     runId,
@@ -452,6 +454,7 @@ function writeRunWith(options: {
   const sessionFile = path.join(asyncDir, "child.jsonl");
   fs.mkdirSync(asyncDir, { recursive: true });
   fs.writeFileSync(sessionFile, "", "utf-8");
+  seedSessionRecord(sessionFile);
   const stamp = (child: { agent: string; [key: string]: unknown }) => ({
     status: options.state,
     startedAt: 100,

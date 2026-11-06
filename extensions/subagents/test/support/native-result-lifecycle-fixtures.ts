@@ -74,7 +74,6 @@ export interface NativeExecutorState {
   lastUiContext: null;
   poller: null;
   watcher: null;
-  watcherRestartTimer: null;
   resultFileCoalescer: { schedule: () => boolean; clear: () => void };
 }
 
@@ -207,7 +206,6 @@ export function makeNativeResultLifecycleExecutor(
     lastUiContext: null,
     poller: null,
     watcher: null,
-    watcherRestartTimer: null,
     resultFileCoalescer: {
       schedule: () => false,
       clear: () => {},

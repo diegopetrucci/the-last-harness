@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import fsMutable from "node:fs";
 import * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -677,6 +680,110 @@ describe("lifecycle state helpers", () => {
         },
         { token: "owner-new", pid: 7002, acquiredAt: 160 },
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets only one contender break a stale owner and never removes a replacement lock", () => {
+    const root = tempRoot("pi-lifecycle-lock-breaker-");
+    const realMkdir = fs.mkdirSync;
+    try {
+      const asyncDir = path.join(root, "run-breaker");
+      const lockDir = path.join(asyncDir, ".lifecycle-transition.lock");
+      const ownerPath = path.join(lockDir, "owner.json");
+      fs.mkdirSync(lockDir, { recursive: true });
+      fs.writeFileSync(
+        ownerPath,
+        JSON.stringify({ token: "owner-old", pid: 7001, acquiredAt: 150 }),
+        "utf-8",
+      );
+      let injected = false;
+      // Contender A completes the same stale recovery and re-acquires a live lock
+      // after B inspected the stale owner but before B gains the right to break it.
+      fsMutable.mkdirSync = ((target: fs.PathLike, options?: fs.MakeDirectoryOptions) => {
+        if (!injected && String(target).includes(".lifecycle-transition.lock.break-")) {
+          injected = true;
+          fs.rmSync(lockDir, { recursive: true, force: false });
+          realMkdir(lockDir);
+          fs.writeFileSync(
+            ownerPath,
+            JSON.stringify({ token: "contender-a", pid: 7002, acquiredAt: 160 }),
+            "utf-8",
+          );
+        }
+        return realMkdir(target, options);
+      }) as typeof fs.mkdirSync;
+      syncBuiltinESMExports();
+
+      let entered = false;
+      assert.throws(
+        () =>
+          withLifecycleStatusLock(
+            asyncDir,
+            () => {
+              entered = true;
+            },
+            {
+              kill: (pid) => {
+                if (pid !== 7001) return true;
+                const error = new Error("dead") as NodeJS.ErrnoException;
+                error.code = "ESRCH";
+                throw error;
+              },
+              retryDelaysMs: [],
+            },
+          ),
+        /status lock \(pid 7002/,
+      );
+      assert.equal(injected, true);
+      assert.equal(entered, false);
+      assert.equal(
+        (JSON.parse(fs.readFileSync(ownerPath, "utf-8")) as { token: string }).token,
+        "contender-a",
+      );
+      assert.deepEqual(
+        fs.readdirSync(asyncDir).filter((name) => name.includes(".break-")),
+        [],
+      );
+    } finally {
+      fsMutable.mkdirSync = realMkdir;
+      syncBuiltinESMExports();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed while another contender holds the breaker for the same stale owner", () => {
+    const root = tempRoot("pi-lifecycle-lock-breaker-held-");
+    try {
+      const asyncDir = path.join(root, "run-breaker-held");
+      const lockDir = path.join(asyncDir, ".lifecycle-transition.lock");
+      fs.mkdirSync(lockDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(lockDir, "owner.json"),
+        JSON.stringify({ token: "owner-old", pid: 7001, acquiredAt: 150 }),
+        "utf-8",
+      );
+      let breakerSeen = false;
+      assert.throws(
+        () =>
+          withLifecycleStatusLock(asyncDir, () => undefined, {
+            kill: () => {
+              // First liveness probe: simulate a concurrent breaker taking the marker.
+              if (!breakerSeen) {
+                breakerSeen = true;
+                const hash = createHash("sha256").update("owner-old").digest("hex").slice(0, 32);
+                fs.mkdirSync(path.join(asyncDir, `.lifecycle-transition.lock.break-${hash}`));
+              }
+              const error = new Error("dead") as NodeJS.ErrnoException;
+              error.code = "ESRCH";
+              throw error;
+            },
+            retryDelaysMs: [],
+          }),
+        /status lock \(pid 7001/,
+      );
+      assert.equal(fs.existsSync(path.join(lockDir, "owner.json")), true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

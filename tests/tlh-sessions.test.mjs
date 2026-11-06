@@ -132,6 +132,20 @@ test("tlh-sessions: per-session mode emits valid JSON with required top-level fi
   assert.ok("filesScanned" in output.coverage, "coverage.filesScanned must be present");
 });
 
+test("tlh-sessions: ignores subagent session ownership sidecars", (t) => {
+  const { agentDir, sessionsDir } = makeAgentFixture(t);
+  const name = "2026-01-01T00-00-00-000Z_abc.jsonl";
+  const sessionPath = writeSessionFile(sessionsDir, "proj", name, [sessionHeaderLine()]);
+  const withoutSidecar = parseJsonOutput(runSessions(agentDir));
+  writeFileSync(`${sessionPath}.owner.json`, JSON.stringify({ schemaVersion: 1 }), "utf8");
+  writeFileSync(`${sessionPath}.owner.json.lock`, "", "utf8");
+  const withSidecar = parseJsonOutput(runSessions(agentDir));
+
+  assert.equal(withoutSidecar.coverage.filesScanned, 1);
+  assert.equal(withSidecar.coverage.filesScanned, 1);
+  assert.equal(withSidecar.sessions.length, withoutSidecar.sessions.length);
+});
+
 test("tlh-sessions: per-tool mode emits valid JSON with required top-level fields", (t) => {
   const { agentDir } = makeAgentFixture(t);
   const result = runSessions(agentDir, ["--mode", "per-tool"]);

@@ -26,6 +26,7 @@ import {
   waitForAsyncStatusPredicate,
   waitForMarker,
 } from "../support/async-execution-helpers.ts";
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 
 function highContextEmptyTerminalJsonl() {
   const usage = {
@@ -279,6 +280,7 @@ describe("async execution model restoration and fallback", () => {
       '{"type":"session","version":1,"id":"restored-context","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n',
       "utf-8",
     );
+    seedSessionRecord(restoredSessionFile);
     executeAsyncSingle(id, {
       agent: "worker",
       task: "Do work",
@@ -472,7 +474,7 @@ describe("async execution model restoration and fallback", () => {
     });
     const id = `async-context-fresh-${Date.now().toString(36)}`;
     const sessionFile = path.join(tempDir, "fresh-preallocated.jsonl");
-    fs.writeFileSync(sessionFile, "", "utf-8");
+    // A fresh executor-provided path does not exist yet; the runner creates its record.
     executeAsyncSingle(id, {
       agent: "worker",
       task: "Do fresh work",

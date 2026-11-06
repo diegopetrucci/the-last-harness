@@ -1,7 +1,7 @@
 // Generated from extensions/subagents/src/runs/shared/lifecycle-state.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { waitSync, writeAtomicJson } from "../../shared/atomic-json.js";
 import { invalidateStatusCache, readStatus } from "../../shared/utils.js";
 import { boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
@@ -19,7 +19,7 @@ export const isActiveLifecycleState = (value) => ACTIVE_RUN_STATES.has(canonical
 export const isTerminalLifecycleState = (value) => TERMINAL_RUN_STATES.has(canonicalLifecycleState(value));
 export const isCompletedLifecycleState = (value) => canonicalLifecycleState(value) === "complete";
 export const isCompletedLifecycleStepState = (value) => canonicalLifecycleStepState(value) === "complete";
-class LifecycleLockExhaustedError extends Error {
+export class LifecycleLockExhaustedError extends Error {
     constructor(message, options) {
         super(message, options);
         this.name = "LifecycleLockExhaustedError";
@@ -263,11 +263,12 @@ export function writeNormalizedLifecycleStatus(asyncDir, status, rawEvidence) {
     return normalized;
 }
 const runLabel = (asyncDir) => path.basename(path.resolve(asyncDir)) || "unknown-run";
-const lockDir = (asyncDir) => path.join(asyncDir, ".lifecycle-transition.lock");
-const ownerPath = (asyncDir) => path.join(lockDir(asyncDir), "owner.json");
-function readLockOwner(asyncDir) {
+const lifecycleLockPath = (asyncDir) => path.join(asyncDir, ".lifecycle-transition.lock");
+const breakerDir = (lockPath, token) => `${lockPath}.break-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
+const ownerPath = (lockPath) => path.join(lockPath, "owner.json");
+function readLockOwner(lockPath) {
     try {
-        const parsed = JSON.parse(fs.readFileSync(ownerPath(asyncDir), "utf8"));
+        const parsed = JSON.parse(fs.readFileSync(ownerPath(lockPath), "utf8"));
         return isRecord(parsed)
             ? {
                 token: boundedToken(parsed.token),
@@ -280,10 +281,10 @@ function readLockOwner(asyncDir) {
         return {};
     }
 }
-function lockSnapshot(asyncDir) {
+function lockSnapshot(lockPath) {
     try {
-        fs.statSync(lockDir(asyncDir));
-        return readLockOwner(asyncDir);
+        fs.statSync(lockPath);
+        return readLockOwner(lockPath);
     }
     catch (error) {
         if (codeOf(error) === "ENOENT")
@@ -303,44 +304,46 @@ export function checkPidLiveness(pid, kill = process.kill) {
         return codeOf(error) === "ESRCH" ? "dead" : "unknown";
     }
 }
-function liveLock(asyncDir) {
-    try {
-        const snapshot = lockSnapshot(asyncDir);
-        if (!snapshot)
-            return false;
-        return !completeOwner(snapshot) || checkPidLiveness(snapshot.pid) !== "dead";
-    }
-    catch {
-        return true;
-    }
-}
-function recoverLock(asyncDir, options) {
-    const snapshot = lockSnapshot(asyncDir);
+function recoverLock(lockPath, options) {
+    const snapshot = lockSnapshot(lockPath);
     if (!snapshot)
         return false;
     const owner = snapshot;
     if (!completeOwner(owner) || checkPidLiveness(owner.pid, options.kill) !== "dead")
         return false;
-    const latest = lockSnapshot(asyncDir);
-    if (!latest ||
-        !completeOwner(latest) ||
-        latest.token !== owner.token ||
-        latest.pid !== owner.pid ||
-        latest.acquiredAt !== owner.acquiredAt)
-        return false;
+    const breaker = breakerDir(lockPath, owner.token);
     try {
-        fs.rmSync(lockDir(asyncDir), { recursive: true, force: false });
-        return true;
+        fs.mkdirSync(breaker);
     }
     catch (error) {
-        if (codeOf(error) === "ENOENT")
+        if (codeOf(error) === "EEXIST")
             return false;
         throw error;
     }
+    try {
+        const latest = lockSnapshot(lockPath);
+        if (!latest ||
+            !completeOwner(latest) ||
+            latest.token !== owner.token ||
+            latest.pid !== owner.pid ||
+            latest.acquiredAt !== owner.acquiredAt)
+            return false;
+        try {
+            fs.rmSync(lockPath, { recursive: true, force: false });
+            return true;
+        }
+        catch (error) {
+            if (codeOf(error) === "ENOENT")
+                return false;
+            throw error;
+        }
+    }
+    finally {
+        fs.rmSync(breaker, { recursive: true, force: true });
+    }
 }
-function acquireLock(asyncDir, options) {
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const directory = lockDir(asyncDir);
+export function acquireDirectoryLock(directory, options, describeHeld) {
+    fs.mkdirSync(path.dirname(directory), { recursive: true });
     const owner = {
         token: randomUUID(),
         pid: process.pid,
@@ -355,20 +358,23 @@ function acquireLock(asyncDir, options) {
         catch (error) {
             if (codeOf(error) !== "EEXIST")
                 throw error;
-            if (recoverLock(asyncDir, options))
+            if (recoverLock(directory, options))
                 continue;
             const delay = delays[attempt];
             if (delay !== undefined) {
                 waitSync(delay);
                 continue;
             }
-            const held = readLockOwner(asyncDir);
-            const acquired = held.acquiredAt === undefined ? "unknown time" : new Date(held.acquiredAt).toISOString();
-            throw new LifecycleLockExhaustedError(`Lifecycle transition rejected for run '${runLabel(asyncDir)}': status lock (pid ${held.pid ?? "unknown"}, acquired ${acquired}) is held by another transition.`, { cause: error });
+            throw new LifecycleLockExhaustedError(describeHeld(readLockOwner(directory)), {
+                cause: error,
+            });
         }
     }
     try {
-        fs.writeFileSync(ownerPath(asyncDir), JSON.stringify(owner), { encoding: "utf8", mode: 0o600 });
+        fs.writeFileSync(ownerPath(directory), JSON.stringify(owner), {
+            encoding: "utf8",
+            mode: 0o600,
+        });
     }
     catch (error) {
         fs.rmSync(directory, { recursive: true, force: true });
@@ -380,12 +386,18 @@ function acquireLock(asyncDir, options) {
             return;
         released = true;
         try {
-            if (readLockOwner(asyncDir).token === owner.token)
+            if (readLockOwner(directory).token === owner.token)
                 fs.rmSync(directory, { recursive: true, force: true });
         }
         catch {
         }
     };
+}
+function acquireLock(asyncDir, options) {
+    return acquireDirectoryLock(lifecycleLockPath(asyncDir), options, (held) => {
+        const acquired = held.acquiredAt === undefined ? "unknown time" : new Date(held.acquiredAt).toISOString();
+        return `Lifecycle transition rejected for run '${runLabel(asyncDir)}': status lock (pid ${held.pid ?? "unknown"}, acquired ${acquired}) is held by another transition.`;
+    });
 }
 export function withLifecycleStatusLock(asyncDir, operation, options = {}) {
     const release = acquireLock(asyncDir, options);
@@ -609,7 +621,7 @@ function mergeStatusMonotonicRuntime(current, memory, changed) {
     merged.steps?.forEach((step, index) => maxRuntimeEvidence(step, current.steps?.[index], memory.steps?.[index]));
     return merged;
 }
-export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
+export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory, lockOptions) {
     const memoryGeneration = lifecycleGeneration(inMemory);
     try {
         return withLifecycleStatusLock(asyncDir, (persisted) => {
@@ -617,42 +629,52 @@ export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
                 return writeNormalizedLifecycleStatus(asyncDir, inMemory);
             const current = normalizeAsyncLifecycleStatus(persisted);
             return writeNormalizedLifecycleStatus(asyncDir, mergeStatusMonotonicRuntime(current, inMemory, lifecycleGeneration(current) !== memoryGeneration));
-        });
+        }, lockOptions);
     }
     catch (error) {
         if (!(error instanceof LifecycleLockExhaustedError))
             throw error;
-        const persisted = readStatus(asyncDir, { cache: false });
-        if (persisted &&
-            inMemory.state === "failed" &&
-            isActiveLifecycleState(persisted.state) &&
-            lifecycleGeneration(persisted) === memoryGeneration &&
-            !liveLock(asyncDir)) {
-            const merged = mergeStatusMonotonicRuntime(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
-            return writeNormalizedLifecycleStatus(asyncDir, {
-                ...persisted,
-                state: "failed",
-                pid: undefined,
-                pause: undefined,
-                activityState: undefined,
-                currentTool: undefined,
-                currentToolStartedAt: undefined,
-                currentPath: undefined,
-                error: inMemory.error,
-                endedAt: inMemory.endedAt ?? persisted.endedAt,
-                lastUpdate: maxNumber(persisted.lastUpdate, inMemory.lastUpdate),
-                lifecycle: {
-                    ...persisted.lifecycle,
-                    ...(inMemory.lifecycle?.resumeBlockedReason
-                        ? { resumeBlockedReason: inMemory.lifecycle.resumeBlockedReason }
-                        : {}),
-                    generation: memoryGeneration + 1,
-                },
-                steps: merged.steps ?? persisted.steps,
-            });
+        if (inMemory.state !== "failed")
+            return readFallback(asyncDir, inMemory);
+        try {
+            return withLifecycleStatusLock(asyncDir, (persisted) => {
+                if (!persisted ||
+                    !isActiveLifecycleState(persisted.state) ||
+                    lifecycleGeneration(persisted) !== memoryGeneration)
+                    return persisted ?? normalizeAsyncLifecycleStatus(inMemory);
+                const merged = mergeStatusMonotonicRuntime(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
+                return writeNormalizedLifecycleStatus(asyncDir, {
+                    ...persisted,
+                    state: "failed",
+                    pid: undefined,
+                    pause: undefined,
+                    activityState: undefined,
+                    currentTool: undefined,
+                    currentToolStartedAt: undefined,
+                    currentPath: undefined,
+                    error: inMemory.error,
+                    endedAt: inMemory.endedAt ?? persisted.endedAt,
+                    lastUpdate: maxNumber(persisted.lastUpdate, inMemory.lastUpdate),
+                    lifecycle: {
+                        ...persisted.lifecycle,
+                        ...(inMemory.lifecycle?.resumeBlockedReason
+                            ? { resumeBlockedReason: inMemory.lifecycle.resumeBlockedReason }
+                            : {}),
+                        generation: memoryGeneration + 1,
+                    },
+                    steps: merged.steps ?? persisted.steps,
+                });
+            }, { ...lockOptions, retryDelaysMs: [] });
         }
-        return persisted ?? normalizeAsyncLifecycleStatus(inMemory);
+        catch (retryError) {
+            if (!(retryError instanceof LifecycleLockExhaustedError))
+                throw retryError;
+            return readFallback(asyncDir, inMemory);
+        }
     }
+}
+function readFallback(asyncDir, inMemory) {
+    return readStatus(asyncDir, { cache: false }) ?? normalizeAsyncLifecycleStatus(inMemory);
 }
 function continuationTargetExists(sourceAsyncDir, id, options) {
     const root = path.resolve(options.asyncDirRoot ?? path.dirname(path.resolve(sourceAsyncDir)));
@@ -840,8 +862,7 @@ export function recoverStoppedLifecycleOwnership(status, options = {}) {
             return { status: normalized, repaired: false, pidLiveness };
         const hasResumeCheckpoint = Boolean(pause?.kind &&
             (pause.requestedAt !== undefined || pause.pausedAt !== undefined) &&
-            (normalized.sessionFile ||
-                normalized.steps?.some((step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0)));
+            [normalized.sessionFile, ...(normalized.steps?.map((step) => step.sessionFile) ?? [])].some((file) => typeof file === "string" && options.isResumableSession?.(file) === true));
         if (!hasResumeCheckpoint)
             return { status: normalized, repaired: false, pidLiveness };
         const pausedAt = pause?.pausedAt ?? now ?? Date.now();

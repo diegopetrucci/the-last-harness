@@ -3,6 +3,7 @@
  * fail-closed handling of malformed persisted accounting (#770 budgets).
  */
 
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -86,7 +87,10 @@ describe("durable active-runtime ledger", () => {
     const asyncDir = path.join(ASYNC_DIR, runId);
     cleanup.push(asyncDir, path.join(RESULTS_DIR, `${runId}.json`));
     const sessions = names.map((name) => path.join(tempDir, `${runId}-${name}.jsonl`));
-    sessions.forEach((file) => fs.writeFileSync(file, "", "utf-8"));
+    sessions.forEach((file) => {
+      fs.writeFileSync(file, "", "utf-8");
+      seedSessionRecord(file);
+    });
     const task = (name: string, index: number) => ({
       agent: name,
       task: `work ${name}`,
@@ -279,6 +283,7 @@ describe("durable active-runtime ledger", () => {
         cleanup.push(asyncDir);
         fs.mkdirSync(asyncDir, { recursive: true });
         fs.writeFileSync(sessionFile, "", "utf-8");
+        seedSessionRecord(sessionFile);
         fs.writeFileSync(
           statusPath,
           JSON.stringify({
@@ -336,6 +341,7 @@ describe("durable active-runtime ledger", () => {
       cleanup.push(asyncDir);
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       const statusPath = path.join(asyncDir, "status.json");
       fs.writeFileSync(
         statusPath,
@@ -409,6 +415,7 @@ describe("durable active-runtime ledger", () => {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.mkdirSync(RESULTS_DIR, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         resultPath,
         JSON.stringify({
@@ -446,6 +453,7 @@ describe("durable active-runtime ledger", () => {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.mkdirSync(RESULTS_DIR, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       // Status undercounts and claims a malformed owner; the result carries the
       // authoritative role-timeout evidence. Neither may widen the budget.
       fs.writeFileSync(
@@ -514,6 +522,7 @@ describe("durable active-runtime ledger", () => {
       cleanup.push(asyncDir);
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify({

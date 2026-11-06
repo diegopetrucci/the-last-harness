@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -153,6 +154,7 @@ describe("runtime cleanup", () => {
         lastUpdate: staleAt,
       });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       setTreeMtime(runDir, staleAt);
 
       const result = cleanupRuntimeDirs(paths, {

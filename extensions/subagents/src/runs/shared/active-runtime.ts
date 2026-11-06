@@ -48,6 +48,11 @@ export interface ActiveRuntimeTracker {
   freeze(now?: number): number;
   /** Whether this segment has already been frozen. */
   isFrozen(): boolean;
+  /**
+   * Raise the lineage total to at least `minTotal` (never lowers it). Used when a
+   * shared record shows more runtime than this segment was started with.
+   */
+  rebase(minTotal: number, now?: number): number;
   finalize(now?: number): number;
 }
 
@@ -150,6 +155,22 @@ export function createActiveRuntimeTracker(
     checkpoint,
     freeze,
     isFrozen: () => frozen,
+    rebase: (minTotal, at = now()) => {
+      if (frozen) return total;
+      // Shift the base: the record's runtime plus this runner's own time since
+      // its prior base. Never lowers the total.
+      const before = current(at);
+      const normalizedAt = normalizeActiveRuntimeCheckpointAt(at);
+      const ownElapsed =
+        normalizedAt === undefined ? 0 : Math.max(0, normalizedAt - segmentStartedAt);
+      const shifted = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        boundedActiveRuntimeMs(minTotal) + ownElapsed,
+      );
+      total = Math.max(before, shifted);
+      if (normalizedAt !== undefined) segmentStartedAt = Math.max(segmentStartedAt, normalizedAt);
+      return total;
+    },
     finalize: (at = now()) => (frozen ? total : checkpoint(at)),
   };
 }

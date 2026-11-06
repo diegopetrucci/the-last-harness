@@ -76,6 +76,18 @@ export function createActiveRuntimeTracker(input = {}) {
         checkpoint,
         freeze,
         isFrozen: () => frozen,
+        rebase: (minTotal, at = now()) => {
+            if (frozen)
+                return total;
+            const before = current(at);
+            const normalizedAt = normalizeActiveRuntimeCheckpointAt(at);
+            const ownElapsed = normalizedAt === undefined ? 0 : Math.max(0, normalizedAt - segmentStartedAt);
+            const shifted = Math.min(Number.MAX_SAFE_INTEGER, boundedActiveRuntimeMs(minTotal) + ownElapsed);
+            total = Math.max(before, shifted);
+            if (normalizedAt !== undefined)
+                segmentStartedAt = Math.max(segmentStartedAt, normalizedAt);
+            return total;
+        },
         finalize: (at = now()) => (frozen ? total : checkpoint(at)),
     };
 }

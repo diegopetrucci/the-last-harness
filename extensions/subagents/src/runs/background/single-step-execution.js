@@ -14,6 +14,9 @@ import { resolveEffectiveThinking } from "../../shared/model-info.js";
 import { appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { boundChildError, boundChildStderrError, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { scheduleDeadline } from "../shared/deadline-timer.js";
+import { allocateChildSessionFile } from "../shared/session-path.js";
+import { durableContextBlockMessage, roleBudgetExhaustedMessage, } from "../shared/session-admission.js";
+import { openAttemptSessionLease, } from "./attempt-session-lease.js";
 import { detectSubagentError, formatErrorWithOutput } from "../../shared/utils.js";
 import { captureGitWorkspaceSnapshot, captureSubagentAttemptFacts, providerTokensFromUsage, } from "../../shared/post-run-facts.js";
 import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, } from "../../shared/terminal-result.js";
@@ -22,6 +25,29 @@ import { injectTicketBody } from "../shared/ticket-context.js";
 import { skipOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.js";
 import { classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, mergeContextUsageDiagnostics, parseContextUsageDiagnostics, resolveSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 const activeTempDirs = new Set();
+const activeAttemptLeases = new Set();
+const LEASE_FINISH_RETRY_MS = 25;
+const LEASE_FINISH_MAX_WAIT_MS = 500;
+async function finishActiveAttemptLeases() {
+    const deadline = Date.now() + LEASE_FINISH_MAX_WAIT_MS;
+    for (;;) {
+        let pending = 0;
+        for (const entry of activeAttemptLeases) {
+            try {
+                if (entry.lease.finish(entry.progress()).released)
+                    activeAttemptLeases.delete(entry);
+                else
+                    pending++;
+            }
+            catch {
+                pending++;
+            }
+        }
+        if (pending === 0 || Date.now() >= deadline)
+            return;
+        await new Promise((resolve) => setTimeout(resolve, LEASE_FINISH_RETRY_MS));
+    }
+}
 let killCleanupInstalled = false;
 export function ensureKillCleanup() {
     if (killCleanupInstalled)
@@ -43,12 +69,16 @@ export function ensureKillCleanup() {
         for (const dir of activeTempDirs)
             cleanupTempDir(dir);
         activeTempDirs.clear();
-        void terminateLiveChildGroups().then(() => reraise(signal));
+        void terminateLiveChildGroups()
+            .then(() => finishActiveAttemptLeases())
+            .catch(() => undefined)
+            .then(() => reraise(signal));
     };
     const sigintHandler = () => handle("SIGINT");
     const sigtermHandler = () => handle("SIGTERM");
     process.on("SIGINT", sigintHandler);
     process.on("SIGTERM", sigtermHandler);
+    process.on("uncaughtExceptionMonitor", () => killLiveChildGroups());
 }
 function costSummaryFromAttempts(attempts) {
     if (!attempts || attempts.length === 0)
@@ -67,6 +97,48 @@ function costSummaryFromAttempts(attempts) {
 }
 export function saturatingStepDeadlineAt(stepStartedAt, stepTimeoutMs) {
     return Math.min(Number.MAX_SAFE_INTEGER, stepStartedAt + stepTimeoutMs);
+}
+function computeAttemptDeadlines(step, ctx, activeRuntimeMs, startedAt) {
+    const roleRemainingMs = step.timeoutOwner !== "run" && step.timeoutMs !== undefined
+        ? Math.max(0, step.timeoutMs - activeRuntimeMs)
+        : undefined;
+    const attemptDeadlineAt = roleRemainingMs !== undefined
+        ? saturatingStepDeadlineAt(startedAt, roleRemainingMs)
+        : undefined;
+    const childDeadlineAt = ctx.deadlineAt === undefined
+        ? attemptDeadlineAt
+        : attemptDeadlineAt === undefined
+            ? ctx.deadlineAt
+            : Math.min(ctx.deadlineAt, attemptDeadlineAt);
+    return { attemptDeadlineAt, childDeadlineAt };
+}
+function applyLeaseSnapshot(input) {
+    const { step, ctx, state, attempt, record } = input;
+    if (record.activeRuntimeMs > state.activeRuntimeMs) {
+        state.activeRuntimeMs = state.runtimeTracker.rebase(record.activeRuntimeMs);
+        Object.assign(attempt, computeAttemptDeadlines(step, ctx, state.activeRuntimeMs, attempt.startedAt));
+    }
+    const recordContext = record.contextUsage?.usage;
+    if (step.timeoutOwner !== "run" &&
+        step.timeoutMs !== undefined &&
+        state.activeRuntimeMs >= step.timeoutMs) {
+        return {
+            retire: true,
+            refusal: roleBudgetExhaustedMessage(step.agent, state.activeRuntimeMs),
+        };
+    }
+    if (!input.firstAttempt)
+        return {};
+    if (recordContext) {
+        state.aggregateContextUsage = {
+            ...recordContext,
+            ...(recordContext.restoredTokens === undefined && recordContext.contextTokens !== undefined
+                ? { restoredTokens: recordContext.contextTokens }
+                : {}),
+        };
+    }
+    const contextBlock = durableContextBlockMessage(recordContext, contextWindowForModel(input.candidate, step.contextWindows));
+    return contextBlock ? { refusal: contextBlock } : {};
 }
 function prepareSingleStepSetup(step, ctx) {
     let activeTimeoutInterrupt;
@@ -183,21 +255,23 @@ function prepareSingleStepAttempt(input) {
     const { step, ctx, state, candidate, index, task, sessionEnabled, sessionDir } = input;
     const attemptCwd = path.resolve(step.cwd ?? ctx.cwd);
     const baseline = captureGitWorkspaceSnapshot(attemptCwd);
-    const attemptSessionPath = step.sessionFile ?? sessionDir;
+    let sessionFile = step.sessionFile;
+    let sessionSetupError;
+    if (!sessionFile && sessionEnabled && sessionDir) {
+        try {
+            sessionFile = allocateChildSessionFile(sessionDir);
+            state.attemptSessionFile = sessionFile;
+            ctx.onAttemptSessionFile?.(sessionFile);
+        }
+        catch (error) {
+            sessionSetupError = boundChildError(error instanceof Error ? error.message : String(error));
+        }
+    }
+    const attemptSessionPath = sessionFile ?? sessionDir;
     const sessionBaseline = attemptSessionPath ? snapshotSessionFiles(attemptSessionPath) : undefined;
     const startedAt = Date.now();
     const monotonicStartedAt = performance.now();
-    const roleRemainingMs = step.timeoutOwner !== "run" && step.timeoutMs !== undefined
-        ? Math.max(0, step.timeoutMs - state.activeRuntimeMs)
-        : undefined;
-    const attemptDeadlineAt = roleRemainingMs !== undefined
-        ? saturatingStepDeadlineAt(startedAt, roleRemainingMs)
-        : undefined;
-    const childDeadlineAt = ctx.deadlineAt === undefined
-        ? attemptDeadlineAt
-        : attemptDeadlineAt === undefined
-            ? ctx.deadlineAt
-            : Math.min(ctx.deadlineAt, attemptDeadlineAt);
+    const { attemptDeadlineAt, childDeadlineAt } = computeAttemptDeadlines(step, ctx, state.activeRuntimeMs, startedAt);
     const attemptThinking = resolveEffectiveThinking(candidate, step.thinking);
     const attemptIdentity = canonicalSubagentModelIdentity(candidate, attemptThinking);
     if (index === 0)
@@ -228,13 +302,16 @@ function prepareSingleStepAttempt(input) {
     let tempDir;
     let buildError;
     try {
+        if (sessionSetupError) {
+            throw new Error(`Failed to prepare child session file: ${sessionSetupError}`);
+        }
         ({ args, env, tempDir } = buildPiArgs({
             parentSessionId: step.parentSessionId,
             baseArgs: ["--mode", "json", "-p"],
             task,
             sessionEnabled,
             sessionDir,
-            sessionFile: step.sessionFile,
+            sessionFile,
             model: candidate,
             inheritProjectContext: step.inheritProjectContext,
             inheritSkills: step.inheritSkills,
@@ -270,6 +347,7 @@ function prepareSingleStepAttempt(input) {
         childDeadlineAt,
         monotonicStartedAt,
         sessionBaseline,
+        sessionFile,
         args,
         env,
         tempDir,
@@ -567,7 +645,7 @@ function buildSingleStepResult(input) {
         stderr: finalResult?.stderr,
         stderrTruncated: finalResult?.stderrTruncated,
         protocolOutputLimit: finalResult?.protocolOutputLimit,
-        sessionFile: step.sessionFile,
+        sessionFile: step.sessionFile ?? state.attemptSessionFile,
         model: output.finalModel,
         modelIdentity: output.finalModelIdentity,
         modelResolution: state.modelResolution,
@@ -603,7 +681,7 @@ export function providerTokensForAttempt(input) {
 }
 function captureAttemptFactsForRun(input) {
     const { step, ctx, state, preparation, attemptIndex, run } = input;
-    const sessionPath = step.sessionFile ?? ctx.sessionDir;
+    const sessionPath = preparation.sessionFile ?? ctx.sessionDir;
     const sessionFacts = sessionPath
         ? parseSessionFacts(sessionPath, {
             baseline: preparation.sessionBaseline,
@@ -660,6 +738,35 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
             sessionEnabled: setup.sessionEnabled,
             sessionDir: setup.sessionDir,
         });
+        let sessionLease;
+        if (!attempt.buildError && attempt.sessionFile) {
+            const opened = openAttemptSessionLease(attempt.sessionFile, stepCtx.id);
+            if (opened.ok) {
+                sessionLease = opened.lease;
+                const gate = applyLeaseSnapshot({
+                    step,
+                    ctx: stepCtx,
+                    state,
+                    attempt,
+                    record: opened.record,
+                    candidate,
+                    firstAttempt: index === 0,
+                });
+                if (gate.refusal) {
+                    sessionLease.finish({
+                        activeRuntimeMs: state.activeRuntimeMs,
+                        ...(gate.retire ? { retireReason: "role-timeout" } : {}),
+                    });
+                    sessionLease = undefined;
+                    cleanupTempDir(attempt.tempDir);
+                    attempt.buildError = `Refusing to launch child: ${gate.refusal}`;
+                }
+            }
+            else {
+                cleanupTempDir(attempt.tempDir);
+                attempt.buildError = opened.error;
+            }
+        }
         if (attempt.buildError) {
             const attemptResult = {
                 model: candidate ?? step.model ?? "default",
@@ -721,6 +828,27 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
             activeTempDirs.add(attemptTempDir);
             ensureKillCleanup();
         }
+        let latestLeaseContext;
+        const leaseEntry = sessionLease
+            ? {
+                lease: sessionLease,
+                progress: () => ({
+                    activeRuntimeMs: state.runtimeTracker.checkpoint(),
+                    ...(latestLeaseContext ? { contextUsage: latestLeaseContext } : {}),
+                }),
+            }
+            : undefined;
+        if (leaseEntry) {
+            activeAttemptLeases.add(leaseEntry);
+            ensureKillCleanup();
+        }
+        if (sessionLease) {
+            stepCtx.registerLeaseCheckpoint?.((progress) => {
+                if (progress.contextUsage)
+                    latestLeaseContext = progress.contextUsage;
+                sessionLease.checkpoint(progress);
+            });
+        }
         try {
             const run = await runPiStreaming(attempt.args, path.resolve(step.cwd ?? stepCtx.cwd), stepCtx.outputFile, appendDiagnosticJsonl, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, {
                 eventsPath: setup.eventsPath,
@@ -735,6 +863,14 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
                 configuredModel: candidate,
                 contextWindow: contextWindowForModel(candidate, step.contextWindows),
                 contextWindows: step.contextWindows,
+                ...(sessionLease
+                    ? {
+                        onChildSpawned: (groupId) => sessionLease.recordProcessGroup(groupId),
+                        onContextUsage: (usage) => {
+                            latestLeaseContext = usage;
+                        },
+                    }
+                    : {}),
             });
             completedRun = run;
             const assessment = assessSingleStepAttempt({
@@ -769,6 +905,23 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
         finally {
             state.activeRuntimeMs = state.runtimeTracker.checkpoint();
             attemptTimeoutTimer?.cancel();
+            if (leaseEntry)
+                activeAttemptLeases.delete(leaseEntry);
+            if (sessionLease) {
+                stepCtx.registerLeaseCheckpoint?.(undefined);
+                const finished = sessionLease.finish({
+                    activeRuntimeMs: state.activeRuntimeMs,
+                    ...(completedRun?.contextUsage ? { contextUsage: completedRun.contextUsage } : {}),
+                    ...(completedRun?.timedOut === true &&
+                        step.timeoutOwner !== "run" &&
+                        step.timeoutMs !== undefined
+                        ? { retireReason: "role-timeout" }
+                        : {}),
+                });
+                if (!finished.released) {
+                    console.error(`Session lease for run '${stepCtx.id}' step ${stepCtx.flatIndex} stays held: ${finished.reason}`);
+                }
+            }
             if (attemptTempDir) {
                 activeTempDirs.delete(attemptTempDir);
                 cleanupTempDir(attemptTempDir);

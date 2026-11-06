@@ -54,6 +54,8 @@ You are running inside a delegated TLH child subagent session.
 
 export const GNOSIS_VALIDATION_TIMEOUT_MS = 5000;
 
+export const REX_SESSION_START_TIMEOUT_MS = 2000;
+
 export const THINKING_LEVELS: ThinkingLevel[] = [
   "off",
   "minimal",
