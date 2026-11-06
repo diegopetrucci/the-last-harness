@@ -1,4 +1,12 @@
-/** Runtime ceilings, resume budgets, final drain, and timeout coverage. */
+/**
+ * Async-path integration tests for runtime ceilings, resume budgets and durable resume.
+ *
+ * Provenance (tlhf-60wy): ported from single-execution-runtime.test.ts, which drove both runSync and
+ * executor.execute(). Tests here go through the background path; shared
+ * invariants that were runSync-driven were ported to background or shared-helper
+ * tests (e.g. async-execution-lifecycle-interruptions, async-execution-runner-deadlines-process-failures). Only assertions on the removed foreground result/callback
+ * shapes were dropped.
+ */
 
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -11,19 +19,14 @@ import {
   createTempDir,
   createEventBus,
   removeTempDir,
-  makeAgentConfigs,
   makeAgent,
   makeMinimalCtx,
   makeModel,
-  events,
 } from "../support/helpers.ts";
 import {
   available,
-  runSync,
   createSubagentExecutor,
-  type ExecutionModule,
   type ExecuteAsyncSingleOverride,
-  type ExecutorToolResult,
 } from "../support/single-execution-fixtures.ts";
 import {
   ASYNC_DIR,
@@ -31,7 +34,7 @@ import {
   SUBAGENT_ASYNC_STARTED_EVENT,
   getAsyncConfigPath,
 } from "../../src/shared/types.ts";
-import type { AsyncStatus, Details, SubagentToolResult } from "../../src/shared/types.ts";
+import type { AsyncStatus } from "../../src/shared/types.ts";
 import {
   buildSkippedAcceptanceLedger,
   resolveEffectiveAcceptance,
@@ -42,11 +45,9 @@ import {
   type SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
-import { scaleTestTimeout } from "../support/scale-timeout.ts";
-import { mockAssistantMessage } from "../support/single-execution-fixtures.ts";
 
 describe(
-  "single sync execution",
+  "async single dispatch — runtime ceilings and resume budgets",
   { skip: !available ? "pi packages not available" : undefined },
   () => {
     let tempDir: string;
@@ -95,7 +96,6 @@ describe(
         foregroundControls: new Map(),
         lastForegroundControlId: null,
       },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
       executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
       telemetryProvenance: SubagentTelemetryProvenance | undefined = undefined,
       piOverride:
@@ -110,11 +110,11 @@ describe(
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
         discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
         executeAsyncSingle: executeAsyncSingleOverride,
         telemetryProvenance,
       });
     }
+
     it(
       "uses the human-owned run ceiling for async execution",
       {
@@ -135,7 +135,6 @@ describe(
           [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
           { execution: { maxRunTimeMs: 1_234 } },
           undefined,
-          runSync,
           spyExecuteAsync,
         );
 
@@ -177,7 +176,6 @@ describe(
           [makeAgent("echo", { maxExecutionTimeMs: 600 })],
           { execution: { maxRunTimeMs: false } },
           undefined,
-          runSync,
           spyExecuteAsync,
         );
 
@@ -252,7 +250,9 @@ describe(
           children: [{ agent: "echo", status: "completed", sessionFile }],
         });
         const effects: string[] = [];
-        const details: NonNullable<ExecutorToolResult["details"]> = { results: [] };
+        const details: NonNullable<
+          Awaited<ReturnType<ReturnType<typeof makeExecutor>["execute"]>>["details"]
+        > = { results: [] };
         Object.defineProperty(details, "asyncDir", {
           get() {
             effects.push(
@@ -274,7 +274,6 @@ describe(
             [makeAgent("echo")],
             {},
             state,
-            runSync,
             executeAsyncSingle,
           ).execute(
             "resume-format-order-call",
@@ -390,7 +389,6 @@ describe(
             {},
             undefined,
             undefined,
-            undefined,
             currentProvenance,
             pi,
           ).execute(
@@ -473,7 +471,6 @@ describe(
             [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
             { execution: { maxRunTimeMs: 1_234 } },
             state,
-            runSync,
             executeAsyncSingle,
           ).execute(
             "resume-runtime-forwarding-call",
@@ -543,7 +540,6 @@ describe(
             [makeAgent("echo", { maxExecutionTimeMs: 100 })],
             { execution: { maxRunTimeMs: false } },
             state,
-            runSync,
             executeAsyncSingle,
           ).execute(
             "resume-runtime-reset-call",
@@ -644,7 +640,6 @@ describe(
             [makeAgent("echo", { maxExecutionTimeMs: 500 })],
             { execution: { maxRunTimeMs: 10_000 } },
             state,
-            runSync,
             executeAsyncSingle,
           ).execute(
             "resume-supervisor-budget-call",
@@ -670,31 +665,6 @@ describe(
         }
       },
     );
-
-    // Removed: "clamps an ordinary resume from runtime remembered by a real foreground pause"
-    //
-    // Uses foregroundControls.interrupt (foreground-specific mechanism) to pause a running
-    // child and then resume with a clamped timeout. After async-only, dispatch goes to
-    // background and foregroundControls is not populated for background runs; the interrupt
-    // path is handled by async control channel instead.
-    //
-    // Resume timeout clamping (maxExecutionTimeMs - accumulated) is covered by:
-    //   - async-execution-runner-deadlines-process-failures.test.ts:
-    //     "keeps a shorter internal run deadline below the agent ceiling"
-    //   - async-execution-supervisor.test.ts: verifies timeoutMs <= maxExecutionTimeMs
-    //     in the continuation status after supervisor-pause resume.
-
-    // Removed: "persists supervisor-pause runtime for a fresh-process resume"
-    //
-    // Uses observedRunSync to capture the supervisor-pause transition (foreground-specific
-    // callback). After async-only, the initial dispatch goes to background; the pause
-    // transition is observed via async status polling, not runSync hooks.
-    //
-    // Runtime persistence and fresh-process resume is covered by:
-    //   - async-execution-supervisor.test.ts: "completes a canonical developer async supervisor
-    //     pause with a full paused→resumed lifecycle" verifies activeRuntimeMs accumulated
-    //     through pause, timeoutMs <= maxExecutionTimeMs in continuation, and fresh-executor
-    //     resume.
 
     it(
       "blocks unsafe foreground durable resume at the atomic claim boundary without spawning",
@@ -881,13 +851,7 @@ describe(
             const ctx = makeMinimalCtx(tempDir);
             ctx.model = model;
             ctx.modelRegistry.getAvailable = () => [model];
-            const result = await makeExecutor(
-              [agent],
-              {},
-              state,
-              runSync,
-              executeAsyncSingle,
-            ).execute(
+            const result = await makeExecutor([agent], {}, state, executeAsyncSingle).execute(
               `foreground-context-route-resume-${role}`,
               { action: "resume", id: runId, message: "Continue." },
               new AbortController().signal,
@@ -918,495 +882,5 @@ describe(
         }
       },
     );
-
-    // Removed: "rejects an ordinary resume once accumulated runtime exhausts the agent ceiling"
-    //
-    // Uses executor dispatch (which now goes to background) to produce a FAILED run and
-    // reads from foregroundRuns state. After async-only, failed background runs are in
-    // ASYNC_DIR not foregroundRuns; the foreground receipt doesn't contain the exitCode
-    // failure that the test used to check.
-    //
-    // The exhausted-ceiling resume rejection is covered by:
-    //   - native-result-lifecycle-revival.test.ts: near line 600, "resume with mixed success/
-    //     failure" verifies that a failed child with consumed runtime >= ceiling is rejected
-    //     with /exhausted its maxExecutionTimeMs ceiling after ...ms/.
-
-    // Removed: "resets the logical runtime budget after successful completion before resume"
-    //
-    // Uses executor dispatch (background) then injects a fake activeRuntimeMs into
-    // foregroundRuns state to simulate a run that consumed more than the ceiling.
-    // After async-only, foregroundRuns is NOT populated for background dispatch;
-    // the successful completion budget-reset logic operates on async source targets.
-    //
-    // The "successful completion resets budget" invariant is an implicit property of
-    // the async resume path: any successfully completed async run can always be revived
-    // with a fresh budget (the pre-spawn guard only blocks non-success terminal runs).
-    // This is exercised indirectly by any test that successfully resumes a completed
-    // async run (e.g., executor-dispatch.test.ts, native-result-lifecycle-revival.test.ts).
-
-    it("treats forced drain after final assistant output as cleanup success", async () => {
-      mockPi.onCall({
-        jsonl: [events.assistantMessage("done-before-drain")],
-        stderr: "Done after 1 turn(s). Ready for input.\n",
-        keepAliveAfterFinalMessageMs: 10000,
-      });
-      const agents = makeAgentConfigs(["echo"]);
-
-      const start = Date.now();
-      const result = await runSync(tempDir, agents, "echo", "Task", {});
-      const elapsed = Date.now() - start;
-
-      assert.ok(elapsed < 4000, `should clean up shortly after terminal stop, took ${elapsed}ms`);
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.error, undefined);
-      assert.equal(result.finalOutput, "done-before-drain");
-      assert.ok(
-        !(result.progress?.recentOutput ?? []).some((line) => line.includes("Forcing termination")),
-      );
-    });
-
-    it("treats forced drain after empty terminal assistant output as cleanup success", async () => {
-      mockPi.onCall({
-        jsonl: [
-          {
-            type: "message_end",
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: "" }],
-              model: "mock/test-model",
-              stopReason: "stop",
-              usage: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
-            },
-          },
-        ],
-        keepAliveAfterFinalMessageMs: 10000,
-      });
-      const agents = makeAgentConfigs(["echo"]);
-
-      const start = Date.now();
-      const result = await runSync(tempDir, agents, "echo", "Task", {});
-      const elapsed = Date.now() - start;
-
-      assert.ok(
-        elapsed < 4000,
-        `should clean up shortly after empty terminal stop, took ${elapsed}ms`,
-      );
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.error, undefined);
-      assert.equal(result.finalOutput, "");
-      assert.equal(result.progress.status, "completed");
-      assert.ok(
-        !(result.progress?.recentOutput ?? []).some((line) => line.includes("Forcing termination")),
-      );
-    });
-
-    it("keeps explicit assistant errors as failures during final-drain cleanup", async () => {
-      mockPi.onCall({
-        jsonl: [
-          {
-            type: "message_end",
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: "failed" }],
-              model: "mock/test-model",
-              stopReason: "stop",
-              errorMessage: "provider exploded",
-              usage: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
-            },
-          },
-        ],
-        keepAliveAfterFinalMessageMs: 10000,
-      });
-      const agents = makeAgentConfigs(["echo"]);
-
-      const result = await runSync(tempDir, agents, "echo", "Task", {});
-
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.error, "provider exploded");
-      assert.equal(result.progress.status, "failed");
-    });
-
-    it("handles abort signal (completes faster than delay)", async () => {
-      mockPi.onCall({ delay: 10000 }); // Long delay — process should be killed before this
-      const agents = makeAgentConfigs(["slow"]);
-      const controller = new AbortController();
-
-      const start = Date.now();
-      setTimeout(() => controller.abort(), 200);
-
-      await runSync(tempDir, agents, "slow", "Slow task", {
-        signal: controller.signal,
-      });
-      const elapsed = Date.now() - start;
-
-      // The key assertion: the run should complete much faster than the 10s delay,
-      // proving the abort signal terminated the process early.
-      assert.ok(elapsed < 5000, `should abort early, took ${elapsed}ms`);
-      // Exit code is platform-dependent (Windows: often 1 or 0, Linux: null/143)
-    });
-
-    it("finalizes a pre-spawn timeout once and removes prepared prompt files", async () => {
-      const isolatedTmpDir = path.join(tempDir, "pre-spawn-timeout-tmp");
-      fs.mkdirSync(isolatedTmpDir);
-      const previousTmpDir = process.env.TMPDIR;
-      process.env.TMPDIR = isolatedTmpDir;
-      const updates: SubagentToolResult<Details>[] = [];
-
-      try {
-        const result = await runSync(
-          tempDir,
-          [makeAgent("echo", { systemPrompt: "temporary system prompt" })],
-          "echo",
-          "Task",
-          {
-            runId: "timeout-before-spawn",
-            timeoutMs: 0,
-            onUpdate: (update: SubagentToolResult<Details>) => updates.push(update),
-          },
-        );
-
-        assert.equal(result.timedOut, true);
-        assert.equal(result.error, "Subagent timed out after 0ms.");
-        assert.equal(result.progress.status, "failed");
-        assert.equal(mockPi.callCount(), 0, "an expired deadline must not spawn a child");
-        assert.equal(updates.length, 1, "the terminal timeout update should be emitted once");
-        assert.equal(updates[0]?.details?.results?.[0]?.timedOut, true);
-        assert.equal(updates[0]?.details?.progress?.[0]?.status, "failed");
-        const updateText = updates[0]?.content[0];
-        assert.match(
-          updateText?.type === "text" ? updateText.text : "",
-          /Subagent timed out after 0ms\./,
-        );
-        assert.deepEqual(fs.readdirSync(isolatedTmpDir), []);
-      } finally {
-        if (previousTmpDir === undefined) delete process.env.TMPDIR;
-        else process.env.TMPDIR = previousTmpDir;
-      }
-    });
-
-    it("marks foreground runs that exceed timeoutMs as timed out", async () => {
-      mockPi.onCall({
-        steps: [
-          {
-            jsonl: [
-              events.assistantMessage("partial timeout update"),
-              events.toolStart("read", { path: "README.md" }),
-            ],
-          },
-          { delay: 10000 },
-        ],
-      });
-      const agents = makeAgentConfigs(["slow"]);
-
-      const timeoutMs = scaleTestTimeout(150);
-      const expectedTimeoutText = `Subagent timed out after ${timeoutMs}ms.`;
-      const start = Date.now();
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        runId: "timeout-single",
-        timeoutMs,
-      });
-      const elapsed = Date.now() - start;
-
-      assert.ok(elapsed < 5000, `should time out early, took ${elapsed}ms`);
-      assert.notEqual(result.exitCode, 0);
-      assert.equal(result.timedOut, true);
-      assert.equal(result.error, expectedTimeoutText);
-      assert.ok((result.finalOutput ?? "").includes(expectedTimeoutText));
-      assert.match(result.finalOutput ?? "", /Run id: timeout-single/);
-      assert.match(result.finalOutput ?? "", /Current tool: read/);
-      assert.match(result.finalOutput ?? "", /Current path: README\.md/);
-      assert.match(result.finalOutput ?? "", /Recent child output:\n- partial timeout update/);
-      assert.equal(result.progress.status, "failed");
-    });
-
-    it("applies the agent execution ceiling to foreground timeouts", async () => {
-      mockPi.onCall({
-        steps: [{ jsonl: [events.assistantMessage("partial timeout update")] }, { delay: 10000 }],
-      });
-      const agents = [makeAgent("slow", { maxExecutionTimeMs: 75 })];
-
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        runId: "timeout-single-agent-ceiling",
-        timeoutMs: 150,
-      });
-
-      assert.equal(result.timedOut, true);
-      assert.equal(result.error, "Subagent timed out after 75ms.");
-    });
-
-    it("does not fire or retain an above-Node-boundary foreground ceiling", async () => {
-      mockPi.onCall({ output: "completed under long ceiling" });
-      const agents = [makeAgent("long", { maxExecutionTimeMs: 2_147_483_648 })];
-
-      const result = await runSync(tempDir, agents, "long", "Quick task", {
-        runId: "timeout-single-above-node-boundary",
-      });
-
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.timedOut, undefined);
-      assert.equal(result.finalOutput, "completed under long ceiling");
-    });
-
-    it("keeps a shorter foreground caller timeout below the agent ceiling", async () => {
-      mockPi.onCall({ delay: 10000 });
-      const agents = [makeAgent("slow", { maxExecutionTimeMs: 150 })];
-
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        runId: "timeout-single-caller-shorter",
-        timeoutMs: 75,
-      });
-
-      assert.equal(result.timedOut, true);
-      assert.equal(result.error, "Subagent timed out after 75ms.");
-    });
-
-    it("writes timeout metadata with the resolved session file before artifact finalization", async () => {
-      mockPi.onCall({
-        steps: [
-          {
-            jsonl: [
-              events.assistantMessage("partial output before timeout"),
-              events.toolStart("read", { path: "src/runs/foreground/execution.ts" }),
-            ],
-          },
-          { delay: 10000 },
-        ],
-      });
-      const agents = makeAgentConfigs(["slow"]);
-      const sessionFile = path.join(tempDir, "child-session.jsonl");
-      const artifactsDir = path.join(tempDir, "artifacts");
-
-      const timeoutMs = scaleTestTimeout(150);
-      const expectedTimeoutText = `Subagent timed out after ${timeoutMs}ms.`;
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        runId: "timeout-artifact-metadata",
-        timeoutMs,
-        sessionFile,
-        artifactsDir,
-        artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
-      });
-
-      assert.equal(result.timedOut, true);
-      assert.equal(result.sessionFile, sessionFile);
-      assert.ok(result.artifactPaths, "should have artifact paths");
-      const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
-      assert.ok(artifactText.includes(expectedTimeoutText));
-      assert.match(artifactText, /Run id: timeout-artifact-metadata/);
-      assert.match(
-        artifactText,
-        new RegExp(`Session file: ${sessionFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
-      );
-      assert.match(
-        artifactText,
-        new RegExp(
-          `Artifact output: ${result.artifactPaths.outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-        ),
-      );
-      assert.match(artifactText, /Recent child output:\n- partial output before timeout/);
-
-      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
-        timedOut?: boolean;
-        sessionFile?: string;
-      };
-      assert.equal(metadata.timedOut, true);
-      assert.equal(metadata.sessionFile, sessionFile);
-    });
-
-    it("does not advertise a jsonl timeout artifact when includeJsonl is false", async () => {
-      mockPi.onCall({
-        steps: [
-          {
-            jsonl: [
-              events.assistantMessage("partial output before timeout"),
-              events.toolStart("read", { path: "src/runs/foreground/execution.ts" }),
-            ],
-          },
-          { delay: 10000 },
-        ],
-      });
-      const agents = makeAgentConfigs(["slow"]);
-      const artifactsDir = path.join(tempDir, "artifacts-no-jsonl");
-
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        runId: "timeout-no-jsonl-artifact",
-        timeoutMs: 150,
-        artifactsDir,
-        artifactConfig: {
-          enabled: true,
-          includeOutput: true,
-          includeMetadata: true,
-          includeJsonl: false,
-        },
-      });
-
-      assert.equal(result.timedOut, true);
-      assert.ok(result.artifactPaths, "should have artifact paths");
-      const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
-      assert.doesNotMatch(artifactText, /Artifact jsonl:/);
-    });
-
-    it("does not advertise an output timeout artifact when includeOutput is false", async () => {
-      mockPi.onCall({
-        steps: [
-          {
-            jsonl: [
-              events.assistantMessage("partial output before timeout"),
-              events.toolStart("read", { path: "src/runs/foreground/execution.ts" }),
-            ],
-          },
-          { delay: 10000 },
-        ],
-      });
-      const agents = makeAgentConfigs(["slow"]);
-      const artifactsDir = path.join(tempDir, "artifacts-no-output");
-
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        runId: "timeout-no-output-artifact",
-        timeoutMs: 150,
-        artifactsDir,
-        artifactConfig: { enabled: true, includeOutput: false, includeMetadata: true },
-      });
-
-      assert.equal(result.timedOut, true);
-      assert.doesNotMatch(result.finalOutput ?? "", /Artifact output:/);
-    });
-
-    it("does not add sessionFile to non-timeout metadata", async () => {
-      mockPi.onCall({ output: "Hello from mock agent" });
-      const agents = makeAgentConfigs(["echo"]);
-      const sessionFile = path.join(tempDir, "child-session-success.jsonl");
-      const artifactsDir = path.join(tempDir, "artifacts-success-session-metadata");
-
-      const result = await runSync(tempDir, agents, "echo", "Say hello", {
-        runId: "success-session-metadata",
-        sessionFile,
-        artifactsDir,
-        artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
-      });
-
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.sessionFile, sessionFile);
-      assert.ok(result.artifactPaths, "should have artifact paths");
-      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
-        timedOut?: boolean;
-        sessionFile?: string;
-      };
-      assert.equal(metadata.timedOut, undefined);
-      assert.equal(metadata.sessionFile, undefined);
-    });
-
-    it("does not run acceptance verification after a foreground timeout", async () => {
-      const markerPath = path.join(tempDir, "verify-ran.txt");
-      const report = [
-        "done",
-        "```acceptance-report",
-        JSON.stringify({
-          criteriaSatisfied: [
-            { id: "criterion-1", status: "satisfied", evidence: "integration test evidence" },
-          ],
-          changedFiles: ["src/a.ts"],
-          testsAddedOrUpdated: ["test/a.test.ts"],
-          commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
-          validationOutput: ["validation passed"],
-          residualRisks: [],
-          noStagedFiles: true,
-          notes: "complete",
-        }),
-        "```",
-      ].join("\n");
-      mockPi.onCall({
-        jsonl: [events.assistantMessage(report)],
-        keepAliveAfterFinalMessageMs: 10000,
-      });
-      const agents = makeAgentConfigs(["slow"]);
-
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        timeoutMs: 150,
-        acceptance: {
-          level: "verified",
-          verify: [
-            {
-              id: "marker",
-              command:
-                "node -e \"require('node:fs').writeFileSync(process.env.VERIFY_MARKER, 'ran')\"",
-              env: { VERIFY_MARKER: markerPath },
-              timeoutMs: 10_000,
-            },
-          ],
-        },
-      });
-
-      assert.equal(result.timedOut, true);
-      assert.equal(result.acceptance?.status, "rejected");
-      assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "timeout");
-      assert.equal(result.acceptance?.verifyRuns?.length, 0);
-      assert.equal(fs.existsSync(markerPath), false);
-    });
-
-    it("appends the acceptance digest to the artifact but not to finalOutput for timed-out runs", async () => {
-      // Regression: the timeout branch unconditionally replaced the artifact content with
-      // plain timeoutDiagnostics, discarding the digest that was appended at the earlier
-      // artifact-set site. finalOutput must stay exactly timeoutDiagnostics; the artifact
-      // copy is the only surface that receives the digest.
-      const reportBody = JSON.stringify({
-        criteriaSatisfied: [
-          { id: "criterion-1", status: "satisfied", evidence: "integration test evidence" },
-        ],
-        changedFiles: ["src/a.ts"],
-        testsAddedOrUpdated: ["test/a.test.ts"],
-        commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
-        validationOutput: ["validation passed"],
-        residualRisks: [],
-        noStagedFiles: true,
-      });
-      const report = ["Done", "```acceptance-report", reportBody, "```"].join("\n");
-      // Verify timeout artifact semantics, not 150ms latency: scale both budgets so
-      // the report arrives before timeout while the mock remains alive past it; keep
-      // the report non-terminal so the fixed 1s final-stop drain cannot win.
-      const timeoutMs = scaleTestTimeout(1_000);
-      const keepAliveAfterFinalMessageMs = scaleTestTimeout(10_000);
-      mockPi.onCall({
-        jsonl: [mockAssistantMessage(report, "tool_use")],
-        keepAliveAfterFinalMessageMs,
-      });
-      const agents = makeAgentConfigs(["slow"]);
-      const digestArtifactsDir = path.join(tempDir, "artifacts-timeout-digest");
-
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
-        runId: "timeout-digest-split",
-        timeoutMs,
-        artifactsDir: digestArtifactsDir,
-        artifactConfig: { enabled: true, includeOutput: true, includeMetadata: false },
-      });
-
-      assert.equal(result.timedOut, true);
-      // finalOutput must be exactly the timeout diagnostics — no digest
-      assert.match(result.finalOutput ?? "", /Recovery diagnostics:/);
-      assert.doesNotMatch(
-        result.finalOutput ?? "",
-        /Validation evidence \(from acceptance report\):/,
-      );
-      // The artifact must carry the digest
-      assert.ok(result.artifactPaths, "should have artifact paths");
-      const artifactContent = fs.readFileSync(result.artifactPaths!.outputPath, "utf-8");
-      assert.match(artifactContent, /Validation evidence \(from acceptance report\):/);
-      // The artifact starts with the timeout diagnostics content (finalOutput is the prefix)
-      assert.ok(
-        artifactContent.startsWith(result.finalOutput!),
-        `artifact should start with finalOutput (timeout diagnostics); finalOutput=${JSON.stringify(result.finalOutput?.slice(0, 200))}`,
-      );
-    });
-
-    // Foreground interruption and supervisor pause coverage lives in
-    // single-execution-supervisor-pause.test.ts.
-
-    it("handles stderr without exit code as info (not error)", async () => {
-      mockPi.onCall({ output: "Success", stderr: "Warning: something", exitCode: 0 });
-      const agents = makeAgentConfigs(["echo"]);
-
-      const result = await runSync(tempDir, agents, "echo", "Task", {});
-
-      assert.equal(result.exitCode, 0);
-    });
   },
 );

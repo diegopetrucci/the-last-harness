@@ -90,6 +90,43 @@ describe("buildPiArgs session wiring", () => {
     }
   });
 
+  it("moves tasks above the argument limit into a private @file and cleans it up", () => {
+    const longTask = "Analyze ".repeat(2000);
+    const shortTask = "Analyze quickly";
+    const short = buildPiArgs({
+      baseArgs: ["-p"],
+      task: shortTask,
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
+    assert.equal(short.args.at(-1), `Task: ${shortTask}`);
+    assert.equal(short.tempDir, undefined);
+
+    const { args, tempDir } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: longTask,
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
+    try {
+      assert.ok(tempDir, "long tasks should allocate a temp dir");
+      const atArg = args.at(-1) ?? "";
+      assert.ok(atArg.startsWith("@"), "task should be passed as an @file argument");
+      assert.ok(!args.some((arg) => arg.includes("Analyze Analyze")));
+      const taskFile = atArg.slice(1);
+      assert.equal(path.dirname(taskFile), tempDir);
+      assert.equal(fs.readFileSync(taskFile, "utf8"), `Task: ${longTask}`);
+      if (process.platform !== "win32") {
+        assert.equal(fs.statSync(taskFile).mode & 0o777, 0o600);
+      }
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+    assert.equal(fs.existsSync(tempDir ?? ""), false);
+  });
+
   it("uses --session when sessionFile is provided", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-session-"));
     try {

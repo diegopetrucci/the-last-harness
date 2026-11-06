@@ -22,8 +22,6 @@ import {
   type AcceptanceLedger,
   type ForegroundResumeRun,
   type ResolvedAcceptanceConfig,
-  type RunSyncOptions,
-  type SingleResult,
   type SubagentState,
 } from "../../src/shared/types.ts";
 import {
@@ -65,36 +63,8 @@ function makeTempDir(prefix: string): string {
 // Common executor helpers
 // ---------------------------------------------------------------------------
 
-type RunSyncImpl = (
-  runtimeCwd: string,
-  agents: unknown[],
-  agentName: string,
-  task: string,
-  opts: RunSyncOptions,
-) => Promise<SingleResult>;
-
-function captureRunSync(calls: RunSyncOptions[]): RunSyncImpl {
-  return async (
-    _runtimeCwd: string,
-    _agents: unknown[],
-    agentName: string,
-    task: string,
-    opts: RunSyncOptions,
-  ): Promise<SingleResult> => {
-    calls.push(opts);
-    return {
-      agent: agentName,
-      task,
-      exitCode: 0,
-      messages: [],
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-      finalOutput: "done",
-    };
-  };
-}
-
 /** Create an executor with the default agent list (echo + second) and optional seams. */
-function makeExecutor(sessionRoot: string, state: SubagentState, runSyncImpl: RunSyncImpl) {
+function makeExecutor(sessionRoot: string, state: SubagentState) {
   return createSubagentExecutor({
     pi: {
       events: {
@@ -118,7 +88,6 @@ function makeExecutor(sessionRoot: string, state: SubagentState, runSyncImpl: Ru
         makeSupportAgent("second", { description: "Second agent" }),
       ],
     }),
-    runSync: runSyncImpl as any,
   });
 }
 
@@ -247,14 +216,6 @@ function makeParallelSeamExecutor(
     getSubagentSessionRoot: () => root,
     expandTilde: (v: string) => v,
     discoverAgents: () => ({ agents: agentList }),
-    runSync: async () => ({
-      agent: "",
-      task: "",
-      exitCode: 0,
-      messages: [],
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-      finalOutput: "done",
-    }),
     executeAsyncParallel: ((runId: string, params: unknown) => {
       parallelCalls.push({ runId, params });
       return {
@@ -319,7 +280,7 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       const sentinel = "/sentinel-async-false-dispatch";
       const root = makeTempDir("tlh-ao-state-false-dispatch-");
       const state = makeSubagentState({ baseCwd: sentinel });
-      const executor = makeExecutor(root, state, captureRunSync([]));
+      const executor = makeExecutor(root, state);
 
       const before = snapshotState(state);
       const asyncDirBefore = captureAsyncDirEntries();
@@ -357,7 +318,7 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       const sentinel = "/sentinel-async-false-resume";
       const root = makeTempDir("tlh-ao-state-false-resume-");
       const state = makeSubagentState({ baseCwd: sentinel });
-      const executor = makeExecutor(root, state, captureRunSync([]));
+      const executor = makeExecutor(root, state);
       const { runId, cleanup } = setupPausedForegroundRun(state, root);
 
       try {
@@ -400,7 +361,7 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       const sentinel = "/sentinel-print-dispatch";
       const root = makeTempDir("tlh-ao-state-print-dispatch-");
       const state = makeSubagentState({ baseCwd: sentinel });
-      const executor = makeExecutor(root, state, captureRunSync([]));
+      const executor = makeExecutor(root, state);
 
       const before = snapshotState(state);
       const asyncDirBefore = captureAsyncDirEntries();
@@ -440,7 +401,7 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       const sentinel = "/sentinel-async-false-parallel-dispatch";
       const root = makeTempDir("tlh-ao-state-false-parallel-");
       const state = makeSubagentState({ baseCwd: sentinel });
-      const executor = makeExecutor(root, state, captureRunSync([]));
+      const executor = makeExecutor(root, state);
 
       const before = snapshotState(state);
       const asyncDirBefore = captureAsyncDirEntries();
@@ -484,7 +445,7 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       const sentinel = "/sentinel-async-false-count-dispatch";
       const root = makeTempDir("tlh-ao-state-false-count-");
       const state = makeSubagentState({ baseCwd: sentinel });
-      const executor = makeExecutor(root, state, captureRunSync([]));
+      const executor = makeExecutor(root, state);
 
       const before = snapshotState(state);
       const asyncDirBefore = captureAsyncDirEntries();
@@ -522,7 +483,7 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       const sentinel = "/sentinel-print-resume";
       const root = makeTempDir("tlh-ao-state-print-resume-");
       const state = makeSubagentState({ baseCwd: sentinel });
-      const executor = makeExecutor(root, state, captureRunSync([]));
+      const executor = makeExecutor(root, state);
       const { runId, cleanup } = setupPausedForegroundRun(state, root);
 
       try {
@@ -706,7 +667,7 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       const state = makeSubagentState({
         baseCwd: "/sentinel-" + testCase.label.replace(/\W+/g, "-"),
       });
-      const executor = makeExecutor(root, state, captureRunSync([]));
+      const executor = makeExecutor(root, state);
       const { dispatch, mode, cleanup } = testCase.input(state, root);
       try {
         const before = snapshotState(state);

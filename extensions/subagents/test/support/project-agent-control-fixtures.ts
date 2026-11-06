@@ -143,7 +143,6 @@ export function makeExecutor(
   },
   options: {
     executeAsyncSingle?: (...args: any[]) => any;
-    runSync?: (...args: any[]) => any;
     discoverAgents?: (...args: any[]) => { agents: any[]; modelScope?: any };
     kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   } = {},
@@ -172,7 +171,6 @@ export function makeExecutor(
       ...(active.rebind ? { rebind: active.rebind } : {}),
     }),
     executeAsyncSingle: options.executeAsyncSingle,
-    runSync: options.runSync,
     kill: options.kill ?? (() => true),
   });
 }

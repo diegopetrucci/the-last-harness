@@ -22,7 +22,7 @@ import type {
   SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
 import { buildCompletionDetails } from "../../src/runs/background/notify.ts";
-import { createSubagentExecutor, runSync } from "../support/single-execution-fixtures.ts";
+import { createSubagentExecutor } from "../support/single-execution-fixtures.ts";
 
 const controls: ResolvedControlConfig = {
   enabled: true,
@@ -149,7 +149,6 @@ describe("subagent telemetry persistence", () => {
       getSubagentSessionRoot: () => tempDir,
       expandTilde: (value: string) => value,
       discoverAgents: () => ({ agents }),
-      runSync,
       telemetryProvenance: provenance,
     });
     const ctx = makeMinimalCtx(tempDir);

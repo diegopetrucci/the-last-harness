@@ -5,7 +5,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { AgentConfig, AgentDiscoveryDiagnostic, AgentScope } from "../../agents/agents.ts";
 
 import {
-  PROJECT_AGENT_TERMINAL_RETENTION_MS,
   retainProjectAgentRunReference,
   releaseProjectAgentRunReference,
   type ProjectAgentRunCapture,
@@ -19,13 +18,7 @@ import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { clearPendingForegroundControlNotices } from "../../extension/control-notices.ts";
-import type { runSync } from "./execution.ts";
-import {
-  buildParallelModeError,
-  runParallelPath,
-  runSinglePath,
-  toExecutionErrorResult,
-} from "./execution-paths.ts";
+
 import {
   authorizeProjectInterruptTarget,
   authorizeProjectSteerTarget,
@@ -113,6 +106,27 @@ import {
   resolveChildMaxSubagentDepth,
   resolveCurrentMaxSubagentDepth,
 } from "../../shared/types.ts";
+
+/** Helpers relocated from the removed execution-paths module. */
+function toExecutionErrorResult(
+  params: SubagentParamsLike,
+  error: unknown,
+): SubagentToolResult<Details> {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    content: [{ type: "text", text: message }],
+    isError: true,
+    details: { mode: getRequestedModeLabel(params), results: [] },
+  };
+}
+
+function buildParallelModeError(message: string): SubagentToolResult<Details> {
+  return {
+    content: [{ type: "text", text: message }],
+    isError: true,
+    details: { mode: "parallel" as const, results: [] },
+  };
+}
 
 interface TaskParam {
   agent: string;
@@ -213,8 +227,6 @@ export interface ExecutorDeps {
   executeAsyncSingle?: typeof executeAsyncSingle;
   /** Narrow functional seam for parallel dispatch tests without spawning runners. */
   executeAsyncParallel?: typeof executeAsyncParallel;
-  /** Narrow functional seam for foreground pause/resume tests. */
-  runSync?: typeof runSync;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
@@ -242,8 +254,6 @@ interface ExecutionContextData {
   timeoutMs?: number;
   deadlineAt?: number;
   modelScope?: ModelScopeConfig;
-  /** Narrow functional seam for foreground pause/resume tests. */
-  runSync?: typeof runSync;
 }
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
@@ -1359,42 +1369,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const childSessionFileForIndex = (idx?: number) =>
       path.join(sessionDirForIndex(idx), "session.jsonl");
 
-    let projectRunRetained = false;
-    if (!effectiveAsync && projectResolution.projectAgentCaptures?.length) {
-      try {
-        retainProjectAgentRunReference(
-          projectResolution.projectAgentCapability!,
-          runId,
-          projectResolution.projectAgentCaptures,
-        );
-        projectRunRetained = true;
-      } catch (error) {
-        return toExecutionErrorResult(
-          effectiveParams,
-          new Error(
-            `TLH project-agent run retention failed: ${error instanceof Error ? error.message : String(error)}`,
-          ),
-        );
-      }
-    }
-    const releaseTerminalProjectRun = (
-      result: SubagentToolResult<Details>,
-    ): SubagentToolResult<Details> => {
-      if (
-        projectRunRetained &&
-        !result.details?.results.some((child) => child.pause || child.interrupted)
-      ) {
-        const releaseTimer = setTimeout(
-          () => releaseProjectAgentRunReference(runId),
-          PROJECT_AGENT_TERMINAL_RETENTION_MS,
-        );
-        releaseTimer.unref?.();
-        projectRunRetained = false;
-      }
-      return result;
-    };
     const onUpdateWithContext = onUpdate;
-
     const foregroundMode: "single" | "parallel" = hasTasks ? "parallel" : "single";
     const runStartedAt = Date.now();
 
@@ -1424,7 +1399,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       startedAt: runStartedAt,
       timeoutMs: runTimeoutMs,
       modelScope,
-      runSync: deps.runSync,
     };
 
     const foregroundControl = effectiveAsync
@@ -1447,21 +1421,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     try {
       const asyncResult = runAsyncPath(execData, deps);
       if (asyncResult) return asyncResult;
-      if (hasTasks && effectiveParams.tasks) {
-        const result = await runParallelPath(execData, deps);
-        return releaseTerminalProjectRun(result);
-      }
-      if (hasSingle) {
-        const result = await runSinglePath(execData, deps);
-        return releaseTerminalProjectRun(result);
-      }
     } catch (error) {
-      if (projectRunRetained) {
-        releaseProjectAgentRunReference(runId);
-        projectRunRetained = false;
-      }
-      const errorResult = toExecutionErrorResult(effectiveParams, error);
-      return errorResult;
+      return toExecutionErrorResult(effectiveParams, error);
     } finally {
       if (foregroundControl) {
         clearPendingForegroundControlNotices(deps.state, runId);
@@ -1470,11 +1431,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
           deps.state.lastForegroundControlId = null;
         }
       }
-    }
-
-    if (projectRunRetained) {
-      releaseProjectAgentRunReference(runId);
-      projectRunRetained = false;
     }
     return {
       content: [{ type: "text", text: "Invalid params" }],

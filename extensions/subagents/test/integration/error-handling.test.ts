@@ -1,31 +1,19 @@
 /**
- * Integration tests for error handling across execution modes.
+ * Integration tests for the shared detectSubagentError parser.
  *
- * Tests: agent crashes, stderr capture, detectSubagentError override,
- * and error propagation across parallel tasks.
- *
- * Requires pi packages for execution tests. Skips gracefully if unavailable.
+ * Provenance (tlhf-60wy): the former runSync "error handling" tests were removed
+ * with the foreground engine. Exit-code/stderr handling is covered on the
+ * background path in child-process-hardening.test.ts, and exit-0 hidden-failure
+ * detection in async-execution-models-output-output-artifacts-streaming.test.ts.
  */
 
-import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { MockPi } from "../support/helpers.ts";
-import {
-  createMockPi,
-  createTempDir,
-  removeTempDir,
-  makeAgentConfigs,
-  events,
-  tryImport,
-} from "../support/helpers.ts";
+import { tryImport } from "../support/helpers.ts";
 
 // Top-level await
 const utils = await tryImport<any>("./src/shared/utils.ts");
-const execution = await tryImport<any>("./src/runs/foreground/execution.ts");
 
-const piAvailable = !!(execution && utils);
-
-const runSync = execution?.runSync;
 const detectSubagentError = utils?.detectSubagentError;
 
 // ---------------------------------------------------------------------------
@@ -53,6 +41,19 @@ describe(
 
     it("detects fatal bash error in last tool result", () => {
       const messages = [
+        {
+          role: "toolResult",
+          toolName: "bash",
+          isError: true,
+          content: [{ type: "text", text: "Permission denied" }],
+        },
+      ];
+      const result = detectSubagentError(messages);
+      assert.equal(result.hasError, true);
+    });
+
+    it("detects fatal command-not-found text even when the tool result is not flagged isError", () => {
+      const messages = [
         { role: "assistant", content: [{ type: "text", text: "Running..." }] },
         {
           role: "toolResult",
@@ -68,36 +69,33 @@ describe(
 
     it("detects non-zero exit code in bash output", () => {
       const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Running..." }] },
         {
           role: "toolResult",
           toolName: "bash",
           isError: false,
-          content: [{ type: "text", text: "Error: process exited with code 127" }],
+          content: [{ type: "text", text: "Exit code: 1\nSome output" }],
         },
+        { role: "assistant", content: [{ type: "text", text: "Done" }] },
       ];
       const result = detectSubagentError(messages);
-      assert.equal(result.hasError, true);
-      assert.equal(result.exitCode, 127);
+      assert.equal(result.hasError, false); // non-bash-error, just assistant text
     });
 
     it("ignores errors before last successful tool result", () => {
       const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Trying..." }] },
         {
           role: "toolResult",
           toolName: "bash",
           isError: true,
-          content: [{ type: "text", text: "EISDIR" }],
+          content: [{ type: "text", text: "Failed" }],
         },
-        { role: "assistant", content: [{ type: "text", text: "Let me fix that..." }] },
         {
           role: "toolResult",
           toolName: "bash",
           isError: false,
           content: [{ type: "text", text: "OK" }],
         },
-        { role: "assistant", content: [{ type: "text", text: "Fixed!" }] },
+        { role: "assistant", content: [{ type: "text", text: "Recovered" }] },
       ];
       const result = detectSubagentError(messages);
       assert.equal(result.hasError, false);
@@ -105,74 +103,15 @@ describe(
 
     it("detects isError on tool result", () => {
       const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Running..." }] },
         {
           role: "toolResult",
-          toolName: "write",
+          toolName: "read",
           isError: true,
-          content: [{ type: "text", text: "Permission denied" }],
+          content: [{ type: "text", text: "File not found" }],
         },
       ];
       const result = detectSubagentError(messages);
       assert.equal(result.hasError, true);
-      assert.equal(result.errorType, "write");
-    });
-  },
-);
-
-// ---------------------------------------------------------------------------
-// runSync error handling
-// ---------------------------------------------------------------------------
-
-describe(
-  "runSync error handling",
-  { skip: !piAvailable ? "pi packages not available" : undefined },
-  () => {
-    let tempDir: string;
-    let mockPi: MockPi;
-
-    before(() => {
-      mockPi = createMockPi();
-      mockPi.install();
-    });
-
-    after(() => {
-      mockPi.uninstall();
-    });
-
-    beforeEach(() => {
-      tempDir = createTempDir();
-      mockPi.reset();
-    });
-
-    afterEach(() => {
-      removeTempDir(tempDir);
-    });
-
-    it("captures stderr on non-zero exit", async () => {
-      mockPi.onCall({ exitCode: 2, stderr: "Fatal: out of memory" });
-      const agents = makeAgentConfigs(["crash"]);
-
-      const result = await runSync(tempDir, agents, "crash", "Do heavy work", {});
-
-      assert.equal(result.exitCode, 2);
-      assert.ok(result.error?.includes("out of memory"));
-    });
-
-    it("detectSubagentError overrides exit 0 on hidden failure", async () => {
-      mockPi.onCall({
-        jsonl: [
-          events.toolStart("bash", { command: "deploy" }),
-          events.toolEnd("bash"),
-          events.toolResult("bash", "connection refused"),
-        ],
-      });
-      const agents = makeAgentConfigs(["deployer"]);
-
-      const result = await runSync(tempDir, agents, "deployer", "Deploy app", {});
-
-      assert.notEqual(result.exitCode, 0, "should detect hidden failure");
-      assert.ok(result.error?.includes("connection refused"));
     });
   },
 );

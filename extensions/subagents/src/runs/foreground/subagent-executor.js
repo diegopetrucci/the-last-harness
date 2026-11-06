@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PROJECT_AGENT_TERMINAL_RETENTION_MS, retainProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
+import { retainProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
 import { getArtifactsDir, resolveArtifactConfig } from "../../shared/artifacts.js";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.js";
 import { handleManagementAction } from "../../agents/agent-management.js";
 import { buildDoctorReport } from "../../extension/doctor.js";
 import { clearPendingForegroundControlNotices } from "../../extension/control-notices.js";
-import { buildParallelModeError, runParallelPath, runSinglePath, toExecutionErrorResult, } from "./execution-paths.js";
 import { authorizeProjectInterruptTarget, authorizeProjectSteerTarget, buildManagementActionParams, buildRunStatusParams, buildResumeModelResolution, cancelPersistedPausedForegroundRun, clearForegroundMessageInbox, foregroundStatusResult, getAsyncInterruptTarget, getForegroundControl, getRequestedModeLabel, interruptAsyncRun, readModelRegistrySnapshot, registerForegroundMessageInbox, requestForegroundInterrupt, requestInterruptAllRunningSubagentRuns, projectInterruptAuthorizationResult, projectInterruptResolutionMismatch, resolveRememberedForegroundRun, resolveSingleRunOutputBaseDir, resolvedAsyncInterruptTarget, selectInterruptTarget, steerAsyncRun, unknownAgentMessage, trimRememberedForegroundRuns, providerFallbackModelsForTarget, resumeAsyncRun, unsupportedSavedChainInput, unsupportedSavedChainInputResult, } from "./foreground-control.js";
 import { hasInMemoryProjectAgentCapture, isRecordValue, lookupPrivateProjectActionReference, normalizeProjectAgentAccess, privateProjectCaptureForTarget, projectAgentEntryIdentityError, projectRunAuthorizationError, resolveProjectAgentExecution, } from "./project-agent-control.js";
 export { buildResumeModelResolution, clearForegroundMessageInbox, normalizeProjectAgentAccess, projectAgentEntryIdentityError, registerForegroundMessageInbox, trimRememberedForegroundRuns, requestInterruptAllRunningSubagentRuns, };
@@ -24,6 +23,21 @@ import { retiredNestedLaunchError } from "../shared/pi-args.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { inspectSubagentStatus } from "../background/run-status.js";
 import { SUBAGENT_ACTIONS, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, } from "../../shared/types.js";
+function toExecutionErrorResult(params, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+        content: [{ type: "text", text: message }],
+        isError: true,
+        details: { mode: getRequestedModeLabel(params), results: [] },
+    };
+}
+function buildParallelModeError(message) {
+    return {
+        content: [{ type: "text", text: message }],
+        isError: true,
+        details: { mode: "parallel", results: [] },
+    };
+}
 function resolveRequestedCwd(runtimeCwd, requestedCwd) {
     return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
 }
@@ -912,25 +926,6 @@ export function createSubagentExecutor(deps) {
         const sessionDirForIndex = (idx) => path.join(sessionRoot, `run-${idx ?? 0}`);
         const childSessionFileForTask = (_agentName, idx) => path.join(sessionDirForIndex(idx), "session.jsonl");
         const childSessionFileForIndex = (idx) => path.join(sessionDirForIndex(idx), "session.jsonl");
-        let projectRunRetained = false;
-        if (!effectiveAsync && projectResolution.projectAgentCaptures?.length) {
-            try {
-                retainProjectAgentRunReference(projectResolution.projectAgentCapability, runId, projectResolution.projectAgentCaptures);
-                projectRunRetained = true;
-            }
-            catch (error) {
-                return toExecutionErrorResult(effectiveParams, new Error(`TLH project-agent run retention failed: ${error instanceof Error ? error.message : String(error)}`));
-            }
-        }
-        const releaseTerminalProjectRun = (result) => {
-            if (projectRunRetained &&
-                !result.details?.results.some((child) => child.pause || child.interrupted)) {
-                const releaseTimer = setTimeout(() => releaseProjectAgentRunReference(runId), PROJECT_AGENT_TERMINAL_RETENTION_MS);
-                releaseTimer.unref?.();
-                projectRunRetained = false;
-            }
-            return result;
-        };
         const onUpdateWithContext = onUpdate;
         const foregroundMode = hasTasks ? "parallel" : "single";
         const runStartedAt = Date.now();
@@ -960,7 +955,6 @@ export function createSubagentExecutor(deps) {
             startedAt: runStartedAt,
             timeoutMs: runTimeoutMs,
             modelScope,
-            runSync: deps.runSync,
         };
         const foregroundControl = effectiveAsync
             ? undefined
@@ -982,22 +976,9 @@ export function createSubagentExecutor(deps) {
             const asyncResult = runAsyncPath(execData, deps);
             if (asyncResult)
                 return asyncResult;
-            if (hasTasks && effectiveParams.tasks) {
-                const result = await runParallelPath(execData, deps);
-                return releaseTerminalProjectRun(result);
-            }
-            if (hasSingle) {
-                const result = await runSinglePath(execData, deps);
-                return releaseTerminalProjectRun(result);
-            }
         }
         catch (error) {
-            if (projectRunRetained) {
-                releaseProjectAgentRunReference(runId);
-                projectRunRetained = false;
-            }
-            const errorResult = toExecutionErrorResult(effectiveParams, error);
-            return errorResult;
+            return toExecutionErrorResult(effectiveParams, error);
         }
         finally {
             if (foregroundControl) {
@@ -1007,10 +988,6 @@ export function createSubagentExecutor(deps) {
                     deps.state.lastForegroundControlId = null;
                 }
             }
-        }
-        if (projectRunRetained) {
-            releaseProjectAgentRunReference(runId);
-            projectRunRetained = false;
         }
         return {
             content: [{ type: "text", text: "Invalid params" }],

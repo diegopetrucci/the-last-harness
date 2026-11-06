@@ -10,7 +10,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, type ArtifactPaths } from "../../src/shared/types.ts";
 import type { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
-import type { runSync } from "../../src/runs/foreground/execution.ts";
 import type { MockPi } from "./helpers.ts";
 import { makeAgent, makeMinimalCtx, tryImport } from "./helpers.ts";
 import { scaleTestTimeout } from "./scale-timeout.ts";
@@ -55,7 +54,6 @@ export interface NativeExecutorOptions {
   agents?: ReturnType<typeof makeAgent>[];
   config?: Record<string, unknown>;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-  runSync?: typeof runSync;
   executeAsyncSingle?: typeof executeAsyncSingle;
 }
 
@@ -276,7 +274,6 @@ export function makeNativeResultLifecycleExecutor(
     expandTilde: (value: string) => value,
     discoverAgents: () => ({ agents: options.agents ?? [makeAgent("worker")] }),
     kill: options.kill,
-    runSync: options.runSync,
     executeAsyncSingle: options.executeAsyncSingle,
   });
   return { executor, events, state };

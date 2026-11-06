@@ -15,6 +15,7 @@ import {
   makeModel,
   removeTempDir,
 } from "../support/helpers.ts";
+import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 import {
   available,
   expectUnsupportedChainRequest as expectUnsupportedChainRequestFor,
@@ -417,9 +418,11 @@ describe(
       // After async-only: a result file with state "paused" IS written when a run pauses
       // (foreground runs did not write a result file while paused).
       {
-        const pausedResult = JSON.parse(
-          fs.readFileSync(path.join(RESULTS_DIR, `${runId}.json`), "utf-8"),
-        ) as { state?: string };
+        // The runner writes status.json as paused before the result file; wait for the file.
+        const pausedResultPath = await waitForAsyncResultFile(runId, scaleTestTimeout(15_000));
+        const pausedResult = JSON.parse(fs.readFileSync(pausedResultPath, "utf-8")) as {
+          state?: string;
+        };
         assert.equal(pausedResult.state, "paused");
       }
 

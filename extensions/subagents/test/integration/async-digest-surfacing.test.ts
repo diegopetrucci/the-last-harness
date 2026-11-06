@@ -26,6 +26,7 @@ import {
   events,
   tryImport,
 } from "../support/helpers.ts";
+import { mockAssistantMessage } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface ArtifactPaths {
@@ -42,6 +43,7 @@ interface AsyncSingleResultPayload {
     agent?: string;
     output?: string;
     success?: boolean;
+    timedOut?: boolean;
     exitCode?: number;
     artifactPaths?: ArtifactPaths;
   }>;
@@ -313,5 +315,48 @@ describe("async artifact digest surfacing (ps-il5m)", () => {
     const artifact = fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8");
     assert.equal(artifact, "async findings only");
     assert.doesNotMatch(artifact, /Validation evidence/);
+  });
+
+  it("keeps the digest in the artifact but out of semantic output for a timed-out async run", async () => {
+    const reportBody = JSON.stringify({
+      criteriaSatisfied: [
+        { id: "criterion-1", status: "satisfied", evidence: "integration test evidence" },
+      ],
+      changedFiles: ["src/a.ts"],
+      testsAddedOrUpdated: ["test/a.test.ts"],
+      commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+      validationOutput: ["validation passed"],
+      residualRisks: [],
+      noStagedFiles: true,
+    });
+    const report = ["Done", "```acceptance-report", reportBody, "```"].join("\n");
+    // Keep the report non-terminal (tool_use) so the final-stop drain cannot win,
+    // and keep the mock alive past the timeout so the timeout is authoritative.
+    const timeoutMs = scaleTestTimeout(1_000);
+    mockPi.onCall({
+      jsonl: [mockAssistantMessage(report, "tool_use")],
+      keepAliveAfterFinalMessageMs: scaleTestTimeout(10_000),
+    });
+    const id = `async-digest-timeout-${Date.now().toString(36)}`;
+
+    const launch = executeAsyncSingle!(id, {
+      agent: "reviewer",
+      task: "Review-only. Do not edit.",
+      ...checkedParams(id),
+      timeoutMs,
+    });
+    assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
+
+    const payload = await readAsyncPayload(id);
+    assert.equal(payload.success, false);
+    assert.equal(payload.state, "failed");
+    const result = payload.results[0]!;
+    // Timeout stays authoritative; no verification outcome replaces it.
+    assert.equal(result.timedOut, true);
+    assert.doesNotMatch(result.output ?? "", /Validation evidence/);
+    assert.ok(result.artifactPaths, "expected artifactPaths in async result");
+    const artifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+    assert.match(artifact, /Validation evidence \(from acceptance report\):/);
+    assert.doesNotMatch(artifact, /```acceptance-report/);
   });
 });

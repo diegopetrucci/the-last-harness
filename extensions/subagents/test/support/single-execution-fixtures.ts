@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { tryImport } from "./helpers.ts";
-import type { AgentConfig } from "./helpers.ts";
 import type {
   AsyncStatus,
   ChildProcessCleanupResult,
@@ -210,16 +209,6 @@ export function inferredAcceptanceRejectionOutput(output: string): string {
   ].join("\n");
 }
 
-export interface ExecutionModule {
-  runSync(
-    runtimeCwd: string,
-    agents: AgentConfig[],
-    agentName: string,
-    task: string,
-    options: Record<string, unknown>,
-  ): Promise<RunSyncResult>;
-}
-
 export interface UtilsModule {
   getFinalOutput(messages: unknown[]): string;
 }
@@ -296,11 +285,9 @@ export function writePackageSkill(packageRoot: string, skillName: string): void 
   );
 }
 
-const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
-export const available = !!(execution && utils);
+export const available = !!utils;
 
-export const runSync = execution?.runSync;
 export const getFinalOutput = utils?.getFinalOutput;
 export const createSubagentExecutor = executorMod?.createSubagentExecutor;

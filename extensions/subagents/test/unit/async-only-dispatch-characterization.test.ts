@@ -30,8 +30,6 @@ import {
   type AcceptanceLedger,
   type ForegroundResumeRun,
   type ResolvedAcceptanceConfig,
-  type RunSyncOptions,
-  type SingleResult,
   type SubagentState,
 } from "../../src/shared/types.ts";
 import { readStatus } from "../../src/shared/utils.ts";
@@ -96,35 +94,6 @@ function makeTempDir(prefix: string): string {
 // Common executor helpers
 // ---------------------------------------------------------------------------
 
-type RunSyncImpl = (
-  runtimeCwd: string,
-  agents: unknown[],
-  agentName: string,
-  task: string,
-  opts: RunSyncOptions,
-) => Promise<SingleResult>;
-
-/** Inert runSync stub: records calls and returns a minimal SingleResult. */
-function captureRunSync(calls: RunSyncOptions[]): RunSyncImpl {
-  return async (
-    _runtimeCwd: string,
-    _agents: unknown[],
-    agentName: string,
-    task: string,
-    opts: RunSyncOptions,
-  ): Promise<SingleResult> => {
-    calls.push(opts);
-    return {
-      agent: agentName,
-      task,
-      exitCode: 0,
-      messages: [],
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-      finalOutput: "done",
-    };
-  };
-}
-
 type AsyncSingleSeam = (
   runId: string,
   params: Record<string, unknown>,
@@ -144,10 +113,10 @@ type AsyncParallelSeam = (
 function makeExecutor(
   sessionRoot: string,
   state: SubagentState,
-  runSyncImpl: RunSyncImpl,
   options: {
     executeAsyncSingle?: AsyncSingleSeam;
     executeAsyncParallel?: AsyncParallelSeam;
+    config?: Record<string, unknown>;
   } = {},
 ) {
   return createSubagentExecutor({
@@ -163,7 +132,7 @@ function makeExecutor(
       },
     } as any,
     state,
-    config: { maxSubagentDepth: 2, control: {} } as any,
+    config: { maxSubagentDepth: 2, control: {}, ...options.config } as any,
     tempArtifactsDir: sessionRoot,
     getSubagentSessionRoot: () => sessionRoot,
     expandTilde: (v: string) => v,
@@ -173,7 +142,6 @@ function makeExecutor(
         makeSupportAgent("second", { description: "Second agent" }),
       ],
     }),
-    runSync: runSyncImpl as any,
     ...(options.executeAsyncSingle
       ? { executeAsyncSingle: options.executeAsyncSingle as any }
       : {}),
@@ -183,18 +151,20 @@ function makeExecutor(
   });
 }
 
-function makeExecutorCapturing(sessionRoot: string): {
+function makeExecutorCapturing(
+  sessionRoot: string,
+  config?: Record<string, unknown>,
+): {
   executor: ReturnType<typeof makeExecutor>;
-  syncCalls: RunSyncOptions[];
   asyncCalls: Array<{ runId: string; params: unknown }>;
   parallelCalls: Array<{ runId: string; params: unknown }>;
   state: SubagentState;
 } {
-  const syncCalls: RunSyncOptions[] = [];
   const asyncCalls: Array<{ runId: string; params: unknown }> = [];
   const parallelCalls: Array<{ runId: string; params: unknown }> = [];
   const state = makeSubagentState({ baseCwd: sessionRoot });
-  const executor = makeExecutor(sessionRoot, state, captureRunSync(syncCalls), {
+  const executor = makeExecutor(sessionRoot, state, {
+    config,
     executeAsyncSingle: (runId: string, params: Record<string, unknown>) => {
       asyncCalls.push({ runId, params });
       return {
@@ -213,7 +183,7 @@ function makeExecutorCapturing(sessionRoot: string): {
       };
     },
   });
-  return { executor, syncCalls, asyncCalls, parallelCalls, state };
+  return { executor, asyncCalls, parallelCalls, state };
 }
 
 // ---------------------------------------------------------------------------
@@ -348,9 +318,9 @@ describe("async-only dispatch routing", () => {
   // async parameter: omitted / false / true  (single run)
   // -----------------------------------------------------------------------
 
-  it("async omitted dispatches as background — asyncId returned, runSync not called", async () => {
+  it("async omitted dispatches as background — asyncId returned", async () => {
     const root = makeTempDir("tlh-ao-omitted-");
-    const { executor, syncCalls, asyncCalls } = makeExecutorCapturing(root);
+    const { executor, asyncCalls } = makeExecutorCapturing(root);
 
     const result = await executor.execute(
       "id",
@@ -360,8 +330,6 @@ describe("async-only dispatch routing", () => {
       makeMinimalCtx(root),
     );
 
-    // Background dispatch: runSync must not have been called.
-    assert.equal(syncCalls.length, 0, "runSync must not be called for omitted-async dispatch");
     // Background job was started.
     assert.ok(result.details?.asyncId, "expected asyncId for omitted-async dispatch");
     assert.equal(result.isError, undefined);
@@ -369,9 +337,8 @@ describe("async-only dispatch routing", () => {
     assert.equal(asyncCalls.length, 1, "executeAsyncSingle seam must be called once");
   });
 
-  it("async:false is rejected — isError true, no side effects (no syncCalls, no asyncCalls, no session dir)", async () => {
+  it("async:false is rejected — isError true, no side effects (no asyncCalls, no session dir)", async () => {
     const sessions: string[] = [];
-    const syncCalls: RunSyncOptions[] = [];
     const asyncCalls: Array<{ runId: string; params: unknown }> = [];
     const root = makeTempDir("tlh-ao-false-");
     const state = makeSubagentState({ baseCwd: root });
@@ -399,7 +366,6 @@ describe("async-only dispatch routing", () => {
       discoverAgents: () => ({
         agents: [makeSupportAgent("echo", { description: "Echo agent" })],
       }),
-      runSync: captureRunSync(syncCalls) as any,
       executeAsyncSingle: ((runId: string, params: Record<string, unknown>) => {
         asyncCalls.push({ runId, params });
         return {
@@ -420,7 +386,6 @@ describe("async-only dispatch routing", () => {
     assert.equal(result.isError, true, "async:false must be rejected");
     const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
     assert.match(text, /async:false is no longer supported/i);
-    assert.equal(syncCalls.length, 0, "runSync must not be called when async:false is rejected");
     assert.equal(
       asyncCalls.length,
       0,
@@ -434,9 +399,9 @@ describe("async-only dispatch routing", () => {
     );
   });
 
-  it("async:true skips runSync and returns an asyncId (background)", async () => {
+  it("async:true returns an asyncId (background)", async () => {
     const root = makeTempDir("tlh-ao-true-");
-    const { executor, syncCalls } = makeExecutorCapturing(root);
+    const { executor } = makeExecutorCapturing(root);
 
     const result = await executor.execute(
       "id",
@@ -446,8 +411,6 @@ describe("async-only dispatch routing", () => {
       makeMinimalCtx(root),
     );
 
-    // Background launch: runSync is never called.
-    assert.equal(syncCalls.length, 0);
     // Result carries an asyncId — the background run was registered.
     assert.ok(result.details?.asyncId, "expected asyncId for async:true dispatch");
     assert.equal(result.isError, undefined);
@@ -457,9 +420,9 @@ describe("async-only dispatch routing", () => {
   // async parameter: parallel mode
   // -----------------------------------------------------------------------
 
-  it("parallel + async:false is rejected — isError, no runSync calls", async () => {
+  it("parallel + async:false is rejected — isError, no asyncCalls", async () => {
     const root = makeTempDir("tlh-ao-false-parallel-");
-    const { executor, syncCalls, asyncCalls } = makeExecutorCapturing(root);
+    const { executor, asyncCalls } = makeExecutorCapturing(root);
 
     const result = await executor.execute(
       "id",
@@ -478,13 +441,12 @@ describe("async-only dispatch routing", () => {
     assert.equal(result.isError, true, "parallel async:false must be rejected");
     const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
     assert.match(text, /async:false is no longer supported/i);
-    assert.equal(syncCalls.length, 0, "runSync must not be called");
     assert.equal(asyncCalls.length, 0, "executeAsyncSingle must not be called");
   });
 
-  it("parallel + async:true skips runSync and returns asyncId", async () => {
+  it("parallel + async:true returns asyncId", async () => {
     const root = makeTempDir("tlh-ao-true-parallel-");
-    const { executor, syncCalls } = makeExecutorCapturing(root);
+    const { executor } = makeExecutorCapturing(root);
 
     const result = await executor.execute(
       "id",
@@ -500,7 +462,6 @@ describe("async-only dispatch routing", () => {
       makeMinimalCtx(root),
     );
 
-    assert.equal(syncCalls.length, 0, "expected no foreground runSync calls");
     assert.ok(result.details?.asyncId, "expected asyncId for async:true parallel dispatch");
     assert.equal(result.details?.mode, "parallel");
     assert.equal(result.isError, undefined);
@@ -512,7 +473,7 @@ describe("async-only dispatch routing", () => {
 
   it("tasks[].count expands to N background runs — asyncId returned, no runSync calls", async () => {
     const root = makeTempDir("tlh-ao-count-");
-    const { executor, syncCalls } = makeExecutorCapturing(root);
+    const { executor } = makeExecutorCapturing(root);
 
     const result = await executor.execute(
       "id",
@@ -524,8 +485,6 @@ describe("async-only dispatch routing", () => {
 
     assert.equal(result.isError, undefined);
     assert.equal(result.details?.mode, "parallel");
-    // Background dispatch: no syncCalls (foreground never called)
-    assert.equal(syncCalls.length, 0, "runSync must not be called for count expansion");
     // Parallel dispatch goes through executeAsyncParallel (not the executeAsyncSingle seam);
     // verify asyncId is present in the result receipt.
     assert.ok(result.details?.asyncId, "expected asyncId for count-expanded parallel dispatch");
@@ -564,7 +523,6 @@ describe("async-only dispatch routing", () => {
       discoverAgents: () => ({
         agents: [makeSupportAgent("echo", { description: "Echo" })],
       }),
-      runSync: captureRunSync([]) as any,
       // Seam for async dispatch: prevents a real detached-runner spawn that
       // would write files under the session dir and potentially recreate it
       // after after() cleanup, causing temp-dir leaks.
@@ -618,7 +576,6 @@ describe("async-only dispatch routing", () => {
       discoverAgents: () => ({
         agents: [makeSupportAgent("echo", { description: "Echo" })],
       }),
-      runSync: captureRunSync([]) as any,
     });
 
     const result = await executor.execute(
@@ -771,6 +728,45 @@ describe("async-only dispatch routing", () => {
     assert.match(text, /Valid:/);
   });
 
+  it("rejects action='single' instead of treating it as execution", async () => {
+    const root = makeTempDir("tlh-ao-single-alias-");
+    const { executor, asyncCalls, parallelCalls } = makeExecutorCapturing(root);
+
+    const result = await executor.execute(
+      "single-alias",
+      { action: "single" as any, agent: "echo", task: "Run through alias" },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(root),
+    );
+
+    assert.equal(result.isError, true);
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+    assert.match(text, /Unknown action: single/);
+    assert.equal(asyncCalls.length, 0);
+    assert.equal(parallelCalls.length, 0);
+  });
+
+  it("rejects arbitrary unknown action strings without launching", async () => {
+    const root = makeTempDir("tlh-ao-unknown-arbitrary-");
+    const { executor, asyncCalls, parallelCalls } = makeExecutorCapturing(root);
+
+    const result = await executor.execute(
+      "unknown-action",
+      { action: "not-a-real-action" as any, agent: "echo", task: "Should not run" },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(root),
+    );
+
+    assert.equal(result.isError, true);
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+    assert.match(text, /Unknown action: not-a-real-action/);
+    assert.match(text, /Valid:/);
+    assert.equal(asyncCalls.length, 0);
+    assert.equal(parallelCalls.length, 0);
+  });
+
   // -----------------------------------------------------------------------
   // Background dispatch does NOT set foregroundControl
   // -----------------------------------------------------------------------
@@ -801,7 +797,6 @@ describe("async-only dispatch routing", () => {
       discoverAgents: () => ({
         agents: [makeSupportAgent("echo", { description: "Echo" })],
       }),
-      runSync: captureRunSync([]) as any,
       executeAsyncSingle: ((runId: string, params: Record<string, unknown>) => {
         // Capture foregroundControls size at seam-call time
         capturedForegroundControlsSize = state.foregroundControls.size;
@@ -1097,7 +1092,7 @@ describe("async-only — supervisor pause/cancel", () => {
 describe("async-only — project-agent dispatch authorization", () => {
   it("embedded.* dispatch with no capability is rejected before async dispatch", async () => {
     const root = makeTempDir("tlh-ao-proj-no-cap-");
-    const { executor, syncCalls, asyncCalls } = makeExecutorCapturing(root);
+    const { executor, asyncCalls } = makeExecutorCapturing(root);
 
     const result = await executor.execute(
       "id",
@@ -1110,7 +1105,6 @@ describe("async-only — project-agent dispatch authorization", () => {
     assert.equal(result.isError, true);
     const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
     assert.match(text, /unavailable|invalid|rejected/i);
-    assert.equal(syncCalls.length, 0, "runSync must not be called when capability is missing");
     assert.equal(
       asyncCalls.length,
       0,
@@ -1133,7 +1127,6 @@ describe("async-only — project-agent dispatch authorization", () => {
     _capabilitiesToRevoke.push(capability);
     const expected = getProjectAgentSnapshotProvenance(capability);
 
-    const syncCalls: RunSyncOptions[] = [];
     const asyncCalls: Array<{ runId: string; params: unknown }> = [];
     const executor = createSubagentExecutor({
       pi: {
@@ -1159,7 +1152,6 @@ describe("async-only — project-agent dispatch authorization", () => {
         architect: false,
         canInitiate: false,
       }),
-      runSync: captureRunSync(syncCalls) as any,
       executeAsyncSingle: ((runId: string, params: Record<string, unknown>) => {
         asyncCalls.push({ runId, params });
         return {
@@ -1192,7 +1184,6 @@ describe("async-only — project-agent dispatch authorization", () => {
     assert.equal(result.isError, true);
     const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
     assert.match(text, /requires.*architect|disabled.*primary|architect.*disabled/i);
-    assert.equal(syncCalls.length, 0, "runSync must not be called when canInitiate is false");
     assert.equal(
       asyncCalls.length,
       0,
@@ -1267,7 +1258,7 @@ describe("async-only — project-agent dispatch authorization", () => {
 describe("async-only — print/rpc mode gate", () => {
   it("dispatch in print mode is rejected — isError true", async () => {
     const root = makeTempDir("tlh-ao-print-dispatch-");
-    const { executor, syncCalls, asyncCalls } = makeExecutorCapturing(root);
+    const { executor, asyncCalls } = makeExecutorCapturing(root);
 
     const ctx = { ...makeMinimalCtx(root), mode: "print" as const };
     const result = await executor.execute(
@@ -1281,13 +1272,12 @@ describe("async-only — print/rpc mode gate", () => {
     assert.equal(result.isError, true, "dispatch in print mode must be rejected");
     const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
     assert.match(text, /not available in non-interactive mode/i);
-    assert.equal(syncCalls.length, 0, "runSync must not be called in print mode");
     assert.equal(asyncCalls.length, 0, "executeAsyncSingle must not be called in print mode");
   });
 
   it("dispatch in rpc mode is rejected — isError true", async () => {
     const root = makeTempDir("tlh-ao-rpc-dispatch-");
-    const { executor, syncCalls, asyncCalls } = makeExecutorCapturing(root);
+    const { executor, asyncCalls } = makeExecutorCapturing(root);
 
     const ctx = { ...makeMinimalCtx(root), mode: "rpc" as const };
     const result = await executor.execute(
@@ -1301,7 +1291,6 @@ describe("async-only — print/rpc mode gate", () => {
     assert.equal(result.isError, true, "dispatch in rpc mode must be rejected");
     const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
     assert.match(text, /not available in non-interactive mode/i);
-    assert.equal(syncCalls.length, 0, "runSync must not be called in rpc mode");
     assert.equal(asyncCalls.length, 0, "executeAsyncSingle must not be called in rpc mode");
   });
 
@@ -1400,5 +1389,105 @@ describe("async-only — print/rpc mode gate", () => {
 
     // No active run, but the action itself goes through (management result, possibly isError for no target)
     assert.equal(result.details?.mode, "management");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ported from single-execution-basic.test.ts (removed with foreground engine)
+// ---------------------------------------------------------------------------
+
+describe("async-only — concurrent dispatch and management guards", () => {
+  it("rejects duplicate concurrent subagent execution calls", async () => {
+    // After async-only: the first call returns a background receipt immediately;
+    // the second call is rejected before the background child has called mockPi.
+    const root = makeTempDir("tlh-ao-concurrent-dup-");
+    const { executor } = makeExecutorCapturing(root);
+    const ctx = makeMinimalCtx(root);
+
+    const first = executor.execute(
+      "first",
+      { agent: "echo", task: "First call" },
+      new AbortController().signal,
+      undefined,
+      ctx,
+    );
+    const second = await executor.execute(
+      "second",
+      { agent: "echo", task: "Duplicate call" },
+      new AbortController().signal,
+      undefined,
+      ctx,
+    );
+    const firstResult = await first;
+
+    assert.equal(firstResult.isError, undefined);
+    assert.ok(firstResult.details?.asyncId, "expected asyncId for accepted background dispatch");
+    assert.equal(second.isError, true);
+    const secondText = second.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+    assert.match(secondText, /Issue exactly ONE subagent call per turn/);
+  });
+
+  it("ignores legacy per-session spawn quota config and env values", async () => {
+    // After async-only: each call returns a background receipt;
+    // verify neither dispatch is rejected by legacy quota logic.
+    const root = makeTempDir("tlh-ao-spawn-quota-");
+    const { executor } = makeExecutorCapturing(root, { maxSubagentSpawnsPerSession: 1 });
+    const ctx = makeMinimalCtx(root);
+
+    const savedMaxSpawns = process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
+    process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = "0";
+    try {
+      const first = await executor.execute(
+        "first",
+        { agent: "echo", task: "First call" },
+        new AbortController().signal,
+        undefined,
+        ctx,
+      );
+      const second = await executor.execute(
+        "second",
+        { agent: "echo", task: "Second call" },
+        new AbortController().signal,
+        undefined,
+        ctx,
+      );
+
+      assert.equal(first.isError, undefined);
+      assert.ok(first.details?.asyncId, "expected asyncId for first background dispatch");
+      assert.equal(second.isError, undefined);
+      assert.ok(second.details?.asyncId, "expected asyncId for second background dispatch");
+    } finally {
+      if (savedMaxSpawns === undefined) delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
+      else process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = savedMaxSpawns;
+    }
+  });
+
+  it("allows management actions while an execution call is in progress", async () => {
+    // After async-only: the first call returns a background receipt immediately;
+    // a concurrent status action must not be rejected.
+    const root = makeTempDir("tlh-ao-mgmt-in-progress-");
+    const { executor } = makeExecutorCapturing(root);
+    const ctx = makeMinimalCtx(root);
+
+    const first = executor.execute(
+      "first",
+      { agent: "echo", task: "First call" },
+      new AbortController().signal,
+      undefined,
+      ctx,
+    );
+    const status = await executor.execute(
+      "status",
+      { action: "status" },
+      new AbortController().signal,
+      undefined,
+      ctx,
+    );
+    const firstResult = await first;
+
+    assert.equal(firstResult.isError, undefined);
+    assert.equal(status.isError, undefined);
+    const statusText = status.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+    assert.doesNotMatch(statusText, /Rejected: a subagent call is already in progress/);
   });
 });

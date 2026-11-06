@@ -1477,4 +1477,95 @@ describe("async execution utilities", () => {
       await waitForPidsToExit([runnerPid, ...childPids], `paused async cohort ${cohortId}`);
     },
   );
+
+  it(
+    "keeps private interview questions out of the durable pause request for interview_request",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process supervisor pause delivery unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const id = `async-interview-pause-${Date.now().toString(36)}`;
+      const privateQuestion = "PRIVATE_INTERVIEW_QUESTION_TEXT";
+      let runnerPid: number | undefined;
+      mockPi.onCall({
+        steps: [
+          {
+            jsonl: [
+              events.toolStart("contact_supervisor", {
+                reason: "interview_request",
+                message: "Need input",
+                interview: {
+                  questions: [{ id: "q1", type: "text", question: privateQuestion }],
+                },
+              }),
+            ],
+          },
+        ],
+        keepAliveAfterFinalMessageMs: 5_000,
+      });
+      const started = executeAsyncSingle!(id, {
+        agent: "worker",
+        task: "Ask for supervisor input and stop there.",
+        agentConfig: makeAgent("worker", { completionGuard: false }),
+        ctx: {
+          pi: {
+            events: {
+              emit(event: string, payload: unknown) {
+                if (
+                  event === "subagent:async-started" &&
+                  payload &&
+                  typeof payload === "object" &&
+                  "pid" in payload
+                ) {
+                  runnerPid = (payload as { pid?: number }).pid;
+                }
+              },
+            },
+          },
+          cwd: tempDir,
+          currentSessionId: "session-1",
+        },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+      });
+      assert.equal(started.isError, undefined);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      assert.ok(runnerPid, "expected async runner pid from started event");
+      await waitForMockPiCall(mockPi, 0);
+      const childPids = startedMockPiPids(mockPi);
+      await waitForAsyncState(asyncDir, "paused");
+      const statusText = fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8");
+      const status = JSON.parse(statusText) as any;
+      const payload = (await readAsyncPayload(id)) as any;
+      const expectedRequest = {
+        tool: "contact_supervisor",
+        reason: "interview_request",
+        summary: "Need input",
+      };
+      assert.equal(status.state, "paused");
+      assert.equal(status.pause?.kind, "awaiting_supervisor");
+      assert.equal(status.pause?.ownerPid, undefined);
+      assert.deepEqual(status.pause?.request, expectedRequest);
+      assert.deepEqual(status.steps?.[0]?.pause?.request, expectedRequest);
+      assert.equal(payload.state, "paused");
+      assert.deepEqual(payload.pause?.request, expectedRequest);
+      assert.deepEqual(payload.results?.[0]?.pause?.request, expectedRequest);
+      for (const serialized of [statusText, JSON.stringify(payload)]) {
+        assert.equal(serialized.includes(privateQuestion), false);
+        assert.equal(serialized.includes('"questions"'), false);
+      }
+      await waitForPidsToExit([runnerPid, ...childPids], `paused interview run ${id}`);
+    },
+  );
 });

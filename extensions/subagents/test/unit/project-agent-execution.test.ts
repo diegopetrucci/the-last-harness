@@ -7,7 +7,9 @@ import { afterEach, describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   getProjectAgentSnapshotProvenance,
+  lookupProjectAgentRunReference,
   registerProjectAgentSnapshot,
+  releaseProjectAgentRunReference,
   type ProjectAgentSnapshotCapability,
 } from "../../src/agents/project-agent-snapshot.ts";
 import {
@@ -119,14 +121,11 @@ function makeExecutor(
   architect = true,
   options: {
     canInitiate?: boolean;
-    runSync?: (
-      runtimeCwd: string,
-      agents: AgentConfig[],
-      agentName: string,
-      task: string,
-      options: Record<string, unknown>,
-    ) => Promise<Record<string, unknown>>;
     executeAsyncSingle?: (
+      runId: string,
+      params: Record<string, unknown>,
+    ) => Record<string, unknown>;
+    executeAsyncParallel?: (
       runId: string,
       params: Record<string, unknown>,
     ) => Record<string, unknown>;
@@ -155,9 +154,11 @@ function makeExecutor(
       architect,
       ...(options.canInitiate !== undefined ? { canInitiate: options.canInitiate } : {}),
     }),
-    runSync: options.runSync as never,
     ...(options.executeAsyncSingle
       ? { executeAsyncSingle: options.executeAsyncSingle as never }
+      : {}),
+    ...(options.executeAsyncParallel
+      ? { executeAsyncParallel: options.executeAsyncParallel as never }
       : {}),
   });
 }
@@ -313,19 +314,12 @@ describe("project-agent executor authorization", () => {
     const malformedAgent = { ...makeAgent(projectRoot), tools: [] } as AgentConfig;
     const snapshot = registerSnapshot(projectRoot, malformedAgent);
     const discoverCalls = { count: 0 };
-    let spawnCalls = 0;
     const executor = makeExecutor(
       projectRoot,
       snapshot.capability,
       snapshot.expected,
       discoverCalls,
       true,
-      {
-        runSync: async () => {
-          spawnCalls += 1;
-          return {};
-        },
-      },
     );
     const cases: Array<{ id: string; params: SubagentParamsLike }> = [
       {
@@ -365,7 +359,6 @@ describe("project-agent executor authorization", () => {
       assert.match(resultText(result), /does not carry an explicit usable tools list/);
     }
     assert.equal(discoverCalls.count, 0);
-    assert.equal(spawnCalls, 0);
     assert.equal(fs.existsSync(path.join(projectRoot, "sessions")), false);
   });
 
@@ -374,19 +367,12 @@ describe("project-agent executor authorization", () => {
     const linkedRoot = addNestedLinkedWorktree(projectRoot);
     const snapshot = registerSnapshot(projectRoot);
     const discoverCalls = { count: 0 };
-    let spawned = false;
     const executor = makeExecutor(
       projectRoot,
       snapshot.capability,
       snapshot.expected,
       discoverCalls,
       true,
-      {
-        runSync: async () => {
-          spawned = true;
-          return {};
-        },
-      },
     );
 
     const singleResult = await executor.execute(
@@ -404,7 +390,6 @@ describe("project-agent executor authorization", () => {
     assert.equal(singleResult.isError, true);
     assert.match(resultText(singleResult), /trusted snapshot worktree/i);
     assert.equal(discoverCalls.count, 0);
-    assert.equal(spawned, false);
 
     const parallelResult = await executor.execute(
       "nested-linked-parallel",
@@ -426,7 +411,6 @@ describe("project-agent executor authorization", () => {
     assert.equal(parallelResult.isError, true);
     assert.match(resultText(parallelResult), /one trusted snapshot worktree/i);
     assert.equal(discoverCalls.count, 0);
-    assert.equal(spawned, false);
   });
 
   it("uses the exact active snapshot and confines a mixed async batch before spawning", async () => {
@@ -663,6 +647,86 @@ Profile developer prompt.
     );
     assert.equal(explicitResult.isError, undefined);
     assert.equal(calls[2]?.params.modelOverride, "openai/explicit-model");
+  });
+
+  describe("dispatch-boundary project run reference lifetime", () => {
+    type LaunchOutcome = "receipt" | "returned-error";
+    const dispatchKinds = [
+      {
+        label: "single",
+        params: (projectRoot: string) => ({
+          agent: "embedded.xyz",
+          task: "run the exact project agent",
+          agentScope: "project" as const,
+          cwd: projectRoot,
+        }),
+      },
+      {
+        label: "parallel",
+        params: (projectRoot: string) => ({
+          tasks: [{ agent: "embedded.xyz", task: "run the exact project agent", cwd: projectRoot }],
+          agentScope: "project" as const,
+          cwd: projectRoot,
+        }),
+      },
+    ];
+
+    for (const dispatch of dispatchKinds) {
+      for (const outcome of ["receipt", "returned-error"] as LaunchOutcome[]) {
+        it(`${dispatch.label} dispatch retains the run reference before launch and ${
+          outcome === "receipt"
+            ? "keeps it after a successful receipt"
+            : "releases it after a returned launch error"
+        }`, async () => {
+          const projectRoot = makeProject();
+          const snapshot = registerSnapshot(projectRoot);
+          const seen: Array<{ runId: string; statusAtLaunch: string }> = [];
+          const seam = (runId: string) => {
+            seen.push({ runId, statusAtLaunch: lookupProjectAgentRunReference(runId).status });
+            return outcome === "receipt"
+              ? {
+                  content: [{ type: "text", text: "launch-receipt" }],
+                  details: { asyncId: runId, results: [] },
+                }
+              : {
+                  content: [{ type: "text", text: "launch failed" }],
+                  isError: true,
+                  details: { mode: "single", results: [] },
+                };
+          };
+          const executor = makeExecutor(
+            projectRoot,
+            snapshot.capability,
+            snapshot.expected,
+            { count: 0 },
+            true,
+            { executeAsyncSingle: seam, executeAsyncParallel: seam },
+          );
+          let runId: string | undefined;
+          try {
+            const result = await executor.execute(
+              `project-reference-${dispatch.label}-${outcome}`,
+              dispatch.params(projectRoot) as never,
+              new AbortController().signal,
+              undefined,
+              makeContext(projectRoot),
+            );
+            assert.equal(seen.length, 1, "expected exactly one launch seam call");
+            runId = seen[0]!.runId;
+            assert.equal(seen[0]!.statusAtLaunch, "found", "reference must exist before launch");
+            if (outcome === "receipt") {
+              assert.equal(result.isError, undefined);
+              assert.equal(lookupProjectAgentRunReference(runId).status, "found");
+            } else {
+              assert.equal(result.isError, true);
+              assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
+            }
+          } finally {
+            if (runId) releaseProjectAgentRunReference(runId);
+          }
+        });
+      }
+    }
   });
 
   it("allows disabled mode to initiate a project run only with explicit capability access", async () => {

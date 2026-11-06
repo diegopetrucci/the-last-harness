@@ -1079,6 +1079,74 @@ describe("async execution utilities", () => {
     );
   });
 
+  it("never starts acceptance verification after a child timeout", async () => {
+    const markerPath = path.join(tempDir, "verify-ran.txt");
+    const report = [
+      "done",
+      "```acceptance-report",
+      JSON.stringify({
+        criteriaSatisfied: [
+          { id: "criterion-1", status: "satisfied", evidence: "integration test evidence" },
+        ],
+        changedFiles: ["src/a.ts"],
+        testsAddedOrUpdated: ["test/a.test.ts"],
+        commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+        validationOutput: ["validation passed"],
+        residualRisks: [],
+        noStagedFiles: true,
+        notes: "complete",
+      }),
+      "```",
+    ].join("\n");
+    // The report is the final message, but the child stays alive past the timeout.
+    mockPi.onCall({
+      jsonl: [events.assistantMessage(report)],
+      keepAliveAfterFinalMessageMs: scaleTestTimeout(10_000),
+    });
+    const id = `async-timeout-no-verify-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Slow task",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      maxSubagentDepth: 2,
+      timeoutMs: scaleTestTimeout(500),
+      acceptance: {
+        level: "verified",
+        verify: [
+          {
+            id: "marker",
+            command:
+              "node -e \"require('node:fs').writeFileSync(process.env.VERIFY_MARKER, 'ran')\"",
+            env: { VERIFY_MARKER: markerPath },
+            timeoutMs: scaleTestTimeout(10_000),
+          },
+        ],
+      },
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(payload.state, "failed");
+    assert.equal(payload.timedOut, true);
+    assert.equal(payload.results[0]?.timedOut, true);
+    assert.equal(status.steps?.[0]?.timedOut, true);
+    assert.equal(payload.results[0]?.acceptance?.verifyRuns?.length ?? 0, 0);
+    assert.equal(fs.existsSync(markerPath), false, "verify command must not run after a timeout");
+  });
+
   it(
     "interrupts async acceptance verification and returns a paused result",
     {

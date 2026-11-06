@@ -22,7 +22,7 @@ import {
 import type { MockPi } from "../support/helpers.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
-import { createSubagentExecutor, runSync } from "../support/single-execution-fixtures.ts";
+import { createSubagentExecutor } from "../support/single-execution-fixtures.ts";
 import {
   lifecycleGeneration,
   transitionLifecycleStatus,
@@ -532,7 +532,6 @@ describe("async execution utilities", () => {
         await waitForAsyncState(sourceAsyncDir, "paused");
 
         assert.ok(createSubagentExecutor, "foreground executor fixture is available");
-        assert.ok(runSync, "foreground execution fixture is available");
         const executor = createSubagentExecutor({
           pi: { events: createEventBus(), getSessionName: () => undefined },
           state: makeSubagentState({ baseCwd: tempDir }),
@@ -541,7 +540,6 @@ describe("async execution utilities", () => {
           getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
           expandTilde: (value: string) => value,
           discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-          runSync,
           telemetryProvenance: provenance,
         });
         const resume = await executor.execute(

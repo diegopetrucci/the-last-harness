@@ -34,6 +34,7 @@ import {
   waitForAsyncControlCondition,
   waitForAsyncResultFile,
   waitForAsyncStatusPredicate,
+  waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
 
 describe("async execution model restoration and fallback", () => {
@@ -1592,5 +1593,382 @@ describe("async execution model restoration and fallback", () => {
     assert.equal(statusPayload.state, "failed");
     assert.equal(statusPayload.steps?.[0]?.status, "failed");
     assert.equal(statusPayload.steps?.[0]?.exitCode, 1);
+  });
+
+  const fullArtifactConfig = {
+    enabled: true,
+    includeInput: false,
+    includeOutput: true,
+    includeJsonl: false,
+    includeMetadata: true,
+    cleanupDays: 7,
+  };
+  const disabledArtifactConfig = {
+    enabled: false,
+    includeInput: false,
+    includeOutput: false,
+    includeJsonl: false,
+    includeMetadata: false,
+    cleanupDays: 7,
+  };
+  const contextWindowModels = [
+    { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+  ];
+  const providerErrorMessage = (model: string, text: string) => ({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      model,
+      errorMessage: "429 quota exceeded",
+      usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+    },
+  });
+  const pressureUsage = (total: number) => ({
+    totalTokens: total,
+    input: Math.round(total * 0.9),
+    output: Math.round(total * 0.1),
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost: { total: 0 },
+  });
+
+  interface ArtifactMetadata {
+    exitCode?: number;
+    error?: string;
+    terminationReason?: string;
+    contextPressure?: unknown;
+    contextPressureCrossedThresholds?: string[];
+  }
+
+  it("background runs classify the #456 empty terminal as context exhausted and agree across result, status and artifacts", async () => {
+    mockPi.onCall({
+      jsonl: [
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "toolCall", id: "call-456", name: "edit", arguments: { path: "a.ts" } },
+            ],
+            model: "mock/test-model",
+            stopReason: "toolUse",
+            usage: pressureUsage(990),
+          },
+        },
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "  " }],
+            model: "mock/test-model",
+            stopReason: "stop",
+            usage: pressureUsage(990),
+          },
+        },
+      ],
+    });
+    const id = `async-context-exhausted-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Finish the edit.",
+      agentConfig: makeAgent("worker", { model: "mock/test-model", completionGuard: false }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      acceptance: false,
+      availableModels: contextWindowModels,
+      artifactsDir: path.join(tempDir, "context-exhausted-artifacts"),
+      artifactConfig: fullArtifactConfig,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const result = payload.results[0]!;
+    const expectedError =
+      "Subagent stopped with an unfinished tool interaction under high context pressure.";
+
+    assert.equal(payload.success, false);
+    assert.equal(result.success, false);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminationReason, "context_exhausted");
+    assert.equal(result.contextUsage?.contextPercent, 99);
+    assert.equal(result.output, "");
+    assert.equal(result.error, expectedError);
+    assert.equal(status.steps?.[0]?.status, "failed");
+    assert.equal(status.steps?.[0]?.exitCode, 1);
+    assert.equal(status.steps?.[0]?.terminationReason, "context_exhausted");
+
+    assert.ok(result.artifactPaths, "expected persisted artifacts");
+    const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+    assert.equal(artifactText, expectedError);
+    assert.equal(artifactText.match(/unfinished tool interaction/g)?.length, 1);
+    const metadata = JSON.parse(
+      fs.readFileSync(result.artifactPaths.metadataPath, "utf-8"),
+    ) as ArtifactMetadata;
+    assert.equal(metadata.exitCode, 1);
+    assert.equal(metadata.error, expectedError);
+    assert.equal(metadata.terminationReason, "context_exhausted");
+    assert.equal(
+      (metadata.contextPressure as { severity?: string } | undefined)?.severity,
+      "critical",
+    );
+    assert.deepEqual(metadata.contextPressureCrossedThresholds, ["warning", "critical"]);
+    assert.deepEqual(metadata.contextPressure, result.contextPressure);
+    assert.deepEqual(
+      metadata.contextPressureCrossedThresholds,
+      result.contextPressureCrossedThresholds,
+    );
+  });
+
+  it("background runs keep ordinary high-context success consistent across result, status and artifact metadata", async () => {
+    mockPi.onCall({
+      jsonl: [
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "toolCall", id: "call-success", name: "edit", arguments: { path: "a.ts" } },
+            ],
+            model: "mock/test-model",
+            stopReason: "toolUse",
+            usage: pressureUsage(800),
+          },
+        },
+        {
+          type: "tool_result_end",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-success",
+            toolName: "edit",
+            content: [{ type: "text", text: "edited" }],
+          },
+        },
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Ordinary success" }],
+            model: "mock/test-model",
+            stopReason: "stop",
+            usage: pressureUsage(990),
+          },
+        },
+      ],
+    });
+    const id = `async-context-ordinary-success-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Finish the edit.",
+      agentConfig: makeAgent("worker", { model: "mock/test-model", completionGuard: false }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      acceptance: false,
+      availableModels: contextWindowModels,
+      artifactsDir: path.join(tempDir, "ordinary-success-artifacts"),
+      artifactConfig: fullArtifactConfig,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const result = payload.results[0]!;
+
+    assert.equal(payload.success, true);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.error, undefined);
+    assert.equal(result.terminationReason, "completed");
+    assert.equal(result.output, "Ordinary success");
+    assert.equal(status.steps?.[0]?.status, "complete");
+    assert.equal(status.steps?.[0]?.exitCode, 0);
+    assert.ok(result.artifactPaths, "expected persisted artifacts");
+    assert.equal(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), "Ordinary success");
+    const metadata = JSON.parse(
+      fs.readFileSync(result.artifactPaths.metadataPath, "utf-8"),
+    ) as ArtifactMetadata;
+    assert.equal(metadata.exitCode, 0);
+    assert.equal(metadata.error, undefined);
+    assert.equal(metadata.terminationReason, "completed");
+  });
+
+  it("background fallback keeps the original identity free of thinking the first attempt dropped", async () => {
+    mockPi.onCall({
+      jsonl: [providerErrorMessage("openai/gpt-5-mini", "temporary provider failure")],
+      exitCode: 1,
+    });
+    mockPi.onCall({ output: "Recovered on fallback" });
+    const id = `async-fallback-thinking-dropped-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Do work",
+      agentConfig: makeAgent("worker", {
+        model: "openai/gpt-5-mini",
+        thinking: "high",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      availableModels: [
+        {
+          provider: "openai",
+          id: "gpt-5-mini",
+          fullId: "openai/gpt-5-mini",
+          reasoning: true,
+          thinkingLevelMap: { high: null },
+        },
+        {
+          provider: "anthropic",
+          id: "claude-sonnet-4",
+          fullId: "anthropic/claude-sonnet-4",
+          reasoning: true,
+        },
+      ],
+      artifactConfig: disabledArtifactConfig,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    const result = payload.results[0]!;
+    assert.equal(payload.success, true);
+    assert.equal(result.model, "anthropic/claude-sonnet-4:high");
+    assert.equal(result.modelResolution?.kind, "fallback");
+    // The first attempt actually dropped "high" as unsupported, so the fallback
+    // resolution must not restore it on the original identity.
+    assert.deepEqual(result.modelResolution?.original, {
+      provider: "openai",
+      model: "gpt-5-mini",
+    });
+    assert.deepEqual(result.modelResolution?.resumed, {
+      provider: "anthropic",
+      model: "claude-sonnet-4",
+      thinking: "high",
+    });
+    assert.match(
+      result.modelResolution?.reason ?? "",
+      /Runtime fallback selected 'anthropic\/claude-sonnet-4:high' after 'openai\/gpt-5-mini' failed/,
+    );
+    assert.equal(mockPi.callCount(), 2);
+  });
+
+  it("background fallback fails when every configured attempt reports provider errors", async () => {
+    for (const model of ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]) {
+      mockPi.onCall({ jsonl: [providerErrorMessage(model, `${model} quota hit`)], exitCode: 0 });
+    }
+    const id = `async-fallback-exhausted-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Do work",
+      agentConfig: makeAgent("worker", {
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: disabledArtifactConfig,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(payload.success, false);
+    assert.equal(payload.state, "failed");
+    assert.equal(payload.results[0]?.exitCode, 1);
+    assert.deepEqual(payload.results[0]?.attemptedModels, [
+      "openai/gpt-5-mini",
+      "anthropic/claude-sonnet-4",
+    ]);
+    assert.deepEqual(
+      payload.results[0]?.modelAttempts?.map((attempt) => attempt.success),
+      [false, false],
+    );
+    assert.match(payload.results[0]?.error ?? "", /429 quota exceeded/);
+    assert.equal(status.state, "failed");
+    assert.equal(status.steps?.[0]?.status, "failed");
+    assert.equal(mockPi.callCount(), 2);
+  });
+
+  it("background fallback re-baselines the output file for each attempt", async () => {
+    const outputPath = path.join(tempDir, "fallback-output.md");
+    mockPi.onCall({
+      jsonl: [providerErrorMessage("openai/gpt-5-mini", "primary failed")],
+      exitCode: 0,
+      delay: 1_000,
+    });
+    mockPi.onCall({ output: "fallback assistant output" });
+    const id = `async-fallback-output-baseline-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Do work",
+      agentConfig: makeAgent("worker", {
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      output: outputPath,
+      artifactConfig: disabledArtifactConfig,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    // Simulate the failed primary leaving partial output behind while it runs.
+    await waitForMockPiCall(mockPi, 0);
+    fs.writeFileSync(outputPath, "stale partial output from failed primary", "utf-8");
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.deepEqual(
+      payload.results[0]?.modelAttempts?.map((attempt) => attempt.success),
+      [false, true],
+    );
+    assert.equal(fs.readFileSync(outputPath, "utf-8"), "fallback assistant output");
+  });
+
+  it("background runs keep the fallback notice hidden when the primary attempt actually succeeds", async () => {
+    mockPi.onCall({ output: "Primary succeeded" });
+    const id = `async-fallback-notice-no-retry-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Do work",
+      agentConfig: makeAgent("worker", {
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      modelFallbackNotice: "Should stay hidden",
+      artifactConfig: disabledArtifactConfig,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(payload.success, true);
+    assert.equal(payload.results[0]?.output, "Primary succeeded");
+    assert.equal(payload.results[0]?.modelFallbackNotice, undefined);
+    assert.deepEqual(payload.results[0]?.attemptedModels, ["openai/gpt-5-mini"]);
+    assert.doesNotMatch(JSON.stringify(payload), /Should stay hidden/);
+    assert.doesNotMatch(JSON.stringify(status), /Should stay hidden/);
+    assert.equal(mockPi.callCount(), 1);
   });
 });

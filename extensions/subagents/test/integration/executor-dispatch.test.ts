@@ -11,7 +11,6 @@ import {
   RESULTS_DIR,
   type ExtensionConfig,
 } from "../../src/shared/types.ts";
-import { runSync } from "../../src/runs/foreground/execution.ts";
 import {
   createEventBus,
   createMockPi,
@@ -210,7 +209,7 @@ describe("subagent executor dispatch wiring", () => {
       projectAgentsDir: null,
     }),
     config: ExtensionConfig = {},
-    overrides: { runSync?: typeof runSync } = {},
+    overrides: Record<string, never> = {},
   ) {
     return createSubagentExecutor({
       pi: makeExtensionAPI({ events: createEventBus() }),

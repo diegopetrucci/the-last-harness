@@ -1055,6 +1055,71 @@ describe("async execution health", () => {
     assert.equal(status.steps?.[0]?.activityState, "needs_attention");
   });
 
+  it("does not surface control state or events when control is disabled", async () => {
+    const markerDir = path.join(tempDir, "control-disabled-markers");
+    fs.mkdirSync(markerDir, { recursive: true });
+    const release = path.join(markerDir, "release");
+    // Attention-triggering input: silence beyond needsAttentionAfterMs across
+    // several monitor ticks.
+    mockPi.onCall({
+      steps: [
+        { jsonl: [events.assistantMessage("first update", "mock/test-model", "tool_use")] },
+        { waitForMarker: release },
+        { jsonl: [events.assistantMessage("final update")] },
+      ],
+    });
+    const id = `async-control-disabled-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Investigate behavior",
+      agentConfig: makeAgent("scout"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: false,
+        needsAttentionAfterMs: 1,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+    await waitForAsyncStatusPredicate(
+      asyncDir,
+      (status) => status.state === "running",
+      "running before the silent period",
+    );
+    await new Promise((resolve) => setTimeout(resolve, ACTIVITY_MONITOR_INTERVAL_MS * 2 + 500));
+    const midRun = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(midRun.activityState, undefined);
+    assert.equal(midRun.steps?.[0]?.activityState, undefined);
+    fs.writeFileSync(release, "", "utf-8");
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    assert.equal(payload.success, true);
+    assert.doesNotMatch(eventText, /"type":"subagent\.control"/);
+    assert.equal(status.activityState, undefined);
+    assert.equal(status.steps?.[0]?.activityState, undefined);
+    assert.equal(status.steps?.[0]?.durableAttentionReasons, undefined);
+    assert.equal(payload.results?.[0]?.activityState, undefined);
+    assert.equal(payload.results?.[0]?.durableAttentionReasons, undefined);
+  });
+
   it("resets background idle episode identity across fallback attempts", async () => {
     const markerDir = path.join(tempDir, "async-fallback-health-markers");
     fs.mkdirSync(markerDir, { recursive: true });

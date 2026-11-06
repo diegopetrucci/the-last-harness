@@ -9,7 +9,13 @@ import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createMockPi, createTempDir, makeAgent, removeTempDir } from "../support/helpers.ts";
+import {
+  createMockPi,
+  createTempDir,
+  events,
+  makeAgent,
+  removeTempDir,
+} from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import {
@@ -690,6 +696,82 @@ describe("async execution runner deadlines and process failures", () => {
     );
   });
 
+  for (const withLocation of [true, false]) {
+    it(`setup failure ${
+      withLocation
+        ? "preserves the dispatch-time childLocation"
+        : "adds no childLocation when none was dispatched"
+    }`, () => {
+      const id = `async-setup-failure-location-${withLocation ? "present" : "absent"}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      const childLocation = {
+        childCwd: path.join(tempDir, "child-worktree"),
+        displayPath: "child-worktree",
+        branch: "feat-setup-failure",
+      };
+      const config: SubagentRunConfig = {
+        id,
+        plan: {
+          kind: "single",
+          task: {
+            agent: "worker",
+            task: "Inspect the task",
+            tools: ["./custom-tool.ts"],
+            skills: ["tmux"],
+            inheritProjectContext: false,
+            inheritSkills: false,
+            systemPrompt: "You are a test agent.",
+            ...(withLocation ? { childLocation } : {}),
+          },
+        },
+        resultPath,
+        cwd: tempDir,
+        asyncDir,
+        artifactsDir: path.join(tempDir, `${id}-artifacts`),
+        artifactConfig: {
+          mode: "compact",
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          includeTranscript: false,
+          includeChildEventProjections: false,
+          cleanupDays: 7,
+        },
+        sessionId: "session-setup-failure-location",
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
+      const runnerPath = path.resolve(
+        process.cwd(),
+        "extensions/subagents/src/runs/background/subagent-runner.js",
+      );
+      const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        env: { ...process.env },
+      });
+      assert.equal(runner.status, 0, runner.stderr);
+
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.error, INVALID_LAZY_SKILL_TOOL_POLICY_ERROR);
+      assert.equal(status.steps?.[0]?.error, INVALID_LAZY_SKILL_TOOL_POLICY_ERROR);
+      const step = status.steps?.[0] as { childLocation?: unknown } | undefined;
+      if (withLocation) {
+        assert.deepEqual(step?.childLocation, childLocation);
+      } else {
+        assert.equal(step?.childLocation, undefined);
+        assert.equal("childLocation" in (step ?? {}), false);
+      }
+    });
+  }
+
   it("persists bounded active-runtime checkpoints without event or projection spam", async () => {
     mockPi.onCall({ delay: 2_500, output: "checkpointed result" });
     const id = `async-runtime-checkpoints-${Date.now().toString(36)}`;
@@ -760,6 +842,126 @@ describe("async execution runner deadlines and process failures", () => {
     assert.equal(payload.timedOut, true);
     assert.equal(payload.results[0]?.timedOut, true);
     assert.equal(payload.results[0]?.error, `Subagent timed out after ${roleTimeoutMs}ms.`);
+  });
+
+  it("finalizes an already-expired valid deadline without spawning and removes prepared prompt files", async () => {
+    const isolatedTmpDir = path.join(tempDir, "pre-spawn-timeout-tmp");
+    fs.mkdirSync(isolatedTmpDir);
+    const previousTmpDir = process.env.TMPDIR;
+    process.env.TMPDIR = isolatedTmpDir;
+    const id = `async-timeout-before-spawn-${Date.now().toString(36)}`;
+    try {
+      mockPi.onCall({ output: "must never run" });
+      const launch = executeAsyncSingle(id, {
+        agent: "echo",
+        task: "Task",
+        agentConfig: makeAgent("echo", { systemPrompt: "temporary system prompt" }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+        timeoutMs: 1,
+      });
+      assert.equal(launch.isError, undefined);
+
+      const payload = await readAsyncPayload(id);
+      const status = JSON.parse(
+        fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.success, false);
+      assert.equal(payload.timedOut, true);
+      assert.equal(payload.results[0]?.timedOut, true);
+      assert.equal(
+        payload.results[0]?.error,
+        "Subagent exceeded the configured maximum execution time.",
+      );
+      assert.equal(status.state, "failed");
+      assert.equal(status.steps?.[0]?.status, "failed");
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(mockPi.callCount(), 0, "an expired deadline must not spawn a child");
+      assert.deepEqual(
+        fs.readdirSync(isolatedTmpDir),
+        [],
+        "prepared prompt temp files must be removed",
+      );
+    } finally {
+      if (previousTmpDir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpDir;
+    }
+  });
+
+  it("keeps timeout session, result, status and artifact metadata in agreement", async () => {
+    const timeoutMs = scaleTestTimeout(500);
+    mockPi.onCall({
+      steps: [
+        {
+          jsonl: [
+            events.assistantMessage("partial output before timeout"),
+            events.toolStart("read", { path: "README.md" }),
+          ],
+        },
+        { delay: 60_000 },
+      ],
+    });
+    const id = `async-timeout-agreement-${Date.now().toString(36)}`;
+    const sessionFile = path.join(tempDir, "child-session.jsonl");
+    executeAsyncSingle(id, {
+      agent: "slow",
+      task: "Slow task",
+      agentConfig: makeAgent("slow", { completionGuard: false }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      sessionFile,
+      artifactsDir: path.join(tempDir, "timeout-artifacts"),
+      artifactConfig: {
+        enabled: true,
+        includeInput: false,
+        includeOutput: true,
+        includeJsonl: false,
+        includeMetadata: true,
+        cleanupDays: 7,
+      },
+      maxSubagentDepth: 2,
+      timeoutMs,
+    });
+
+    const payload = await readAsyncPayload(id);
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const result = payload.results[0]!;
+    const expectedError = "Subagent exceeded the configured maximum execution time.";
+
+    assert.equal(payload.state, "failed");
+    assert.equal(result.timedOut, true);
+    assert.equal(result.error, expectedError);
+    assert.equal(result.sessionFile, sessionFile);
+    assert.equal(status.steps?.[0]?.timedOut, true);
+    assert.equal(status.steps?.[0]?.sessionFile, sessionFile);
+    assert.ok(result.artifactPaths, "timeout should still persist artifacts");
+    const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+    assert.ok(artifactText.includes(expectedError), "artifact must carry the timeout error");
+    // Artifact metadata does not carry sessionFile; it must agree on the timeout
+    // identity (termination reason, exit code, error and the persisted deadline).
+    const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
+      exitCode?: number;
+      error?: string;
+      terminationReason?: string;
+      deadlineAt?: number;
+    };
+    assert.equal(metadata.terminationReason, "timed_out");
+    assert.equal(result.terminationReason, "timed_out");
+    assert.equal(metadata.exitCode, result.exitCode);
+    assert.equal(metadata.error, result.error);
+    assert.equal(typeof metadata.deadlineAt, "number");
   });
 
   it("hard-kills async children that ignore timeout SIGTERM", async () => {
