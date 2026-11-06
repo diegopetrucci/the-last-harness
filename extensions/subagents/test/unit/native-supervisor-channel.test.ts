@@ -103,8 +103,6 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
     baseCwd: process.cwd(),
     currentSessionId: sessionId,
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: ctx as SubagentState["lastUiContext"],
     poller: null,

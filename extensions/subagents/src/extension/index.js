@@ -14,7 +14,7 @@ import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPacka
 import { CLEANUP_MARKER_FRESH_WINDOW_MS, CLEANUP_MARKER_LEASE_OFFSET_MS, RUNTIME_CLEANUP_MARKER_NAME, } from "./runtime-cleanup-constants.js";
 import { resolveRunnerModulePath, resolveRunnerNodeCommand, } from "../runs/background/async-execution.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
-import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } from "../tui/render.js";
+import { renderWidget, renderSubagentResult } from "../tui/render.js";
 import { SubagentParams } from "./schemas.js";
 import { createSubagentExecutor, normalizeProjectAgentAccess, } from "../runs/foreground/subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
@@ -30,7 +30,7 @@ import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
-import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
+import { formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 import { registerCacheWarmingDecision } from "./cache-warming-decision.js";
 import { announceBundledSubagentRestoreProvider } from "../../../shared/subagent-restore-contract.js";
 export { loadConfig } from "./config.js";
@@ -125,29 +125,6 @@ export function scheduleDetachedRuntimeCleanup(deps = {}) {
     }
     catch {
     }
-}
-function subagentResultIsRunning(result) {
-    return (result.details?.progress?.some((entry) => entry.status === "running") ||
-        result.details?.results.some((entry) => entry.progress?.status === "running") ||
-        false);
-}
-function ensureSubagentResultAnimation(context) {
-    const state = context.state;
-    if (state.subagentResultAnimationTimer)
-        return;
-    if (typeof context.invalidate !== "function")
-        return;
-    if (state.frame === undefined)
-        state.frame = 0;
-    state.subagentResultAnimationTimer = setInterval(() => {
-        state.frame = ((state.frame ?? 0) + 1) % 10;
-        try {
-            context.invalidate?.();
-        }
-        catch {
-            void 0;
-        }
-    }, 80);
 }
 function isStaleExtensionContextError(error) {
     return error instanceof Error && error.message.includes("Extension context no longer active");
@@ -275,9 +252,6 @@ export default function registerSubagentExtension(pi) {
         subagentInProgress: false,
         asyncJobs: new Map(),
         foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-        pendingForegroundControlNotices: new Map(),
         cleanupTimers: new Map(),
         lastUiContext: null,
         liveDetailController,
@@ -328,7 +302,6 @@ export default function registerSubagentExtension(pi) {
         toolResultBridge.clear();
         stopResultWatcher();
         supervisorChannel.dispose();
-        clearPendingForegroundControlNotices(state);
         if (state.poller) {
             clearInterval(state.poller);
             state.poller = null;
@@ -476,15 +449,8 @@ export default function registerSubagentExtension(pi) {
                 rendererState !== null &&
                 typeof context.invalidate === "function" &&
                 liveDetailController.registerToolRow(context.toolCallId, rendererState, context.invalidate);
-            if (subagentResultIsRunning(result) && isLiveToolRow) {
-                ensureSubagentResultAnimation(context);
-            }
-            else {
-                clearLegacyResultAnimationTimer(context);
-            }
-            const frame = context.state?.frame ?? 0;
             const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
-            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme, frame, Date.now());
+            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme);
         },
     });
     pi.registerTool(tool);
@@ -525,7 +491,6 @@ export default function registerSubagentExtension(pi) {
     const controlEventHandler = (payload) => {
         handleSubagentControlNotice({
             pi,
-            state,
             visibleControlNotices,
             details: payload,
             isIdle: isControlNoticeIdle,
@@ -586,7 +551,6 @@ export default function registerSubagentExtension(pi) {
             }
             state.lastUiContext = ctx;
             cleanupSessionArtifacts(ctx);
-            clearPendingForegroundControlNotices(state);
             liveDetailController.clearToolRows();
             resetJobs(ctx);
             restoreAttempted = true;
@@ -632,7 +596,6 @@ export default function registerSubagentExtension(pi) {
         if (state.poller)
             clearInterval(state.poller);
         state.poller = null;
-        clearPendingForegroundControlNotices(state);
         for (const timer of state.cleanupTimers.values()) {
             clearTimeout(timer);
         }

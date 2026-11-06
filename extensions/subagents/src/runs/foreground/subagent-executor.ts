@@ -17,7 +17,6 @@ import { getArtifactsDir, resolveArtifactConfig } from "../../shared/artifacts.t
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
-import { clearPendingForegroundControlNotices } from "../../extension/control-notices.ts";
 
 import {
   authorizeProjectInterruptTarget,
@@ -26,15 +25,10 @@ import {
   buildRunStatusParams,
   buildResumeModelResolution,
   cancelPersistedPausedForegroundRun,
-  clearForegroundMessageInbox,
-  foregroundStatusResult,
   getAsyncInterruptTarget,
-  getForegroundControl,
   getRequestedModeLabel,
   interruptAsyncRun,
   readModelRegistrySnapshot,
-  registerForegroundMessageInbox,
-  requestForegroundInterrupt,
   requestInterruptAllRunningSubagentRuns,
   projectInterruptAuthorizationResult,
   projectInterruptResolutionMismatch,
@@ -62,10 +56,8 @@ import {
 } from "./project-agent-control.ts";
 export {
   buildResumeModelResolution,
-  clearForegroundMessageInbox,
   normalizeProjectAgentAccess,
   projectAgentEntryIdentityError,
-  registerForegroundMessageInbox,
   trimRememberedForegroundRuns,
   requestInterruptAllRunningSubagentRuns,
 };
@@ -782,25 +774,6 @@ function executeStatusAction(
   _ctx: ExtensionContext,
   deps: ExecutorDeps,
 ): SubagentToolResult<Details> {
-  if (params.id) {
-    try {
-      const resolved = resolveSubagentRunId(params.id, { state: deps.state });
-      if (resolved?.kind === "foreground") {
-        const foreground = getForegroundControl(deps.state, resolved.id);
-        if (foreground) return foregroundStatusResult(foreground);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        content: [{ type: "text", text: message }],
-        isError: true,
-        details: { mode: "management", results: [] },
-      };
-    }
-  } else {
-    const foreground = getForegroundControl(deps.state, undefined);
-    if (foreground) return foregroundStatusResult(foreground);
-  }
   return inspectSubagentStatus(buildRunStatusParams(params), { state: deps.state });
 }
 
@@ -935,11 +908,7 @@ async function executeInterruptAction(
   }
   const targetRunId = params.id;
   const rememberedPaused = resolveRememberedForegroundRun(params, deps.state);
-  if (
-    rememberedPaused?.child.status === "paused" &&
-    rememberedPaused.child.pause &&
-    !getForegroundControl(deps.state, rememberedPaused.run.runId)
-  ) {
+  if (rememberedPaused?.child.status === "paused" && rememberedPaused.child.pause) {
     const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
     if (fs.existsSync(pausedAsyncDir)) {
       const projectResolutionError = projectInterruptResolutionMismatch(
@@ -1044,27 +1013,6 @@ async function executeInterruptAction(
           details: { mode: "management", results: [] },
         };
       }
-    }
-    const foreground = getForegroundControl(deps.state, resolved.id);
-    if (foreground) {
-      if (requestForegroundInterrupt(foreground)) {
-        return {
-          content: [
-            { type: "text", text: `Interrupt requested for foreground run ${foreground.runId}.` },
-          ],
-          details: { mode: "management", results: [] },
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
-          },
-        ],
-        isError: true,
-        details: { mode: "management", results: [] },
-      };
     }
     const asyncTarget = getAsyncInterruptTarget(deps.state, resolved.id);
     if (asyncTarget) {
@@ -1191,8 +1139,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const initState = () => {
       deps.state.baseCwd = ctx.cwd;
       deps.state.foregroundRuns ??= new Map();
-      deps.state.foregroundControls ??= new Map();
-      deps.state.lastForegroundControlId ??= null;
     };
     const requestParams = params;
     const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
@@ -1370,7 +1316,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       path.join(sessionDirForIndex(idx), "session.jsonl");
 
     const onUpdateWithContext = onUpdate;
-    const foregroundMode: "single" | "parallel" = hasTasks ? "parallel" : "single";
     const runStartedAt = Date.now();
 
     const execData: ExecutionContextData = {
@@ -1401,36 +1346,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       modelScope,
     };
 
-    const foregroundControl = effectiveAsync
-      ? undefined
-      : {
-          runId,
-          mode: foregroundMode,
-          startedAt: runStartedAt,
-          updatedAt: runStartedAt,
-          currentAgent: undefined,
-          currentIndex: undefined,
-          currentActivityState: undefined,
-          interrupt: undefined,
-        };
-    if (foregroundControl) {
-      deps.state.foregroundControls.set(runId, foregroundControl);
-      deps.state.lastForegroundControlId = runId;
-    }
-
     try {
       const asyncResult = runAsyncPath(execData, deps);
       if (asyncResult) return asyncResult;
     } catch (error) {
       return toExecutionErrorResult(effectiveParams, error);
-    } finally {
-      if (foregroundControl) {
-        clearPendingForegroundControlNotices(deps.state, runId);
-        deps.state.foregroundControls.delete(runId);
-        if (deps.state.lastForegroundControlId === runId) {
-          deps.state.lastForegroundControlId = null;
-        }
-      }
     }
     return {
       content: [{ type: "text", text: "Invalid params" }],

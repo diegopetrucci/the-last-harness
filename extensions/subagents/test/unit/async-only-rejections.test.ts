@@ -251,7 +251,7 @@ async function runParallelWithSeam(
 // ---------------------------------------------------------------------------
 // (a) Rejection gate leaves executor state unchanged
 // Snapshots state before a rejected call; asserts baseCwd, subagentInProgress,
-// foregroundRuns/Controls unchanged and no new ASYNC_DIR entry created.
+// foregroundRuns unchanged and no new ASYNC_DIR entry created.
 // ---------------------------------------------------------------------------
 
 describe("async-only — rejection gate leaves executor state unchanged", () => {
@@ -260,8 +260,6 @@ describe("async-only — rejection gate leaves executor state unchanged", () => 
       baseCwd: state.baseCwd,
       subagentInProgress: state.subagentInProgress,
       foregroundRunsSize: state.foregroundRuns?.size ?? 0,
-      foregroundControlsSize: state.foregroundControls.size,
-      lastForegroundControlId: state.lastForegroundControlId,
     };
   }
 

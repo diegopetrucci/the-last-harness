@@ -6,10 +6,9 @@ import { getArtifactsDir, resolveArtifactConfig } from "../../shared/artifacts.j
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.js";
 import { handleManagementAction } from "../../agents/agent-management.js";
 import { buildDoctorReport } from "../../extension/doctor.js";
-import { clearPendingForegroundControlNotices } from "../../extension/control-notices.js";
-import { authorizeProjectInterruptTarget, authorizeProjectSteerTarget, buildManagementActionParams, buildRunStatusParams, buildResumeModelResolution, cancelPersistedPausedForegroundRun, clearForegroundMessageInbox, foregroundStatusResult, getAsyncInterruptTarget, getForegroundControl, getRequestedModeLabel, interruptAsyncRun, readModelRegistrySnapshot, registerForegroundMessageInbox, requestForegroundInterrupt, requestInterruptAllRunningSubagentRuns, projectInterruptAuthorizationResult, projectInterruptResolutionMismatch, resolveRememberedForegroundRun, resolveSingleRunOutputBaseDir, resolvedAsyncInterruptTarget, selectInterruptTarget, steerAsyncRun, unknownAgentMessage, trimRememberedForegroundRuns, providerFallbackModelsForTarget, resumeAsyncRun, unsupportedSavedChainInput, unsupportedSavedChainInputResult, } from "./foreground-control.js";
+import { authorizeProjectInterruptTarget, authorizeProjectSteerTarget, buildManagementActionParams, buildRunStatusParams, buildResumeModelResolution, cancelPersistedPausedForegroundRun, getAsyncInterruptTarget, getRequestedModeLabel, interruptAsyncRun, readModelRegistrySnapshot, requestInterruptAllRunningSubagentRuns, projectInterruptAuthorizationResult, projectInterruptResolutionMismatch, resolveRememberedForegroundRun, resolveSingleRunOutputBaseDir, resolvedAsyncInterruptTarget, selectInterruptTarget, steerAsyncRun, unknownAgentMessage, trimRememberedForegroundRuns, providerFallbackModelsForTarget, resumeAsyncRun, unsupportedSavedChainInput, unsupportedSavedChainInputResult, } from "./foreground-control.js";
 import { hasInMemoryProjectAgentCapture, isRecordValue, lookupPrivateProjectActionReference, normalizeProjectAgentAccess, privateProjectCaptureForTarget, projectAgentEntryIdentityError, projectRunAuthorizationError, resolveProjectAgentExecution, } from "./project-agent-control.js";
-export { buildResumeModelResolution, clearForegroundMessageInbox, normalizeProjectAgentAccess, projectAgentEntryIdentityError, registerForegroundMessageInbox, trimRememberedForegroundRuns, requestInterruptAllRunningSubagentRuns, };
+export { buildResumeModelResolution, normalizeProjectAgentAccess, projectAgentEntryIdentityError, trimRememberedForegroundRuns, requestInterruptAllRunningSubagentRuns, };
 import { pausedForegroundStatusPath } from "./foreground-pause-state.js";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.js";
 import { resolveExecutionPolicy, } from "../../agents/execution-ceiling.js";
@@ -446,29 +445,6 @@ function executeDoctorAction(params, requestCwd, ctx, deps) {
     };
 }
 function executeStatusAction(params, _ctx, deps) {
-    if (params.id) {
-        try {
-            const resolved = resolveSubagentRunId(params.id, { state: deps.state });
-            if (resolved?.kind === "foreground") {
-                const foreground = getForegroundControl(deps.state, resolved.id);
-                if (foreground)
-                    return foregroundStatusResult(foreground);
-            }
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: message }],
-                isError: true,
-                details: { mode: "management", results: [] },
-            };
-        }
-    }
-    else {
-        const foreground = getForegroundControl(deps.state, undefined);
-        if (foreground)
-            return foregroundStatusResult(foreground);
-    }
     return inspectSubagentStatus(buildRunStatusParams(params), { state: deps.state });
 }
 async function executeSteerAction(params, ctx, deps) {
@@ -585,9 +561,7 @@ async function executeInterruptAction(params, ctx, deps) {
     }
     const targetRunId = params.id;
     const rememberedPaused = resolveRememberedForegroundRun(params, deps.state);
-    if (rememberedPaused?.child.status === "paused" &&
-        rememberedPaused.child.pause &&
-        !getForegroundControl(deps.state, rememberedPaused.run.runId)) {
+    if (rememberedPaused?.child.status === "paused" && rememberedPaused.child.pause) {
         const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
         if (fs.existsSync(pausedAsyncDir)) {
             const projectResolutionError = projectInterruptResolutionMismatch(requestedProjectLookup, rememberedPaused.run.runId);
@@ -680,27 +654,6 @@ async function executeInterruptAction(params, ctx, deps) {
                 };
             }
         }
-        const foreground = getForegroundControl(deps.state, resolved.id);
-        if (foreground) {
-            if (requestForegroundInterrupt(foreground)) {
-                return {
-                    content: [
-                        { type: "text", text: `Interrupt requested for foreground run ${foreground.runId}.` },
-                    ],
-                    details: { mode: "management", results: [] },
-                };
-            }
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
-                    },
-                ],
-                isError: true,
-                details: { mode: "management", results: [] },
-            };
-        }
         const asyncTarget = getAsyncInterruptTarget(deps.state, resolved.id);
         if (asyncTarget) {
             asyncInterruptTarget = resolvedAsyncInterruptTarget(asyncTarget);
@@ -783,8 +736,6 @@ export function createSubagentExecutor(deps) {
         const initState = () => {
             deps.state.baseCwd = ctx.cwd;
             deps.state.foregroundRuns ??= new Map();
-            deps.state.foregroundControls ??= new Map();
-            deps.state.lastForegroundControlId ??= null;
         };
         const requestParams = params;
         const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
@@ -927,7 +878,6 @@ export function createSubagentExecutor(deps) {
         const childSessionFileForTask = (_agentName, idx) => path.join(sessionDirForIndex(idx), "session.jsonl");
         const childSessionFileForIndex = (idx) => path.join(sessionDirForIndex(idx), "session.jsonl");
         const onUpdateWithContext = onUpdate;
-        const foregroundMode = hasTasks ? "parallel" : "single";
         const runStartedAt = Date.now();
         const execData = {
             params: effectiveParams,
@@ -956,22 +906,6 @@ export function createSubagentExecutor(deps) {
             timeoutMs: runTimeoutMs,
             modelScope,
         };
-        const foregroundControl = effectiveAsync
-            ? undefined
-            : {
-                runId,
-                mode: foregroundMode,
-                startedAt: runStartedAt,
-                updatedAt: runStartedAt,
-                currentAgent: undefined,
-                currentIndex: undefined,
-                currentActivityState: undefined,
-                interrupt: undefined,
-            };
-        if (foregroundControl) {
-            deps.state.foregroundControls.set(runId, foregroundControl);
-            deps.state.lastForegroundControlId = runId;
-        }
         try {
             const asyncResult = runAsyncPath(execData, deps);
             if (asyncResult)
@@ -979,15 +913,6 @@ export function createSubagentExecutor(deps) {
         }
         catch (error) {
             return toExecutionErrorResult(effectiveParams, error);
-        }
-        finally {
-            if (foregroundControl) {
-                clearPendingForegroundControlNotices(deps.state, runId);
-                deps.state.foregroundControls.delete(runId);
-                if (deps.state.lastForegroundControlId === runId) {
-                    deps.state.lastForegroundControlId = null;
-                }
-            }
         }
         return {
             content: [{ type: "text", text: "Invalid params" }],

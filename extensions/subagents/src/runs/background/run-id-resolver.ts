@@ -31,9 +31,7 @@ function exactAsyncLocation(
 
 function foregroundIds(state: SubagentState | undefined): string[] {
   if (!state) return [];
-  return [
-    ...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])]),
-  ];
+  return [...(state.foregroundRuns?.keys() ?? [])];
 }
 
 export function resolveSubagentRunId(
@@ -43,8 +41,7 @@ export function resolveSubagentRunId(
   assertSafeNestedId("id", id);
   const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
   const resultsDir = deps.resultsDir ?? RESULTS_DIR;
-  if (deps.state?.foregroundControls.has(id) || deps.state?.foregroundRuns?.has(id))
-    return { kind: "foreground", id };
+  if (deps.state?.foregroundRuns?.has(id)) return { kind: "foreground", id };
   const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
   if (exactAsync) return { kind: "async", id, location: exactAsync };
 

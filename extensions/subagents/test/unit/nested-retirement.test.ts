@@ -4,20 +4,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import {
-  clearForegroundMessageInbox,
-  registerForegroundMessageInbox,
-} from "../../src/runs/foreground/foreground-control.ts";
 import { NESTED_EVENTS_DIR } from "../../src/runs/shared/nested-events.ts";
 import {
   RETIRED_NESTED_ROUTE_ENV_VARS,
   SUBAGENT_CHILD_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import {
-  type ExtensionConfig,
-  type ForegroundRunControl,
-  type SubagentState,
-} from "../../src/shared/types.ts";
+import { type ExtensionConfig, type SubagentState } from "../../src/shared/types.ts";
 import { makeAgent, makeExtensionAPI, makeMinimalCtx } from "../support/helpers.ts";
 
 function createState(): SubagentState {
@@ -26,9 +18,6 @@ function createState(): SubagentState {
     currentSessionId: null,
     asyncJobs: new Map(),
     foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
@@ -37,17 +26,6 @@ function createState(): SubagentState {
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },
   };
-}
-
-class CapturingForegroundControls extends Map<string, ForegroundRunControl> {
-  readonly capturedRunIds: string[] = [];
-  readonly capturedControls: ForegroundRunControl[] = [];
-
-  override set(runId: string, control: ForegroundRunControl): this {
-    this.capturedRunIds.push(runId);
-    this.capturedControls.push(control);
-    return super.set(runId, control);
-  }
 }
 
 function createExecutor(state: SubagentState, sessionRoot?: string) {
@@ -68,35 +46,6 @@ function createExecutor(state: SubagentState, sessionRoot?: string) {
 }
 
 describe("nested orchestration retirement", () => {
-  it("isolates foreground message inboxes across direct control lifecycles", () => {
-    const first: ForegroundRunControl = {
-      runId: "same-run",
-      mode: "single",
-      startedAt: 1,
-      updatedAt: 1,
-    };
-    const firstInbox = registerForegroundMessageInbox(first, first.runId, 0);
-    fs.writeFileSync(path.join(firstInbox, "stale.json"), "{}", "utf-8");
-    const firstRoot = first.messageInboxRoot!;
-
-    const second: ForegroundRunControl = {
-      runId: "same-run",
-      mode: "single",
-      startedAt: 2,
-      updatedAt: 2,
-    };
-    const secondInbox = registerForegroundMessageInbox(second, second.runId, 0);
-    try {
-      assert.notEqual(second.messageInboxRoot, firstRoot);
-      assert.equal(fs.existsSync(path.join(secondInbox, "stale.json")), false);
-    } finally {
-      clearForegroundMessageInbox(first, 0);
-      clearForegroundMessageInbox(second, 0);
-    }
-    assert.equal(fs.existsSync(firstRoot), false);
-    assert.equal(fs.existsSync(path.dirname(secondInbox)), false);
-  });
-
   it("does not create a retired nested route for an ordinary direct background run", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-root-no-nested-route-"));
     const state = createState();
@@ -117,9 +66,6 @@ describe("nested orchestration retirement", () => {
       const content = result.content[0];
       const text = content?.type === "text" ? content.text : "";
       assert.match(text, /ordinary root model lookup failed/);
-      // Background dispatch does not set foregroundControls (foreground engine
-      // is unreachable from new dispatch; deleted in the next ticket).
-      assert.equal(state.foregroundControls.size, 0);
 
       // Core regression: no retired nested route files created.
       let routeFiles: string[] = [];
@@ -143,8 +89,6 @@ describe("nested orchestration retirement", () => {
         process.env[activeRouteEnv] = activeRouteEnv === SUBAGENT_CHILD_ENV ? "1" : "legacy-route";
         const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-root-retired-route-"));
         const state = createState();
-        const controls = new CapturingForegroundControls();
-        state.foregroundControls = controls;
         try {
           const result = await createExecutor(state, root).execute(
             "run",
@@ -158,7 +102,6 @@ describe("nested orchestration retirement", () => {
           const content = result.content[0];
           const text = content?.type === "text" ? content.text : "";
           assert.match(text, /Nested subagent orchestration is retired/);
-          assert.equal(controls.capturedRunIds.length, 0);
           assert.deepEqual(fs.readdirSync(root), []);
         } finally {
           fs.rmSync(root, { recursive: true, force: true });

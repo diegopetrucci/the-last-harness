@@ -358,8 +358,6 @@ function isAwaitingSupervisorPause(pause) {
         pause.kind === "awaiting_supervisor");
 }
 function requestBlockingPhase(request, state) {
-    if (state.foregroundControls.has(request.runId))
-        return "pausing";
     const foregroundRun = state.foregroundRuns?.get(request.runId);
     const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ?? foregroundRun?.children[request.childIndex];
     if (foregroundChild && isAwaitingSupervisorPause(foregroundChild.pause)) {

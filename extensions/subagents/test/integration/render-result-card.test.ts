@@ -6,18 +6,12 @@ import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput, type Details, type SubagentToolResult } from "../../src/shared/types.ts";
 import { renderSubagentResult } from "../../src/tui/render.ts";
-import { PHRASE_HOLD_MS, whimsicalThinkingPhrase } from "../../src/tui/whimsical-phrases.ts";
 
 const theme = createPlainTheme();
 
 const expandKey = liveDetailShortcutDisplay();
 const expandHint = `Press ${expandKey} for full output`;
-const liveDetailHint = `Press ${expandKey} for live detail`;
 const emptyUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-
-function firstGrapheme(text: string): string {
-  return Array.from(text.trimStart())[0] ?? "";
-}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -55,110 +49,25 @@ function withTerminalRows<T>(rows: number, fn: () => T): T {
   }
 }
 
+function makeFailedParallelResult(): SubagentToolResult<Details> {
+  return {
+    content: [{ type: "text", text: "failed" }],
+    details: {
+      mode: "parallel",
+      totalSteps: 6,
+      results: ["a", "b", "c", "d", "e", "f"].map((agent) => ({
+        agent,
+        task: "Run the assigned task.",
+        exitCode: 1,
+        error: "boom",
+        usage: emptyUsage,
+      })),
+      artifacts: { dir: "/tmp/failed-artifacts", files: [] },
+    },
+  };
+}
+
 describe("renderSubagentResult", () => {
-  it("shows a resolved foreground tk ticket once while active in compact and expanded cards", () => {
-    const result = {
-      agent: "worker",
-      task: "Run `tk show psr-raw4` first.",
-      exitCode: 0,
-      usage: emptyUsage,
-      tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-      progress: {
-        index: 0,
-        agent: "worker",
-        status: "running" as const,
-        task: "Run `tk show psr-raw4` first.",
-        recentTools: [],
-        recentOutput: [],
-        toolCount: 1,
-        tokens: 0,
-        durationMs: 10,
-      },
-    };
-    for (const expanded of [false, true]) {
-      const text = renderSubagentResult!(
-        {
-          content: [{ type: "text", text: "running" }],
-          details: { mode: "single", results: [result] },
-        },
-        { expanded },
-        theme,
-      )
-        .render(120)
-        .join("\n");
-      assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
-    }
-
-    const completedText = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "done" }],
-        details: {
-          mode: "single",
-          results: [{ ...result, progress: { ...result.progress, status: "completed" } }],
-        },
-      },
-      { expanded: false },
-      theme,
-    )
-      .render(120)
-      .join("\n");
-    assert.doesNotMatch(completedText, /ticket: Show active tk title/);
-  });
-
-  it("shows one foreground tk ticket indicator for active parallel children", () => {
-    const text = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: {
-          mode: "parallel",
-          totalSteps: 2,
-          results: [
-            {
-              agent: "ticketed",
-              task: "Run `tk show psr-raw4` first.",
-              exitCode: 0,
-              usage: emptyUsage,
-              tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-              progress: {
-                index: 0,
-                agent: "ticketed",
-                status: "running",
-                task: "ticket",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-            {
-              agent: "plain",
-              task: "Review the result.",
-              exitCode: 0,
-              usage: emptyUsage,
-              progress: {
-                index: 1,
-                agent: "plain",
-                status: "running",
-                task: "plain",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-          ],
-        },
-      },
-      { expanded: false },
-      theme,
-    )
-      .render(140)
-      .join("\n");
-    assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
-  });
-
   it("ignores sparse historical result entries while preserving logical row indexes", () => {
     const validResult = {
       agent: "reviewer",
@@ -203,166 +112,10 @@ describe("renderSubagentResult", () => {
     assert.equal(sparseResults[1], validResult);
   });
 
-  it("renders one live-detail hint after all running foreground result rows", () => {
-    const text = withTerminalWidth(140, () =>
-      renderSubagentResult!(
-        {
-          content: [{ type: "text", text: "running" }],
-          details: {
-            mode: "parallel",
-            totalSteps: 2,
-            results: [
-              {
-                agent: "reviewer",
-                task: "Review the change.",
-                exitCode: 0,
-                usage: emptyUsage,
-                tkTicket: { id: "tlhf-first", title: "First ticket" },
-                progress: {
-                  index: 0,
-                  agent: "reviewer",
-                  status: "running",
-                  task: "Review the change.",
-                  currentTool: "read",
-                  currentToolArgs: "reviewer.ts",
-                  recentTools: [],
-                  recentOutput: [],
-                  toolCount: 1,
-                  tokens: 0,
-                  durationMs: 10,
-                },
-              },
-              {
-                agent: "writer",
-                task: "Write the change.",
-                exitCode: 0,
-                usage: emptyUsage,
-                progress: {
-                  index: 1,
-                  agent: "writer",
-                  status: "running",
-                  task: "Write the change.",
-                  currentTool: "write",
-                  currentToolArgs: "writer.ts",
-                  recentTools: [],
-                  recentOutput: [],
-                  toolCount: 1,
-                  tokens: 0,
-                  durationMs: 10,
-                },
-              },
-            ],
-            artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
-          },
-        },
-        { expanded: false },
-        theme,
-      )
-        .render(140)
-        .join("\n"),
-    );
-
-    const lines = text.split("\n");
-    const hintLines = lines.filter((line) => line.includes(liveDetailHint));
-    assert.equal(hintLines.length, 1, "concurrent running rows should share one live-detail hint");
-    assert.match(text, /artifacts: \/tmp\/foreground-artifacts/);
-
-    const reviewerRowIndex = lines.findIndex((line) => line.includes("reviewer"));
-    const reviewerTicketIndex = lines.findIndex((line) => line.includes("ticket: First ticket"));
-    const reviewerActivityIndex = lines.findIndex((line) => line.includes("read: reviewer.ts"));
-    const writerRowIndex = lines.findIndex((line) => line.includes("writer"));
-    const writerActivityIndex = lines.findIndex((line) => line.includes("write: writer.ts"));
-    const artifactsIndex = lines.findIndex((line) =>
-      line.includes("artifacts: /tmp/foreground-artifacts"),
-    );
-    const hintIndex = lines.findIndex((line) => line.includes(liveDetailHint));
-
-    assert.ok(reviewerRowIndex !== -1, "first agent row should be present");
-    assert.match(
-      lines[reviewerActivityIndex] ?? "",
-      /^ {7}read: reviewer\.ts$/,
-      "foreground parallel activity must keep the exact 7-space column",
-    );
-    assert.match(
-      lines[writerActivityIndex] ?? "",
-      /^ {7}write: writer\.ts$/,
-      "second foreground parallel activity must keep the exact 7-space column",
-    );
-    assert.doesNotMatch(text, /⎿/, "foreground parallel rendering must not add the branch glyph");
-    assert.ok(reviewerTicketIndex > reviewerRowIndex, "ticket should remain under its agent row");
-    assert.ok(
-      reviewerActivityIndex > reviewerTicketIndex,
-      "first agent activity should remain after its ticket",
-    );
-    assert.ok(writerRowIndex !== -1, "second agent row should be present");
-    assert.ok(
-      writerActivityIndex > writerRowIndex,
-      "second agent activity should remain in its row",
-    );
-    assert.ok(hintIndex > writerActivityIndex, "shared hint should follow all agent activity");
-    assert.equal(
-      artifactsIndex,
-      hintIndex - 1,
-      "artifacts should remain immediately before the shared hint",
-    );
-    assert.equal(hintIndex, lines.length - 1, "shared hint should be the final rendered card line");
-  });
-
-  it("keeps the shared live-detail footer after collapsed multi-agent truncation", () => {
+  it("keeps collapsed multi-agent output within the row budget with a hidden-lines summary", () => {
     const text = withTerminalWidth(140, () =>
       withTerminalRows(10, () =>
-        renderSubagentResult!(
-          {
-            content: [{ type: "text", text: "running" }],
-            details: {
-              mode: "parallel",
-              totalSteps: 2,
-              results: [
-                {
-                  agent: "reviewer",
-                  task: "Review the change.",
-                  exitCode: 0,
-                  usage: emptyUsage,
-                  progress: {
-                    index: 0,
-                    agent: "reviewer",
-                    status: "running",
-                    task: "Review the change.",
-                    currentTool: "read",
-                    currentToolArgs: "reviewer.ts",
-                    recentTools: [],
-                    recentOutput: [],
-                    toolCount: 1,
-                    tokens: 0,
-                    durationMs: 10,
-                  },
-                },
-                {
-                  agent: "writer",
-                  task: "Write the change.",
-                  exitCode: 0,
-                  usage: emptyUsage,
-                  progress: {
-                    index: 1,
-                    agent: "writer",
-                    status: "running",
-                    task: "Write the change.",
-                    currentTool: "write",
-                    currentToolArgs: "writer.ts",
-                    recentTools: [],
-                    recentOutput: [],
-                    toolCount: 1,
-                    tokens: 0,
-                    durationMs: 10,
-                  },
-                },
-              ],
-              artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
-            },
-          },
-          { expanded: false },
-          theme,
-        )
+        renderSubagentResult!(makeFailedParallelResult(), { expanded: false }, theme)
           .render(140)
           .join("\n"),
       ),
@@ -370,266 +123,35 @@ describe("renderSubagentResult", () => {
 
     const lines = text.split("\n");
     assert.match(text, new RegExp(`lines hidden · ${escapeRegExp(expandKey)} expands`));
-    assert.equal(
-      lines.filter((line) => line.includes(liveDetailHint)).length,
-      1,
-      "truncation should retain one shared live-detail footer",
-    );
-    assert.match(lines.at(-1) ?? "", new RegExp(escapeRegExp(liveDetailHint)));
     assert.ok(lines.length <= 5, "collapsed output should respect the constrained line budget");
   });
 
-  it("keeps the wrapped live-detail footer within a narrow collapsed height budget", () => {
+  it("keeps wrapped hidden-lines summaries within a narrow collapsed height budget", () => {
     const text = withTerminalWidth(37, () =>
       withTerminalRows(10, () =>
-        renderSubagentResult!(
-          {
-            content: [{ type: "text", text: "running" }],
-            details: {
-              mode: "parallel",
-              totalSteps: 2,
-              results: [
-                {
-                  agent: "reviewer",
-                  task: "Review the change.",
-                  exitCode: 0,
-                  usage: emptyUsage,
-                  progress: {
-                    index: 0,
-                    agent: "reviewer",
-                    status: "running",
-                    task: "Review the change.",
-                    currentTool: "read",
-                    currentToolArgs: "reviewer.ts",
-                    recentTools: [],
-                    recentOutput: [],
-                    toolCount: 1,
-                    tokens: 0,
-                    durationMs: 10,
-                  },
-                },
-                {
-                  agent: "writer",
-                  task: "Write the change.",
-                  exitCode: 0,
-                  usage: emptyUsage,
-                  progress: {
-                    index: 1,
-                    agent: "writer",
-                    status: "running",
-                    task: "Write the change.",
-                    currentTool: "write",
-                    currentToolArgs: "writer.ts",
-                    recentTools: [],
-                    recentOutput: [],
-                    toolCount: 1,
-                    tokens: 0,
-                    durationMs: 10,
-                  },
-                },
-              ],
-              artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
-            },
-          },
-          { expanded: false },
-          theme,
-        )
+        renderSubagentResult!(makeFailedParallelResult(), { expanded: false }, theme)
           .render(37)
           .join("\n"),
       ),
     );
 
     const lines = text.split("\n");
-    const normalized = lines.join(" ").replace(/\s+/g, " ").trim();
-    assert.equal(
-      normalized.match(new RegExp(escapeRegExp(liveDetailHint), "g"))?.length,
-      1,
-      "narrow wrapping should retain exactly one live-detail hint",
-    );
-    const footerStart = lines.findIndex((line) => line.includes(`Press ${expandKey}`));
-    assert.ok(footerStart !== -1, "wrapped live-detail footer should be present");
-    assert.equal(
-      lines.slice(footerStart).join(" ").replace(/\s+/g, " ").trim(),
-      liveDetailHint,
-      "wrapped live-detail footer should remain final",
-    );
     assert.ok(lines.length <= 5, "narrow collapsed output should respect the line budget");
+    assert.match(text.replace(/\s+/g, " "), new RegExp(`${escapeRegExp(expandKey)}`));
   });
 
-  it("falls back to a bounded key summary when the footer cannot fit", () => {
-    const tinyResult = {
-      content: [{ type: "text" as const, text: "running" }],
-      details: {
-        mode: "parallel" as const,
-        totalSteps: 2,
-        results: ["reviewer", "writer"].map((agent, index) => ({
-          agent,
-          task: "Run the assigned task.",
-          exitCode: 0,
-          usage: emptyUsage,
-          progress: {
-            index,
-            agent,
-            status: "running" as const,
-            task: "Run the assigned task.",
-            currentTool: "read",
-            currentToolArgs: `${agent}.ts`,
-            recentTools: [],
-            recentOutput: [],
-            toolCount: 1,
-            tokens: 0,
-            durationMs: 10,
-          },
-        })),
-      },
-    };
+  it("falls back to a bounded key summary when the hidden-lines summary cannot fit", () => {
     const text = withTerminalWidth(8, () =>
       withTerminalRows(10, () =>
-        renderSubagentResult!(tinyResult, { expanded: false }, theme).render(8).join("\n"),
+        renderSubagentResult!(makeFailedParallelResult(), { expanded: false }, theme)
+          .render(8)
+          .join("\n"),
       ),
     );
 
     const lines = text.split("\n");
     assert.ok(lines.length <= 5, "tiny collapsed output should respect the line budget");
     assert.doesNotMatch(text, /Press|live detail|for live/);
-  });
-
-  it("indents the ticket line deeper than its agent row in multi-agent compact output", () => {
-    const text = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: {
-          mode: "parallel",
-          totalSteps: 2,
-          results: [
-            {
-              agent: "ticketed",
-              task: "Run `tk show psr-ndnt` first.",
-              exitCode: 0,
-              usage: emptyUsage,
-              tkTicket: { id: "psr-ndnt", title: "Indent ticket under agent" },
-              progress: {
-                index: 0,
-                agent: "ticketed",
-                status: "running",
-                task: "ticket",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-            {
-              agent: "plain",
-              task: "Review the result.",
-              exitCode: 0,
-              usage: emptyUsage,
-              progress: {
-                index: 1,
-                agent: "plain",
-                status: "running",
-                task: "plain",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-          ],
-        },
-      },
-      { expanded: false },
-      theme,
-    )
-      .render(140)
-      .join("\n");
-
-    const lines = text.split("\n");
-    const agentLineIndex = lines.findIndex((l) => l.includes("ticketed"));
-    const ticketLineIndex = lines.findIndex((l) => l.includes("ticket: Indent ticket under agent"));
-    assert.ok(agentLineIndex !== -1, "agent row should be present");
-    assert.ok(ticketLineIndex !== -1, "ticket line should be present");
-    assert.ok(ticketLineIndex > agentLineIndex, "ticket line should appear after agent row");
-
-    const agentLine = lines[agentLineIndex]!;
-    const ticketLine = lines[ticketLineIndex]!;
-    const agentIndent = agentLine.length - agentLine.trimStart().length;
-    const ticketIndent = ticketLine.length - ticketLine.trimStart().length;
-    assert.ok(
-      ticketIndent > agentIndent,
-      `ticket line indent (${ticketIndent}) should exceed agent row indent (${agentIndent})`,
-    );
-  });
-
-  it("indents the ticket line deeper than its agent row in multi-agent expanded output", () => {
-    const text = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: {
-          mode: "parallel",
-          totalSteps: 2,
-          results: [
-            {
-              agent: "ticketed",
-              task: "Run `tk show psr-xpnd` first.",
-              exitCode: 0,
-              usage: emptyUsage,
-              tkTicket: { id: "psr-xpnd", title: "Expanded indent ticket" },
-              progress: {
-                index: 0,
-                agent: "ticketed",
-                status: "running",
-                task: "ticket",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-            {
-              agent: "plain",
-              task: "Review the result.",
-              exitCode: 0,
-              usage: emptyUsage,
-              progress: {
-                index: 1,
-                agent: "plain",
-                status: "running",
-                task: "plain",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 1,
-                tokens: 0,
-                durationMs: 10,
-              },
-            },
-          ],
-        },
-      },
-      { expanded: true },
-      theme,
-    )
-      .render(140)
-      .join("\n");
-
-    const lines = text.split("\n");
-    const agentLineIndex = lines.findIndex((l) => l.includes("ticketed"));
-    const ticketLineIndex = lines.findIndex((l) => l.includes("ticket: Expanded indent ticket"));
-    assert.ok(agentLineIndex !== -1, "agent row should be present");
-    assert.ok(ticketLineIndex !== -1, "ticket line should be present");
-    assert.ok(ticketLineIndex > agentLineIndex, "ticket line should appear after agent row");
-
-    const agentLine = lines[agentLineIndex]!;
-    const ticketLine = lines[ticketLineIndex]!;
-    const agentIndent = agentLine.length - agentLine.trimStart().length;
-    const ticketIndent = ticketLine.length - ticketLine.trimStart().length;
-    assert.ok(
-      ticketIndent > agentIndent,
-      `ticket line indent (${ticketIndent}) should exceed agent row indent (${agentIndent})`,
-    );
   });
 
   it("suppresses visible body lines for initial async-start placeholders", () => {
@@ -789,31 +311,6 @@ describe("renderSubagentResult", () => {
       if (text.includes("Press ")) hintStyles.push(name);
       return text;
     });
-    const activeResult = {
-      agent: "worker",
-      task: "review",
-      exitCode: 0,
-      usage: emptyUsage,
-      progress: {
-        index: 0,
-        agent: "worker",
-        status: "running" as const,
-        task: "review",
-        recentTools: [],
-        recentOutput: [],
-        toolCount: 0,
-        tokens: 0,
-        durationMs: 0,
-      },
-    };
-    renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: { mode: "single", results: [activeResult] },
-      },
-      { expanded: false },
-      styledTheme,
-    ).render(120);
     renderSubagentResult!(
       {
         content: [{ type: "text", text: "First line\nSecond line" }],
@@ -822,7 +319,7 @@ describe("renderSubagentResult", () => {
       { expanded: false },
       styledTheme,
     ).render(120);
-    assert.deepEqual(hintStyles, ["dim", "dim"]);
+    assert.deepEqual(hintStyles, ["dim"]);
   });
 
   it("preserves unstructured multiline and structured single-line output", () => {
@@ -1005,10 +502,9 @@ describe("renderSubagentResult", () => {
     assert.doesNotMatch(text, /⎿/);
   });
 
-  it("shows live detail hints for running single subagents without leaking paths in compact mode", () => {
-    const now = Date.now();
+  it("hides configured and artifact output paths in compact single mode while expanded keeps them", () => {
     const result = {
-      content: [{ type: "text" as const, text: "(running...)" }],
+      content: [{ type: "text" as const, text: "done" }],
       details: {
         mode: "single" as const,
         results: [
@@ -1025,21 +521,6 @@ describe("renderSubagentResult", () => {
               metadataPath: "",
             },
             usage: emptyUsage,
-            progress: {
-              index: 0,
-              agent: "reviewer",
-              status: "running" as const,
-              task: "review",
-              lastActivityAt: now - 2_000,
-              currentTool: "read",
-              currentToolArgs: "package.json",
-              currentToolStartedAt: now - 3_000,
-              recentTools: [],
-              recentOutput: [],
-              toolCount: 1,
-              tokens: 42,
-              durationMs: 3_000,
-            },
           },
         ],
       },
@@ -1048,13 +529,6 @@ describe("renderSubagentResult", () => {
     const compactText = renderSubagentResult!(result, { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compactText, new RegExp(liveDetailHint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(compactText, /active 2s ago/);
-    assert.match(
-      compactText,
-      /^ {5}read: package\.json \| 3\.0s(?: · active 2s ago)?\s*$/m,
-      "foreground single activity must keep the exact 5-space column",
-    );
     assert.doesNotMatch(compactText, /⎿/);
     assert.doesNotMatch(compactText, /configured-output\.md/);
     assert.doesNotMatch(compactText, /reviewer_output\.md/);
@@ -1064,326 +538,6 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(expandedText, /Output: \/tmp\/configured-output\.md/);
     assert.equal((expandedText.match(/Artifacts: \/tmp\/reviewer_output\.md/g) ?? []).length, 1);
-  });
-
-  it("shows a time-stable thinking phrase and suppresses it for active tools", () => {
-    const snapshotNow = 10_000;
-    const makeResult = (
-      turnCount: number,
-      durationMs: number,
-      currentTool?: string,
-      activityState?: "needs_attention",
-    ) => ({
-      content: [{ type: "text" as const, text: "(running...)" }],
-      details: {
-        mode: "single" as const,
-        results: [
-          {
-            agent: "reviewer",
-            task: "review",
-            exitCode: 0,
-            messages: [],
-            usage: { ...emptyUsage, turns: turnCount },
-            progress: {
-              index: 0,
-              agent: "reviewer",
-              status: "running" as const,
-              task: "review",
-              lastActivityAt: snapshotNow,
-              ...(activityState ? { activityState } : {}),
-              ...(currentTool ? { currentTool, currentToolStartedAt: snapshotNow - 2_000 } : {}),
-              recentTools: [],
-              recentOutput: [],
-              toolCount: 3,
-              tokens: 1_200,
-              durationMs,
-              turnCount,
-            },
-          },
-        ],
-      },
-    });
-
-    // durationMs=4_000 → slot 0; phrase is the same regardless of turnCount.
-    const slot0Phrase = whimsicalThinkingPhrase(0, 0, 0, 0); // elapsedMs=0 → slot 0
-    const compact = renderSubagentResult!(makeResult(0, 4_000), { expanded: false }, theme)
-      .render(120)
-      .join("\n");
-    assert.match(compact, new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"));
-    assert.ok(compact.indexOf(slot0Phrase) < compact.indexOf("active now"));
-    assert.doesNotMatch(compact, /3 tool uses|1\.2k token|4\.0s|⟳ 0/);
-
-    // Phrase stays stable when turnCount advances but durationMs stays in the same 8 s window.
-    const nextTurn = renderSubagentResult!(makeResult(1, 4_000), { expanded: false }, theme)
-      .render(120)
-      .join("\n");
-    assert.match(
-      nextTurn,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
-      "phrase must not change within the same 8 s window even if turnCount increases",
-    );
-
-    // Phrase advances when durationMs crosses the 8 s boundary.
-    const slot1Phrase = whimsicalThinkingPhrase(0, 0, 0, PHRASE_HOLD_MS); // elapsedMs=8000 → slot 1
-    assert.notEqual(slot1Phrase, slot0Phrase, "slot 1 phrase must differ from slot 0");
-    const nextWindow = renderSubagentResult!(
-      makeResult(0, PHRASE_HOLD_MS),
-      { expanded: false },
-      theme,
-    )
-      .render(120)
-      .join("\n");
-    assert.match(
-      nextWindow,
-      new RegExp(escapeRegExp(slot1Phrase)),
-      "phrase must advance when durationMs reaches the next 8 s slot",
-    );
-    assert.doesNotMatch(
-      nextWindow,
-      new RegExp(escapeRegExp(slot0Phrase)),
-      "old phrase must not appear after window boundary",
-    );
-
-    const activeTool = renderSubagentResult!(
-      makeResult(0, 4_000, "read"),
-      { expanded: false },
-      theme,
-    )
-      .render(120)
-      .join("\n");
-    assert.match(activeTool, /^ {5}read \| 4\.0s(?: · active 2s ago)?\s*$/m);
-    assert.match(activeTool, /active 2s ago/);
-    assert.doesNotMatch(activeTool, /⎿/);
-    assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(slot0Phrase)));
-
-    const expanded = renderSubagentResult!(makeResult(2, 4_000), { expanded: true }, theme)
-      .render(120)
-      .join("\n");
-    assert.match(expanded, /3 tools, 1\.2k tok, 4\.0s/);
-    assert.match(expanded, /2 turns/);
-
-    const warning = renderSubagentResult!(
-      makeResult(0, 4_000, undefined, "needs_attention"),
-      { expanded: false },
-      theme,
-    )
-      .render(120)
-      .join("\n");
-    assert.doesNotMatch(warning, new RegExp(escapeRegExp(slot0Phrase)));
-    // The fixture's lastActivityAt is sub-second, so the health label carries no age clause here.
-    assert.match(warning, /needs attention/);
-    assert.doesNotMatch(warning, /⎿/);
-  });
-
-  it("advances phrase via live now - startedAt clock while durationMs is unchanged", () => {
-    // Simulates the idle case: durationMs stays fixed but now advances.
-    const startedAt = 0;
-    const makeIdleResult = () => ({
-      content: [{ type: "text" as const, text: "(running...)" }],
-      details: {
-        mode: "single" as const,
-        results: [
-          {
-            agent: "idle-worker",
-            task: "idle task",
-            exitCode: 0,
-            messages: [],
-            usage: emptyUsage,
-            progress: {
-              index: 0,
-              agent: "idle-worker",
-              status: "running" as const,
-              task: "idle task",
-              lastActivityAt: startedAt,
-              recentTools: [],
-              recentOutput: [],
-              toolCount: 0,
-              tokens: 0,
-              // durationMs deliberately frozen at 0 to simulate no progress events.
-              durationMs: 0,
-              turnCount: 0,
-              startedAt,
-            },
-          },
-        ],
-      },
-    });
-
-    // Slot 0: now = 4 s (within first 8 s window).
-    const slot0Phrase = whimsicalThinkingPhrase(0, 0, 0, 0); // elapsedMs=0 → slot 0
-    const at4s = renderSubagentResult!(
-      makeIdleResult(),
-      { expanded: false },
-      theme,
-      undefined,
-      4_000,
-    )
-      .render(120)
-      .join("\n");
-    assert.match(
-      at4s,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
-      "phrase must be slot 0 when now - startedAt < 8 s",
-    );
-
-    // Stable within window: same now, same phrase despite turnCount staying 0.
-    const at6s = renderSubagentResult!(
-      makeIdleResult(),
-      { expanded: false },
-      theme,
-      undefined,
-      6_000,
-    )
-      .render(120)
-      .join("\n");
-    assert.match(
-      at6s,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
-      "phrase must remain slot 0 at 6 s (still within first window)",
-    );
-
-    // Advances at boundary: now = 8 s crosses into slot 1.
-    const slot1Phrase = whimsicalThinkingPhrase(0, 0, 0, PHRASE_HOLD_MS);
-    assert.notEqual(slot1Phrase, slot0Phrase, "slot 1 phrase must differ from slot 0");
-    const at8s = renderSubagentResult!(
-      makeIdleResult(),
-      { expanded: false },
-      theme,
-      undefined,
-      PHRASE_HOLD_MS,
-    )
-      .render(120)
-      .join("\n");
-    assert.match(
-      at8s,
-      new RegExp(`^ {5}${escapeRegExp(slot1Phrase)}$`, "m"),
-      "phrase must advance to slot 1 when now - startedAt reaches the 8 s boundary",
-    );
-    assert.doesNotMatch(
-      at8s,
-      new RegExp(escapeRegExp(slot0Phrase)),
-      "old phrase must not appear after window boundary",
-    );
-
-    // Fallback: when startedAt is absent, durationMs is used.
-    const noStartedAt = {
-      content: [{ type: "text" as const, text: "(running...)" }],
-      details: {
-        mode: "single" as const,
-        results: [
-          {
-            agent: "idle-worker",
-            task: "idle task",
-            exitCode: 0,
-            messages: [],
-            usage: emptyUsage,
-            progress: {
-              index: 0,
-              agent: "idle-worker",
-              status: "running" as const,
-              task: "idle task",
-              lastActivityAt: startedAt,
-              recentTools: [],
-              recentOutput: [],
-              toolCount: 0,
-              tokens: 0,
-              durationMs: 0,
-              turnCount: 0,
-            },
-          },
-        ],
-      },
-    };
-    const fallback = renderSubagentResult!(
-      noStartedAt,
-      { expanded: false },
-      theme,
-      undefined,
-      PHRASE_HOLD_MS * 2, // now is far ahead but startedAt is missing → fall back to durationMs=0 → slot 0
-    )
-      .render(120)
-      .join("\n");
-    assert.match(
-      fallback,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
-      "must fall back to durationMs when startedAt is absent",
-    );
-  });
-
-  it("keeps running compact result output stable when progress is unchanged", async () => {
-    const result = {
-      content: [{ type: "text" as const, text: "(running...)" }],
-      details: {
-        mode: "single" as const,
-        results: [
-          {
-            agent: "reviewer",
-            task: "review",
-            exitCode: 0,
-            messages: [],
-            usage: emptyUsage,
-            progress: {
-              index: 0,
-              agent: "reviewer",
-              status: "running" as const,
-              task: "review",
-              lastActivityAt: 2_000,
-              currentTool: "read",
-              currentToolArgs: "package.json",
-              currentToolStartedAt: 1_000,
-              recentTools: [],
-              recentOutput: [],
-              toolCount: 1,
-              tokens: 42,
-              durationMs: 3_000,
-            },
-          },
-        ],
-      },
-    };
-    const first = renderSubagentResult!(result, { expanded: false }, theme).render(120);
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    const second = renderSubagentResult!(result, { expanded: false }, theme).render(120);
-
-    assert.deepEqual(second, first);
-  });
-
-  it("advances running compact result glyphs when progress changes", () => {
-    const renderGlyph = (toolCount: number) =>
-      firstGrapheme(
-        renderSubagentResult!(
-          {
-            content: [{ type: "text", text: "(running...)" }],
-            details: {
-              mode: "single",
-              results: [
-                {
-                  agent: "reviewer",
-                  task: "review",
-                  exitCode: 0,
-                  messages: [],
-                  usage: emptyUsage,
-                  progress: {
-                    index: 0,
-                    agent: "reviewer",
-                    status: "running",
-                    task: "review",
-                    recentTools: [],
-                    recentOutput: [],
-                    toolCount,
-                    tokens: 0,
-                    durationMs: 0,
-                  },
-                },
-              ],
-            },
-          },
-          { expanded: false },
-          theme,
-        ).render(120)[0] ?? "",
-      );
-
-    assert.notEqual(renderGlyph(1), renderGlyph(2));
   });
 
   it("sanitizes production truncation paths in compact success previews and failure fallbacks", () => {
@@ -1576,65 +730,6 @@ describe("renderSubagentResult", () => {
     assert.match(text, /^ {7}Done \(no text output\)\s*$/m);
     assert.doesNotMatch(text, /⎿/);
     assert.doesNotMatch(text, /0ms/);
-  });
-
-  it("keeps pending placeholder steps pending in compact rendering", () => {
-    const widget = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "running" }],
-        details: {
-          mode: "parallel",
-          totalSteps: 2,
-          results: [
-            {
-              agent: "a",
-              task: "first",
-              exitCode: 0,
-              messages: [],
-              usage: emptyUsage,
-              progress: {
-                index: 0,
-                agent: "a",
-                status: "running",
-                task: "first",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 0,
-                tokens: 0,
-                durationMs: 0,
-              },
-            },
-            {
-              agent: "b",
-              task: "second",
-              exitCode: 0,
-              messages: [],
-              usage: emptyUsage,
-              progress: {
-                index: 1,
-                agent: "b",
-                status: "pending",
-                task: "second",
-                recentTools: [],
-                recentOutput: [],
-                toolCount: 0,
-                tokens: 0,
-                durationMs: 0,
-              },
-            },
-          ],
-        },
-      },
-      { expanded: false },
-      theme,
-    );
-
-    const lines = widget.render(120);
-    const pendingIndex = lines.findIndex((line) => /Agent 2\/2: b/.test(line));
-    assert.notEqual(pendingIndex, -1);
-    assert.match(lines[pendingIndex]!, /◦ Agent 2\/2: b · pending/);
-    assert.doesNotMatch(lines[pendingIndex]!, /0ms/);
-    assert.doesNotMatch(lines[pendingIndex + 1] ?? "", /Done \(no text output\)/);
   });
 
   it("hides compact multi output paths while expanded keeps them", () => {

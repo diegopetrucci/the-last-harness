@@ -14,61 +14,6 @@ import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { projectRunAuthorizationError } from "./project-agent-control.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
-export function getForegroundControl(state, runId) {
-    if (runId)
-        return state.foregroundControls.get(runId);
-    if (state.lastForegroundControlId) {
-        const latest = state.foregroundControls.get(state.lastForegroundControlId);
-        if (latest)
-            return latest;
-    }
-    let newest;
-    for (const control of state.foregroundControls.values()) {
-        if (!newest || control.updatedAt > newest.updatedAt)
-            newest = control;
-    }
-    return newest;
-}
-function formatForegroundActivity(control) {
-    const facts = [];
-    if (control.currentTool && control.currentToolStartedAt)
-        facts.push(`tool ${control.currentTool} for ${Math.floor(Math.max(0, Date.now() - control.currentToolStartedAt) / 1000)}s`);
-    else if (control.currentTool)
-        facts.push(`tool ${control.currentTool}`);
-    if (control.currentPath)
-        facts.push(`path ${control.currentPath}`);
-    if (control.turnCount !== undefined)
-        facts.push(`${control.turnCount} turns`);
-    if (control.tokens !== undefined)
-        facts.push(`${control.tokens} tokens`);
-    if (control.toolCount !== undefined)
-        facts.push(`${control.toolCount} tools`);
-    if (!control.lastActivityAt) {
-        if (control.currentActivityState === "needs_attention")
-            return ["needs attention", ...facts].join(" | ");
-        return facts.length ? facts.join(" | ") : undefined;
-    }
-    const seconds = Math.floor(Math.max(0, Date.now() - control.lastActivityAt) / 1000);
-    if (control.currentActivityState === "needs_attention")
-        return [`no activity for ${seconds}s`, ...facts].join(" | ");
-    return [`active ${seconds}s ago`, ...facts].join(" | ");
-}
-export function foregroundStatusResult(control) {
-    const activity = formatForegroundActivity(control);
-    const lines = [
-        `Run: ${control.runId}`,
-        "State: running",
-        `Mode: ${control.mode}`,
-        control.currentAgent
-            ? `Current: ${control.currentAgent}${control.currentIndex !== undefined ? ` step ${control.currentIndex + 1}` : ""}`
-            : undefined,
-        activity ? `Activity: ${activity}` : undefined,
-    ].filter((line) => Boolean(line));
-    return {
-        content: [{ type: "text", text: lines.join("\n") }],
-        details: { mode: "management", results: [] },
-    };
-}
 function foregroundRunHasResumableState(run) {
     const persistedPath = pausedForegroundStatusPath(run.runId);
     try {

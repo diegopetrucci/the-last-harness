@@ -23,8 +23,6 @@ function createState(sessionId: string): SubagentState {
     baseCwd: "/repo",
     currentSessionId: sessionId,
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,

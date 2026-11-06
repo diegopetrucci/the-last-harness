@@ -5,13 +5,10 @@ import { resolveAsyncRunLocation } from "../background/async-resume.js";
 import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
-import { formatControlNoticeMessage, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { readStatus } from "../../shared/utils.js";
-import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, } from "../../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { hasProjectAgentControlMarker, isRecordValue, projectRunAuthorizationError, authorizePersistedProjectAgentRun, } from "./project-agent-control.js";
-import { getForegroundControl } from "./foreground-run-state.js";
-export { getForegroundControl, foregroundStatusResult, trimRememberedForegroundRuns, rememberForegroundRun, updateRememberedForegroundChild, resolveRememberedForegroundRun, cancelPersistedPausedForegroundRun, } from "./foreground-run-state.js";
-export { registerForegroundMessageInbox, clearForegroundMessageInbox, } from "./foreground-message-inbox.js";
+export { trimRememberedForegroundRuns, rememberForegroundRun, updateRememberedForegroundChild, resolveRememberedForegroundRun, cancelPersistedPausedForegroundRun, } from "./foreground-run-state.js";
 export { buildResumeModelResolution, enrichPersistedPausedForegroundSingleRun, recoverFailedPausedForegroundTransition, resumeAsyncRun, } from "./foreground-resume.js";
 export { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "./foreground-support.js";
 function isAsyncInterruptFailure(result) {
@@ -114,11 +111,6 @@ export function selectInterruptTarget(params, state) {
         const resolved = resolveSubagentRunId(requestedId, { state });
         if (resolved)
             return { target: resolved, params: { ...params, id: resolved.id } };
-        const foreground = getForegroundControl(state, requestedId);
-        if (foreground) {
-            const target = { kind: "foreground", id: foreground.runId };
-            return { target, params: { ...params, id: target.id } };
-        }
         const asyncTarget = getAsyncInterruptTarget(state, requestedId);
         if (asyncTarget) {
             const target = resolvedAsyncInterruptTarget(asyncTarget);
@@ -129,11 +121,6 @@ export function selectInterruptTarget(params, state) {
         }
         return { target: undefined, params };
     }
-    const foreground = getForegroundControl(state, undefined);
-    if (foreground) {
-        const target = { kind: "foreground", id: foreground.runId };
-        return { target, params: { ...params, id: target.id } };
-    }
     const asyncTarget = getAsyncInterruptTarget(state, undefined);
     if (!asyncTarget)
         return { target: undefined, params };
@@ -142,35 +129,6 @@ export function selectInterruptTarget(params, state) {
         target,
         params: { ...params, id: target.id, dir: asyncTarget.asyncDir },
     };
-}
-export function resetForegroundControlHealth(control) {
-    control.currentActivityState = undefined;
-    control.idleEpisodeId = undefined;
-    control.durableAttentionReasons = undefined;
-    control.compaction = undefined;
-}
-export function updateForegroundControlProgress(control, progress) {
-    control.currentActivityState = progress?.activityState;
-    control.idleEpisodeId = progress?.idleEpisodeId;
-    control.durableAttentionReasons = progress?.durableAttentionReasons
-        ? [...progress.durableAttentionReasons]
-        : undefined;
-    control.compaction = progress?.compaction ? { ...progress.compaction } : undefined;
-}
-export function clearForegroundControlEphemeralHealth(control) {
-    control.currentActivityState = undefined;
-    control.idleEpisodeId = undefined;
-    control.compaction = undefined;
-}
-export function requestForegroundInterrupt(control) {
-    if (!control?.interrupt)
-        return false;
-    const interrupted = control.interrupt();
-    if (interrupted) {
-        control.updatedAt = Date.now();
-        clearForegroundControlEphemeralHealth(control);
-    }
-    return interrupted;
 }
 function requestAsyncInterruptForTarget(state, target, kill) {
     const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
@@ -261,18 +219,10 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
 }
 export function requestInterruptAllRunningSubagentRuns(state) {
     const result = {
-        foregroundRunIds: [],
         asyncRunIds: [],
-        skippedForegroundRunIds: [],
         skippedAsyncRunIds: [],
         errors: [],
     };
-    for (const control of state.foregroundControls.values()) {
-        if (requestForegroundInterrupt(control))
-            result.foregroundRunIds.push(control.runId);
-        else
-            result.skippedForegroundRunIds.push(control.runId);
-    }
     const knownAsyncDirs = new Set();
     for (const job of state.asyncJobs.values()) {
         knownAsyncDirs.add(job.asyncDir);
@@ -305,17 +255,6 @@ export function requestInterruptAllRunningSubagentRuns(state) {
     }
     result.errors.push(...diskOnly.errors);
     return result;
-}
-export function emitControlNotification(input) {
-    if (!shouldNotifyControlEvent(input.controlConfig, input.event))
-        return;
-    if (!input.controlConfig.notifyChannels.includes("event"))
-        return;
-    input.pi.events.emit(SUBAGENT_CONTROL_EVENT, {
-        event: input.event,
-        source: "foreground",
-        noticeText: formatControlNoticeMessage(input.event),
-    });
 }
 export function interruptAsyncRun(state, runId, kill, location) {
     const target = getAsyncInterruptTarget(state, runId, location);

@@ -826,7 +826,7 @@ describe("project-agent control malformed and nested rejection", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-  it("fails closed when no-id interrupt falls through to a project-marked foreground run", async () => {
+  it("fails closed when interrupting a remembered project-marked foreground run without its private reference", async () => {
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-foreground-fallback-")),
     );
@@ -838,7 +838,6 @@ describe("project-agent control malformed and nested rejection", () => {
     );
     const runId = `project-foreground-fallback-${Date.now().toString(36)}`;
     const state = createState();
-    let signalled = false;
     state.foregroundRuns!.set(runId, {
       runId,
       mode: "single",
@@ -853,29 +852,17 @@ describe("project-agent control malformed and nested rejection", () => {
         },
       ],
     } as never);
-    state.foregroundControls.set(runId, {
-      runId,
-      mode: "single",
-      startedAt: Date.now(),
-      updatedAt: Date.now(),
-      interrupt: () => {
-        signalled = true;
-        return true;
-      },
-    } as never);
-    state.lastForegroundControlId = runId;
     const executor = makeExecutor(root, state, { capability: generation.capability });
     try {
       const result = await executor.execute(
-        "interrupt-no-id-foreground-project",
-        { action: "interrupt" },
+        "interrupt-foreground-project",
+        { action: "interrupt", id: runId },
         new AbortController().signal,
         undefined,
         makeContext(root),
       );
       assert.equal(result.isError, true);
       assert.match(text(result), /private reference|project-agent|fallback/i);
-      assert.equal(signalled, false);
     } finally {
       revokeIfRegistered(generation.capability);
       fs.rmSync(root, { recursive: true, force: true });

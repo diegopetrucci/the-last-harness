@@ -501,7 +501,6 @@ function requestBlockingPhase(
   request: PendingSupervisorRequest,
   state: SubagentState,
 ): BlockingRequestPhase | undefined {
-  if (state.foregroundControls.has(request.runId)) return "pausing";
   const foregroundRun = state.foregroundRuns?.get(request.runId);
   const foregroundChild =
     foregroundRun?.children.find(

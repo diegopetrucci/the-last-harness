@@ -187,15 +187,8 @@ describe("subagent extension child mode", () => {
 			assert.notEqual(exportFirstCollapsed, exportFirstExpanded, "export-first variants matched");
 			assert.doesNotMatch(exportFirstCollapsed, /second output line/);
 			assert.match(exportFirstExpanded, /second output line/);
-			try {
-				registeredTool.renderResult(runningResult, { expanded: false, isPartial: false }, theme, exportFirstContext);
-				assert.equal(exportFirstContext.state.subagentResultAnimationTimer, undefined, "export-first row started an animation timer");
-			} finally {
-				if (exportFirstContext.state.subagentResultAnimationTimer) {
-					clearInterval(exportFirstContext.state.subagentResultAnimationTimer);
-					exportFirstContext.state.subagentResultAnimationTimer = undefined;
-				}
-			}
+			registeredTool.renderResult(runningResult, { expanded: false, isPartial: false }, theme, exportFirstContext);
+			assert.deepEqual(Object.keys(exportFirstContext.state), [], "export-first row mutated renderer state (animation timer)");
 			assert.equal(exportFirstProbeCalls, 0, "export-first probe ran inside renderResult");
 			await Promise.resolve();
 			assert.equal(exportFirstProbeCalls, 1, "export-first renders did not deduplicate their deferred probe");

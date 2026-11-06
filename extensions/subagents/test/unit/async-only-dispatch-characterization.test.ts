@@ -768,69 +768,6 @@ describe("async-only dispatch routing", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Background dispatch does NOT set foregroundControl
-  // -----------------------------------------------------------------------
-
-  it("background dispatch (async omitted) does not set foregroundControl — foregroundControls remains empty", async () => {
-    const root = makeTempDir("tlh-ao-bg-ctrl-");
-    let capturedForegroundControlsSize = -1;
-    const asyncCalls: Array<{ runId: string; params: unknown }> = [];
-    const state = makeSubagentState({ baseCwd: root });
-
-    const executor = createSubagentExecutor({
-      pi: {
-        events: {
-          emit() {},
-          on() {
-            return () => {};
-          },
-        },
-        getSessionName() {
-          return "parent";
-        },
-      } as any,
-      state,
-      config: { maxSubagentDepth: 2, control: {} } as any,
-      tempArtifactsDir: root,
-      getSubagentSessionRoot: () => root,
-      expandTilde: (v: string) => v,
-      discoverAgents: () => ({
-        agents: [makeSupportAgent("echo", { description: "Echo" })],
-      }),
-      executeAsyncSingle: ((runId: string, params: Record<string, unknown>) => {
-        // Capture foregroundControls size at seam-call time
-        capturedForegroundControlsSize = state.foregroundControls.size;
-        asyncCalls.push({ runId, params });
-        return {
-          content: [{ type: "text", text: "async-seam-ok" }],
-          details: { asyncId: runId, results: [] },
-        };
-      }) as any,
-    });
-
-    await executor.execute(
-      "id",
-      { agent: "echo", task: "supervisor test" },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(root),
-    );
-
-    assert.equal(asyncCalls.length, 1, "executeAsyncSingle seam was not called");
-    // Background dispatch never sets foregroundControl
-    assert.equal(
-      capturedForegroundControlsSize,
-      0,
-      "foregroundControls must be empty during background dispatch",
-    );
-    assert.equal(
-      state.foregroundControls.size,
-      0,
-      "foregroundControls must be empty after background dispatch",
-    );
-  });
-
-  // -----------------------------------------------------------------------
   // async:false on action:resume is also rejected
   // -----------------------------------------------------------------------
 
@@ -1057,7 +994,6 @@ describe("async-only — supervisor pause/cancel", () => {
       const { executor, state } = makeExecutorCapturing(root);
 
       const { runId, asyncDir, cleanup } = setupPausedForegroundRun(state, root);
-      state.foregroundControls.delete(runId);
 
       try {
         const result = await executor.execute(

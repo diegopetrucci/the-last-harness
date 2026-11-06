@@ -13,8 +13,6 @@ function makeState(cwd: string): SubagentState {
     baseCwd: cwd,
     currentSessionId: "session-current",
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,

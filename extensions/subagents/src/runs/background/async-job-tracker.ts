@@ -755,8 +755,6 @@ export function createAsyncJobTracker(
     }
     state.asyncJobs.clear();
     lastPhraseSlotKeys.clear();
-    state.foregroundControls?.clear();
-    state.lastForegroundControlId = null;
     state.resultFileCoalescer.clear();
     if (ctx?.hasUI) {
       state.lastUiContext = ctx;

@@ -48,64 +48,6 @@ import { projectRunAuthorizationError } from "./project-agent-control.ts";
 import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
 
-export function getForegroundControl(state: SubagentState, runId: string | undefined) {
-  if (runId) return state.foregroundControls.get(runId);
-  if (state.lastForegroundControlId) {
-    const latest = state.foregroundControls.get(state.lastForegroundControlId);
-    if (latest) return latest;
-  }
-  let newest:
-    | (SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never)
-    | undefined;
-  for (const control of state.foregroundControls.values()) {
-    if (!newest || control.updatedAt > newest.updatedAt) newest = control;
-  }
-  return newest;
-}
-
-function formatForegroundActivity(
-  control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never,
-): string | undefined {
-  const facts: string[] = [];
-  if (control.currentTool && control.currentToolStartedAt)
-    facts.push(
-      `tool ${control.currentTool} for ${Math.floor(Math.max(0, Date.now() - control.currentToolStartedAt) / 1000)}s`,
-    );
-  else if (control.currentTool) facts.push(`tool ${control.currentTool}`);
-  if (control.currentPath) facts.push(`path ${control.currentPath}`);
-  if (control.turnCount !== undefined) facts.push(`${control.turnCount} turns`);
-  if (control.tokens !== undefined) facts.push(`${control.tokens} tokens`);
-  if (control.toolCount !== undefined) facts.push(`${control.toolCount} tools`);
-  if (!control.lastActivityAt) {
-    if (control.currentActivityState === "needs_attention")
-      return ["needs attention", ...facts].join(" | ");
-    return facts.length ? facts.join(" | ") : undefined;
-  }
-  const seconds = Math.floor(Math.max(0, Date.now() - control.lastActivityAt) / 1000);
-  if (control.currentActivityState === "needs_attention")
-    return [`no activity for ${seconds}s`, ...facts].join(" | ");
-  return [`active ${seconds}s ago`, ...facts].join(" | ");
-}
-
-export function foregroundStatusResult(
-  control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never,
-): SubagentToolResult<Details> {
-  const activity = formatForegroundActivity(control);
-  const lines = [
-    `Run: ${control.runId}`,
-    "State: running",
-    `Mode: ${control.mode}`,
-    control.currentAgent
-      ? `Current: ${control.currentAgent}${control.currentIndex !== undefined ? ` step ${control.currentIndex + 1}` : ""}`
-      : undefined,
-    activity ? `Activity: ${activity}` : undefined,
-  ].filter((line): line is string => Boolean(line));
-  return {
-    content: [{ type: "text", text: lines.join("\n") }],
-    details: { mode: "management", results: [] },
-  };
-}
-
 function foregroundRunHasResumableState(run: {
   runId: string;
   children: readonly {

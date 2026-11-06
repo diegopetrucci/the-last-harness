@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   normalizeProjectAgentRunCapture,
   projectAgentRunCaptureEquals,
@@ -10,22 +10,14 @@ import { resolveAsyncRunLocation } from "../background/async-resume.ts";
 import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
-import {
-  formatControlNoticeMessage,
-  shouldNotifyControlEvent,
-} from "../shared/subagent-control.ts";
 import { readStatus } from "../../shared/utils.ts";
 import {
   type AsyncStatus,
-  type AgentProgress,
-  type ControlEvent,
   type Details,
-  type ResolvedControlConfig,
   type SubagentState,
   type SubagentToolResult,
   ASYNC_DIR,
   RESULTS_DIR,
-  SUBAGENT_CONTROL_EVENT,
 } from "../../shared/types.ts";
 import type { ExecutorDeps, SubagentParamsLike } from "./subagent-executor.ts";
 import {
@@ -34,20 +26,13 @@ import {
   projectRunAuthorizationError,
   authorizePersistedProjectAgentRun,
 } from "./project-agent-control.ts";
-import { getForegroundControl } from "./foreground-run-state.ts";
 export {
-  getForegroundControl,
-  foregroundStatusResult,
   trimRememberedForegroundRuns,
   rememberForegroundRun,
   updateRememberedForegroundChild,
   resolveRememberedForegroundRun,
   cancelPersistedPausedForegroundRun,
 } from "./foreground-run-state.ts";
-export {
-  registerForegroundMessageInbox,
-  clearForegroundMessageInbox,
-} from "./foreground-message-inbox.ts";
 export {
   buildResumeModelResolution,
   enrichPersistedPausedForegroundSingleRun,
@@ -182,11 +167,6 @@ export function selectInterruptTarget(
   if (requestedId) {
     const resolved = resolveSubagentRunId(requestedId, { state });
     if (resolved) return { target: resolved, params: { ...params, id: resolved.id } };
-    const foreground = getForegroundControl(state, requestedId);
-    if (foreground) {
-      const target = { kind: "foreground" as const, id: foreground.runId };
-      return { target, params: { ...params, id: target.id } };
-    }
     const asyncTarget = getAsyncInterruptTarget(state, requestedId);
     if (asyncTarget) {
       const target = resolvedAsyncInterruptTarget(asyncTarget);
@@ -197,11 +177,6 @@ export function selectInterruptTarget(
     }
     return { target: undefined, params };
   }
-  const foreground = getForegroundControl(state, undefined);
-  if (foreground) {
-    const target = { kind: "foreground" as const, id: foreground.runId };
-    return { target, params: { ...params, id: target.id } };
-  }
   const asyncTarget = getAsyncInterruptTarget(state, undefined);
   if (!asyncTarget) return { target: undefined, params };
   const target = resolvedAsyncInterruptTarget(asyncTarget);
@@ -209,44 +184,6 @@ export function selectInterruptTarget(
     target,
     params: { ...params, id: target.id, dir: asyncTarget.asyncDir },
   };
-}
-
-type ForegroundControl =
-  SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never;
-
-export function resetForegroundControlHealth(control: ForegroundControl): void {
-  control.currentActivityState = undefined;
-  control.idleEpisodeId = undefined;
-  control.durableAttentionReasons = undefined;
-  control.compaction = undefined;
-}
-
-export function updateForegroundControlProgress(
-  control: ForegroundControl,
-  progress: AgentProgress | undefined,
-): void {
-  control.currentActivityState = progress?.activityState;
-  control.idleEpisodeId = progress?.idleEpisodeId;
-  control.durableAttentionReasons = progress?.durableAttentionReasons
-    ? [...progress.durableAttentionReasons]
-    : undefined;
-  control.compaction = progress?.compaction ? { ...progress.compaction } : undefined;
-}
-
-export function clearForegroundControlEphemeralHealth(control: ForegroundControl): void {
-  control.currentActivityState = undefined;
-  control.idleEpisodeId = undefined;
-  control.compaction = undefined;
-}
-
-export function requestForegroundInterrupt(control: ForegroundControl): boolean {
-  if (!control?.interrupt) return false;
-  const interrupted = control.interrupt();
-  if (interrupted) {
-    control.updatedAt = Date.now();
-    clearForegroundControlEphemeralHealth(control);
-  }
-  return interrupted;
 }
 
 function requestAsyncInterruptForTarget(
@@ -355,9 +292,7 @@ function discoverDiskOnlyRunningAsyncTargets(
 }
 
 interface InterruptAllRunningSubagentRunsResult {
-  foregroundRunIds: string[];
   asyncRunIds: string[];
-  skippedForegroundRunIds: string[];
   skippedAsyncRunIds: string[];
   errors: string[];
 }
@@ -366,16 +301,10 @@ export function requestInterruptAllRunningSubagentRuns(
   state: SubagentState,
 ): InterruptAllRunningSubagentRunsResult {
   const result: InterruptAllRunningSubagentRunsResult = {
-    foregroundRunIds: [],
     asyncRunIds: [],
-    skippedForegroundRunIds: [],
     skippedAsyncRunIds: [],
     errors: [],
   };
-  for (const control of state.foregroundControls.values()) {
-    if (requestForegroundInterrupt(control)) result.foregroundRunIds.push(control.runId);
-    else result.skippedForegroundRunIds.push(control.runId);
-  }
   const knownAsyncDirs = new Set<string>();
   for (const job of state.asyncJobs.values()) {
     knownAsyncDirs.add(job.asyncDir);
@@ -408,20 +337,6 @@ export function requestInterruptAllRunningSubagentRuns(
   }
   result.errors.push(...diskOnly.errors);
   return result;
-}
-
-export function emitControlNotification(input: {
-  pi: ExtensionAPI;
-  controlConfig: ResolvedControlConfig;
-  event: ControlEvent;
-}): void {
-  if (!shouldNotifyControlEvent(input.controlConfig, input.event)) return;
-  if (!input.controlConfig.notifyChannels.includes("event")) return;
-  input.pi.events.emit(SUBAGENT_CONTROL_EVENT, {
-    event: input.event,
-    source: "foreground" as const,
-    noticeText: formatControlNoticeMessage(input.event),
-  });
 }
 
 export function interruptAsyncRun(

@@ -132,28 +132,8 @@ function makeParentState(sessionId: string | null, ctx: unknown): SubagentState 
     baseCwd: process.cwd(),
     currentSessionId: sessionId,
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: ctx as SubagentState["lastUiContext"],
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear: () => {} },
-  };
-}
-
-function makeControlState(): SubagentState {
-  return {
-    baseCwd: "/tmp/project",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
     poller: null,
     completionSeen: new Map(),
     watcher: null,
@@ -357,8 +337,6 @@ describe("no-pi-intercom regression guard", () => {
 
   describe("needs_attention notice delivery", () => {
     it("delivers notices via pi.sendMessage", () => {
-      const state = makeControlState();
-
       const sent: Array<{ message: unknown; options: unknown }> = [];
 
       const nudges: Array<{ text: string; options: unknown }> = [];
@@ -374,10 +352,8 @@ describe("no-pi-intercom regression guard", () => {
 
       handleSubagentControlNotice({
         pi: mockPi as never,
-        state,
         visibleControlNotices: new Set(),
         details: { source: "async", event: needsAttentionEvent() },
-        foregroundDelayMs: 20,
       });
 
       assert.equal(

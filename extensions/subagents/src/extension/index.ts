@@ -61,11 +61,7 @@ import {
   SUBAGENT_LIVE_DETAIL_SHORTCUT,
   SUBAGENT_PAUSE_ALL_SHORTCUT,
 } from "../shared/subagent-shortcuts.ts";
-import {
-  clearLegacyResultAnimationTimer,
-  renderWidget,
-  renderSubagentResult,
-} from "../tui/render.ts";
+import { renderWidget, renderSubagentResult } from "../tui/render.ts";
 import { SubagentParams } from "./schemas.ts";
 import {
   createSubagentExecutor,
@@ -106,7 +102,6 @@ import {
   WIDGET_KEY,
 } from "../shared/types.ts";
 import {
-  clearPendingForegroundControlNotices,
   formatSubagentControlNotice,
   handleSubagentControlNotice,
   SUBAGENT_CONTROL_MESSAGE_TYPE,
@@ -277,40 +272,6 @@ export function scheduleDetachedRuntimeCleanup(deps: DetachedRuntimeCleanupDeps 
   }
 }
 
-// Drives the inline running-indicator braille animation for foreground subagent
-// results. Foreground runs receive progress only on child events, so the glyph
-// (derived from progress fields) would freeze between events. While a result is
-// running we tick a frame counter + invalidate() every 80ms so renderSubagentResult
-// can blend the frame into runningGlyph and produce a smooth spinner.
-function subagentResultIsRunning(result: { details?: Details }): boolean {
-  return (
-    result.details?.progress?.some((entry) => entry.status === "running") ||
-    result.details?.results.some((entry) => entry.progress?.status === "running") ||
-    false
-  );
-}
-
-function ensureSubagentResultAnimation(context: {
-  state: Record<string, unknown>;
-  invalidate?: () => void;
-}): void {
-  const state = context.state as {
-    subagentResultAnimationTimer?: ReturnType<typeof setInterval>;
-    frame?: number;
-  };
-  if (state.subagentResultAnimationTimer) return;
-  if (typeof context.invalidate !== "function") return;
-  if (state.frame === undefined) state.frame = 0;
-  state.subagentResultAnimationTimer = setInterval(() => {
-    state.frame = ((state.frame ?? 0) + 1) % 10;
-    try {
-      context.invalidate?.();
-    } catch {
-      void 0;
-    }
-  }, 80);
-}
-
 function isStaleExtensionContextError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Extension context no longer active");
 }
@@ -458,9 +419,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     subagentInProgress: false,
     asyncJobs: new Map(),
     foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     liveDetailController,
@@ -520,7 +478,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     toolResultBridge.clear();
     stopResultWatcher();
     supervisorChannel.dispose();
-    clearPendingForegroundControlNotices(state);
     if (state.poller) {
       clearInterval(state.poller);
       state.poller = null;
@@ -713,19 +670,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
         rendererState !== null &&
         typeof context.invalidate === "function" &&
         liveDetailController.registerToolRow(context.toolCallId, rendererState, context.invalidate);
-      if (subagentResultIsRunning(result) && isLiveToolRow) {
-        ensureSubagentResultAnimation(context);
-      } else {
-        clearLegacyResultAnimationTimer(context);
-      }
-      const frame = (context.state as { frame?: number } | undefined)?.frame ?? 0;
       const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
       return renderSubagentResult(
         { ...result, ...(context.isError ? { isError: true } : {}) },
         { expanded },
         theme,
-        frame,
-        Date.now(),
       );
     },
   });
@@ -775,7 +724,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   const controlEventHandler = (payload: unknown) => {
     handleSubagentControlNotice({
       pi,
-      state,
       visibleControlNotices,
       details: payload as SubagentControlMessageDetails,
       isIdle: isControlNoticeIdle,
@@ -843,7 +791,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       }
       state.lastUiContext = ctx;
       cleanupSessionArtifacts(ctx);
-      clearPendingForegroundControlNotices(state);
       liveDetailController.clearToolRows();
       resetJobs(ctx);
       restoreAttempted = true;
@@ -902,7 +849,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     stopResultWatcher();
     if (state.poller) clearInterval(state.poller);
     state.poller = null;
-    clearPendingForegroundControlNotices(state);
     for (const timer of state.cleanupTimers.values()) {
       clearTimeout(timer);
     }

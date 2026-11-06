@@ -93,8 +93,6 @@ describe(
         currentSessionId: null,
         asyncJobs: new Map(),
         foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
       executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
       telemetryProvenance: SubagentTelemetryProvenance | undefined = undefined,
@@ -237,8 +235,6 @@ describe(
           currentSessionId: null,
           asyncJobs: new Map(),
           foregroundRuns: new Map(),
-          foregroundControls: new Map(),
-          lastForegroundControlId: null,
         };
         state.foregroundRuns.set(sourceRunId, {
           runId: sourceRunId,
@@ -438,8 +434,6 @@ describe(
           currentSessionId: null,
           asyncJobs: new Map(),
           foregroundRuns: new Map(),
-          foregroundControls: new Map(),
-          lastForegroundControlId: null,
         };
         state.foregroundRuns.set(runId, {
           runId,
@@ -507,8 +501,6 @@ describe(
           currentSessionId: null,
           asyncJobs: new Map(),
           foregroundRuns: new Map(),
-          foregroundControls: new Map(),
-          lastForegroundControlId: null,
         };
         state.foregroundRuns.set(runId, {
           runId,
@@ -601,8 +593,6 @@ describe(
           currentSessionId: null,
           asyncJobs: new Map(),
           foregroundRuns: new Map(),
-          foregroundControls: new Map(),
-          lastForegroundControlId: null,
         };
         state.foregroundRuns.set(runId, {
           runId,
@@ -683,8 +673,6 @@ describe(
           currentSessionId: null,
           asyncJobs: new Map(),
           foregroundRuns: new Map(),
-          foregroundControls: new Map(),
-          lastForegroundControlId: null,
         };
         state.foregroundRuns.set(runId, {
           runId,
@@ -789,8 +777,6 @@ describe(
             currentSessionId: null,
             asyncJobs: new Map(),
             foregroundRuns: new Map(),
-            foregroundControls: new Map(),
-            lastForegroundControlId: null,
           };
           const agent =
             role === "developer"

@@ -62,8 +62,6 @@ export interface NativeExecutorState {
   currentSessionId: null;
   asyncJobs: Map<unknown, unknown>;
   foregroundRuns: Map<string, unknown>;
-  foregroundControls: Map<string, unknown>;
-  lastForegroundControlId: string | null;
   cleanupTimers: Map<unknown, unknown>;
   lastUiContext: null;
   poller: null;
@@ -248,8 +246,6 @@ export function makeNativeResultLifecycleExecutor(
     currentSessionId: null,
     asyncJobs: new Map(),
     foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null as string | null,
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,

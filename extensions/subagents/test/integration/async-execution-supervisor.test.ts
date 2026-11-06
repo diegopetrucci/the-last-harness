@@ -86,8 +86,6 @@ describe("async execution utilities", () => {
         baseCwd: tempDir,
         currentSessionId: null,
         asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
       config: {},
       tempArtifactsDir: tempDir,

@@ -96,8 +96,6 @@ describe(
         currentSessionId: null,
         asyncJobs: new Map(),
         foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
     ) {
       return createSubagentExecutor!({
