@@ -22,10 +22,10 @@ import { provisionPiRuntime } from "./lib/tlh-install-runtime.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "1.4.0";
+const PINNED_PI_VERSION = "1.5.0";
 // Keep in sync with TLH_PINNED_PI_VERSION in install.sh.
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "0.5.4";
+const DEFAULT_GNOSIS_VERSION = "0.5.5";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 // Ownership marker file written into the runtime prefix by TLH on every
@@ -107,7 +107,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to \`pi install\`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.4)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.5)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 `;
 }

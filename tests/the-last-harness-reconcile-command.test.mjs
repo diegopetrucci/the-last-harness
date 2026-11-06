@@ -1314,3 +1314,113 @@ test("/reconcile TUI: Reset all isolates a mid-batch write failure and reports i
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Primary effort overrides (effort-only and model+effort)
+// ---------------------------------------------------------------------------
+
+function buildPrimaryEffortSettings({ model, effort = "low", extra = {} } = {}) {
+  return {
+    ...extra,
+    tlh: {
+      primaryAgent: {
+        ...(model ? { modelOverrides: { architect: model } } : {}),
+        effortOverrides: { architect: effort },
+      },
+    },
+  };
+}
+
+test("/reconcile non-TUI: effort-only primary override is listed in the read-only summary", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
+  const pi = createPiHarness();
+  registerReconcileCommand(pi);
+  const command = pi.commands.get("reconcile");
+  writeFileSync(
+    join(fixture.agent, "settings.json"),
+    `${JSON.stringify(buildPrimaryEffortSettings({ effort: "low" }), null, 2)}\n`,
+  );
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { ctx, notifications } = createCommandContext({
+      cwd: fixture.cwd,
+      hasUI: false,
+      mode: "headless",
+    });
+    await command.handler("", ctx);
+    assert.match(notifications[0].message, /architect \[primary\].*effort: low/);
+  });
+});
+
+test("/reconcile TUI Keep: effort-only primary override is acknowledged and preserved", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
+  const pi = createPiHarness();
+  registerReconcileCommand(pi);
+  const command = pi.commands.get("reconcile");
+  const settingsPath = join(fixture.agent, "settings.json");
+  writeFileSync(settingsPath, `${JSON.stringify(buildPrimaryEffortSettings(), null, 2)}\n`);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { ctx } = createCommandContext({ cwd: fixture.cwd });
+    const selections = [
+      (options) => options.find((opt) => opt.includes("architect")),
+      (options) => options.find((opt) => opt.startsWith("Keep")),
+    ];
+    ctx.ui.select = async (_title, options) => selections.shift()?.(options);
+    await command.handler("", ctx);
+    assert.ok(readReconcileState().acknowledgedSnapshot?.architect?.byProvider?.anthropic);
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    assert.equal(settings.tlh.primaryAgent.effortOverrides.architect, "low");
+  });
+});
+
+for (const withRuntime of [false, true]) {
+  test(`/reconcile TUI Reset: model+effort primary override cleared in one backed-up write (${withRuntime ? "runtime" : "settings-only"})`, async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
+    const pi = createPiHarness();
+    const { clearPrimaryAgentOverridesByName } = await jiti.import(
+      "../extensions/the-last-harness/primary-agent-runtime-settings.ts",
+    );
+    let resetCalls = 0;
+    registerReconcileCommand(
+      pi,
+      withRuntime
+        ? {
+            async resetPrimaryAgentModelOverride(ctx, agentName) {
+              resetCalls += 1;
+              return clearPrimaryAgentOverridesByName(ctx.cwd, agentName);
+            },
+          }
+        : undefined,
+    );
+    const command = pi.commands.get("reconcile");
+    const settingsPath = join(fixture.agent, "settings.json");
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify(
+        buildPrimaryEffortSettings({
+          model: "anthropic/claude-sonnet-4-6",
+          extra: { theme: "keep-me" },
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
+      const selections = [
+        (options) => options.find((opt) => opt.includes("architect")),
+        (options) => options.find((opt) => opt.startsWith("Reset")),
+      ];
+      ctx.ui.select = async (_title, options) => selections.shift()?.(options);
+      await command.handler("", ctx);
+      const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+      assert.equal(settings.theme, "keep-me");
+      assert.equal(settings.tlh.primaryAgent.modelOverrides, undefined);
+      assert.equal(settings.tlh.primaryAgent.effortOverrides, undefined);
+      assert.equal(resetCalls, withRuntime ? 1 : 0);
+      const backups = readdirSync(fixture.agent).filter((f) => f.startsWith("settings.json."));
+      assert.equal(backups.length, 1, "exactly one backup for the single write");
+      assert.equal(notifications.at(-1)?.type, "info");
+      assert.ok(readReconcileState().acknowledgedSnapshot?.architect);
+    });
+  });
+}

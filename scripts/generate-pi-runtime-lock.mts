@@ -32,6 +32,7 @@ const PI_SIBLING_PACKAGES = Object.freeze([
   "@earendil-works/pi-ai",
   "@earendil-works/pi-codemode",
   "@earendil-works/pi-mcp",
+  "@earendil-works/pi-schema",
   "@earendil-works/pi-telemetry",
   "@earendil-works/pi-tui",
 ]);

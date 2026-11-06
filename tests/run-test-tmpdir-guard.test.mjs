@@ -180,6 +180,12 @@ test("findLeaks returns empty array when the directory does not exist", () => {
   assert.deepEqual(findLeaks(join(tmpdir(), "tlh-nonexistent-guard-dir-xyz")), []);
 });
 
+test("findLeaks throws unexpected inspection errors", () => {
+  const file = join(tempDir(), "not-a-directory");
+  writeFileSync(file, "no directory entries");
+  assert.throws(() => findLeaks(file), { code: "ENOTDIR" });
+});
+
 // ---------------------------------------------------------------------------
 // runWithTmpdirGuard — behaviour via injectable spawn
 //
@@ -366,6 +372,39 @@ test("runWithTmpdirGuard returns 1 for a deliberately leaked directory", async (
   }
   const code = await runWithTmpdirGuard({ spawn });
   assert.equal(code, 1);
+});
+
+test("runWithTmpdirGuard fails when its owned root is replaced by a file", async () => {
+  let root;
+  let calls = 0;
+  function spawn(_cmd, _args, opts) {
+    calls += 1;
+    root = opts?.env?.TMPDIR;
+    if (calls === 4 && root) {
+      rmSync(root, { recursive: true, force: true });
+      writeFileSync(root, "not a directory");
+    }
+    return fakeChild(0);
+  }
+
+  let diagnostic = "";
+  const originalWrite = process.stderr.write;
+  process.stderr.write = (chunk) => {
+    diagnostic += String(chunk);
+    return true;
+  };
+  let code;
+  try {
+    code = await runWithTmpdirGuard({ spawn });
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+
+  assert.equal(code, 1);
+  assert.equal(calls, 4);
+  assert.equal(existsSync(root), false, "the replaced owned root must be removed");
+  assert.match(diagnostic, /\[tlh\] could not inspect temp-dir root .*ENOTDIR/u);
+  assert.ok(diagnostic.includes(root), "the inspection diagnostic must identify the root");
 });
 
 // ---------------------------------------------------------------------------

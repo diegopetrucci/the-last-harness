@@ -2,7 +2,7 @@
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE } from "../the-last-harness-primary-agent.mjs";
+import { PRIMARY_AGENT_CYCLE } from "../the-last-harness-primary-agent.mjs";
 import { isThinkingLevel } from "./thinking.js";
 export function getTlhGlobalSettings(cwd) {
     try {
@@ -18,6 +18,14 @@ export function getTlhPrimaryAgentConfig(cwd) {
 }
 export function getTlhDurableThinkingLevel(cwd) {
     const level = getTlhGlobalSettings(cwd).defaultThinkingLevel;
+    return typeof level === "string" && isThinkingLevel(level) ? level : undefined;
+}
+export function getTlhPrimaryEffortOverride(primaryConfig, primary) {
+    const overrides = primaryConfig?.effortOverrides;
+    if (!isRecord(overrides) || !Object.hasOwn(overrides, primary)) {
+        return undefined;
+    }
+    const level = overrides[primary];
     return typeof level === "string" && isThinkingLevel(level) ? level : undefined;
 }
 export function getTlhSubagentOverrides(cwd) {
@@ -111,6 +119,42 @@ export function writeTlhPrimaryAgentModelOverride(cwd, primary, modelKey) {
         };
     });
 }
+export function writeTlhPrimaryAgentEffortOverride(cwd, primary, level) {
+    return withLockedTlhSettingsWrite(cwd, "Refusing to write effort-override settings outside the isolated TLH profile.", (current) => {
+        const { settings, primaryAgent } = prepareTlhPrimaryAgentSettings(current, "settings.tlh must be an object to update effort-override settings.", "settings.tlh.primaryAgent must be an object to update effort-override settings.");
+        const rawOverrides = primaryAgent.effortOverrides;
+        let effortOverrides;
+        if (rawOverrides === undefined) {
+            effortOverrides = {};
+            primaryAgent.effortOverrides = effortOverrides;
+        }
+        else if (isRecord(rawOverrides)) {
+            effortOverrides = rawOverrides;
+        }
+        else {
+            throw new Error("settings.tlh.primaryAgent.effortOverrides must be an object.");
+        }
+        if (level === undefined) {
+            if (!Object.hasOwn(effortOverrides, primary)) {
+                return { changed: false };
+            }
+            delete effortOverrides[primary];
+        }
+        else {
+            if (effortOverrides[primary] === level) {
+                return { changed: false };
+            }
+            effortOverrides[primary] = level;
+        }
+        if (Object.keys(effortOverrides).length === 0) {
+            delete primaryAgent.effortOverrides;
+        }
+        return {
+            changed: true,
+            nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+        };
+    });
+}
 export function writeTlhPrimaryAgentDefault(cwd, selection) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write primary-agent settings outside the isolated TLH profile.", (current) => {
         const { settings, primaryAgent } = prepareTlhPrimaryAgentSettings(current, "settings.tlh must be an object to update primary-agent settings.", "settings.tlh.primaryAgent must be an object to update primary-agent defaults.");
@@ -132,13 +176,33 @@ export function writeTlhPrimaryAgentDefault(cwd, selection) {
             setField("enabled", undefined);
             setField("selected", undefined);
         }
-        else if (selection === DISABLED_PRIMARY_AGENT) {
-            setField("enabled", false);
-            setField("selected", DISABLED_PRIMARY_AGENT);
-        }
         else {
             setField("enabled", true);
             setField("selected", selection);
+        }
+        if (!changed) {
+            return { changed: false };
+        }
+        return {
+            changed: true,
+            nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+        };
+    });
+}
+export function writeTlhPrimaryAgentOverridesCleared(cwd, primary) {
+    return withLockedTlhSettingsWrite(cwd, "Refusing to write primary-override settings outside the isolated TLH profile.", (current) => {
+        const { settings, primaryAgent } = prepareTlhPrimaryAgentSettings(current, "settings.tlh must be an object to update primary-override settings.", "settings.tlh.primaryAgent must be an object to update primary-override settings.");
+        let changed = false;
+        for (const key of ["modelOverrides", "effortOverrides"]) {
+            const container = primaryAgent[key];
+            if (!isRecord(container) || !Object.hasOwn(container, primary)) {
+                continue;
+            }
+            delete container[primary];
+            changed = true;
+            if (Object.keys(container).length === 0) {
+                delete primaryAgent[key];
+            }
         }
         if (!changed) {
             return { changed: false };
@@ -157,4 +221,10 @@ export function clearPrimaryAgentModelOverrideByName(cwd, agentName) {
         return undefined;
     }
     return writeTlhPrimaryAgentModelOverride(cwd, agentName, undefined);
+}
+export function clearPrimaryAgentOverridesByName(cwd, agentName) {
+    if (!isTlhPrimaryAgentSelection(agentName)) {
+        return undefined;
+    }
+    return writeTlhPrimaryAgentOverridesCleared(cwd, agentName);
 }

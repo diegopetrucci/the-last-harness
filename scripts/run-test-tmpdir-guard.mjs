@@ -75,13 +75,15 @@ export const TMPDIR_ALLOWLIST = [
  * @param {string} dir - the per-run TMPDIR root to inspect
  * @param {readonly string[]} [allowlist] - names to skip; defaults to TMPDIR_ALLOWLIST
  * @returns {string[]} leaked entry names (sorted)
+ * @throws {Error} when the root cannot be inspected for a reason other than ENOENT
  */
 export function findLeaks(dir, allowlist = TMPDIR_ALLOWLIST) {
   let entries;
   try {
     entries = readdirSync(dir);
-  } catch {
-    return [];
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
   }
   const allowSet = new Set(allowlist);
   return entries.filter((name) => !allowSet.has(name)).sort();
@@ -386,7 +388,15 @@ export async function runWithTmpdirGuard({
     process.off("SIGTERM", onSigterm);
     if (supportsOwnedProcessGroups) process.off("SIGHUP", onSighup);
     // Report leaks before removal so the names are visible even on failure.
-    const leaks = findLeaks(root);
+    let leaks = [];
+    try {
+      leaks = findLeaks(root);
+    } catch (error) {
+      process.stderr.write(
+        `[tlh] could not inspect temp-dir root ${root}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      if (exitCode === 0) exitCode = 1;
+    }
     if (leaks.length > 0) {
       process.stderr.write(
         `[tlh] temp-dir leaks detected under ${root}:\n${leaks.map((n) => `  ${n}`).join("\n")}\n`,

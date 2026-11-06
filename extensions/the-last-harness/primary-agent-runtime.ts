@@ -8,10 +8,8 @@ import {
 
 import {
   DEFAULT_PRIMARY_AGENT,
-  DISABLED_PRIMARY_AGENT,
   PRIMARY_AGENT_CYCLE,
   PRIMARY_AGENT_SESSION_STATE_ENTRY,
-  isEnabledPrimaryAgentSelection,
   nextPrimaryAgentSelection,
   primaryAgentDefaultLabel,
   primaryAgentSelectionFromBranch,
@@ -35,8 +33,10 @@ import {
 import { formatHomePath, isRecord } from "./common.js";
 import {
   clearPrimaryAgentModelOverrideByName,
+  clearPrimaryAgentOverridesByName,
   isTlhPrimaryAgentSelection,
   getTlhDurableThinkingLevel,
+  getTlhPrimaryEffortOverride,
   getTlhGlobalSettings,
   getTlhPrimaryAgentConfig,
   getTlhSubagentOverrides,
@@ -176,6 +176,14 @@ type SessionThinkingOverride = {
   level: ThinkingLevel;
 };
 
+export type PrimaryEffortPersistenceTarget = {
+  primary: TlhPrimaryAgentSelection;
+  packagedEffort: ThinkingLevel | undefined;
+  applyThinking: boolean;
+  /** Record the packaged-default drift baseline for this primary and provider. */
+  recordOverrideBaseline?(provider: string | undefined): void;
+};
+
 export type TlhPrimaryAgentRuntime = {
   applySessionStart(ctx: ExtensionContext, reason?: string): Promise<void>;
   projectAgentGuidanceSnapshot(): ProjectAgentGuidanceInventory | undefined;
@@ -183,9 +191,19 @@ export type TlhPrimaryAgentRuntime = {
   activePrimaryAgentPrompt(): AgentPrompt | undefined;
   /** Remember a validated user thinking selection for this primary/session. */
   recordUserThinkingLevel?(level: ThinkingLevel): void;
+  /**
+   * Describe where /effort should persist a saved level for the active primary:
+   * the primary name, its packaged effort for the current provider, and whether
+   * TLH auto-applies thinking. `undefined` when no primary is active.
+   */
+  primaryEffortPersistenceTarget?(ctx: {
+    cwd: string;
+    model?: { provider?: string };
+  }): PrimaryEffortPersistenceTarget | undefined;
   buildLaunchSystemPrompt(ctx: ExtensionContext, baseSystemPrompt: string): string;
   /**
-   * Clear the stored model override for a named primary agent and reapply
+   * Clear the stored model and effort overrides for a named primary agent (one
+   * settings write) and reapply
    * the packaged default to the active session, matching /switch-primary-agent
    * model reset behaviour.
    *
@@ -197,13 +215,6 @@ export type TlhPrimaryAgentRuntime = {
     agentName: string,
   ): Promise<TlhPrimaryAgentWriteResult | undefined>;
 };
-
-const EXTENSION_RUNTIME_NOT_INITIALIZED_MESSAGE =
-  "Extension runtime not initialized. Action methods cannot be called during extension loading.";
-
-function isExtensionRuntimeNotInitializedError(error: unknown): boolean {
-  return error instanceof Error && error.message === EXTENSION_RUNTIME_NOT_INITIALIZED_MESSAGE;
-}
 
 function primaryAgentLabel(selection: TlhPrimaryAgentSelection): string {
   return selection;
@@ -474,7 +485,7 @@ function createTlhPrimaryAgentRuntime(
     selection: TlhPrimaryAgentSelection,
     source: string,
   ): TlhPrimaryAgentSelection {
-    if (selection === DISABLED_PRIMARY_AGENT || primaryAgents.has(selection)) {
+    if (primaryAgents.has(selection)) {
       return selection;
     }
     warnOnce(
@@ -482,9 +493,12 @@ function createTlhPrimaryAgentRuntime(
       `missing-primary-agent-${source}-${selection}`,
       `TLH primary agent "${selection}" is not available; falling back to ${DEFAULT_PRIMARY_AGENT}.`,
     );
-    return primaryAgents.has(DEFAULT_PRIMARY_AGENT)
-      ? DEFAULT_PRIMARY_AGENT
-      : DISABLED_PRIMARY_AGENT;
+    if (!primaryAgents.has(DEFAULT_PRIMARY_AGENT)) {
+      throw new Error(
+        `TLH cannot start: the ${DEFAULT_PRIMARY_AGENT} primary agent is unavailable, so there is no primary agent to fall back to. Reinstall or update TLH to restore the bundled ${DEFAULT_PRIMARY_AGENT} agent.`,
+      );
+    }
+    return DEFAULT_PRIMARY_AGENT;
   }
 
   function syncPrimaryAgentState(ctx: ExtensionContext): void {
@@ -523,8 +537,7 @@ function createTlhPrimaryAgentRuntime(
   }
 
   function activePrimaryAgent(): AgentPrompt | undefined {
-    const selection = currentPrimaryAgentSelection();
-    return selection === DISABLED_PRIMARY_AGENT ? undefined : primaryAgents.get(selection);
+    return primaryAgents.get(currentPrimaryAgentSelection());
   }
 
   const projectAgentLifecycle: PrimaryAgentResourceLifecycle =
@@ -547,7 +560,6 @@ function createTlhPrimaryAgentRuntime(
     settings: TlhSettings,
   ): string {
     const primary = activePrimaryAgent();
-    const primaryEnabled = isEnabledPrimaryAgentSelection(currentPrimaryAgentSelection());
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const prompts = [
       baseSystemPrompt,
@@ -556,7 +568,6 @@ function createTlhPrimaryAgentRuntime(
       buildTlhSystemPrompt(
         primary,
         subagentMetadata,
-        primaryEnabled,
         projectAgentLifecycle.projectAgentGuidanceSnapshot(),
         isTlhNoDeveloperSessionActive(),
       ),
@@ -584,8 +595,7 @@ function createTlhPrimaryAgentRuntime(
     const settingsLabel = settingsPath
       ? formatHomePath(settingsPath)
       : "unavailable outside isolated TLH profile";
-    const activePrimary =
-      effective !== DISABLED_PRIMARY_AGENT ? primaryAgents.get(effective) : undefined;
+    const activePrimary = primaryAgents.get(effective);
     const rawModelOverrides = primaryConfig?.modelOverrides as unknown;
     const modelOverride =
       activePrimary &&
@@ -610,7 +620,7 @@ function createTlhPrimaryAgentRuntime(
       return;
     }
     pi.appendEntry<TlhPrimaryAgentSessionState>(PRIMARY_AGENT_SESSION_STATE_ENTRY, {
-      enabled: selection !== DISABLED_PRIMARY_AGENT,
+      enabled: true,
       selected: selection,
     });
   }
@@ -627,7 +637,7 @@ function createTlhPrimaryAgentRuntime(
     if (warnOnMissing && missingTools.length > 0) {
       warnOnce(
         ctx,
-        `missing-primary-tools-${primary?.name ?? DISABLED_PRIMARY_AGENT}`,
+        `missing-primary-tools-${primary?.name ?? DEFAULT_PRIMARY_AGENT}`,
         `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`,
       );
     }
@@ -737,7 +747,7 @@ function createTlhPrimaryAgentRuntime(
 
   function recordUserThinkingLevel(level: ThinkingLevel): void {
     const selection = currentPrimaryAgentSelection();
-    if (!isThinkingLevel(level) || !isEnabledPrimaryAgentSelection(selection)) {
+    if (!isThinkingLevel(level)) {
       return;
     }
     sessionThinkingOverride = { primary: selection, level };
@@ -806,6 +816,27 @@ function createTlhPrimaryAgentRuntime(
     return clamped;
   }
 
+  function primaryEffortPersistenceTarget(ctx: {
+    cwd: string;
+    model?: { provider?: string };
+  }): PrimaryEffortPersistenceTarget | undefined {
+    const primary = activePrimaryAgent();
+    if (!primary) {
+      return undefined;
+    }
+    const selection = currentPrimaryAgentSelection();
+    return {
+      primary: selection,
+      recordOverrideBaseline: (provider) => recordOverrideBaseline(selection, primary, provider),
+      packagedEffort: resolveProviderThinking(primary, ctx.model?.provider),
+      applyThinking: resolvePrimaryAutoApplySetting(
+        getTlhPrimaryAgentConfig(ctx.cwd),
+        primary,
+        "applyThinking",
+      ),
+    };
+  }
+
   type PrimaryModelSource = "project" | "existing";
 
   async function applyPrimaryModel(
@@ -856,8 +887,9 @@ function createTlhPrimaryAgentRuntime(
     model: ActiveModel | undefined,
   ): ThinkingLevel | undefined {
     const sessionThinking = sessionThinkingLevelForPrimary(selection, model);
+    const primaryOverride = getTlhPrimaryEffortOverride(getTlhPrimaryAgentConfig(cwd), selection);
     const durableThinking = getTlhDurableThinkingLevel(cwd);
-    const requestedThinking = sessionThinking ?? durableThinking ?? thinking;
+    const requestedThinking = sessionThinking ?? primaryOverride ?? durableThinking ?? thinking;
     if (requestedThinking === undefined) {
       return undefined;
     }
@@ -866,25 +898,6 @@ function createTlhPrimaryAgentRuntime(
     if (pi.getThinkingLevel() === targetThinking) return undefined;
     setTlhThinkingLevel(targetThinking);
     return undefined;
-  }
-
-  function applyDisabledPrimaryDefaults(
-    ctx: ExtensionContext,
-    warnOnMissing: boolean,
-    sessionStartOperation: SessionStartOperation | undefined,
-  ): void {
-    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
-    try {
-      applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
-    } catch (error) {
-      // Resource-loader lifecycle smoke tests can invoke disabled session
-      // handlers before the action runtime is bound. Retry on the next
-      // lifecycle hook instead of failing the session; real runtime errors
-      // must still surface.
-      if (!isExtensionRuntimeNotInitializedError(error)) {
-        throw error;
-      }
-    }
   }
 
   async function applyPrimaryDefaults(
@@ -898,13 +911,6 @@ function createTlhPrimaryAgentRuntime(
     if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     lastObservedModel = ctx.model;
     const selection = currentPrimaryAgentSelection();
-    if (!isEnabledPrimaryAgentSelection(selection)) {
-      // Disabled mode keeps the architect capability surface (tools only) while
-      // omitting the architect persona and all of its model/thinking defaults.
-      applyDisabledPrimaryDefaults(ctx, warnOnMissing, sessionStartOperation);
-      return;
-    }
-
     if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     const primary = activePrimaryAgent();
     if (!primary) {
@@ -1005,9 +1011,6 @@ function createTlhPrimaryAgentRuntime(
     updateSessionOnlyModel(undefined);
     syncPrimaryAgentState(ctx);
     const selection = currentPrimaryAgentSelection();
-    if (!isEnabledPrimaryAgentSelection(selection)) {
-      return;
-    }
     const primary = activePrimaryAgent();
     if (!primary) {
       return;
@@ -1043,7 +1046,8 @@ function createTlhPrimaryAgentRuntime(
     if (
       writeResult?.changed === true &&
       nextOverride !== undefined &&
-      !isMeaningfulPrimaryOverride(existingOverride)
+      !isMeaningfulPrimaryOverride(existingOverride) &&
+      getTlhPrimaryEffortOverride(primaryConfig, selection) === undefined
     ) {
       recordOverrideBaseline(selection, primary, model.provider);
     }
@@ -1056,15 +1060,9 @@ function createTlhPrimaryAgentRuntime(
     if (!isTlhPrimaryAgentSelection(agentName)) {
       return undefined;
     }
-    const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, agentName, undefined);
+    const result = clearPrimaryAgentOverridesByName(ctx.cwd, agentName);
     await applyPrimaryModeChange(ctx);
     return result;
-  }
-
-  function cleanDisabledPrimarySessionHint(selection: TlhPrimaryAgentSelection): string {
-    return selection === DISABLED_PRIMARY_AGENT
-      ? " Existing conversation history may still contain TLH primary-agent guidance; start a new session for a completely clean context."
-      : "";
   }
 
   async function cycleSessionPrimaryAgent(ctx: ExtensionContext): Promise<void> {
@@ -1075,7 +1073,7 @@ function createTlhPrimaryAgentRuntime(
     setSessionPrimaryAgentOverride(nextOverride);
     await applyPrimaryModeChange(ctx);
     ctx.ui.notify(
-      `Shift+Tab switched TLH primary agent to ${primaryAgentLabel(nextOverride)} for this session.${cleanDisabledPrimarySessionHint(nextOverride)}`,
+      `Shift+Tab switched TLH primary agent to ${primaryAgentLabel(nextOverride)} for this session.`,
       "info",
     );
   }
@@ -1096,7 +1094,6 @@ function createTlhPrimaryAgentRuntime(
       { value: "rush", description: "Use the Rush primary agent for this session" },
       { value: "product", description: "Use the product primary agent for this session" },
       { value: "bug-hunter", description: "Use the bug-hunter primary agent for this session" },
-      { value: "disabled", description: "Disable TLH primary agents for this session" },
       { value: "reset", description: "Clear the session primary-agent override" },
       { value: "model reset", description: "Clear the active primary's persisted model override" },
       {
@@ -1108,10 +1105,6 @@ function createTlhPrimaryAgentRuntime(
       {
         value: "default bug-hunter",
         description: "Persistently select bug-hunter for future sessions",
-      },
-      {
-        value: "default disabled",
-        description: "Persistently disable TLH primaries for future sessions",
       },
       { value: "default reset", description: "Remove the persistent primary-agent setting" },
     ];
@@ -1160,13 +1153,6 @@ function createTlhPrimaryAgentRuntime(
             return;
           }
           const selection = currentPrimaryAgentSelection();
-          if (selection === DISABLED_PRIMARY_AGENT) {
-            ctx.ui.notify(
-              "Cannot clear model override: primary agents are disabled. Enable a primary agent first with /switch-primary-agent <agent>.",
-              "error",
-            );
-            return;
-          }
           try {
             const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, undefined);
             await applyPrimaryModeChange(ctx);
@@ -1188,7 +1174,7 @@ function createTlhPrimaryAgentRuntime(
         if (selected) {
           if (parts.length !== 1) {
             ctx.ui.notify(
-              "Usage: /switch-primary-agent architect|rush|product|bug-hunter|disabled",
+              "Usage: /switch-primary-agent architect|rush|product|bug-hunter",
               "error",
             );
             return;
@@ -1196,7 +1182,7 @@ function createTlhPrimaryAgentRuntime(
           setSessionPrimaryAgentOverride(selected);
           await applyPrimaryModeChange(ctx);
           ctx.ui.notify(
-            `TLH primary agent set to ${primaryAgentLabel(selected)} for this session.${cleanDisabledPrimarySessionHint(selected)}`,
+            `TLH primary agent set to ${primaryAgentLabel(selected)} for this session.`,
             "info",
           );
           return;
@@ -1205,7 +1191,7 @@ function createTlhPrimaryAgentRuntime(
         if (command === "default") {
           if (parts.length !== 2) {
             ctx.ui.notify(
-              "Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset",
+              "Usage: /switch-primary-agent default architect|rush|product|bug-hunter|reset",
               "error",
             );
             return;
@@ -1214,7 +1200,7 @@ function createTlhPrimaryAgentRuntime(
             value === "reset" ? undefined : parsePrimaryAgentSelection(value);
           if (value !== "reset" && !defaultSelection) {
             ctx.ui.notify(
-              "Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset",
+              "Usage: /switch-primary-agent default architect|rush|product|bug-hunter|reset",
               "error",
             );
             return;
@@ -1243,14 +1229,14 @@ function createTlhPrimaryAgentRuntime(
         }
 
         ctx.ui.notify(
-          "Usage: /switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|model reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]",
+          "Usage: /switch-primary-agent [status|architect|rush|product|bug-hunter|reset|model reset|default architect|default rush|default product|default bug-hunter|default reset]",
           "error",
         );
       },
     });
 
     pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT, {
-      description: "Cycle TLH primary agent (architect/rush/product/bug-hunter/disabled)",
+      description: "Cycle TLH primary agent (architect/rush/product/bug-hunter)",
       handler: async (ctx) => {
         await cycleSessionPrimaryAgent(ctx);
       },
@@ -1513,11 +1499,8 @@ function createTlhPrimaryAgentRuntime(
       if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
         return { block: true, reason: rushDeveloperDelegationReason() };
       }
-      const allowEmbeddedTargets =
-        isEnabledPrimaryAgentSelection(selection) || selection === DISABLED_PRIMARY_AGENT;
       const reason = validateSubagentToolInput(event.input, {
         allowedSubagents,
-        allowEmbeddedTargets,
       });
       if (reason) {
         return { block: true, reason };
@@ -1646,6 +1629,7 @@ function createTlhPrimaryAgentRuntime(
     currentPrimaryAgentLabel,
     activePrimaryAgentPrompt: activePrimaryAgent,
     recordUserThinkingLevel,
+    primaryEffortPersistenceTarget,
     buildLaunchSystemPrompt,
     resetPrimaryAgentModelOverride,
     registerCommands,
@@ -1655,6 +1639,7 @@ function createTlhPrimaryAgentRuntime(
 
 export {
   clearPrimaryAgentModelOverrideByName,
+  clearPrimaryAgentOverridesByName,
   extractDispatchProviders,
   isHighConfidenceAuthSignatureInAttemptError,
   processSubagentRunDetails,

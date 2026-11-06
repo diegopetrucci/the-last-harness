@@ -73,7 +73,6 @@ import {
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
   TEMP_ROOT_DIR,
   getAsyncConfigPath,
-  resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
 import {
   buildSubagentRunTelemetry,
@@ -185,7 +184,6 @@ interface AsyncSingleParams {
   providerFallbackModels?: string[];
   modelFallbackNotice?: string;
   availableModels?: ModelInfo[];
-  maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
   /** Prior persisted facts retained when this invocation revives a child. */
   priorTerminalResult?: SubagentTerminalResult;
@@ -236,7 +234,6 @@ interface AsyncParallelParams {
   sessionRoot?: string;
   sessionFilesByFlatIndex?: (string | undefined)[];
   progressDir?: string;
-  maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
   /** Exact approved project-agent captures for detached runner tasks. */
   projectAgentIdentities?: readonly ProjectAgentIdentity[];
@@ -489,7 +486,7 @@ export function buildAsyncRunnerPlan(
   id: string,
   params: AsyncParallelPlanParams,
 ): AsyncRunnerPlanBuildResult | { error: string } {
-  const { tasks, agents, ctx, cwd, sessionFilesByFlatIndex, maxSubagentDepth } = params;
+  const { tasks, agents, ctx, cwd, sessionFilesByFlatIndex } = params;
   const outputBaseDir = params.artifactsDir
     ? path.join(params.artifactsDir, "outputs", id)
     : undefined;
@@ -678,7 +675,6 @@ export function buildAsyncRunnerPlan(
       outputPath,
       outputMode: behavior.outputMode,
       sessionFile,
-      maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agent.maxSubagentDepth),
       // The role ceiling is trusted policy, not caller input. Persist it on
       // every new task so the runner can enforce it independently per child.
       ...(agent.maxExecutionTimeMs !== undefined
@@ -785,7 +781,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
     artifactConfig,
     sessionRoot,
     sessionFilesByFlatIndex,
-    maxSubagentDepth,
     controlConfig,
   } = params;
   const retiredNestedError = retiredNestedLaunchError(params);
@@ -820,7 +815,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
       progressDir:
         params.progressDir ??
         (artifactsDir ? path.join(artifactsDir, "progress", id) : path.join(asyncDir, "progress")),
-      maxSubagentDepth,
       projectAgentIdentities: params.projectAgentIdentities,
       ticketBodies: params.ticketBodies,
     });
@@ -1011,7 +1005,6 @@ export function buildAsyncSingleRunnerPlan(
     activeRuntimeCheckpointAt,
     projectAgent,
     sessionFile,
-    maxSubagentDepth,
   } = params;
   const {
     taskWithOutputInstruction,
@@ -1153,10 +1146,6 @@ export function buildAsyncSingleRunnerPlan(
               ),
             }
           : {}),
-        maxSubagentDepth: resolveChildMaxSubagentDepth(
-          maxSubagentDepth,
-          agentConfig.maxSubagentDepth,
-        ),
         ...(roleBudgetMs !== undefined ? { timeoutMs: roleBudgetMs } : {}),
         ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(resolvedActiveRuntimeMs > 0 ? { activeRuntimeMs: resolvedActiveRuntimeMs } : {}),

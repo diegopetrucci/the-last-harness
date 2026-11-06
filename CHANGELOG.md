@@ -11,6 +11,14 @@ All notable changes to The Last Harness will be documented in this file.
 ### What's new
 
 - In a Rex terminal, TLH now gives the primary agent Rex's session-start context; see [Rex integration](docs/integrations.md#rex-integration).
+- Bumped managed Gnosis (`gn`) to 0.5.5.
+- Managed Gnosis install now fetches the release checksums concurrently with the archive download, reducing install latency.
+- `/annotate-git-diff` now runs independent git lookups concurrently when opening the review window and loading file contents, reducing latency.
+- `/what-consumed-my-session-limit-and-tokens` now reads session files with bounded concurrency, reducing report latency.
+- `tlh sessions` now scans session files and resolves subagent child headers with bounded concurrency, reducing latency.
+- Suppressed Pi's extension update changelog notices at launch; TLH keeps only its own update signals ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
+- Hid OpenAI Codex `gpt-6.1-terra` from the model picker by default ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
+- `/effort` Ctrl+S now saves a per-primary effort override (`tlh.primaryAgent.effortOverrides`) instead of the global default; `/reconcile` lists and resets effort-only overrides ([#866](https://github.com/diegopetrucci/the-last-harness/pull/866)).
 - Refreshed the bundled Herdr and tmux terminal skills to newer upstream commits.
 - Added the opt-in ticket-free Architect/no-developer workflow; see [Ticket-free Architect mode](docs/commands.md#ticket-free-architect-mode) ([#854](https://github.com/diegopetrucci/the-last-harness/pull/854)).
 - Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume and cancel for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
@@ -27,9 +35,13 @@ All notable changes to The Last Harness will be documented in this file.
 - In RPC mode, TLH now publishes its subscription usage footer segment as the `tlh-usage` extension UI status (cleared with `undefined`) so hosts such as tlh-gui can render it; the docs also list the existing `fast` status key; see [docs/commands.md](docs/commands.md#usage-and-rpc-status-for-hosts).
 - TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`.
 - The `tlh` wrapper defaults `PI_PROGRAM_STATUS=0` to keep Pi 1.1.0's native OSC 7501 emitter off while TLH's effective-activity reporter remains the root owner.
+- `/annotate-last-message N` annotates an earlier reply; `N` counts completed text replies, and `1` (the default) is the latest.
+- Refreshed the `/annotate-last-message` window: each line has a note button, Esc with notes needs a second press to discard, Esc inside an inline note closes only that note, and Cancel/Submit show their shortcuts.
 
 ### Fixed
 
+- Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
+- Restored Herdr panes now relaunch the same TLH session instead of a plain shell; see [docs/integrations.md](docs/integrations.md) ([#864](https://github.com/diegopetrucci/the-last-harness/pull/864)).
 - The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.
 - `/annotate-last-message` no longer clips the bottom of long assistant messages; the message panel is now a flex column so its scroller fits below the header.
@@ -53,11 +65,13 @@ All notable changes to The Last Harness will be documented in this file.
 - The result watcher now rescans existing results after a restart, since results written while it was down emit no events.
 - Awaited-run abort now sends SIGTERM first so cooperative children can flush, then SIGKILLs a child that ignores SIGINT and SIGTERM within a bounded grace instead of leaving it running after its runner exits.
 - Interrupting a run keeps its owner pid until child cleanup is proven, so a paused run cannot be resumed onto a still-live source session.
+- `/annotate-last-message` keeps a fenced code block in one section across blank lines and no longer creates an empty section for a horizontal-rule-only block.
+- Subagent run status writes no longer bypass the lifecycle lock: the lock-exhaustion fallback only writes while holding the lock, and continuation gate rejection now persists through a generation-checked locked transition, preserving newer committed states.
 
 ### Changed
 
 - Bumped the bundled `pi-mcp-adapter` pin from 5.0.1 to 5.0.2: servers that launch Xcode's MCP bridge (`xcrun mcpbridge`) now default to no idle timeout, so Xcode's "Allow agent to access Xcode?" prompt is not repeated after idle shutdown (an explicit per-server `idleTimeout` still wins).
-- Bumped the bundled Pi runtime from `1.3.0` to `1.4.0`. TLH behavior and defaults are unchanged; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-140-review-evidence) and provider-backed checks remain pending.
+- Bumped the bundled Pi runtime from `1.3.0` to `1.5.0` (via `1.4.0`). TLH behavior and defaults are unchanged; review evidence is in the upstream-sync inventory ([1.5.0](docs/upstream-sync-inventory.md#pi-150-review-evidence), [1.4.0](docs/upstream-sync-inventory.md#historical-pi-140-review-evidence)) and provider-backed checks remain pending ([#861](https://github.com/diegopetrucci/the-last-harness/pull/861)).
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 350,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Refreshed bundled extension pins: `pi-fast` 0.1.6 → 0.1.11, `pi-anthropic-auth` 3.4.2 → 3.4.3, `pi-mcp-adapter` 5.0.0 → 5.0.2, `pi-web-access` 0.29.2 → 0.29.3, `pi-inline-bash` 0.1.11 → 0.1.14, `pi-context-inspector` 0.1.15 → 0.1.17, `pi-dirty-repo-guard` 0.1.11 → 0.1.13, and `pi-quiet-tools` 0.1.14 → 0.1.15. `pi-fast` 0.1.10 added `/ultrafast` for eligible direct OpenAI API-key `gpt-6-astra` requests and changes direct OpenAI ChatGPT OAuth Fast requests from `service_tier: "fast"` to `service_tier: "priority"`. `pi-fast` 0.1.11 adds Anthropic Fast mode through the request `betas` list instead of rewriting the `anthropic-beta` header, so Pi's own betas are preserved. `pi-mcp-adapter` 5.0.2 defaults Xcode `mcpbridge` servers to no idle timeout (an explicit per-server `idleTimeout` still wins), avoiding repeated Xcode access prompts. `pi-inline-bash` 0.1.14 and `pi-dirty-repo-guard` 0.1.13 honor session abort signals, and the guard's `git status` check now times out after 15 seconds. `pi-quiet-tools` 0.1.15 accepts string/numeric `read` offset and limit values when showing line ranges.
 - Refreshed the shipped `monaco-editor` dependency from 0.56.0 to 0.57.0.
@@ -85,6 +99,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Removed the `DUMB ZONE` footer warning that appeared after context usage exceeded 200,000 tokens.
 - Removed TLH's custom `/review` command and interactive picker; automatic architect review remains.
+- Removed disabled primary-agent mode; saved `disabled` selections (settings or sessions) now fall back to architect with a warning — fix with `/switch-primary-agent default architect`.
 - Retired the bundled Pi Voice/Transcribe defaults. Updates remove only entries whose TLH ownership is recorded in default-extension provenance; ambiguous legacy entries without provenance stay installed. To reinstall manually, run `tlh install npm:@earendil-works/pi-voice` (or install a specific version) in the isolated profile; downloaded models and unrelated package files are left untouched.
 - Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
 - Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.
@@ -94,13 +109,19 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
 - Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
 - Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
+- Removed the subagent depth limit (`maxSubagentDepth`, `PI_SUBAGENT_DEPTH`/`PI_SUBAGENT_MAX_DEPTH`; stale values are ignored and `maxSubagentDepth: 0` no longer disables dispatch) and the retired nested-directory cleanup ([#870](https://github.com/diegopetrucci/the-last-harness/pull/870)).
 
 ### Internal
 
+- Made the subagent result watcher transport mode (native watch, restart wait, polling, stopped) an explicit local state union and removed the shared `watcherRestartTimer` slot.
+- Fixed temporary-root inspection false successes and removed proven-unused subagent, extension, and installer code while moving meaningful tests onto live paths.
+- Removed the union-merge Gnosis conflict guidance from `AGENTS.md`; Gnosis 0.5.5 keeps entries sorted by ID and warns on duplicates.
 - Refreshed four contributor-only lint/type dependency pins: `@oxlint/plugins` and `oxlint` 1.90.0, `oxfmt` 0.75.0, and `@types/node` 26.6.6.
 - Removed production exports that only tests used (project-guidance/agent-definition/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - The root test runner now scrubs ambient `PI_SUBAGENT_*`/`PI_SUBAGENTS_*` variables so running tests inside a TLH subagent shell no longer flips runtime paths (#825).
 - Added a contributor-only `mise.toml` that selects Node.js 26 inside this checkout; it is not shipped in the npm package.
+- The test process-liveness probe now treats a `/proc/<pid>/stat` read that fails with `ENOENT`/`ESRCH` after a successful `kill(pid, 0)` as the process being gone, fixing a reap-race flake in detached-child cleanup tests ([#865](https://github.com/diegopetrucci/the-last-harness/pull/865)).
+- The subagent mock-pi test helper now keeps its 500ms force-exit cap only on Windows and uses 10s elsewhere, so large async pipe writes (e.g. on macOS) are no longer truncated before the parent reads them ([#872](https://github.com/diegopetrucci/the-last-harness/pull/872)).
 
 ## [0.46.0] - 2026-10-20
 

@@ -11,16 +11,11 @@ import {
   resolveParallelSubagentTelemetryOutcome,
   resolveSubagentTelemetryOutcome,
   telemetryFromRunnerResults,
-  telemetryFromSingleResults,
   type SubagentRunTelemetry,
   type SubagentTelemetryControls,
   type SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
-import type {
-  AcceptanceLedgerStatus,
-  ResolvedControlConfig,
-  SingleResult,
-} from "../../src/shared/types.ts";
+import type { AcceptanceLedgerStatus, ResolvedControlConfig } from "../../src/shared/types.ts";
 import { captureSubagentTelemetryProvenance } from "../../src/extension/telemetry-provenance.ts";
 
 const provenance: SubagentTelemetryProvenance = {
@@ -51,26 +46,10 @@ function buildTelemetry(overrides: Partial<SubagentRunTelemetry> = {}): Subagent
   });
 }
 
-function acceptanceForTelemetry(
-  status: AcceptanceLedgerStatus,
-): NonNullable<SingleResult["acceptance"]> {
-  return {
-    status,
-    explicit: false,
-    effectiveAcceptance: {
-      level: "checked",
-      explicit: false,
-      inferredReason: [],
-      criteria: [],
-      evidence: [],
-      verify: [],
-      stopRules: [],
-    },
-    inferredReason: [],
-    criteria: [],
-    runtimeChecks: [],
-    verifyRuns: [],
-  };
+function acceptanceForTelemetry(status: AcceptanceLedgerStatus): {
+  status: AcceptanceLedgerStatus;
+} {
+  return { status };
 }
 
 describe("subagent run telemetry", () => {
@@ -184,23 +163,23 @@ describe("subagent run telemetry", () => {
     });
   });
 
-  it("keeps explicit cancel/pause state consistent between run and single-result step outcomes", () => {
+  it("keeps explicit cancel/pause state consistent between run and runner-result steps", () => {
     const cases: Array<{
       state: "cancelled" | "paused";
       terminationReason?: "model_error";
       acceptanceStatus: "accepted" | "rejected";
-      resultState: Record<string, unknown>;
+      status: "cancelled" | "pausing";
     }> = [
       {
         state: "cancelled",
         terminationReason: "model_error",
         acceptanceStatus: "accepted",
-        resultState: { cancel: { summary: "cancelled by parent", cancelledAt: 123 } },
+        status: "cancelled",
       },
       {
         state: "paused",
         acceptanceStatus: "rejected",
-        resultState: { pause: { kind: "awaiting_supervisor", requestedAt: 123 } },
+        status: "pausing",
       },
     ];
 
@@ -210,27 +189,30 @@ describe("subagent run telemetry", () => {
         ...(testCase.terminationReason ? { terminationReason: testCase.terminationReason } : {}),
         acceptanceStatus: testCase.acceptanceStatus,
       };
-      const telemetry = telemetryFromSingleResults({
+      const telemetry = telemetryFromRunnerResults({
         runId: `foreground-${testCase.state}`,
+        execution: "foreground",
         mode: "single",
         provenance,
         controls,
+        startedAt: 100,
+        endedAt: 200,
         results: [
           {
             agent: "worker",
-            task: "telemetry state test",
-            exitCode: 0,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+            success: true,
             acceptance: acceptanceForTelemetry(testCase.acceptanceStatus),
             ...(testCase.terminationReason
               ? { terminationReason: testCase.terminationReason }
               : {}),
-            ...testCase.resultState,
           },
         ],
+        statusSteps: [{ status: testCase.status }],
         outcome: expected,
       });
 
+      assert.ok(telemetry);
+      assert.equal(telemetry.run.execution, "foreground");
       assert.deepEqual(telemetry.outcome, expected);
       assert.deepEqual(telemetry.steps[0]?.outcome, expected);
     }
@@ -276,38 +258,45 @@ describe("subagent run telemetry", () => {
     });
   });
 
-  it("uses deterministic aggregate outcomes in foreground and async fallbacks", () => {
-    const foregroundResult = (input: {
+  it("uses deterministic aggregate outcomes for foreground and async runner results", () => {
+    const runnerResult = (input: {
       agent: string;
-      exitCode: number;
+      success: boolean;
       terminationReason: "completed" | "model_error";
     }) => ({
       agent: input.agent,
-      task: "telemetry test",
-      exitCode: input.exitCode,
+      success: input.success,
       terminationReason: input.terminationReason,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
     });
-    const foreground = telemetryFromSingleResults({
+    const foreground = telemetryFromRunnerResults({
       runId: "foreground-order-variant",
+      execution: "foreground",
       mode: "parallel",
       provenance,
       controls,
+      startedAt: 100,
+      endedAt: 200,
       results: [
-        foregroundResult({ agent: "complete", exitCode: 0, terminationReason: "completed" }),
-        foregroundResult({ agent: "failure", exitCode: 1, terminationReason: "model_error" }),
+        runnerResult({ agent: "complete", success: true, terminationReason: "completed" }),
+        runnerResult({ agent: "failure", success: false, terminationReason: "model_error" }),
       ],
     });
-    const foregroundReversed = telemetryFromSingleResults({
+    const foregroundReversed = telemetryFromRunnerResults({
       runId: "foreground-order-variant",
+      execution: "foreground",
       mode: "parallel",
       provenance,
       controls,
+      startedAt: 100,
+      endedAt: 200,
       results: [
-        foregroundResult({ agent: "failure", exitCode: 1, terminationReason: "model_error" }),
-        foregroundResult({ agent: "complete", exitCode: 0, terminationReason: "completed" }),
+        runnerResult({ agent: "failure", success: false, terminationReason: "model_error" }),
+        runnerResult({ agent: "complete", success: true, terminationReason: "completed" }),
       ],
     });
+    assert.ok(foreground);
+    assert.ok(foregroundReversed);
+    assert.equal(foreground.run.execution, "foreground");
     assert.deepEqual(foreground.outcome, {
       state: "failed",
       terminationReason: "model_error",
@@ -336,11 +325,14 @@ describe("subagent run telemetry", () => {
       endedAt: 200,
       results: [...asyncResults].reverse(),
     });
-    assert.deepEqual(asyncTelemetry?.outcome, {
+    assert.ok(asyncTelemetry);
+    assert.ok(asyncTelemetryReversed);
+    assert.equal(asyncTelemetry.run.execution, "async");
+    assert.deepEqual(asyncTelemetry.outcome, {
       state: "failed",
       terminationReason: "model_error",
     });
-    assert.deepEqual(asyncTelemetryReversed?.outcome, asyncTelemetry?.outcome);
+    assert.deepEqual(asyncTelemetryReversed.outcome, asyncTelemetry.outcome);
   });
 
   it("retains real async child indexes and derives run duration", () => {
@@ -431,23 +423,26 @@ describe("subagent run telemetry", () => {
       { model: attemptedModels[1]!, success: true, usage: finalUsage },
     ];
 
-    const foreground = telemetryFromSingleResults({
+    const foreground = telemetryFromRunnerResults({
       runId: "foreground-fallback",
+      execution: "foreground",
       mode: "single",
       provenance,
       controls,
+      startedAt: 100,
+      endedAt: 200,
       results: [
         {
           agent: "worker",
-          task: "telemetry test",
-          exitCode: 0,
+          success: true,
           modelIdentity: model,
           attemptedModels,
           modelAttempts,
-          usage: aggregateUsage,
         },
       ],
     });
+    assert.ok(foreground);
+    assert.equal(foreground.run.execution, "foreground");
     assert.equal("model" in foreground.steps[0]!, false);
     assert.deepEqual(foreground.usage, {
       inputTokens: aggregateUsage.input,
@@ -457,23 +452,26 @@ describe("subagent run telemetry", () => {
       costUsd: aggregateUsage.cost,
     });
 
-    const foregroundSingle = telemetryFromSingleResults({
+    const foregroundSingle = telemetryFromRunnerResults({
       runId: "foreground-single",
+      execution: "foreground",
       mode: "single",
       provenance,
       controls,
+      startedAt: 100,
+      endedAt: 200,
       results: [
         {
           agent: "worker",
-          task: "telemetry test",
-          exitCode: 0,
+          success: true,
           modelIdentity: model,
           attemptedModels: ["anthropic/claude-final"],
-          modelAttempts: [{ model: "anthropic/claude-final", success: true, usage: finalUsage }],
-          usage: finalUsage,
+          modelAttempts: [{ model: "anthropic/claude-final", usage: finalUsage }],
         },
       ],
     });
+    assert.ok(foregroundSingle);
+    assert.equal(foregroundSingle.run.execution, "foreground");
     assert.deepEqual(foregroundSingle.steps[0]?.model, model);
 
     const asyncTelemetry = telemetryFromRunnerResults({
@@ -523,23 +521,25 @@ describe("subagent run telemetry", () => {
     assert.ok(asyncSingle);
     assert.deepEqual(asyncSingle.steps[0]?.model, model);
 
-    const partial = telemetryFromSingleResults({
+    const partial = telemetryFromRunnerResults({
       runId: "foreground-partial",
+      execution: "foreground",
       mode: "single",
       provenance,
       controls,
+      startedAt: 100,
+      endedAt: 200,
       results: [
         {
           agent: "worker",
-          task: "telemetry test",
-          exitCode: 0,
+          success: true,
           modelIdentity: model,
           attemptedModels: ["anthropic/claude-final"],
-          modelAttempts: [{ model: "anthropic/claude-final", success: true }],
-          usage: finalUsage,
+          modelAttempts: [{ model: "anthropic/claude-final" }],
         },
       ],
     });
+    assert.ok(partial);
     assert.equal("model" in partial.steps[0]!, false);
   });
 
@@ -591,43 +591,50 @@ describe("subagent run telemetry", () => {
     const cases: Array<{
       name: string;
       attemptedModels?: string[];
-      modelAttempts?: Array<{ model: string; success: boolean; usage: typeof usage }>;
+      modelAttempts?: Array<{ model: string; usage?: typeof usage }>;
     }> = [
-      { name: "empty attemptedModels", attemptedModels: [] },
+      {
+        name: "empty attemptedModels",
+        attemptedModels: [],
+        modelAttempts: [{ model: "anthropic/claude-final", usage }],
+      },
       { name: "empty modelAttempts", modelAttempts: [] },
       {
         name: "mismatched attempted model",
         attemptedModels: ["anthropic/claude-other"],
-        modelAttempts: [{ model: "anthropic/claude-final", success: true, usage }],
+        modelAttempts: [{ model: "anthropic/claude-final", usage }],
       },
       {
         name: "inconsistent attempt model",
         attemptedModels: ["anthropic/claude-final"],
-        modelAttempts: [{ model: "anthropic/claude-other", success: true, usage }],
+        modelAttempts: [{ model: "anthropic/claude-other", usage }],
       },
     ];
 
     for (const testCase of cases) {
       const { name, ...evidence } = testCase;
-      const telemetry = telemetryFromSingleResults({
+      const telemetry = telemetryFromRunnerResults({
         runId: `foreground-inconsistent-${name}`,
+        execution: "foreground",
         mode: "single",
         provenance,
         controls,
+        startedAt: 100,
+        endedAt: 200,
         results: [
           {
             agent: "worker",
-            task: "telemetry test",
-            exitCode: 0,
+            success: true,
             modelIdentity: model,
-            usage,
             ...evidence,
           },
         ],
       });
+      assert.ok(telemetry);
       const step = telemetry.steps[0]!;
       assert.equal("model" in step, false, name);
-      assert.ok(step.usage, name);
+      if (testCase.modelAttempts?.some((attempt) => attempt.usage)) assert.ok(step.usage, name);
+      else assert.equal("usage" in step, false, name);
     }
   });
 

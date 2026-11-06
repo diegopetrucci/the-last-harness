@@ -12,7 +12,6 @@ import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentScope } from "../../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
-import { resolveCurrentMaxSubagentDepth, checkSubagentDepth } from "../../shared/types.ts";
 import { getArtifactsDir } from "../../shared/artifacts.ts";
 import { UNCHANGED_SUPERVISOR_RESUME_MESSAGE } from "../../shared/pause-messages.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -975,20 +974,6 @@ export async function resumeAsyncRun(input: {
     }
   }
 
-  const { blocked, depth, maxDepth } = checkSubagentDepth(input.deps.config.maxSubagentDepth);
-  if (blocked) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`,
-        },
-      ],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
-  }
-
   const effectiveCwd =
     persistedProjectAuthorization?.canonicalCwd ?? target.cwd ?? input.requestCwd;
   const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
@@ -1152,7 +1137,6 @@ export async function resumeAsyncRun(input: {
       activeRuntimeMs,
       ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
       outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
-      maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
       controlConfig: resolveControlConfig(input.deps.config.control),
       availableModels,
       providerFallbackModels: providerFallbackModelsForTarget(input.params),

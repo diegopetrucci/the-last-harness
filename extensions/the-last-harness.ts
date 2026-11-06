@@ -30,6 +30,7 @@ import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { maybeNotifyLegacyThemeNotice } from "./the-last-harness/legacy-theme-notice.js";
 import { estimateTlhLaunchContextAllocation } from "./the-last-harness/launch-context.js";
 import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
+import { installTlhExtensionChangelogNoticeOverride } from "./the-last-harness/extension-changelog-notice.js";
 import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
@@ -66,7 +67,7 @@ const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend re
 const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION =
   "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
-  "Open a native annotation window for the latest assistant message";
+  "Open a native annotation window for the latest assistant message (optional [N] for an earlier reply)";
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 
 function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefined {
@@ -213,6 +214,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
   installTlhPackageUpdateNotificationOverride();
   installTlhNewVersionNotificationOverride();
+  installTlhExtensionChangelogNoticeOverride();
   registerToggleTlhGitAttributionCommand(pi);
   const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
   const loadSessionLimitReportModule = createRetryableLazyImport(

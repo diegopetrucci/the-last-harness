@@ -91,8 +91,9 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
     writeFile(configPath, JSON.stringify({ maxSubagentDepth: 3 }));
 
+    // Retired depth limit: a stale value must load without error and have no effect.
     const config = loadConfig();
-    assert.equal(config.maxSubagentDepth, 3);
+    assert.deepEqual(config, { maxSubagentDepth: 3 });
   });
 
   it("copies open config keys safely and restricts consumed nested settings", () => {

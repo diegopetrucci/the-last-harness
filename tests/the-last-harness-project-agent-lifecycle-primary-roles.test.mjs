@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  DISABLED_PRIMARY_AGENT,
-  SELECTABLE_PRIMARY_AGENTS,
-} from "../extensions/the-last-harness-primary-agent.mjs";
+import { SELECTABLE_PRIMARY_AGENTS } from "../extensions/the-last-harness-primary-agent.mjs";
 import {
   createTlhPrimaryAgentResourceLifecycle,
   retireTlhPrimaryAgentResourceRuntime,
@@ -36,15 +33,6 @@ test("lifecycle provider grants control and initiation to every enabled primary"
     assert.equal(access?.resumeRestrictionReason, rushResumeDelegationReason(), name);
     assert.equal(access?.steerRestrictionReason, rushSteerDelegationReason(), name);
   }
-});
-
-test("lifecycle provider keeps disabled mode initiation-only", (t) => {
-  t.after(() => retireTlhPrimaryAgentResourceRuntime());
-  const access = accessFor(DISABLED_PRIMARY_AGENT);
-  assert.equal(access?.canManage, false);
-  assert.equal(access?.canInitiate, true);
-  assert.equal(access?.architect, false);
-  assert.equal(access?.controlRestrictedToEmbedded, false);
 });
 
 test("lifecycle provider denies control without an active primary and after retirement", () => {

@@ -109,7 +109,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -144,7 +143,6 @@ describe("real child process protocol hardening", () => {
         }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: compactArtifactConfig(),
-        maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
       await waitForMockPiCall(mockPi, 0);
@@ -198,7 +196,6 @@ describe("real child process protocol hardening", () => {
         agentConfig: makeAgent("worker", { fallbackModels: ["mock/fallback"] }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: compactArtifactConfig(),
-        maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
       await waitForMockPiCall(mockPi, 0, scaleTestTimeout(5_000));
@@ -260,7 +257,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -301,7 +297,6 @@ describe("real child process protocol hardening", () => {
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: compactArtifactConfig(),
-        maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
       // Wait for the child process to be alive before interrupting.
@@ -347,7 +342,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -372,7 +366,6 @@ describe("real child process protocol hardening", () => {
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       // Use debug mode so includeChildEventProjections is true.
       artifactConfig: resolveArtifactConfig({ mode: "debug" }),
-      maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -400,7 +393,6 @@ describe("real child process protocol hardening", () => {
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       // compact mode: includeChildEventProjections is false
       artifactConfig: compactArtifactConfig(),
-      maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -433,7 +425,6 @@ describe("real child process protocol hardening", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
     requestAsyncInterrupt(path.join(ASYNC_DIR, id), { source: "startup-interrupt-test" });

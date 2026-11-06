@@ -329,7 +329,7 @@ run_stage0_remote_support_fetch_smoke() {
   cp install.sh "${stage_root}/install.sh"
   make_tracking_support_curl "${fakebin}"
   make_fake_remote_stage1_support_root "${support_root}"
-  rm -f "${support_root}/scripts/tlh-update.mjs"
+  rm -f "${support_root}/scripts/tlh-install-state.mjs"
 
   set +e
   run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_CURL_DELAY=0.01 FAKE_CURL_TRACK_DIR="${track_dir}" FAKE_RAW_BASE="${raw_base}" FAKE_SUPPORT_ROOT="${support_root}" TLH_REF="stage0-fetch-ref" TLH_RAW_BASE="${raw_base}" _TLH_STAGE0_CANONICALIZED=1 bash "${stage_root}/install.sh" --no-settings --agent-dir "${optional_case_dir}/agent" --bin-dir "${optional_case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
@@ -341,7 +341,7 @@ run_stage0_remote_support_fetch_smoke() {
     cat "${combined_file}" >&2
     fail "stage-0 optional remote support miss unexpectedly failed"
   fi
-  assert_contains "${combined_file}" "tlh update support script not found for ref stage0-fetch-ref; the wrapper update helper will be unavailable"
+  assert_contains "${combined_file}" "tlh install-state support script not found for ref stage0-fetch-ref; update metadata helper will be unavailable"
   assert_contains "${combined_file}" "fake_stage1=ok"
   assert_absent "${optional_case_dir}/agent"
   assert_absent "${optional_case_dir}/bin"

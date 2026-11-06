@@ -11,7 +11,7 @@ import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const VALIDATION_TIMEOUT_MS = 5_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "0.5.4";
+const DEFAULT_GNOSIS_VERSION = "0.5.5";
 function usage() {
     return `Usage: tlh-gnosis.mjs <command>
 
@@ -27,7 +27,7 @@ Options:
   --settings <path>    Isolated settings file used to record the managed gn version (default: <agent-dir>/settings.json)
   --target <path>      Managed gn install target (default: <agent-dir>/bin/gn)
   --gnosis-repo <r>    Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
-  --gnosis-version <v> Gnosis version to install (default: 0.5.4)
+  --gnosis-version <v> Gnosis version to install (default: 0.5.5)
   --detail             Print verbose/dry-run installer details
   --dry-run            Print intended changes without writing
   --quiet              Only print errors
@@ -237,9 +237,7 @@ function checksumForAsset(checksumsText, assetName) {
     }
     return undefined;
 }
-async function verifyGnosisArchive(args, archivePath, assetName, version) {
-    const checksumsUrl = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/checksums.txt`;
-    const checksumsText = await fetchText(checksumsUrl);
+function verifyGnosisArchive(checksumsText, archivePath, assetName) {
     const expected = checksumForAsset(checksumsText, assetName);
     if (!expected) {
         throw new Error(`Gnosis checksums did not include ${assetName}`);
@@ -358,8 +356,19 @@ async function installManagedGnosis(args, agentDir, resolvedVersion) {
         const extractDir = join(downloadTempDir, "extract");
         mkdirSync(extractDir, { recursive: true });
         logStderr(args, `Installing Gnosis ${version} into isolated profile: ${target}`);
-        await downloadToFile(url, archivePath);
-        await verifyGnosisArchive(args, archivePath, assetName, version);
+        const checksumsUrl = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/checksums.txt`;
+        // Fetch checksums concurrently with the archive; allSettled prevents an unhandled
+        // rejection if one request fails while the other is still in flight. Archive errors
+        // surface first, matching the previous sequential behavior.
+        const [archiveResult, checksumsResult] = await Promise.allSettled([
+            downloadToFile(url, archivePath),
+            fetchText(checksumsUrl),
+        ]);
+        if (archiveResult.status === "rejected")
+            throw archiveResult.reason;
+        if (checksumsResult.status === "rejected")
+            throw checksumsResult.reason;
+        verifyGnosisArchive(checksumsResult.value, archivePath, assetName);
         extractTarGzip(archivePath, extractDir);
         const extracted = findFileNamed(extractDir, "gn");
         if (!extracted)

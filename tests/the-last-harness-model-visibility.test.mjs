@@ -142,6 +142,14 @@ test("model visibility matches canonical and bare-id glob patterns with visible 
     isTlhModelHidden({ provider: "openai-codex", id: "gpt-5.4" }, defaultsOnlyConfig),
     true,
   );
+  assert.equal(
+    isTlhModelHidden({ provider: "openai-codex", id: "gpt-6.1-terra" }, defaultsOnlyConfig),
+    true,
+  );
+  assert.equal(
+    isTlhModelHidden({ provider: "openai", id: "gpt-6.1-terra" }, defaultsOnlyConfig),
+    false,
+  );
 });
 
 test("model visibility settings are isolated-profile only and normalize hidden/visible arrays", async (t) => {

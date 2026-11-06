@@ -450,27 +450,6 @@ export function getDisplayItems(messages) {
     }
     return items;
 }
-export function sumResultsUsage(results) {
-    const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-    for (const result of results) {
-        usage.input += result.usage.input;
-        usage.output += result.usage.output;
-        usage.cacheRead += result.usage.cacheRead;
-        usage.cacheWrite += result.usage.cacheWrite;
-        usage.cost += result.usage.cost;
-        usage.turns += result.usage.turns;
-    }
-    return usage;
-}
-export function sumResultsCost(results) {
-    const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-    for (const result of results) {
-        total.inputTokens += result.usage.input;
-        total.outputTokens += result.usage.output;
-        total.costUsd += result.usage.cost;
-    }
-    return total;
-}
 export function detectSubagentError(messages) {
     let lastAssistantTextIndex = -1;
     for (let i = messages.length - 1; i >= 0; i--) {

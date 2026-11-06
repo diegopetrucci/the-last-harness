@@ -60,7 +60,7 @@ export interface ProjectAgentAccess {
   canManage?: boolean;
   /** True only while the architect is active; retained for compatibility diagnostics. */
   architect: boolean;
-  /** Enabled primaries and disabled mode may initiate a new project-agent execution. */
+  /** Primary agents with an active role may initiate a new project-agent execution. */
   canInitiate?: boolean;
   /**
    * Resume/steer may only target authorized embedded project agents (Rush).

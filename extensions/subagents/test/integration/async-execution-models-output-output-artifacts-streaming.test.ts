@@ -108,7 +108,6 @@ describe("async execution output and event streaming", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -193,7 +192,6 @@ describe("async execution output and event streaming", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -256,7 +254,6 @@ describe("async execution output and event streaming", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
 
@@ -301,7 +298,6 @@ describe("async execution output and event streaming", () => {
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
       outputMode: "file-only",
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -344,7 +340,6 @@ describe("async execution output and event streaming", () => {
         artifactConfig,
         shareEnabled: false,
         maxOutput,
-        maxSubagentDepth: 2,
       });
 
     const absentId = `async-summary-max-output-absent-${Date.now().toString(36)}`;
@@ -384,7 +379,6 @@ describe("async execution output and event streaming", () => {
       },
       shareEnabled: false,
       maxOutput: { lines: 2, bytes: 1024 },
-      maxSubagentDepth: 2,
     });
     const linePayload = readJsonRecord(await waitForAsyncResultFile(lineId));
     const lineSummary = requiredString(linePayload.summary, "line-limited summary");
@@ -426,7 +420,6 @@ describe("async execution output and event streaming", () => {
         cleanupDays: 7,
       },
       shareEnabled: false,
-      maxSubagentDepth: 2,
     });
     const bytePayload = readJsonRecord(await waitForAsyncResultFile(parallelId));
     const byteResults = readJsonRecords(bytePayload.results, "byte-limited result payload");
@@ -475,7 +468,6 @@ describe("async execution output and event streaming", () => {
       sessionRoot: path.join(tempDir, "sessions"),
       output: "context.md",
       outputBaseDir,
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -517,7 +509,6 @@ describe("async execution output and event streaming", () => {
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -560,7 +551,6 @@ describe("async execution output and event streaming", () => {
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: "false",
-      maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
@@ -601,7 +591,6 @@ describe("async execution output and event streaming", () => {
       },
       shareEnabled: false,
       sessionRoot,
-      maxSubagentDepth: 2,
     });
 
     await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -642,7 +631,6 @@ describe("async execution output and event streaming", () => {
       },
       shareEnabled: false,
       sessionRoot,
-      maxSubagentDepth: 2,
     });
 
     await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -677,7 +665,6 @@ describe("async execution output and event streaming", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -712,7 +699,6 @@ describe("async execution output and event streaming", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);
@@ -762,7 +748,6 @@ describe("async execution output and event streaming", () => {
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       const resultPath = await waitForAsyncResultFile(id);
@@ -819,7 +804,6 @@ describe("async execution output and event streaming", () => {
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       assert.equal(result.isError, true);
@@ -883,7 +867,6 @@ process.stdout.write(ticket.body);
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       const resultPath = await waitForAsyncResultFile(id);
@@ -936,7 +919,6 @@ process.stdout.write(ticket.body);
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -969,7 +951,6 @@ process.stdout.write(ticket.body);
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       skills: ["pi-subagents"],
-      maxSubagentDepth: 2,
     });
 
     assert.equal(result.isError, true);
@@ -1001,7 +982,6 @@ process.stdout.write(ticket.body);
         },
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
       });
 
       await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -1060,7 +1040,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     const statusPath = path.join(asyncDir, "status.json");
@@ -1121,7 +1100,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
@@ -1175,7 +1153,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
@@ -1226,7 +1203,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
@@ -1284,7 +1260,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
@@ -1345,7 +1320,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
@@ -1419,7 +1393,6 @@ process.stdout.write(ticket.body);
         },
         shareEnabled: false,
         sessionRoot,
-        maxSubagentDepth: 2,
       });
 
       const resultPath = await waitForAsyncResultFile(id);
@@ -1477,7 +1450,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot,
-      maxSubagentDepth: 2,
     });
 
     const liveDeadline = Date.now() + scaleTestTimeout(10_000);
@@ -1560,7 +1532,6 @@ process.stdout.write(ticket.body);
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
     });
 
     const resultPath = await waitForAsyncResultFile(id);

@@ -991,7 +991,7 @@ describe("agent frontmatter supervisorBridge", () => {
 });
 
 describe("agent frontmatter maxSubagentDepth", () => {
-  it("parses maxSubagentDepth from discovered agent frontmatter", () => {
+  it("accepts a stale maxSubagentDepth without error and ignores it", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-frontmatter-"));
     tempDirs.push(dir);
     const agentsDir = canonicalAgentDir(dir);
@@ -1011,7 +1011,10 @@ Inspect code
 
     const result = discoverAgents(dir, "project");
     const scout = result.agents.find((agent) => agent.name === "repo-scout");
-    assert.equal(scout?.maxSubagentDepth, 1);
+    assert.ok(scout);
+    assert.equal(result.agentDiagnostics?.length ?? 0, 0);
+    assert.equal("maxSubagentDepth" in scout, false);
+    assert.equal(scout.extraFields, undefined);
   });
 });
 

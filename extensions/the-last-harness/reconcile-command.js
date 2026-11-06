@@ -1,7 +1,7 @@
 // Generated from extensions/the-last-harness/reconcile-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath } from "./common.js";
 import { computeModelEffortDrift, readReconcileState, updateReconcileAcknowledgedSnapshot, } from "./model-effort-reconcile.js";
-import { clearPrimaryAgentModelOverrideByName, } from "./primary-agent-runtime.js";
+import { clearPrimaryAgentOverridesByName, } from "./primary-agent-runtime.js";
 import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { tlhSettingsPathForWrite } from "./profile-state.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
@@ -78,7 +78,7 @@ function notifyResetResult(ctx, result, agentName) {
 function unrecognizedPrimaryOverrideMessage(agentName) {
     const settingsPath = tlhSettingsPathForWrite();
     const location = settingsPath ? ` in ${formatHomePath(settingsPath)}` : "";
-    return `TLH reconcile: "${agentName}" is not a recognised TLH primary agent, so its override cannot be reset automatically. Remove it by hand from settings.tlh.primaryAgent.modelOverrides${location}.`;
+    return `TLH reconcile: "${agentName}" is not a recognised TLH primary agent, so its override cannot be reset automatically. Remove it by hand from settings.tlh.primaryAgent.modelOverrides/effortOverrides${location}.`;
 }
 function notifyUnrecognizedPrimaryOverride(ctx, agentName) {
     ctx.ui.notify(unrecognizedPrimaryOverrideMessage(agentName), "error");
@@ -91,7 +91,7 @@ async function clearOverride(ctx, entry, runtime) {
         const result = await runtime.resetPrimaryAgentModelOverride(ctx, entry.name);
         return result ? { status: "cleared", result } : { status: "unrecognized" };
     }
-    const result = clearPrimaryAgentModelOverrideByName(ctx.cwd, entry.name);
+    const result = clearPrimaryAgentOverridesByName(ctx.cwd, entry.name);
     return result ? { status: "cleared", result } : { status: "unrecognized" };
 }
 async function runReconcilePicker(ctx, provider, runtime) {

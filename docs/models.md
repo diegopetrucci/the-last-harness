@@ -27,8 +27,6 @@ For compatibility with older installed or user-edited agent files, TLH falls bac
 
 Model picker keys are documented in [commands.md](commands.md#model-picker).
 
-Disabled mode is not a model role: it applies no primary model/effort default or override. See [disabled primary-agent mode](commands.md#disabled-primary-agent-mode).
-
 ### Direct provider sessions and authentication
 
 TLH treats xAI as a first-class direct provider and uses provider ID `xai` for its bundled Grok defaults. For xAI subscription access, use `/login xai` when available; Pi owns direct-provider authentication and transport, and this is the recommended subscription path over `XAI_API_KEY`.
@@ -51,7 +49,7 @@ Picker keys (Enter, Ctrl+S, Esc), typed `/model`, launch flags, and undo steps a
 
 The native picker is the only model picker. Its session-only Enter path, persisted save-key path (Ctrl+S by default, `app.models.save`), same-model save-key reselection, model-scope activation, refresh behavior, and configurable Enter/save-key/cancel-key hints rendered from keybinding config at runtime are provided by the pinned Pi runtime (version in `config/pi-runtime/package.json`). TLH wraps only the public `AgentSession.setModel` method in the isolated runtime, carrying `options.persist` through the complete awaited `model_select` dispatch. It does not patch `ModelSelectorComponent`, `SettingsManager`'s model/default persistence methods, or private storage paths; `/thinking` and `/effort` use the public `ThinkingSelectorComponent` with a separate guarded default write. A same-model `persist: true` call emits no `model_select` event, so after the original `setModel` succeeds TLH invokes the current owner-scoped callback through the same primary-override and first-baseline logic. Failed calls and `persist: false` calls never invoke that callback.
 
-Pi does not expose provenance saying whether `persist: true` came from Ctrl+S, provider authentication, or another programmatic path. TLH therefore treats a successful persisted `setModel` call, including provider-auth persistence, as durable compatibility input. Programmatic session model applications that do not request persistence remain session-only under Pi's default behavior. TLH's own primary application, primary-mode changes, cancellation paths, and disabled mode never turn their model application into a user override.
+Pi does not expose provenance saying whether `persist: true` came from Ctrl+S, provider authentication, or another programmatic path. TLH therefore treats a successful persisted `setModel` call, including provider-auth persistence, as durable compatibility input. Programmatic session model applications that do not request persistence remain session-only under Pi's default behavior. TLH's own primary application, primary-mode changes, and cancellation paths never turn their model application into a user override.
 
 ### Staying in sync when TLH updates its defaults
 

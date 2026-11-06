@@ -112,6 +112,7 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
     const fsApi = deps.fs ?? fs;
     const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
     let stopped = false;
+    let transport = { kind: "stopped" };
     const resultRetryStates = new Map();
     const resultRetryDiagnostics = new Set();
     const claimCleanupTimers = new Map();
@@ -490,25 +491,45 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
         })
             .forEach((file) => state.resultFileCoalescer.schedule(file, 0));
     };
-    const startPollingFallback = (reason) => {
-        if (stopped)
-            return;
-        state.watcher?.close();
+    const clearTransportHandle = () => {
+        switch (transport.kind) {
+            case "restart-wait":
+                timers.clearTimeout(transport.timer);
+                break;
+            case "polling":
+                timers.clearInterval(transport.timer);
+                break;
+            case "native-watch":
+                transport.watcher.close();
+                break;
+            case "stopped":
+                break;
+        }
         state.watcher = null;
-        if (state.watcherRestartTimer)
+    };
+    const transitionToStopped = () => {
+        stopped = true;
+        clearTransportHandle();
+        transport = { kind: "stopped" };
+    };
+    const transitionToPolling = (reason) => {
+        if (stopped || transport.kind === "polling")
             return;
+        clearTransportHandle();
         console.error(`Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${getErrorCode(reason) ?? "unknown error"}).`);
         primeExistingResults();
-        state.watcherRestartTimer = timers.setInterval(primeExistingResults, POLL_INTERVAL_MS);
-        state.watcherRestartTimer.unref?.();
+        const timer = timers.setInterval(primeExistingResults, POLL_INTERVAL_MS);
+        timer.unref?.();
+        transport = { kind: "polling", timer };
     };
-    const scheduleRestart = () => {
-        if (stopped || state.watcherRestartTimer)
+    const transitionToRestartWait = () => {
+        if (stopped || transport.kind === "restart-wait" || transport.kind === "polling")
             return;
-        state.watcherRestartTimer = timers.setTimeout(() => {
-            state.watcherRestartTimer = null;
-            if (stopped)
+        clearTransportHandle();
+        const timer = timers.setTimeout(() => {
+            if (stopped || transport.kind !== "restart-wait" || transport.timer !== timer)
                 return;
+            transport = { kind: "stopped" };
             try {
                 fsApi.mkdirSync(resultsDir, { recursive: true });
                 startResultWatcher();
@@ -517,30 +538,28 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
             }
             catch (error) {
                 if (shouldFallBackToPolling(error)) {
-                    startPollingFallback(error);
+                    transitionToPolling(error);
                     return;
                 }
                 console.error(`Failed to restart subagent result watcher for '${resultsDir}':`, error);
-                scheduleRestart();
+                transitionToRestartWait();
             }
         }, WATCHER_RESTART_DELAY_MS);
-        state.watcherRestartTimer.unref?.();
+        timer.unref?.();
+        transport = { kind: "restart-wait", timer };
     };
     const startResultWatcher = () => {
         if (state.watcher)
             return;
         stopped = false;
-        if (state.watcherRestartTimer) {
-            timers.clearTimeout(state.watcherRestartTimer);
-            timers.clearInterval(state.watcherRestartTimer);
-            state.watcherRestartTimer = null;
-        }
+        clearTransportHandle();
+        transport = { kind: "stopped" };
         const startupEntries = readResultEntries();
         if (startupEntries)
             cleanupOrphanClaims(startupEntries);
         try {
             const watchDir = resolveNativeWatchDir(fsApi, resultsDir);
-            state.watcher = fsApi.watch(watchDir, (ev, file) => {
+            const watcher = fsApi.watch(watchDir, (ev, file) => {
                 if (stopped || ev !== "rename" || !file)
                     return;
                 const fileName = file.toString();
@@ -548,41 +567,31 @@ export function createResultWatcher(pi, state, resultsDir, deps = {}) {
                     return;
                 state.resultFileCoalescer.schedule(fileName);
             });
-            state.watcher.on("error", (error) => {
-                if (stopped)
+            state.watcher = watcher;
+            transport = { kind: "native-watch", watcher };
+            watcher.on("error", (error) => {
+                if (transport.kind !== "native-watch" || transport.watcher !== watcher)
                     return;
                 if (shouldFallBackToPolling(error)) {
-                    startPollingFallback(error);
+                    transitionToPolling(error);
                     return;
                 }
                 console.error(`Subagent result watcher failed for '${resultsDir}':`, error);
-                state.watcher?.close();
-                state.watcher = null;
-                scheduleRestart();
+                transitionToRestartWait();
             });
-            state.watcher.unref?.();
+            watcher.unref?.();
         }
         catch (error) {
-            if (stopped)
-                return;
             if (shouldFallBackToPolling(error)) {
-                startPollingFallback(error);
+                transitionToPolling(error);
                 return;
             }
             console.error(`Failed to start subagent result watcher for '${resultsDir}':`, error);
-            state.watcher = null;
-            scheduleRestart();
+            transitionToRestartWait();
         }
     };
     const stopResultWatcher = () => {
-        stopped = true;
-        state.watcher?.close();
-        state.watcher = null;
-        if (state.watcherRestartTimer) {
-            timers.clearTimeout(state.watcherRestartTimer);
-            timers.clearInterval(state.watcherRestartTimer);
-        }
-        state.watcherRestartTimer = null;
+        transitionToStopped();
         for (const retry of resultRetryStates.values()) {
             if (retry.timer)
                 timers.clearTimeout(retry.timer);

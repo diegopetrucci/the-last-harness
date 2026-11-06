@@ -23,9 +23,9 @@ function readPackageBinPath(packageJson) {
     }
     return undefined;
 }
-export function buildSubagentSpawnEnv(inheritedEnv, explicitEnv, depthEnv) {
+export function buildSubagentSpawnEnv(inheritedEnv, explicitEnv) {
     const filteredInheritedEnv = Object.fromEntries(Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("HERDR_")));
-    return { ...filteredInheritedEnv, ...explicitEnv, ...depthEnv };
+    return { ...filteredInheritedEnv, ...explicitEnv };
 }
 function findPiPackageRootFromEntry(entryPoint) {
     let dir = path.dirname(entryPoint);

@@ -71,7 +71,6 @@ describe("async runner execution", () => {
       agents: [selected],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      maxSubagentDepth: 2,
       projectAgentIdentities: [identity],
     });
     assert.ok("plan" in result, "expected successful plan build");
@@ -88,7 +87,6 @@ describe("async runner execution", () => {
       agents: [agent("worker")],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      maxSubagentDepth: 2,
     });
     assert.ok("plan" in result, "expected successful plan build");
     if ("error" in result) return;
@@ -122,7 +120,6 @@ describe("async runner execution", () => {
         agents: [selected],
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         ctx,
-        maxSubagentDepth: 2,
       });
       assert.ok("plan" in free, "expected ticket-free plan build");
       if ("error" in free) return;
@@ -136,7 +133,6 @@ describe("async runner execution", () => {
         agents: [selected],
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         ctx,
-        maxSubagentDepth: 2,
       });
       assert.ok("plan" in normal, "expected normal plan build");
       if ("error" in normal) return;
@@ -174,7 +170,6 @@ describe("async runner execution", () => {
           agents: [selected],
           artifactConfig: DEFAULT_ARTIFACT_CONFIG,
           ctx,
-          maxSubagentDepth: 2,
         });
         assert.ok("error" in parallelPlan, "stale parallel prompts must fail preflight");
         assert.match(parallelPlan.error, /full `tlh update`/);
@@ -185,7 +180,6 @@ describe("async runner execution", () => {
           task: "validate",
           agentConfig: selected,
           ctx,
-          maxSubagentDepth: 2,
           artifactConfig: DEFAULT_ARTIFACT_CONFIG,
           promptVariant: "ticket-free",
         });
@@ -202,7 +196,6 @@ describe("async runner execution", () => {
           agents: [selected],
           artifactConfig: DEFAULT_ARTIFACT_CONFIG,
           ctx,
-          maxSubagentDepth: 2,
         });
         assert.ok(!(parallel instanceof Promise), "preflight rejection must be synchronous");
         if (parallel instanceof Promise) continue;
@@ -233,7 +226,6 @@ describe("async runner execution", () => {
         agents: [selected],
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         ctx,
-        maxSubagentDepth: 2,
       });
       assert.ok("error" in result, "invalid markers must fail preflight");
       assert.match(result.error, /Malformed TLH prompt-variant marker/);
@@ -267,7 +259,6 @@ describe("async runner execution", () => {
           agents: [canonical],
           artifactConfig: DEFAULT_ARTIFACT_CONFIG,
           ctx,
-          maxSubagentDepth: 2,
         });
         assert.ok("plan" in result, "legacy normal prompt must remain launchable");
         if ("error" in result) continue;
@@ -282,7 +273,6 @@ describe("async runner execution", () => {
         agents: [custom],
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         ctx,
-        maxSubagentDepth: 2,
       });
       assert.ok("plan" in customResult, "custom test-runner prompt must remain unchanged");
       if ("error" in customResult) return;
@@ -339,7 +329,7 @@ describe("async runner execution", () => {
       const executor = createSubagentExecutor({
         pi: makeExtensionAPI(),
         state: makeSubagentState({ baseCwd: profile, currentSessionId: "session-123" }),
-        config: { maxSubagentDepth: 2, control: {} },
+        config: { control: {} },
         tempArtifactsDir: path.join(profile, "artifacts"),
         getSubagentSessionRoot: () => path.join(profile, "sessions"),
         expandTilde: (value) => value,
@@ -376,7 +366,6 @@ describe("async runner execution", () => {
         agent: "worker",
         agentConfig: agent("worker"),
         ctx,
-        maxSubagentDepth: 2,
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: os.tmpdir(),
@@ -411,7 +400,6 @@ describe("async runner execution", () => {
       agents,
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      maxSubagentDepth: 2,
     });
 
     assert.ok("plan" in result, "expected successful plan build");
@@ -447,7 +435,6 @@ describe("async runner execution", () => {
       agents: [agent("fast", 100), agent("slow", 300), agent("caller-bound", 900)],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      maxSubagentDepth: 2,
     });
 
     assert.ok("plan" in result, "expected successful plan build");
@@ -467,7 +454,6 @@ describe("async runner execution", () => {
       })),
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      maxSubagentDepth: 2,
     });
 
     assert.deepEqual(result, {
@@ -487,7 +473,6 @@ describe("async runner execution", () => {
       ],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      maxSubagentDepth: 2,
     });
 
     assert.deepEqual(result, {
@@ -515,7 +500,6 @@ describe("async runner plan child-location persistence", () => {
       agents: [agent("worker")],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: stepCtx,
-      maxSubagentDepth: 2,
     });
 
     assert.ok("plan" in result, "expected successful plan build");
@@ -538,7 +522,6 @@ describe("async runner plan child-location persistence", () => {
       agents: [agent("worker")],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: stepCtx,
-      maxSubagentDepth: 2,
     });
 
     assert.ok("plan" in result, "expected successful plan build");
@@ -562,7 +545,6 @@ describe("async runner plan child-location persistence", () => {
       agents: [agent("worker"), agent("worker2"), agent("worker3")],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: stepCtx,
-      maxSubagentDepth: 2,
     });
 
     assert.ok("plan" in result, "expected successful plan build");
@@ -607,7 +589,6 @@ describe("revival: priorTerminalResult propagation", () => {
         agent: "worker",
         agentConfig: revivalAgent,
         ctx,
-        maxSubagentDepth: 2,
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         shareEnabled: false,
         priorTerminalResult: prior,
@@ -641,7 +622,6 @@ describe("revival: priorTerminalResult propagation", () => {
         agent: "worker",
         agentConfig: revivalAgent,
         ctx,
-        maxSubagentDepth: 2,
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: os.tmpdir(),

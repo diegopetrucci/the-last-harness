@@ -32,6 +32,7 @@ import {
 
 import { buildInstallConfig, parseArgs, usage } from "../scripts/tlh-install.mjs";
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
+import { supportFileManifest } from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 const repoNestedFixtureParent = join(repoRoot, ".symphony", "tlh-sessions");
 
@@ -278,7 +279,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
   assert.match(stage0Help.stdout, /installed into a private TLH runtime/);
   assert.match(
     stage0Help.stdout,
-    /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0\.5\.4\)/,
+    /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0.5.5\)/,
   );
   assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
 
@@ -294,7 +295,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 
   assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
   assert.match(usage(), new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
-  assert.match(usage(), /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0\.5\.4\)/);
+  assert.match(usage(), /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0.5.5\)/);
   assert.doesNotMatch(usage(), /--no-pi-install/);
 
   const updateHelp = spawnSync(
@@ -508,7 +509,7 @@ test("stage-1 defaults managed Gnosis to the pinned release and still honors env
     return buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir], env), env);
   };
 
-  assert.equal(configFor().gnosisVersion, "0.5.4");
+  assert.equal(configFor().gnosisVersion, "0.5.5");
   assert.equal(configFor({ TLH_GNOSIS_VERSION: "latest" }).gnosisVersion, "latest");
   assert.equal(configFor({ TLH_GNOSIS_VERSION: "0.5.2" }).gnosisVersion, "0.5.2");
 });
@@ -554,6 +555,51 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
   assert.match(output, /Skipping settings\/keybinding merge \(--no-settings\)\./);
   assert.match(output, /Skipping Gnosis integration \(TLH_SKIP_GNOSIS_INSTALL is set\)\./);
   assert.doesNotMatch(output, /Skipping Gnosis integration \(--no-settings\)\./);
+});
+
+test("support manifests omit redundant package updater downloads while update entrypoints remain usable", (t) => {
+  const root = makeTempDir();
+  const homeDir = join(root, "home");
+  mkdirSync(homeDir, { recursive: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const supportFiles = supportFileManifest({ noSettings: true });
+  assert.equal(
+    supportFiles.some((file) => file.relativePath === "scripts/tlh-update.mjs"),
+    false,
+  );
+  assert.ok(
+    supportFiles.some(
+      (file) =>
+        file.relativePath === "scripts/tlh-recover-update.mjs" &&
+        file.installName === "recover-update.mjs",
+    ),
+  );
+  assert.ok(
+    supportFiles.some(
+      (file) => file.relativePath === "scripts/tlh-wrapper.mjs" && file.requirement === "optional",
+    ),
+  );
+  assert.ok(
+    supportFiles.some(
+      (file) =>
+        file.relativePath === "scripts/tlh-install-state.mjs" && file.requirement === "optional",
+    ),
+  );
+  const installerSource = readFileSync(join(repoRoot, "install.sh"), "utf8");
+  assert.doesNotMatch(installerSource, /\|scripts\/tlh-update\.mjs/);
+  assert.doesNotMatch(installerSource, /Would fetch tlh update support files/);
+
+  for (const relativePath of ["scripts/tlh-update.mjs", "scripts/tlh-recover-update.mjs"]) {
+    const result = spawnSync(process.execPath, [join(repoRoot, relativePath), "--help"], {
+      cwd: repoRoot,
+      env: scrubInstallerEnv({ HOME: homeDir }),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(result.status, 0, `${relativePath}: ${result.stderr}`);
+    assert.match(result.stdout, /Usage: tlh update/);
+  }
 });
 
 test("stage-1 copies only the profile recovery launcher into the isolated profile", (t) => {

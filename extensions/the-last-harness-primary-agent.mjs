@@ -1,5 +1,4 @@
 export const DEFAULT_PRIMARY_AGENT = "architect";
-export const DISABLED_PRIMARY_AGENT = "disabled";
 export const PRIMARY_AGENT_SESSION_STATE_ENTRY = "tlh-primary-agent-state";
 export const SELECTABLE_PRIMARY_AGENTS = Object.freeze([
   "architect",
@@ -7,13 +6,7 @@ export const SELECTABLE_PRIMARY_AGENTS = Object.freeze([
   "product",
   "bug-hunter",
 ]);
-export const PRIMARY_AGENT_CYCLE = Object.freeze([
-  "architect",
-  "rush",
-  "product",
-  "bug-hunter",
-  DISABLED_PRIMARY_AGENT,
-]);
+export const PRIMARY_AGENT_CYCLE = Object.freeze(["architect", "rush", "product", "bug-hunter"]);
 
 const PRIMARY_AGENT_SELECTIONS = new Set(PRIMARY_AGENT_CYCLE);
 
@@ -36,9 +29,10 @@ function invalidSelectionLabel(value) {
   return String(value);
 }
 
-export function isEnabledPrimaryAgentSelection(selection) {
-  return selection !== DISABLED_PRIMARY_AGENT;
-}
+// The retired "disabled" mode is no longer a valid selection. Inputs that used
+// to resolve to it fall back to the default primary through the generic
+// invalid-selection path (reported via `invalidSelected`).
+const RETIRED_DISABLED_SELECTION = "disabled";
 
 export function resolvePrimaryAgentConfig(config) {
   if (!isRecord(config)) {
@@ -46,7 +40,7 @@ export function resolvePrimaryAgentConfig(config) {
   }
 
   if (config.enabled === false) {
-    return { selection: DISABLED_PRIMARY_AGENT };
+    return { selection: DEFAULT_PRIMARY_AGENT, invalidSelected: RETIRED_DISABLED_SELECTION };
   }
 
   if (hasOwn(config, "selected")) {
@@ -65,14 +59,16 @@ export function resolvePrimaryAgentConfig(config) {
 
 export function resolvePrimaryAgentSessionState(data) {
   if (typeof data === "boolean") {
-    return { selection: data ? DEFAULT_PRIMARY_AGENT : DISABLED_PRIMARY_AGENT };
+    return data
+      ? { selection: DEFAULT_PRIMARY_AGENT }
+      : { selection: DEFAULT_PRIMARY_AGENT, invalidSelected: RETIRED_DISABLED_SELECTION };
   }
   if (!isRecord(data)) {
     return {};
   }
 
   if (data.enabled === false) {
-    return { selection: DISABLED_PRIMARY_AGENT };
+    return { selection: DEFAULT_PRIMARY_AGENT, invalidSelected: RETIRED_DISABLED_SELECTION };
   }
 
   if (hasOwn(data, "selected")) {

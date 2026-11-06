@@ -2,7 +2,23 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../shared/types.ts";
 import { findAsyncRunPrefixMatches, type AsyncRunLocation } from "./async-resume.ts";
-import { assertSafeNestedId } from "../shared/nested-events.ts";
+
+function isSafeRunId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !path.isAbsolute(value) &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("..")
+  );
+}
+
+/** Validate a user-supplied id before using it to resolve a retained async artifact. */
+function assertSafeRunId(label: string, value: string): void {
+  if (!isSafeRunId(value)) throw new Error(`${label} must be a non-empty safe id token.`);
+}
 
 export type ResolvedSubagentRunId = { kind: "async"; id: string; location: AsyncRunLocation };
 
@@ -33,7 +49,7 @@ export function resolveSubagentRunId(
   id: string,
   deps: ResolveSubagentRunIdDeps = {},
 ): ResolvedSubagentRunId | undefined {
-  assertSafeNestedId("id", id);
+  assertSafeRunId("id", id);
   const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
   const resultsDir = deps.resultsDir ?? RESULTS_DIR;
   const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);

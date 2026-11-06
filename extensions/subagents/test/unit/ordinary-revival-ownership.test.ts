@@ -130,7 +130,7 @@ function makeExecutor(
   return createSubagentExecutor({
     pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" } as any,
     state: makeSubagentState({ baseCwd: root }),
-    config: { maxSubagentDepth: 2, control: {} } as any,
+    config: { control: {} } as any,
     tempArtifactsDir: root,
     getSubagentSessionRoot: () => path.join(root, "sessions"),
     expandTilde: (value) => value,

@@ -27,7 +27,7 @@ The official release installer verifies SHA-256 checksums for every successfully
 
 ## Workflows
 
-`tlh` has a few primary workflows/personas: architect, rush, product, bug-hunter, disabled. Each of them has different purpose, encoded with a different system prompt, available tools, and subagents. You can switch between primary agents at any time by pressing `shift` + `tab` — but I would suggest to try not to cross-contaminate the same session (start new ones!).
+`tlh` has a few primary workflows/personas: architect, rush, product, bug-hunter. Each of them has different purpose, encoded with a different system prompt, available tools, and subagents. You can switch between primary agents at any time by pressing `shift` + `tab` — but I would suggest to try not to cross-contaminate the same session (start new ones!).
 
 ### The architect
 
@@ -59,10 +59,6 @@ A few quick-fire tips to get the most of the architect:
 ### Product, rush, bug-hunter
 
 These are smaller, laser-focused primary agents. I especially recommend `rush` for quicker fixes that the architect's workflow would be overkill for. `product` handles framing, tradeoffs, strategy, and ticket shaping — it doesn't write code. `bug-hunter` is read-only: reach for it when you want root cause before you've decided how to fix something.
-
-### Disabled mode
-
-`disabled` is a mode where no ad-hoc primary-role guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. Details are in the [command reference](docs/commands.md#disabled-primary-agent-mode). I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
 
 ### Optional iPhone companion
 

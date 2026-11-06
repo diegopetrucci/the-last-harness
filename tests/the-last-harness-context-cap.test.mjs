@@ -155,7 +155,7 @@ test("/toggle-context-cap rejects non-empty args with error notify and does not 
   const settingsPath = join(fixture.agent, "settings.json");
   writeFileSync(
     settingsPath,
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
 
   await withEnv(
@@ -185,7 +185,7 @@ test("session_start caps a 1M-contextWindow model to 350_000 by default", async 
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
 
   await withEnv(
@@ -208,7 +208,7 @@ test("session_start does not cap a model whose contextWindow is already <= 350_0
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
 
   await withEnv(
@@ -317,7 +317,7 @@ test("canonical developer child applies the 272_000 ceiling uniformly", async (t
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   const settingsPath = join(fixture.agent, "settings.json");
   const initialSettings = `${JSON.stringify(
-    { tlh: { primaryAgent: { enabled: false, selected: "disabled" } } },
+    { tlh: { primaryAgent: { applyModel: false, applyThinking: false } } },
     null,
     2,
   )}\n`;
@@ -1412,7 +1412,7 @@ test("model_select caps a large model to 350_000", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
 
   await withEnv(
@@ -1464,7 +1464,7 @@ test("session_shutdown restores original contextWindow after session_start cappe
   const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
 
   await withEnv(
@@ -1719,7 +1719,7 @@ test("/toggle-context-cap disables cap (flips enabled to disabled=true) and rest
   const settingsPath = join(fixture.agent, "settings.json");
   writeFileSync(
     settingsPath,
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
 
   await withEnv(

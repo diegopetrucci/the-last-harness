@@ -87,7 +87,7 @@ test("no-developer captures one session policy across startup reasons, role swit
     };
     assert.equal(await toolCall(trustedEmbeddedDeveloper, ctx), undefined);
 
-    for (const selection of ["rush", "product", "bug-hunter", "disabled"]) {
+    for (const selection of ["rush", "product", "bug-hunter"]) {
       branchEntries[0].data.selected = selection;
       const rolePrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
       assert.doesNotMatch(rolePrompt.systemPrompt, /- developer:/i, selection);
@@ -144,14 +144,14 @@ test("enabling no-developer mid-session waits for the next session", async (t) =
   });
 });
 
-test("disabled no-developer preference restores developer dispatch in a new session", async (t) => {
+test("removing the no-developer preference restores developer dispatch in a new session", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const settingsPath = join(fixture.agent, "settings.json");
   const branchEntries = [
     {
       type: "custom",
       customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-      data: { selected: "disabled" },
+      data: { selected: "architect" },
     },
   ];
 
@@ -568,54 +568,6 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
   });
 });
 
-test("disabled primary mode enforces architect-equivalent subagent safety and scope", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const { toolCall } = registerRuntimeHarness({
-    primaryAgents: selectablePrimaryAgents(),
-    subagentMetadata: [],
-  });
-  const ctx = createToolCallContext(
-    [
-      {
-        type: "custom",
-        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-        data: { selected: "disabled" },
-      },
-    ],
-    undefined,
-    { cwd: fixture.cwd },
-  );
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const allowedEvent = {
-      toolName: "subagent",
-      input: { agent: "repo-scout", task: "Map the repository" },
-    };
-    assert.equal(await toolCall(allowedEvent, ctx), undefined);
-    assert.equal(allowedEvent.input.agentScope, "user");
-    assert.equal(Object.hasOwn(allowedEvent.input, "context"), false);
-    assert.equal(allowedEvent.input.timeoutMs, undefined);
-
-    const blockedTargetEvent = {
-      toolName: "subagent",
-      input: { agent: "planner", task: "Plan the work" },
-    };
-    assert.deepEqual(await toolCall(blockedTargetEvent, ctx), {
-      block: true,
-      reason:
-        "TLH primary agents may delegate only to: developer, test-runner, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
-    });
-    assert.equal(blockedTargetEvent.input.agentScope, "user");
-    assert.equal(Object.hasOwn(blockedTargetEvent.input, "context"), false);
-
-    const blockedScopeEvent = {
-      toolName: "subagent",
-      input: { agent: "developer", task: "Implement the change", agentScope: "project" },
-    };
-    assert.match((await toolCall(blockedScopeEvent, ctx))?.reason ?? "", /may not use agentScope/);
-  });
-});
-
 test("Rush delegates subagent resume enforcement to the executor", async () => {
   const { toolCall } = registerRuntimeHarness({
     primaryAgents: selectablePrimaryAgents(),
@@ -713,7 +665,7 @@ test("/switch-primary-agent includes Rush completions, usage, and status strings
   const usage = createCommandContext();
   await command.handler("rush extra", usage.ctx);
   assert.deepEqual(usage.notifications.at(-1), {
-    message: "Usage: /switch-primary-agent architect|rush|product|bug-hunter|disabled",
+    message: "Usage: /switch-primary-agent architect|rush|product|bug-hunter",
     type: "error",
   });
 
@@ -806,7 +758,10 @@ test("/switch-primary-agent status reports model override or none", async (t) =>
 
 test("/switch-primary-agent status reports an override for overrideable Rush", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
+  const primaryAgents = new Map([
+    ["architect", rushLikePrimary("architect")],
+    ["rush", rushLikePrimary("rush")],
+  ]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writePrimaryConfig(fixture.agent, { modelOverrides: { rush: "anthropic/claude-opus-5" } });
@@ -837,7 +792,10 @@ test("/switch-primary-agent status reports an override for overrideable Rush", a
 
 test("/switch-primary-agent model reset clears an overrideable Rush model override", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
+  const primaryAgents = new Map([
+    ["architect", rushLikePrimary("architect")],
+    ["rush", rushLikePrimary("rush")],
+  ]);
   const initialSettings = `${JSON.stringify(
     {
       tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },

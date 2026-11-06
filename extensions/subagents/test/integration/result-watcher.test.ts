@@ -866,7 +866,7 @@ describe("result watcher", () => {
       try {
         watcher.startResultWatcher();
         assert.equal(state.watcher, null);
-        assert.notEqual(state.watcherRestartTimer, null);
+        assert.equal(typeof poll, "function");
 
         fs.writeFileSync(childSessionPath, "", "utf-8");
         fs.writeFileSync(
@@ -976,7 +976,7 @@ describe("result watcher", () => {
         enospc.code = "ENOSPC";
         emitWatcherError?.(enospc);
         assert.equal(state.watcher, null);
-        assert.notEqual(state.watcherRestartTimer, null);
+        assert.equal(typeof poll, "function");
 
         fs.writeFileSync(
           path.join(resultsDir, "done.json"),

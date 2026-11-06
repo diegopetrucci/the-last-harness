@@ -43,7 +43,7 @@ function makeExecutor(state: SubagentState) {
       },
     } as any,
     state,
-    config: { maxSubagentDepth: 2, control: {} } as any,
+    config: { control: {} } as any,
     tempArtifactsDir: os.tmpdir(),
     getSubagentSessionRoot: (parentSessionFile) =>
       parentSessionFile
@@ -275,5 +275,42 @@ describe("extension: removed schedule action fails closed", () => {
       ],
       { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
     );
+  });
+});
+
+describe("executor: stale depth settings no longer block root dispatch", () => {
+  it("does not return a nested-call block for stale config and env depth values", async () => {
+    const keys = ["PI_SUBAGENT_DEPTH", "PI_SUBAGENT_MAX_DEPTH", SUBAGENT_CHILD_ENV];
+    const saved = keys.map((key) => [key, process.env[key]] as const);
+    try {
+      process.env.PI_SUBAGENT_DEPTH = "5";
+      process.env.PI_SUBAGENT_MAX_DEPTH = "0";
+      delete process.env[SUBAGENT_CHILD_ENV];
+      const executor = createSubagentExecutor({
+        ...({} as any),
+        pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" } as any,
+        state: createState(),
+        config: { maxSubagentDepth: 0, control: {} } as any,
+        tempArtifactsDir: os.tmpdir(),
+        getSubagentSessionRoot: () => os.tmpdir(),
+        expandTilde: (value: string) => value,
+        discoverAgents: () => ({ agents: [] }),
+        kill: () => true,
+      });
+      const result = await executor.execute(
+        "stale-depth",
+        { agent: "missing-agent", task: "hello" } as any,
+        new AbortController().signal,
+        undefined,
+        ctx(),
+      );
+      assert.doesNotMatch(text(result), /Nested subagent call blocked/);
+      assert.match(text(result), /Unknown agent: missing-agent/);
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });

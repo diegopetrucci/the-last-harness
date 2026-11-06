@@ -9,7 +9,7 @@ REF="${TLH_REF:-main}"
 # major; the last is an open floor.
 TLH_MIN_NODE_VERSIONS=("24.22.1" "26.12.1")
 TLH_NODE_REQUIREMENT_TEXT="Node.js >=24.22.1 <25 or >=26.12.1"
-TLH_PINNED_PI_VERSION="1.4.0"
+TLH_PINNED_PI_VERSION="1.5.0"
 
 # Keep stage-0 remote support downloads bounded so an unavailable raw-file
 # request cannot hold up the installer indefinitely, especially in parallel.
@@ -98,7 +98,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.4)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.5)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
@@ -652,7 +652,6 @@ required|scripts/lib/mcp-adapter-migration.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
 required|scripts/tlh-recover-update.mjs
-optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
 optional|scripts/tlh-install-state.mjs
 required|config/settings.defaults.json
@@ -786,9 +785,6 @@ require_supported_node_stage0() {
 warn_missing_optional_support_file() {
   local relative_path="$1"
   case "${relative_path}" in
-    scripts/tlh-update.mjs)
-      warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
-      ;;
     scripts/tlh-wrapper.mjs)
       warn "tlh wrapper support script not found for ref ${REF}; wrapper creation will be unavailable"
       ;;
@@ -979,7 +975,6 @@ dry_run_without_stage1() {
   fi
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh tickets support files."
-  log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."
   log "Dry run only; no support files were downloaded."

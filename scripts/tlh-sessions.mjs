@@ -14,7 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
-import { aggregateCoverage, analyzeSubagentSessions, extractSubagentCorrelationsWithStatus, recordCorrelationEvidenceFailures, scanSessionFile, } from "./lib/session-analysis.mjs";
+import { aggregateCoverage, analyzeSubagentSessions, extractSubagentCorrelationsWithStatus, mapWithConcurrency, recordCorrelationEvidenceFailures, scanSessionFile, SESSION_FILE_CONCURRENCY, } from "./lib/session-analysis.mjs";
 import { resolveTlhAgentDir } from "./lib/tlh-install-utils.mjs";
 import { computeMedian } from "../extensions/the-last-harness/tool-pairing.js";
 // ---------------------------------------------------------------------------
@@ -347,15 +347,20 @@ async function main() {
         failedScans: 0,
         unreadableDirectories: discovery.unreadableDirectories,
     };
-    const scanResults = [];
-    for (const filePath of sessionFiles) {
+    const scanOutcomes = await mapWithConcurrency(sessionFiles, SESSION_FILE_CONCURRENCY, async (filePath) => {
         try {
-            const result = await scanSessionFile(filePath);
-            scanResults.push(result);
+            return await scanSessionFile(filePath);
         }
         catch {
-            extraCoverage.failedScans = (extraCoverage.failedScans ?? 0) + 1;
+            return null;
         }
+    });
+    const scanResults = [];
+    for (const outcome of scanOutcomes) {
+        if (outcome === null)
+            extraCoverage.failedScans = (extraCoverage.failedScans ?? 0) + 1;
+        else
+            scanResults.push(outcome);
     }
     const coverage = aggregateCoverage(scanResults, extraCoverage);
     const publicCorrelationId = createPublicCorrelationId();

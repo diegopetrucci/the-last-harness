@@ -197,8 +197,6 @@ export async function runRealSubagentSession(
     ["PI_CODING_AGENT_DIR", process.env.PI_CODING_AGENT_DIR],
     ["PI_SUBAGENT_EXTRA_AGENT_DIRS", process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS],
     ["PI_SUBAGENT_CHILD", process.env.PI_SUBAGENT_CHILD],
-    ["PI_SUBAGENT_DEPTH", process.env.PI_SUBAGENT_DEPTH],
-    ["PI_SUBAGENT_MAX_DEPTH", process.env.PI_SUBAGENT_MAX_DEPTH],
     ["PI_SUBAGENT_PARENT_SESSION", process.env.PI_SUBAGENT_PARENT_SESSION],
     ["PI_SUBAGENT_PI_BINARY", process.env.PI_SUBAGENT_PI_BINARY],
     [
@@ -244,8 +242,6 @@ export async function runRealSubagentSession(
     process.env.PI_CODING_AGENT_DIR = home;
     delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
     delete process.env.PI_SUBAGENT_CHILD;
-    delete process.env.PI_SUBAGENT_DEPTH;
-    delete process.env.PI_SUBAGENT_MAX_DEPTH;
     delete process.env.PI_SUBAGENT_PARENT_SESSION;
     // Set PI_SUBAGENT_PI_BINARY to the shim binary so the fork's pi-spawn
     // resolution (which resolves the installed @earendil-works/pi-coding-agent

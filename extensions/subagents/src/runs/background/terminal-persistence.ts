@@ -1,5 +1,11 @@
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { lifecycleGeneration } from "../shared/lifecycle-state.ts";
+import {
+  isTerminalLifecycleState,
+  LifecycleGenerationConflictError,
+  lifecycleGeneration,
+  transitionLifecycleStatus,
+} from "../shared/lifecycle-state.ts";
+import { readStatus } from "../../shared/utils.ts";
 import {
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
   type AsyncResultArtifact,
@@ -20,7 +26,6 @@ import type {
   RunnerStatusPayload,
   RunnerStatusStep,
 } from "./run-status-owner.ts";
-import { writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.ts";
 
 /**
  * The detached runner's per-child result, kept separate from terminal writing.
@@ -495,85 +500,140 @@ function writeResultArtifact(
   }
 }
 
+/** Sentinel: a newer writer already committed an immutable terminal state. */
+class GateRejectionPreserveTerminal extends Error {}
+
 /** Persist the explicit result required when a detached continuation loses its claim gate. */
 export function persistContinuationGateRejection(input: ContinuationGateRejectionInput): void {
   const { statusPayload } = input;
   const endedAt = Date.now();
-  statusPayload.state = "failed";
-  statusPayload.pid = undefined;
-  statusPayload.endedAt = endedAt;
-  statusPayload.lastUpdate = endedAt;
-  statusPayload.error = `Continuation launch gate rejected for source run '${input.sourceRunId}' child ${input.sourceIndex}.`;
-  statusPayload.steps = statusPayload.steps.map((step: RunnerStatusStep, index: number) =>
-    index === 0
-      ? {
-          ...step,
-          status: "failed",
-          endedAt,
-          exitCode: 1,
-          terminationReason: step.terminationReason ?? "process_exit",
-          error: statusPayload.error,
+  const gateError = `Continuation launch gate rejected for source run '${input.sourceRunId}' child ${input.sourceIndex}.`;
+  const failSteps = <T extends RunnerStatusStep | NonNullable<AsyncStatus["steps"]>[number]>(
+    steps: readonly T[],
+  ): T[] =>
+    steps.map((step, index) =>
+      index === 0
+        ? {
+            ...step,
+            status: "failed",
+            endedAt,
+            exitCode: 1,
+            terminationReason: step.terminationReason ?? "process_exit",
+            error: gateError,
+          }
+        : step,
+    );
+  const gateTelemetryFor = (steps: RunnerStatusPayload["steps"]) => {
+    const first = steps[0];
+    const gateResults = steps.map((step: RunnerStatusStep, index: number) => ({
+      index,
+      agent: step.agent,
+      ...(index === 0 ? { success: false, terminationReason: "process_exit" as const } : {}),
+    }));
+    return telemetryFromRunnerResults({
+      runId: input.config.id,
+      execution: input.config.awaited ? "foreground" : "async",
+      mode: input.plan.kind,
+      results:
+        gateResults.length > 0
+          ? gateResults
+          : [
+              {
+                index: 0,
+                agent: first?.agent ?? "subagent",
+                success: false,
+                terminationReason: "process_exit",
+              },
+            ],
+      provenance: input.config.telemetry?.provenance,
+      controls: input.controlConfig,
+      startedAt: input.overallStartTime,
+      endedAt,
+      statusSteps: steps,
+      lineage: input.config.telemetry?.lineage,
+      outcome: { state: "failed", terminationReason: "process_exit" },
+    });
+  };
+
+  // Persist through the lifecycle lock with a generation check so a newer
+  // committed generation (for example a stale-run failure commit) is adopted,
+  // never overwritten by this runner's possibly stale in-memory payload.
+  let committed: AsyncStatus | undefined;
+  let expectedGeneration = lifecycleGeneration(statusPayload);
+  try {
+    for (let attempt = 0; !committed; attempt++) {
+      try {
+        committed = transitionLifecycleStatus({
+          asyncDir: input.asyncDir,
+          expectedGeneration,
+          mutate: (current) => {
+            if (isTerminalLifecycleState(current.state) && current.state !== "paused")
+              throw new GateRejectionPreserveTerminal();
+            const steps = failSteps(current.steps ?? []);
+            const telemetry = gateTelemetryFor(steps as RunnerStatusPayload["steps"]);
+            return {
+              ...current,
+              state: "failed",
+              pid: undefined,
+              endedAt,
+              lastUpdate: Math.max(endedAt, current.lastUpdate ?? 0),
+              error: gateError,
+              steps,
+              ...(telemetry ? { telemetry } : {}),
+            };
+          },
+        }).status;
+      } catch (error) {
+        if (error instanceof GateRejectionPreserveTerminal) {
+          committed = readStatus(input.asyncDir, { cache: false }) ?? undefined;
+          break;
         }
-      : step,
-  );
-  const firstStep = statusPayload.steps[0];
-  const gateResults = statusPayload.steps.map((step: RunnerStatusStep, index: number) => ({
-    index,
-    agent: step.agent,
-    ...(index === 0 ? { success: false, terminationReason: "process_exit" as const } : {}),
-  }));
-  const gateTelemetry = telemetryFromRunnerResults({
-    runId: input.config.id,
-    execution: input.config.awaited ? "foreground" : "async",
-    mode: input.plan.kind,
-    results:
-      gateResults.length > 0
-        ? gateResults
-        : [
-            {
-              index: 0,
-              agent: firstStep?.agent ?? "subagent",
-              success: false,
-              terminationReason: "process_exit",
-            },
-          ],
-    provenance: input.config.telemetry?.provenance,
-    controls: input.controlConfig,
-    startedAt: input.overallStartTime,
-    endedAt,
-    statusSteps: statusPayload.steps,
-    lineage: input.config.telemetry?.lineage,
-    outcome: { state: "failed", terminationReason: "process_exit" },
-  });
-  if (gateTelemetry) statusPayload.telemetry = gateTelemetry;
-  writeNormalizedLifecycleStatus(input.asyncDir, statusPayload);
+        if (!(error instanceof LifecycleGenerationConflictError) || attempt >= 2) throw error;
+        const latest = readStatus(input.asyncDir, { cache: false });
+        if (!latest) throw error;
+        // Adopt the newer generation and retry against it.
+        expectedGeneration = lifecycleGeneration(latest);
+      }
+    }
+  } catch (error) {
+    console.error(`Failed to persist continuation gate rejection for ${input.asyncDir}:`, error);
+    return;
+  }
+  // Only a failed committed status yields a failed result artifact; any other
+  // newer terminal state keeps its owner's result.
+  if (!committed || committed.state !== "failed") return;
+  const firstStep = committed.steps?.[0];
+  const gateTelemetry = committed.telemetry;
+  const resultError = committed.error ?? gateError;
+  const resultEndedAt = committed.endedAt ?? endedAt;
+  const resultGeneration = lifecycleGeneration(committed);
   const agent = firstStep?.agent ?? "subagent";
   try {
     writeAtomicJson(input.resultPath, {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       id: input.config.id,
-      generation: lifecycleGeneration(statusPayload),
+      generation: resultGeneration,
       agent,
-      mode: statusPayload.mode,
+      mode: committed.mode,
       success: false,
       state: "failed" as const,
-      summary: statusPayload.error,
+      summary: resultError,
       ...(gateTelemetry ? { telemetry: gateTelemetry } : {}),
-      error: statusPayload.error,
+      error: resultError,
       results: [
         {
           agent,
           ...(firstStep?.promptVariant ? { promptVariant: firstStep.promptVariant } : {}),
           ...(firstStep?.projectAgent ? { projectAgent: firstStep.projectAgent } : {}),
           ticketId: firstStep?.ticketId,
-          output: statusPayload.error,
-          error: statusPayload.error,
+          output: resultError,
+          error: resultError,
           success: false,
           exitCode: 1,
         },
       ],
       exitCode: 1,
-      timestamp: endedAt,
+      timestamp: resultEndedAt,
       durationMs: 0,
       asyncDir: input.asyncDir,
       sessionId: input.config.sessionId,

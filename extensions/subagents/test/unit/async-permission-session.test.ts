@@ -31,7 +31,6 @@ describe("async permission forwarding session identity", () => {
         currentSessionId,
         parentSessionId: "session-abc123",
       },
-      maxSubagentDepth: 1,
     });
 
     assert.ok(!("error" in built));
@@ -65,7 +64,6 @@ describe("async permission forwarding session identity", () => {
         "/tmp/parallel-1.jsonl",
         "/tmp/static-worker.jsonl",
       ],
-      maxSubagentDepth: 1,
     });
 
     assert.ok(!("error" in built));
@@ -110,7 +108,6 @@ describe("async permission forwarding session identity", () => {
           fullId: "anthropic/claude-haiku-4-5",
         },
       ],
-      maxSubagentDepth: 1,
     });
 
     assert.ok(!("error" in built));
@@ -141,7 +138,6 @@ describe("async permission forwarding session identity", () => {
         cwd: "/tmp/project",
         currentSessionId: "/tmp/parent-session.jsonl",
       },
-      maxSubagentDepth: 1,
     });
 
     assert.ok(!("error" in built));

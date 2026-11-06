@@ -204,7 +204,7 @@ test("git cache refresh requests a footer render without unrelated UI activity",
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFakeCommand(
       fakebin,
@@ -272,7 +272,7 @@ test("session start refreshes weekly visibility once and repeated footer renders
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true }, primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true }, primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
 
     SettingsManager.create = (...args) => {
@@ -343,7 +343,7 @@ test("subscription usage footer first render stays synchronous before the lazy s
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFileSync(
       join(agentDir, "tlh", "install-state.json"),
@@ -436,7 +436,7 @@ test("subscription usage refresh requests a footer render when a runtime overrid
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFileSync(
       join(agentDir, "tlh", "install-state.json"),
@@ -527,7 +527,7 @@ test("subscription usage refresh redraws the footer when the event context diffe
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFileSync(
       join(agentDir, "tlh", "install-state.json"),
@@ -633,7 +633,7 @@ test("turn_end refresh with a context distinct from registration redraws the foo
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFileSync(
       join(agentDir, "tlh", "install-state.json"),
@@ -736,7 +736,7 @@ test("pending refresh before session_shutdown does not redraw the old footer", a
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFileSync(
       join(agentDir, "tlh", "install-state.json"),
@@ -844,7 +844,7 @@ test("pending refresh before session switch redraws the new session's footer whe
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFileSync(
       join(agentDir, "tlh", "install-state.json"),
@@ -966,7 +966,7 @@ test("rapid turn_end burst collapses to a single fetch and no extra renders when
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
 
     globalThis.fetch = async () => {
@@ -1060,7 +1060,7 @@ async function withUsageEnv(run) {
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
     );
     writeFileSync(
       join(agentDir, "tlh", "install-state.json"),

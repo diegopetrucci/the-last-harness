@@ -106,8 +106,8 @@ test("prompt variants preserve normal parity and isolate ticket-free protocols",
   const primary = loadPrimaryAgents().get("architect");
   assert.ok(primary, "packaged architect prompt must load");
   const subagents = loadSubagentMetadata();
-  const normal = buildTlhSystemPrompt(primary, subagents, true, undefined, false);
-  const ticketFree = buildTlhSystemPrompt(primary, subagents, true, undefined, true);
+  const normal = buildTlhSystemPrompt(primary, subagents, undefined, false);
+  const ticketFree = buildTlhSystemPrompt(primary, subagents, undefined, true);
   const architectTicketFree = renderPromptVariant(primary.systemPrompt, "ticket-free");
 
   assert.match(
@@ -116,6 +116,8 @@ test("prompt variants preserve normal parity and isolate ticket-free protocols",
   );
   assert.match(normal, /For any ticket-backed dispatch, pass the approved ticket ID/);
   assert.doesNotMatch(normal, /edit source files directly in bounded steps/);
+  assert.match(normal, /## The Last Harness Defaults/);
+  assert.match(normal, /Never create a git commit on your own/);
   assert.match(ticketFree, /edit source files directly in bounded steps/);
   assert.doesNotMatch(
     ticketFree,
@@ -310,7 +312,7 @@ test("primary project guidance selects roles from one session snapshot and refre
   });
 });
 
-test("disabled and unknown primary roles receive no project guidance", async (t) => {
+test("unknown primary roles receive no project guidance", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
     cwd: true,
     test: t,
@@ -324,19 +326,16 @@ test("disabled and unknown primary roles receive no project guidance", async (t)
       {
         type: "custom",
         customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-        data: { selected: "disabled" },
+        data: { selected: "architect" },
       },
     ];
     const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
-    const { applySessionStart, beforeAgentStart, runtime } = registerRuntimeHarness({
+    const { applySessionStart, runtime } = registerRuntimeHarness({
       primaryAgents: guidancePrimaryAgents(),
       subagentMetadata: [],
     });
     await applySessionStart(ctx);
 
-    const disabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
-    assert.doesNotMatch(disabledPrompt.systemPrompt, /TLH Project Agent Guidance/);
-    assert.doesNotMatch(disabledPrompt.systemPrompt, /architect guidance/);
     assert.equal(formatProjectAgentGuidance(runtime.projectAgentGuidanceSnapshot(), "unknown"), "");
   });
 });
@@ -912,40 +911,14 @@ test("child runtime scopes tickets at session start", async (t) => {
   );
 });
 
-test("disabled primary mode validates calls after injecting provider-aware subagent models", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const { toolCall } = registerRuntimeHarness();
-    const event = { toolName: "subagent", input: { agent: "developer" } };
-    const ctx = createToolCallContext(
-      [
-        {
-          type: "custom",
-          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-          data: { selected: "disabled" },
-        },
-      ],
-      undefined,
-      { cwd: fixture.cwd },
-    );
-
-    assert.equal(await toolCall(event, ctx), undefined);
-    assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
-    assert.equal(Object.hasOwn(event.input, "thinking"), false);
-    assert.equal(event.input.agentScope, "user");
-    assert.equal(Object.hasOwn(event.input, "context"), false);
-  });
-});
-
-test("disabled primary mode allows contrarian by default and ignores stale contrarian experimental settings", async (t) => {
+test("architect allows contrarian by default and ignores stale contrarian experimental settings", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const subagentMetadata = [contrarianMetadata()];
   const branchEntries = [
     {
       type: "custom",
       customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-      data: { selected: "disabled" },
+      data: { selected: "architect" },
     },
   ];
   const ctx = createToolCallContext(branchEntries, undefined, {
@@ -998,13 +971,13 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
   });
 });
 
-test("disabled primary mode allows opaque resume regardless of stale contrarian settings", async (t) => {
+test("architect allows opaque resume regardless of stale contrarian settings", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const branchEntries = [
     {
       type: "custom",
       customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-      data: { selected: "disabled" },
+      data: { selected: "architect" },
     },
   ];
   const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
@@ -1070,50 +1043,6 @@ test("enabled primary mode validates subagent input after injecting provider-awa
     assert.equal(Object.hasOwn(event.input, "thinking"), false);
     assert.equal(event.input.agentScope, "user");
     assert.equal(Object.hasOwn(event.input, "context"), false);
-  });
-});
-
-test("disabled primary mode keeps neutral TLH delegation guidance without the architect persona", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const primaryAgents = selectablePrimaryAgents();
-    primaryAgents.set(
-      "architect",
-      createPrimaryPrompt("architect", { systemPrompt: "architect persona sentinel" }),
-    );
-    const { beforeAgentStart } = registerRuntimeHarness({
-      primaryAgents,
-      subagentMetadata: [
-        { name: "developer", description: "developer description sentinel" },
-        {
-          name: "test-runner",
-          description: "test-runner description sentinel",
-        },
-        contrarianMetadata(),
-      ],
-    });
-    const disabledPrompt = await beforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext(
-        [
-          {
-            type: "custom",
-            customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-            data: { selected: "disabled" },
-          },
-        ],
-        undefined,
-        { cwd: fixture.cwd },
-      ),
-    );
-
-    assert.match(disabledPrompt.systemPrompt, /## The Last Harness Defaults/);
-    assert.match(disabledPrompt.systemPrompt, /## TLH Allowed Minor Subagents/);
-    assert.match(disabledPrompt.systemPrompt, /- developer: developer description sentinel/);
-    assert.match(disabledPrompt.systemPrompt, /- test-runner: test-runner description sentinel/);
-    assert.doesNotMatch(disabledPrompt.systemPrompt, /architect persona sentinel/);
-    assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Experimental Feature:/);
   });
 });
 

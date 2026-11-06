@@ -810,15 +810,13 @@ export function createSessionMirrorObserverRuntime(
             attestGeneration(token);
             break;
           case "agent-start":
-            state.status = "active";
-            state.settled = false;
+            // Work signal only: the synchronous lifecycle methods own status.
             break;
           case "dirty":
             state.dirty = true;
             break;
           case "agent-settled":
-            state.status = "idle";
-            state.settled = true;
+            // Publication signal only; publishIfReady re-checks live state.
             publicationRequested = true;
             break;
           case "snapshot-required":

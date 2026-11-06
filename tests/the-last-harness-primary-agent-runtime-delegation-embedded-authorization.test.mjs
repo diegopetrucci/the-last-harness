@@ -69,50 +69,6 @@ function basenameUpper(relativePath) {
   return name.endsWith(".md") ? `${name.slice(0, -3).toUpperCase()}.md` : name.toUpperCase();
 }
 
-test("embedded subagents: disabled mode preserves the default user scope", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    writeEmbeddedAgent(
-      fixture.agent,
-      "trusted/my-tool.md",
-      "---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
-    );
-    const { applySessionStart, toolCall } = registerRuntimeHarness({
-      primaryAgents: selectablePrimaryAgents(),
-      subagentMetadata: [],
-    });
-    const ctx = createToolCallContext(
-      [
-        {
-          type: "custom",
-          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-          data: { selected: "disabled" },
-        },
-      ],
-      undefined,
-      { cwd: fixture.cwd },
-    );
-    await applySessionStart(ctx);
-
-    const allowedEvent = {
-      toolName: "subagent",
-      input: { agent: "embedded.my-tool", task: "do something" },
-    };
-    assert.equal(await toolCall(allowedEvent, ctx), undefined);
-    assert.equal(allowedEvent.input.agentScope, "user");
-    assert.equal(Object.hasOwn(allowedEvent.input, "context"), false);
-
-    // Definition loading and fail-closed authorization happen in the executor;
-    // the primary hook must not claim a project scope for the target.
-    const deferredEvent = {
-      toolName: "subagent",
-      input: { agent: "embedded.missing-tool", task: "deferred to executor" },
-    };
-    assert.equal(await toolCall(deferredEvent, ctx), undefined);
-  });
-});
-
 test("embedded subagents: architect preserves the requested user scope", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
@@ -357,7 +313,7 @@ function rushExecutorCaller({ fixture, owner, toolCall, hookCtx, afterHook }) {
   const executor = createSubagentExecutor({
     pi: { events: { emit() {}, on: () => () => {} }, getSessionName: () => "parent" },
     state: makeSubagentState({ baseCwd: fixture.cwd }),
-    config: { maxSubagentDepth: 2, control: {} },
+    config: { control: {} },
     tempArtifactsDir: fixture.cwd,
     getSubagentSessionRoot: () => join(fixture.cwd, "sessions"),
     expandTilde: (value) => value,

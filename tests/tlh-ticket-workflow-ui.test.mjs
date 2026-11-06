@@ -287,7 +287,7 @@ test("ticket workflow UI loads by default and registers /tickets without a .tick
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {

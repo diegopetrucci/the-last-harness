@@ -416,21 +416,6 @@ export function checkPidLiveness(
   }
 }
 
-function liveLock(asyncDir: string): boolean {
-  try {
-    const snapshot = lockSnapshot(asyncDir);
-    if (!snapshot) return false;
-    // A lock directory without a complete owner is indistinguishable from the
-    // mkdir-before-owner.json publication window. Treat that unknown state as
-    // live so lock-exhausted callers fail closed in memory and never rewrite disk.
-    return !completeOwner(snapshot) || checkPidLiveness(snapshot.pid) !== "dead";
-  } catch {
-    // A lock stat/read failure is unknown ownership, never proof that a
-    // lockless rewrite is safe.
-    return true;
-  }
-}
-
 function recoverLock(asyncDir: string, options: LifecycleLockOptions): boolean {
   const snapshot = lockSnapshot(asyncDir);
   if (!snapshot) return false;
@@ -830,63 +815,82 @@ function mergeStatusMonotonicRuntime(
 export function mergeAndWriteSourceRunnerStatus(
   asyncDir: string,
   inMemory: AsyncStatus,
+  lockOptions?: LifecycleLockOptions,
 ): AsyncStatus {
   const memoryGeneration = lifecycleGeneration(inMemory);
   try {
-    return withLifecycleStatusLock(asyncDir, (persisted) => {
-      if (!persisted) return writeNormalizedLifecycleStatus(asyncDir, inMemory);
-      const current = normalizeAsyncLifecycleStatus(persisted);
-      return writeNormalizedLifecycleStatus(
-        asyncDir,
-        mergeStatusMonotonicRuntime(
-          current,
-          inMemory,
-          lifecycleGeneration(current) !== memoryGeneration,
-        ),
-      );
-    });
+    return withLifecycleStatusLock(
+      asyncDir,
+      (persisted) => {
+        if (!persisted) return writeNormalizedLifecycleStatus(asyncDir, inMemory);
+        const current = normalizeAsyncLifecycleStatus(persisted);
+        return writeNormalizedLifecycleStatus(
+          asyncDir,
+          mergeStatusMonotonicRuntime(
+            current,
+            inMemory,
+            lifecycleGeneration(current) !== memoryGeneration,
+          ),
+        );
+      },
+      lockOptions,
+    );
   } catch (error) {
     if (!(error instanceof LifecycleLockExhaustedError)) throw error;
 
-    const persisted = readStatus(asyncDir, { cache: false });
-    // Unknown lock state is fail-closed in memory: do not rewrite status.json
-    // without a lock merely because owner.json was absent or incomplete.
-    if (
-      persisted &&
-      inMemory.state === "failed" &&
-      isActiveLifecycleState(persisted.state) &&
-      lifecycleGeneration(persisted) === memoryGeneration &&
-      !liveLock(asyncDir)
-    ) {
-      const merged = mergeStatusMonotonicRuntime(
-        normalizeAsyncLifecycleStatus(persisted),
-        inMemory,
-        false,
-      );
-      return writeNormalizedLifecycleStatus(asyncDir, {
-        ...persisted,
-        state: "failed",
-        pid: undefined,
-        pause: undefined,
-        activityState: undefined,
-        currentTool: undefined,
-        currentToolStartedAt: undefined,
-        currentPath: undefined,
-        error: inMemory.error,
-        endedAt: inMemory.endedAt ?? persisted.endedAt,
-        lastUpdate: maxNumber(persisted.lastUpdate, inMemory.lastUpdate),
-        lifecycle: {
-          ...persisted.lifecycle,
-          ...(inMemory.lifecycle?.resumeBlockedReason
-            ? { resumeBlockedReason: inMemory.lifecycle.resumeBlockedReason }
-            : {}),
-          generation: memoryGeneration + 1,
+    // Unknown lock state is fail-closed in memory. A lock-absent snapshot is
+    // not ownership, so the failure projection is only written while actually
+    // holding the lifecycle lock (one non-waiting acquisition attempt); every
+    // check is repeated against the status read under that lock.
+    if (inMemory.state !== "failed") return readFallback(asyncDir, inMemory);
+    try {
+      return withLifecycleStatusLock(
+        asyncDir,
+        (persisted) => {
+          if (
+            !persisted ||
+            !isActiveLifecycleState(persisted.state) ||
+            lifecycleGeneration(persisted) !== memoryGeneration
+          )
+            return persisted ?? normalizeAsyncLifecycleStatus(inMemory);
+          const merged = mergeStatusMonotonicRuntime(
+            normalizeAsyncLifecycleStatus(persisted),
+            inMemory,
+            false,
+          );
+          return writeNormalizedLifecycleStatus(asyncDir, {
+            ...persisted,
+            state: "failed",
+            pid: undefined,
+            pause: undefined,
+            activityState: undefined,
+            currentTool: undefined,
+            currentToolStartedAt: undefined,
+            currentPath: undefined,
+            error: inMemory.error,
+            endedAt: inMemory.endedAt ?? persisted.endedAt,
+            lastUpdate: maxNumber(persisted.lastUpdate, inMemory.lastUpdate),
+            lifecycle: {
+              ...persisted.lifecycle,
+              ...(inMemory.lifecycle?.resumeBlockedReason
+                ? { resumeBlockedReason: inMemory.lifecycle.resumeBlockedReason }
+                : {}),
+              generation: memoryGeneration + 1,
+            },
+            steps: merged.steps ?? persisted.steps,
+          });
         },
-        steps: merged.steps ?? persisted.steps,
-      });
+        { ...lockOptions, retryDelaysMs: [] },
+      );
+    } catch (retryError) {
+      if (!(retryError instanceof LifecycleLockExhaustedError)) throw retryError;
+      return readFallback(asyncDir, inMemory);
     }
-    return persisted ?? normalizeAsyncLifecycleStatus(inMemory);
   }
+}
+
+function readFallback(asyncDir: string, inMemory: AsyncStatus): AsyncStatus {
+  return readStatus(asyncDir, { cache: false }) ?? normalizeAsyncLifecycleStatus(inMemory);
 }
 
 function continuationTargetExists(

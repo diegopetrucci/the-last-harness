@@ -53,7 +53,6 @@ export interface RunnerSubagentStep {
   outputPath?: string;
   outputMode?: "inline" | "file-only";
   sessionFile?: string;
-  maxSubagentDepth?: number;
   /** Trusted per-instance active-time role budget for this child. */
   timeoutMs?: number;
   /** Trusted internal owner of the budget. */

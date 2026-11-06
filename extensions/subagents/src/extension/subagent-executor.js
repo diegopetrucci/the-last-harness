@@ -24,7 +24,7 @@ import { resolveSubagentRunId, } from "../runs/background/run-id-resolver.js";
 import { inspectSubagentStatus } from "../runs/background/run-status.js";
 import { runBoundToToolCall } from "../../../the-last-harness/project-agent-access.mjs";
 import { isAsyncStatusReadError } from "../runs/background/async-status-boundary.js";
-import { SUBAGENT_ACTIONS, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, } from "../shared/types.js";
+import { SUBAGENT_ACTIONS, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, } from "../shared/types.js";
 function toExecutionErrorResult(params, error) {
     return {
         content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
@@ -270,7 +270,6 @@ async function runAsyncPath(data, deps) {
     };
     const modelRegistrySnapshot = readModelRegistrySnapshot(ctx);
     const { availableModels } = modelRegistrySnapshot;
-    const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
     if (hasTasks && params.tasks) {
         const agentConfigs = params.tasks.map((task) => agents.find((agent) => agent.name === task.agent));
         const modelSources = params.tasks.map((task) => modelSourceForTaskOverride(task.model));
@@ -319,7 +318,6 @@ async function runAsyncPath(data, deps) {
             shareEnabled,
             sessionRoot,
             sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index)),
-            maxSubagentDepth: currentMaxSubagentDepth,
             controlConfig,
             projectAgentIdentities: data.projectAgentIdentities,
             ticketBodies,
@@ -340,7 +338,6 @@ async function runAsyncPath(data, deps) {
         const effectiveOutputMode = params.outputMode ?? "inline";
         const normalizedSkills = normalizeSkillInput(params.skill);
         const skills = normalizedSkills === false ? [] : normalizedSkills;
-        const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
         const modelOverride = resolveSubagentModelOverride(params.model ?? a.model, ctx.model, {
             scope: data.modelScope,
             source: params.model ? "explicit" : "inherited",
@@ -375,7 +372,6 @@ async function runAsyncPath(data, deps) {
             modelOverride,
             providerFallbackModels: providerFallbackModelsForTarget(params),
             modelFallbackNotice: params.modelFallbackNotice,
-            maxSubagentDepth,
             controlConfig,
             projectAgent: data.projectAgentIdentities?.find((identity) => `embedded.${identity.slug}` === params.agent),
             ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
@@ -704,21 +700,6 @@ export function createSubagentExecutor(deps) {
                 cwd: requestCwd,
                 noDeveloperActive: capturedNoDeveloperPolicy(ctx, deps).active,
             });
-        }
-        const { blocked, depth, maxDepth } = checkSubagentDepth(deps.config.maxSubagentDepth);
-        if (blocked) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Nested subagent call blocked (depth=${depth}, max=${maxDepth}). ` +
-                            "You are running at the maximum subagent nesting depth. " +
-                            "Complete your current task directly without delegating to further subagents.",
-                    },
-                ],
-                isError: true,
-                details: { mode: "single", results: [] },
-            };
         }
         const ticketNormalized = normalizeExecutionTickets(paramsWithResolvedCwd);
         if (ticketNormalized.error) {

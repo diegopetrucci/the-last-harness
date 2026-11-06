@@ -43,7 +43,6 @@ describe("packaged minor-agent provenance", () => {
       agents: [canonical, custom],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: { pi: makeExtensionAPI(), cwd: root, currentSessionId: "parent" },
-      maxSubagentDepth: 2,
     });
 
     assert.equal("error" in built, false);
@@ -75,7 +74,6 @@ describe("packaged minor-agent provenance", () => {
       agents: [canonical, custom],
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: { pi: makeExtensionAPI(), cwd: root, currentSessionId: "parent" },
-      maxSubagentDepth: 2,
     });
 
     assert.equal("error" in built, false);

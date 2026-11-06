@@ -39,6 +39,9 @@ function makeRecorder() {
 const triggersTurnOf = (entry: { message: unknown } | undefined) =>
   (entry?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details?.triggersTurn;
 
+const eventOf = (entry: { message: unknown } | undefined): ControlEvent | undefined =>
+  (entry?.message as { details?: { event?: ControlEvent } } | undefined)?.details?.event;
+
 describe("subagent control notice delivery", () => {
   it("delivers async needs-attention notices with triggerTurn and no synthetic user message when idle", () => {
     const recorder = makeRecorder();
@@ -90,5 +93,61 @@ describe("subagent control notice delivery", () => {
     assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
     assert.equal(triggersTurnOf(recorder.sent[0]), true);
     assert.equal(recorder.syntheticUserMessages.length, 0);
+  });
+
+  it("filters notices without an event before delivery", () => {
+    const recorder = makeRecorder();
+
+    handleSubagentControlNotice({
+      pi: recorder.pi,
+      visibleControlNotices: new Set(),
+      details: { event: undefined as never },
+    });
+
+    assert.equal(recorder.sent.length, 0);
+    assert.equal(recorder.syntheticUserMessages.length, 0);
+  });
+
+  it("dedupes live notices while keeping idle and pressure severity distinct", () => {
+    const recorder = makeRecorder();
+    const visibleControlNotices = new Set<string>();
+    const idle = needsAttentionEvent();
+    const warning = needsAttentionEvent({
+      reason: "context_pressure",
+      contextPressureSeverity: "warning",
+      contextPressureThreshold: "warning",
+      message: "warning pressure",
+    });
+    const critical = needsAttentionEvent({
+      reason: "context_pressure",
+      contextPressureSeverity: "critical",
+      contextPressureThreshold: "critical",
+      message: "critical pressure",
+    });
+
+    for (const event of [idle, idle, warning, warning, critical]) {
+      handleSubagentControlNotice({
+        pi: recorder.pi,
+        visibleControlNotices,
+        details: { source: "async", event },
+      });
+    }
+
+    assert.equal(recorder.sent.length, 3);
+    assert.equal(eventOf(recorder.sent[0])?.reason, "idle");
+    assert.equal(eventOf(recorder.sent[1])?.contextPressureSeverity, "warning");
+    assert.equal(eventOf(recorder.sent[2])?.contextPressureSeverity, "critical");
+    const warningNotice = recorder.sent[1];
+    assert.ok(warningNotice);
+    assert.match(
+      (warningNotice.message as { content: string }).content,
+      /Subagent context pressure: worker/,
+    );
+    const criticalNotice = recorder.sent[2];
+    assert.ok(criticalNotice);
+    assert.match(
+      (criticalNotice.message as { content: string }).content,
+      /Signal: critical pressure/,
+    );
   });
 });

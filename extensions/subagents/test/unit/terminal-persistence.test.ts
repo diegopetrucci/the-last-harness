@@ -9,6 +9,7 @@ import {
 } from "../../src/shared/telemetry.ts";
 import {
   buildPausedRunnerTelemetry,
+  persistContinuationGateRejection,
   persistRunnerTerminalRun,
   type RunnerStepResult,
 } from "../../src/runs/background/terminal-persistence.ts";
@@ -17,7 +18,12 @@ import {
   createBackgroundRunStatusOwner,
   type RunnerStatusPayload,
 } from "../../src/runs/background/run-status-owner.ts";
-import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
+import {
+  lifecycleGeneration,
+  transitionLifecycleStatus,
+  writeNormalizedLifecycleStatus,
+} from "../../src/runs/shared/lifecycle-state.ts";
+import { readStatus } from "../../src/shared/utils.ts";
 import type { ResolvedControlConfig, CostSummary, TokenUsage } from "../../src/shared/types.ts";
 
 const controls: ResolvedControlConfig = {
@@ -878,5 +884,118 @@ describe("buildPausedRunnerTelemetry execution label", () => {
       "first committed paused status of an async run must carry execution='async'",
     );
     assert.equal(result.outcome?.state, "paused");
+  });
+});
+
+describe("continuation gate rejection persistence", () => {
+  function setup(state: "running" | "paused" = "running") {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-gate-rejection-"));
+    tempDirs.push(root);
+    const id = "gate-rejected-run";
+    const asyncDir = path.join(root, "async");
+    const resultPath = path.join(root, "result.json");
+    const statusPayload: RunnerStatusPayload = {
+      runId: id,
+      mode: "single",
+      state,
+      pid: 4242,
+      startedAt: 100,
+      lastUpdate: 100,
+      cwd: root,
+      currentStep: 0,
+      steps: [{ agent: "worker", status: state === "paused" ? "paused" : "running" }],
+      lifecycle: { generation: 0 },
+    };
+    writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+    const reject = () =>
+      persistContinuationGateRejection({
+        config: { id, asyncDir } as Parameters<
+          typeof persistContinuationGateRejection
+        >[0]["config"],
+        plan: terminalPlan,
+        statusPayload,
+        asyncDir,
+        resultPath,
+        controlConfig: controls,
+        overallStartTime: 100,
+        sourceRunId: "source-run",
+        sourceIndex: 0,
+      });
+    return { asyncDir, resultPath, reject };
+  }
+
+  it("fails a running continuation through a locked generation bump and writes the result", () => {
+    const { asyncDir, resultPath, reject } = setup();
+    reject();
+    const status = readStatus(asyncDir, { cache: false });
+    assert.equal(status?.state, "failed");
+    assert.equal(lifecycleGeneration(status), 1);
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    assert.equal(result.generation, 1);
+    assert.equal(result.state, "failed");
+    assert.match(result.error, /gate rejected for source run 'source-run' child 0/);
+  });
+
+  it("keeps a newer committed stale-failure generation instead of overwriting it", () => {
+    const { asyncDir, resultPath, reject } = setup();
+    // The stale-run reconciler committed generation 1 after this runner built
+    // its generation-0 payload.
+    transitionLifecycleStatus({
+      asyncDir,
+      expectedGeneration: 0,
+      mutate: (current) => ({
+        ...current,
+        state: "failed",
+        pid: undefined,
+        endedAt: 500,
+        error: "stale repair evidence",
+        steps: [{ agent: "worker", status: "failed", error: "stale repair evidence" }],
+      }),
+    });
+    reject();
+    const status = readStatus(asyncDir, { cache: false });
+    assert.equal(lifecycleGeneration(status), 1);
+    assert.equal(status?.error, "stale repair evidence");
+    assert.equal(status?.endedAt, 500);
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    assert.equal(result.generation, 1);
+    assert.equal(result.error, "stale repair evidence");
+  });
+
+  it("adopts a newer active generation and fails it without losing committed metadata", () => {
+    const { asyncDir, resultPath, reject } = setup();
+    transitionLifecycleStatus({
+      asyncDir,
+      expectedGeneration: 0,
+      mutate: (current) => ({ ...current, sessionFile: "newer-writer.jsonl" }),
+    });
+    reject();
+    const status = readStatus(asyncDir, { cache: false });
+    assert.equal(status?.state, "failed");
+    assert.equal(lifecycleGeneration(status), 2);
+    assert.equal(status?.sessionFile, "newer-writer.jsonl");
+    assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf8")).generation, 2);
+  });
+
+  it("does not replace a newer completed state or its result", () => {
+    const { asyncDir, resultPath, reject } = setup();
+    transitionLifecycleStatus({
+      asyncDir,
+      expectedGeneration: 0,
+      mutate: (current) => ({ ...current, state: "complete", pid: undefined, endedAt: 400 }),
+    });
+    reject();
+    const status = readStatus(asyncDir, { cache: false });
+    assert.equal(status?.state, "complete");
+    assert.equal(lifecycleGeneration(status), 1);
+    assert.equal(fs.existsSync(resultPath), false);
+  });
+
+  it("still mutates a paused (terminal-but-mutable) continuation", () => {
+    const { asyncDir, reject } = setup("paused");
+    reject();
+    const status = readStatus(asyncDir, { cache: false });
+    assert.equal(status?.state, "failed");
+    assert.equal(lifecycleGeneration(status), 1);
   });
 });

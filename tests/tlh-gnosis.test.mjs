@@ -99,7 +99,7 @@ test("install-managed dry-run uses the pinned default Gnosis release", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(
     result.stderr,
-    /Would download Gnosis 0\.5\.4 from https:\/\/github\.com\/skorokithakis\/gnosis/,
+    /Would download Gnosis 0\.5\.5 from https:\/\/github\.com\/skorokithakis\/gnosis/,
   );
   assert.equal(result.stdout.trim(), join(fixture.agent, "bin", "gn"));
 });
@@ -110,7 +110,7 @@ test("help shows the pinned default Gnosis release", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(
     result.stdout,
-    /--gnosis-version <v> Gnosis version to install \(default: 0\.5\.4\)/,
+    /--gnosis-version <v> Gnosis version to install \(default: 0\.5\.5\)/,
   );
 });
 
@@ -807,3 +807,54 @@ test("configure-install dry-run reports the install without writing", managedPin
   assert.equal(existsSync(ctx.settingsPath), false);
   assert.equal(existsSync(ctx.managedGn), false);
 });
+
+test(
+  "install-managed requests checksums while the archive download is in flight",
+  { skip: process.platform === "win32" || !gnosisAssetName("1.2.3") },
+  () => {
+    const fixture = tempFixture();
+    const version = "1.2.3";
+    const target = join(fixture.agent, "bin", "gn");
+    const log = join(fixture.dir, "fetch-order.log");
+    const preload = join(fixture.dir, "overlap-fetch.mjs");
+    writeFileSync(
+      preload,
+      [
+        'import { appendFileSync } from "node:fs";',
+        "const log = process.env.TLH_TEST_LOG;",
+        "globalThis.fetch = async (url) => {",
+        "\tconst value = String(url);",
+        '\tif (value.endsWith("/checksums.txt")) {',
+        '\t\tappendFileSync(log, "checksums-start\\n");',
+        '\t\tthrow new Error("simulated checksums failure");',
+        "\t}",
+        '\tappendFileSync(log, "archive-start\\n");',
+        "\tawait new Promise((resolve) => setTimeout(resolve, 100));",
+        '\tappendFileSync(log, "archive-fail\\n");',
+        '\tthrow new Error("simulated archive failure");',
+        "};",
+      ].join("\n"),
+    );
+    const result = runGnosis(
+      [
+        "--agent-dir",
+        fixture.agent,
+        "--target",
+        target,
+        "--gnosis-version",
+        version,
+        "install-managed",
+      ],
+      { env: { HOME: fixture.home, TLH_TEST_LOG: log }, nodeArgs: ["--import", preload] },
+    );
+    assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
+      "archive-start",
+      "checksums-start",
+      "archive-fail",
+    ]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /simulated archive failure/);
+    assert.doesNotMatch(result.stderr, /unhandled|ERR_UNHANDLED/i);
+    assert.equal(existsSync(target), false);
+  },
+);

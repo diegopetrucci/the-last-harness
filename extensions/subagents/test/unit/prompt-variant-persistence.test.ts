@@ -39,7 +39,6 @@ describe("prompt variant persistence carrier", () => {
         agents: [agent],
         artifactConfig: DEFAULT_ARTIFACT_CONFIG,
         ctx: makeAsyncCtx(root, { currentSessionId: "session-variant" }),
-        maxSubagentDepth: 2,
       });
       assert.ok("plan" in built);
       if ("error" in built) return;

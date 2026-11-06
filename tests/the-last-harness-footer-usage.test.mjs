@@ -895,15 +895,6 @@ test("line 2 (color-aware): rush name renders with accent, not dim", () => {
   assert.match(line, /<dim>claude-sonnet-4-20250514<\/dim>/);
 });
 
-test("line 2 (color-aware): disabled renders name with accent", () => {
-  const ctx = createCtx({ provider: "anthropic" });
-  const footer = createTlhFooter(pi, ctx, colorTheme, () => "disabled", createFooterData(), {});
-  const line = footer.render(COLOR_WIDTH)[1] ?? "";
-
-  assert.match(line, /<accent>disabled<\/accent>/);
-  assert.doesNotMatch(line, /<dim>disabled<\/dim>/);
-});
-
 test("line 2 (color-aware): default primary agent renders name with dim, regardless of constant value", () => {
   const ctx = createCtx({ provider: "anthropic" });
   const footer = createTlhFooter(

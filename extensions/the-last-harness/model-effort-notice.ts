@@ -10,7 +10,7 @@ import {
   computeModelEffortDrift,
   hasMeaningfulSubagentOverride,
   isKnownProvider,
-  isMeaningfulPrimaryOverride,
+  listOverriddenPrimaryNames,
   readReconcileState,
 } from "./model-effort-reconcile.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
@@ -32,13 +32,8 @@ let notifiedThisProcess = false;
  * loading packaged agents when nothing is overridden.
  */
 export function hasAnyModelEffortOverride(settings: TlhSettings): boolean {
-  const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
-  if (isRecord(primaryModelOverrides)) {
-    for (const overrideValue of Object.values(primaryModelOverrides)) {
-      if (isMeaningfulPrimaryOverride(overrideValue)) {
-        return true;
-      }
-    }
+  if (listOverriddenPrimaryNames(settings).length > 0) {
+    return true;
   }
 
   const subagentOverrides = settings.subagents?.agentOverrides;
