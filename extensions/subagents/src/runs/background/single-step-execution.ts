@@ -69,6 +69,17 @@ import {
   type ProtocolOutputLimit,
 } from "../shared/child-protocol.ts";
 import { scheduleDeadline } from "../shared/deadline-timer.ts";
+import { allocateChildSessionFile } from "../shared/session-path.ts";
+import {
+  durableContextBlockMessage,
+  roleBudgetExhaustedMessage,
+} from "../shared/session-admission.ts";
+import type { SessionRecord } from "../shared/session-record.ts";
+import {
+  openAttemptSessionLease,
+  type AttemptLeaseProgress,
+  type AttemptSessionLease,
+} from "./attempt-session-lease.ts";
 import { detectSubagentError, formatErrorWithOutput } from "../../shared/utils.ts";
 import {
   captureGitWorkspaceSnapshot,
@@ -105,6 +116,35 @@ type AppendDiagnosticJsonl = (filePath: string, line: string, droppedEventType?:
  * leak temp files and the process still terminates with the correct signal.
  */
 const activeTempDirs = new Set<string>();
+/**
+ * Leases of attempts running in this runner. A controlled SIGINT/SIGTERM stop
+ * finishes them after child cleanup is confirmed, because the runner re-raises
+ * the signal before any attempt's `finally` can run.
+ */
+const activeAttemptLeases = new Set<{
+  lease: AttemptSessionLease;
+  progress: () => AttemptLeaseProgress;
+}>();
+const LEASE_FINISH_RETRY_MS = 25;
+const LEASE_FINISH_MAX_WAIT_MS = 500;
+/** Finish every active lease under the normal release rule; groups still alive stay held. */
+async function finishActiveAttemptLeases(): Promise<void> {
+  const deadline = Date.now() + LEASE_FINISH_MAX_WAIT_MS;
+  for (;;) {
+    let pending = 0;
+    for (const entry of activeAttemptLeases) {
+      try {
+        if (entry.lease.finish(entry.progress()).released) activeAttemptLeases.delete(entry);
+        else pending++;
+      } catch {
+        pending++;
+      }
+    }
+    // A just-SIGKILLed group can take a moment to disappear; bounded retry.
+    if (pending === 0 || Date.now() >= deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, LEASE_FINISH_RETRY_MS));
+  }
+}
 let killCleanupInstalled = false;
 export function ensureKillCleanup(): void {
   if (killCleanupInstalled) return;
@@ -127,12 +167,21 @@ export function ensureKillCleanup(): void {
     activeTempDirs.clear();
     // SIGTERM first so cooperative children can flush, SIGKILL after a bounded
     // grace; re-raise only once children are gone so no timer is orphaned.
-    void terminateLiveChildGroups().then(() => reraise(signal));
+    void terminateLiveChildGroups()
+      .then(() => finishActiveAttemptLeases())
+      .catch(() => undefined)
+      .then(() => reraise(signal));
   };
   const sigintHandler = (): void => handle("SIGINT");
   const sigtermHandler = (): void => handle("SIGTERM");
   process.on("SIGINT", sigintHandler);
   process.on("SIGTERM", sigtermHandler);
+  // Last resort: an uncaught exception or unhandled rejection (which Node
+  // raises as an uncaught exception by default) kills the runner while its
+  // detached child groups keep running. The monitor runs synchronously before
+  // the crash and, unlike an uncaughtException listener, does not change the
+  // process's default exit behaviour. Only groups owned by this runner are hit.
+  process.on("uncaughtExceptionMonitor", () => killLiveChildGroups());
 }
 
 function costSummaryFromAttempts(attempts: ModelAttempt[] | undefined): CostSummary | undefined {
@@ -180,6 +229,13 @@ interface SingleStepContext {
   /** Runner-owned segment tracker, so periodic checkpoints and the step share one ledger. */
   runtimeTracker?: ActiveRuntimeTracker;
   onAttemptStart?: (attempt: ModelAttemptStart) => void;
+  /** Called before spawn with the pre-assigned session file of a fresh attempt. */
+  onAttemptSessionFile?: (sessionFile: string) => void;
+  /**
+   * Registers (or clears) the live attempt's session-lease checkpoint hook, so
+   * the runner's runtime checkpoints also update the session record.
+   */
+  registerLeaseCheckpoint?: (hook: ((progress: AttemptLeaseProgress) => void) | undefined) => void;
   onChildEvent?: (event: ChildEvent) => void;
   /** Called after each child attempt has fully settled, including failures. */
   onAttemptEnd?: (facts: SubagentAttemptFacts) => void;
@@ -268,6 +324,8 @@ interface SingleStepExecutionState {
   attemptFacts: SubagentAttemptFacts[];
   /** Tool-call IDs are globally deduplicated across appended/resumed session data. */
   seenToolCallIds: Set<string>;
+  /** Pre-assigned session file of the latest fresh attempt (absent for preassigned/resumed steps). */
+  attemptSessionFile?: string;
   /** Active child runtime consumed by this lineage, including earlier resumes. */
   activeRuntimeMs: number;
   /** Active-runtime segment for this step; the runner may checkpoint it durably. */
@@ -296,6 +354,83 @@ interface SingleStepSetup {
 
 export function saturatingStepDeadlineAt(stepStartedAt: number, stepTimeoutMs: number): number {
   return Math.min(Number.MAX_SAFE_INTEGER, stepStartedAt + stepTimeoutMs);
+}
+
+/**
+ * The role budget is per instance and measured in active child runtime: this
+ * attempt may only spend what earlier attempts and resumes left over.
+ */
+function computeAttemptDeadlines(
+  step: SubagentStep,
+  ctx: SingleStepContext,
+  activeRuntimeMs: number,
+  startedAt: number,
+): { attemptDeadlineAt?: number; childDeadlineAt?: number } {
+  const roleRemainingMs =
+    step.timeoutOwner !== "run" && step.timeoutMs !== undefined
+      ? Math.max(0, step.timeoutMs - activeRuntimeMs)
+      : undefined;
+  const attemptDeadlineAt =
+    roleRemainingMs !== undefined
+      ? saturatingStepDeadlineAt(startedAt, roleRemainingMs)
+      : undefined;
+  const childDeadlineAt =
+    ctx.deadlineAt === undefined
+      ? attemptDeadlineAt
+      : attemptDeadlineAt === undefined
+        ? ctx.deadlineAt
+        : Math.min(ctx.deadlineAt, attemptDeadlineAt);
+  return { attemptDeadlineAt, childDeadlineAt };
+}
+
+/**
+ * Re-apply admission's gates against the record this runner read while holding
+ * the lease, since dispatcher admission is only a snapshot. Rebases runtime and
+ * context onto the shared evidence, recomputes the attempt's deadlines, and
+ * returns a refusal message (the lease is then finished, not spawned).
+ */
+function applyLeaseSnapshot(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  attempt: SingleStepAttemptPreparation;
+  record: SessionRecord;
+  candidate: string | undefined;
+  firstAttempt: boolean;
+}): { refusal?: string; retire?: boolean } {
+  const { step, ctx, state, attempt, record } = input;
+  if (record.activeRuntimeMs > state.activeRuntimeMs) {
+    state.activeRuntimeMs = state.runtimeTracker.rebase(record.activeRuntimeMs);
+    Object.assign(
+      attempt,
+      computeAttemptDeadlines(step, ctx, state.activeRuntimeMs, attempt.startedAt),
+    );
+  }
+  const recordContext = record.contextUsage?.usage;
+  if (
+    step.timeoutOwner !== "run" &&
+    step.timeoutMs !== undefined &&
+    state.activeRuntimeMs >= step.timeoutMs
+  ) {
+    return {
+      retire: true,
+      refusal: roleBudgetExhaustedMessage(step.agent, state.activeRuntimeMs),
+    };
+  }
+  if (!input.firstAttempt) return {};
+  if (recordContext) {
+    state.aggregateContextUsage = {
+      ...recordContext,
+      ...(recordContext.restoredTokens === undefined && recordContext.contextTokens !== undefined
+        ? { restoredTokens: recordContext.contextTokens }
+        : {}),
+    };
+  }
+  const contextBlock = durableContextBlockMessage(
+    recordContext,
+    contextWindowForModel(input.candidate, step.contextWindows),
+  );
+  return contextBlock ? { refusal: contextBlock } : {};
 }
 
 function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): SingleStepSetup {
@@ -427,6 +562,8 @@ interface SingleStepAttemptPreparation {
   childDeadlineAt?: number;
   monotonicStartedAt: number;
   sessionBaseline?: SessionFileBaseline;
+  /** Concrete session file this attempt is launched with, when one exists. */
+  sessionFile?: string;
   args?: string[];
   env?: Record<string, string | undefined>;
   tempDir?: string;
@@ -448,26 +585,30 @@ function prepareSingleStepAttempt(input: {
   // Capture the baseline before constructing or spawning the child. Git errors
   // are represented in the snapshot rather than allowed to fail the attempt.
   const baseline = captureGitWorkspaceSnapshot(attemptCwd);
-  const attemptSessionPath = step.sessionFile ?? sessionDir;
+  // Fresh attempts in a session directory get their own pre-assigned file, so the
+  // path is known before launch; resumed or preassigned steps keep their file.
+  let sessionFile = step.sessionFile;
+  let sessionSetupError: string | undefined;
+  if (!sessionFile && sessionEnabled && sessionDir) {
+    try {
+      sessionFile = allocateChildSessionFile(sessionDir);
+      state.attemptSessionFile = sessionFile;
+      // Report before onAttemptStart persists status, so the path survives a crash.
+      ctx.onAttemptSessionFile?.(sessionFile);
+    } catch (error) {
+      sessionSetupError = boundChildError(error instanceof Error ? error.message : String(error));
+    }
+  }
+  const attemptSessionPath = sessionFile ?? sessionDir;
   const sessionBaseline = attemptSessionPath ? snapshotSessionFiles(attemptSessionPath) : undefined;
   const startedAt = Date.now();
   const monotonicStartedAt = performance.now();
-  // The role budget is per instance and measured in active child runtime: this
-  // attempt may only spend what earlier attempts and resumes left over.
-  const roleRemainingMs =
-    step.timeoutOwner !== "run" && step.timeoutMs !== undefined
-      ? Math.max(0, step.timeoutMs - state.activeRuntimeMs)
-      : undefined;
-  const attemptDeadlineAt =
-    roleRemainingMs !== undefined
-      ? saturatingStepDeadlineAt(startedAt, roleRemainingMs)
-      : undefined;
-  const childDeadlineAt =
-    ctx.deadlineAt === undefined
-      ? attemptDeadlineAt
-      : attemptDeadlineAt === undefined
-        ? ctx.deadlineAt
-        : Math.min(ctx.deadlineAt, attemptDeadlineAt);
+  const { attemptDeadlineAt, childDeadlineAt } = computeAttemptDeadlines(
+    step,
+    ctx,
+    state.activeRuntimeMs,
+    startedAt,
+  );
   // The requested thinking level is forwarded to Pi, which owns model-argument validation.
   const attemptThinking = resolveEffectiveThinking(candidate, step.thinking);
   const attemptIdentity = canonicalSubagentModelIdentity(candidate, attemptThinking);
@@ -502,13 +643,16 @@ function prepareSingleStepAttempt(input: {
   let tempDir: string | undefined;
   let buildError: string | undefined;
   try {
+    if (sessionSetupError) {
+      throw new Error(`Failed to prepare child session file: ${sessionSetupError}`);
+    }
     ({ args, env, tempDir } = buildPiArgs({
       parentSessionId: step.parentSessionId,
       baseArgs: ["--mode", "json", "-p"],
       task,
       sessionEnabled,
       sessionDir,
-      sessionFile: step.sessionFile,
+      sessionFile,
       model: candidate,
       inheritProjectContext: step.inheritProjectContext,
       inheritSkills: step.inheritSkills,
@@ -543,6 +687,7 @@ function prepareSingleStepAttempt(input: {
     childDeadlineAt,
     monotonicStartedAt,
     sessionBaseline,
+    sessionFile,
     args,
     env,
     tempDir,
@@ -949,7 +1094,7 @@ function buildSingleStepResult(input: {
     stderr: finalResult?.stderr,
     stderrTruncated: finalResult?.stderrTruncated,
     protocolOutputLimit: finalResult?.protocolOutputLimit,
-    sessionFile: step.sessionFile,
+    sessionFile: step.sessionFile ?? state.attemptSessionFile,
     model: output.finalModel,
     modelIdentity: output.finalModelIdentity,
     modelResolution: state.modelResolution,
@@ -1001,7 +1146,7 @@ function captureAttemptFactsForRun(input: {
   effectiveExitSignal?: string | null;
 }): SubagentAttemptFacts {
   const { step, ctx, state, preparation, attemptIndex, run } = input;
-  const sessionPath = step.sessionFile ?? ctx.sessionDir;
+  const sessionPath = preparation.sessionFile ?? ctx.sessionDir;
   const sessionFacts = sessionPath
     ? parseSessionFacts(sessionPath, {
         baseline: preparation.sessionBaseline,
@@ -1063,6 +1208,38 @@ export async function runSingleStep(
       sessionEnabled: setup.sessionEnabled,
       sessionDir: setup.sessionDir,
     });
+    // Hold the session lease before Pi can be spawned; a refusal fails the
+    // attempt exactly like a setup error, without ever launching a second writer.
+    let sessionLease: AttemptSessionLease | undefined;
+    if (!attempt.buildError && attempt.sessionFile) {
+      const opened = openAttemptSessionLease(attempt.sessionFile, stepCtx.id);
+      if (opened.ok) {
+        sessionLease = opened.lease;
+        const gate = applyLeaseSnapshot({
+          step,
+          ctx: stepCtx,
+          state,
+          attempt,
+          record: opened.record,
+          candidate,
+          firstAttempt: index === 0,
+        });
+        if (gate.refusal) {
+          // Coherent record: release cleanly (retiring only for an exhausted
+          // budget), and never spawn.
+          sessionLease.finish({
+            activeRuntimeMs: state.activeRuntimeMs,
+            ...(gate.retire ? { retireReason: "role-timeout" } : {}),
+          });
+          sessionLease = undefined;
+          cleanupTempDir(attempt.tempDir);
+          attempt.buildError = `Refusing to launch child: ${gate.refusal}`;
+        }
+      } else {
+        cleanupTempDir(attempt.tempDir);
+        attempt.buildError = opened.error;
+      }
+    }
     if (attempt.buildError) {
       const attemptResult: ModelAttempt = {
         model: candidate ?? step.model ?? "default",
@@ -1132,6 +1309,26 @@ export async function runSingleStep(
       activeTempDirs.add(attemptTempDir);
       ensureKillCleanup();
     }
+    let latestLeaseContext: ContextUsageDiagnostics | undefined;
+    const leaseEntry = sessionLease
+      ? {
+          lease: sessionLease,
+          progress: (): AttemptLeaseProgress => ({
+            activeRuntimeMs: state.runtimeTracker.checkpoint(),
+            ...(latestLeaseContext ? { contextUsage: latestLeaseContext } : {}),
+          }),
+        }
+      : undefined;
+    if (leaseEntry) {
+      activeAttemptLeases.add(leaseEntry);
+      ensureKillCleanup();
+    }
+    if (sessionLease) {
+      stepCtx.registerLeaseCheckpoint?.((progress) => {
+        if (progress.contextUsage) latestLeaseContext = progress.contextUsage;
+        sessionLease.checkpoint(progress);
+      });
+    }
     try {
       // Keep this await in runSingleStep: settling a child attempt must not gain
       // a promise continuation from an extracted async helper.
@@ -1163,6 +1360,14 @@ export async function runSingleStep(
           configuredModel: candidate,
           contextWindow: contextWindowForModel(candidate, step.contextWindows),
           contextWindows: step.contextWindows,
+          ...(sessionLease
+            ? {
+                onChildSpawned: (groupId: number) => sessionLease.recordProcessGroup(groupId),
+                onContextUsage: (usage: ContextUsageDiagnostics) => {
+                  latestLeaseContext = usage;
+                },
+              }
+            : {}),
         },
       );
       completedRun = run;
@@ -1199,6 +1404,29 @@ export async function runSingleStep(
     } finally {
       state.activeRuntimeMs = state.runtimeTracker.checkpoint();
       attemptTimeoutTimer?.cancel();
+      if (leaseEntry) activeAttemptLeases.delete(leaseEntry);
+      if (sessionLease) {
+        stepCtx.registerLeaseCheckpoint?.(undefined);
+        // Final evidence, then clean-final and release. A role-budget timeout
+        // retires the session first. Any failure leaves the lease held.
+        const finished = sessionLease.finish({
+          activeRuntimeMs: state.activeRuntimeMs,
+          ...(completedRun?.contextUsage ? { contextUsage: completedRun.contextUsage } : {}),
+          // Same rule admission applies to persisted role-timeout evidence. A single
+          // async run's own deadline is the role budget, set a few ms before the
+          // attempt's, so it cannot be told apart by comparing deadlines.
+          ...(completedRun?.timedOut === true &&
+          step.timeoutOwner !== "run" &&
+          step.timeoutMs !== undefined
+            ? { retireReason: "role-timeout" }
+            : {}),
+        });
+        if (!finished.released) {
+          console.error(
+            `Session lease for run '${stepCtx.id}' step ${stepCtx.flatIndex} stays held: ${finished.reason}`,
+          );
+        }
+      }
       if (attemptTempDir) {
         activeTempDirs.delete(attemptTempDir);
         // Belt-and-suspenders: remove the temp dir in case assessSingleStepAttempt

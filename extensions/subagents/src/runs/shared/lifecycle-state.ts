@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { waitSync, writeAtomicJson } from "../../shared/atomic-json.ts";
 import { invalidateStatusCache, readStatus } from "../../shared/utils.ts";
 import type {
@@ -69,7 +69,7 @@ type ContinuationClaimLiveness =
   | "blocked"
   | "unclaimed";
 
-class LifecycleLockExhaustedError extends Error {
+export class LifecycleLockExhaustedError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "LifecycleLockExhaustedError";
@@ -86,7 +86,7 @@ export class LifecycleGenerationConflictError extends Error {
 export const isLifecycleTransitionContentionError = (error: unknown): boolean =>
   error instanceof LifecycleGenerationConflictError || error instanceof LifecycleLockExhaustedError;
 
-type LifecycleLockOptions = {
+export type LifecycleLockOptions = {
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
   retryDelaysMs?: readonly number[];
@@ -111,7 +111,7 @@ type LifecycleTransitionResult = {
   status: AsyncStatus;
 };
 
-type TransitionLockOwner = { token?: string; pid?: number; acquiredAt?: number };
+export type TransitionLockOwner = { token?: string; pid?: number; acquiredAt?: number };
 
 const isRecord = (value: unknown): value is AnyRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -371,13 +371,17 @@ export function writeNormalizedLifecycleStatus(
 const runLabel = (asyncDir: string): string =>
   path.basename(path.resolve(asyncDir)) || "unknown-run";
 
-const lockDir = (asyncDir: string): string => path.join(asyncDir, ".lifecycle-transition.lock");
+const lifecycleLockPath = (asyncDir: string): string =>
+  path.join(asyncDir, ".lifecycle-transition.lock");
 
-const ownerPath = (asyncDir: string): string => path.join(lockDir(asyncDir), "owner.json");
+const breakerDir = (lockPath: string, token: string): string =>
+  `${lockPath}.break-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
 
-function readLockOwner(asyncDir: string): TransitionLockOwner {
+const ownerPath = (lockPath: string): string => path.join(lockPath, "owner.json");
+
+function readLockOwner(lockPath: string): TransitionLockOwner {
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(ownerPath(asyncDir), "utf8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(ownerPath(lockPath), "utf8"));
     return isRecord(parsed)
       ? {
           token: boundedToken(parsed.token),
@@ -390,10 +394,10 @@ function readLockOwner(asyncDir: string): TransitionLockOwner {
   }
 }
 
-function lockSnapshot(asyncDir: string): TransitionLockOwner | undefined {
+function lockSnapshot(lockPath: string): TransitionLockOwner | undefined {
   try {
-    fs.statSync(lockDir(asyncDir));
-    return readLockOwner(asyncDir);
+    fs.statSync(lockPath);
+    return readLockOwner(lockPath);
   } catch (error) {
     if (codeOf(error) === "ENOENT") return undefined;
     throw error;
@@ -416,36 +420,59 @@ export function checkPidLiveness(
   }
 }
 
-function recoverLock(asyncDir: string, options: LifecycleLockOptions): boolean {
-  const snapshot = lockSnapshot(asyncDir);
+function recoverLock(lockPath: string, options: LifecycleLockOptions): boolean {
+  const snapshot = lockSnapshot(lockPath);
   if (!snapshot) return false;
 
   const owner = snapshot;
   // Only a complete owner record whose pid is proven dead can be recovered.
   // Missing, malformed, or partially written owner metadata stays protected.
   if (!completeOwner(owner) || checkPidLiveness(owner.pid, options.kill) !== "dead") return false;
-  const latest = lockSnapshot(asyncDir);
-  if (
-    !latest ||
-    !completeOwner(latest) ||
-    latest.token !== owner.token ||
-    latest.pid !== owner.pid ||
-    latest.acquiredAt !== owner.acquiredAt
-  )
-    return false;
 
+  // Token-scoped single-breaker: only the contender that creates this marker may
+  // break this stale owner token. Replacement owners carry a fresh token, so a
+  // breaker that re-verifies the token after winning the marker can only ever
+  // remove the lock it verified; later contenders see the changed token and back off.
+  const breaker = breakerDir(lockPath, owner.token);
   try {
-    fs.rmSync(lockDir(asyncDir), { recursive: true, force: false });
-    return true;
+    fs.mkdirSync(breaker);
   } catch (error) {
-    if (codeOf(error) === "ENOENT") return false;
+    if (codeOf(error) === "EEXIST") return false;
     throw error;
+  }
+  try {
+    const latest = lockSnapshot(lockPath);
+    if (
+      !latest ||
+      !completeOwner(latest) ||
+      latest.token !== owner.token ||
+      latest.pid !== owner.pid ||
+      latest.acquiredAt !== owner.acquiredAt
+    )
+      return false;
+    try {
+      fs.rmSync(lockPath, { recursive: true, force: false });
+      return true;
+    } catch (error) {
+      if (codeOf(error) === "ENOENT") return false;
+      throw error;
+    }
+  } finally {
+    fs.rmSync(breaker, { recursive: true, force: true });
   }
 }
 
-function acquireLock(asyncDir: string, options: LifecycleLockOptions): () => void {
-  fs.mkdirSync(asyncDir, { recursive: true });
-  const directory = lockDir(asyncDir);
+/**
+ * Exclusive directory lock with token-scoped stale recovery. `describeHeld`
+ * builds the error for callers that exhaust their retries; the lock path's
+ * parent directory is created on demand.
+ */
+export function acquireDirectoryLock(
+  directory: string,
+  options: LifecycleLockOptions,
+  describeHeld: (held: TransitionLockOwner) => string,
+): () => void {
+  fs.mkdirSync(path.dirname(directory), { recursive: true });
   const owner = {
     token: randomUUID(),
     pid: process.pid,
@@ -458,24 +485,23 @@ function acquireLock(asyncDir: string, options: LifecycleLockOptions): () => voi
       break;
     } catch (error) {
       if (codeOf(error) !== "EEXIST") throw error;
-      if (recoverLock(asyncDir, options)) continue;
+      if (recoverLock(directory, options)) continue;
       const delay = delays[attempt];
       if (delay !== undefined) {
         waitSync(delay);
         continue;
       }
-      const held = readLockOwner(asyncDir);
-      const acquired =
-        held.acquiredAt === undefined ? "unknown time" : new Date(held.acquiredAt).toISOString();
-      throw new LifecycleLockExhaustedError(
-        `Lifecycle transition rejected for run '${runLabel(asyncDir)}': status lock (pid ${held.pid ?? "unknown"}, acquired ${acquired}) is held by another transition.`,
-        { cause: error },
-      );
+      throw new LifecycleLockExhaustedError(describeHeld(readLockOwner(directory)), {
+        cause: error,
+      });
     }
   }
 
   try {
-    fs.writeFileSync(ownerPath(asyncDir), JSON.stringify(owner), { encoding: "utf8", mode: 0o600 });
+    fs.writeFileSync(ownerPath(directory), JSON.stringify(owner), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
   } catch (error) {
     fs.rmSync(directory, { recursive: true, force: true });
     throw error;
@@ -485,12 +511,20 @@ function acquireLock(asyncDir: string, options: LifecycleLockOptions): () => voi
     if (released) return;
     released = true;
     try {
-      if (readLockOwner(asyncDir).token === owner.token)
+      if (readLockOwner(directory).token === owner.token)
         fs.rmSync(directory, { recursive: true, force: true });
     } catch {
       /* Never remove an unverified replacement lock. */
     }
   };
+}
+
+function acquireLock(asyncDir: string, options: LifecycleLockOptions): () => void {
+  return acquireDirectoryLock(lifecycleLockPath(asyncDir), options, (held) => {
+    const acquired =
+      held.acquiredAt === undefined ? "unknown time" : new Date(held.acquiredAt).toISOString();
+    return `Lifecycle transition rejected for run '${runLabel(asyncDir)}': status lock (pid ${held.pid ?? "unknown"}, acquired ${acquired}) is held by another transition.`;
+  });
 }
 
 export function withLifecycleStatusLock<T>(
@@ -1134,6 +1168,12 @@ export function recoverStoppedLifecycleOwnership(
   options: {
     kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
     now?: () => number;
+    /**
+     * Whether a session file is a resume checkpoint (see `isResumableSessionCheckpoint`).
+     * Injected so this module does not depend on the session modules; absent means no
+     * session is advertised as resumable.
+     */
+    isResumableSession?: (sessionFile: string) => boolean;
   } = {},
 ): { status: AsyncStatus; repaired: boolean; pidLiveness?: PidLiveness } {
   const normalized = normalizeAsyncLifecycleStatus(status);
@@ -1159,10 +1199,9 @@ export function recoverStoppedLifecycleOwnership(
     const hasResumeCheckpoint = Boolean(
       pause?.kind &&
       (pause.requestedAt !== undefined || pause.pausedAt !== undefined) &&
-      (normalized.sessionFile ||
-        normalized.steps?.some(
-          (step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0,
-        )),
+      [normalized.sessionFile, ...(normalized.steps?.map((step) => step.sessionFile) ?? [])].some(
+        (file) => typeof file === "string" && options.isResumableSession?.(file) === true,
+      ),
     );
     if (!hasResumeCheckpoint) return { status: normalized, repaired: false, pidLiveness };
     const pausedAt = pause?.pausedAt ?? now ?? Date.now();

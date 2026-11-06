@@ -203,6 +203,14 @@ export function runPiStreaming(
     configuredModel?: string;
     contextWindow?: number;
     contextWindows?: Record<string, number>;
+    /**
+     * Called synchronously right after a successful spawn with the detached
+     * child's process-group id, before this function yields. A throw stops the
+     * child through the bounded owned-group cleanup and fails the attempt.
+     */
+    onChildSpawned?: (processGroupId: number) => void;
+    /** Latest context usage as child events arrive (best-effort; must not throw). */
+    onContextUsage?: (usage: ContextUsageDiagnostics) => void;
   },
 ): Promise<RunPiStreamingResult> {
   return new Promise((resolve) => {
@@ -314,7 +322,13 @@ export function runPiStreaming(
       const event = parsed.event;
       appendChildEvent(event);
       transcriptWriter?.writeChildEvent(event);
-      onChildEvent?.(event);
+      if (!persistenceFailure) {
+        try {
+          onChildEvent?.(event);
+        } catch (callbackError) {
+          failOnChildPersistence("Failed to persist child event", callbackError);
+        }
+      }
 
       if (event.type === "tool_execution_start" && event.toolName) {
         const toolArgs = extractToolArgsPreview(event.args ?? {});
@@ -353,6 +367,13 @@ export function runPiStreaming(
           restored: context?.restored === true,
           contextWindow: context?.contextWindow,
         });
+        if (contextUsage) {
+          try {
+            context?.onContextUsage?.(contextUsage);
+          } catch {
+            // Lease context tracking is best-effort.
+          }
+        }
         const eventUsage = event.message.usage;
         if (eventUsage) {
           usage.turns++;
@@ -407,6 +428,8 @@ export function runPiStreaming(
     let timeoutHardKillTimer: NodeJS.Timeout | undefined;
     let protocolLimitHardKillTimer: NodeJS.Timeout | undefined;
     let settled = false;
+    let persistenceFailure = false;
+    let persistenceHardKillTimer: NodeJS.Timeout | undefined;
     let softInterruptsEnabled = true;
     let interruptRegistered = false;
     let exitCodeFromExit: number | null = null;
@@ -466,6 +489,8 @@ export function runPiStreaming(
       clearDrainTimers();
       clearCloseFallbackTimer();
       clearProtocolLimitHardKillTimer();
+      if (persistenceHardKillTimer) clearTimeout(persistenceHardKillTimer);
+      persistenceHardKillTimer = undefined;
       clearStdioGuard();
       stdoutReader.end();
       stderrLineReader.end();
@@ -561,6 +586,27 @@ export function runPiStreaming(
         contextExhausted: contextExhausted === "context_exhausted" || undefined,
       });
     };
+    // A throwing onChildEvent (e.g. ENOSPC on a status write) must not escape the
+    // stdout handler as an uncaught exception: the detached child group would
+    // outlive the runner. Fail the step and run the bounded owned-group cleanup.
+    function failOnChildPersistence(label: string, callbackError: unknown): void {
+      if (persistenceFailure) return;
+      persistenceFailure = true;
+      // Another terminal reason (timeout, interrupt, output limit) already owns
+      // the shutdown and its cleanup; do not override its outcome.
+      if (terminalReason.reason !== undefined) return;
+      interrupted = false;
+      const detail = callbackError instanceof Error ? callbackError.message : String(callbackError);
+      error = boundChildError(`${label}: ${detail}`);
+      if (settled || childExited) return;
+      trySignalChild(child, "SIGTERM");
+      void resolveProcessCleanup("SIGTERM");
+      persistenceHardKillTimer = setTimeout(() => {
+        persistenceHardKillTimer = undefined;
+        if (!settled && !childExited) trySignalChild(child, "SIGKILL");
+      }, CHILD_PROTOCOL_HARD_KILL_GRACE_MS);
+      persistenceHardKillTimer.unref?.();
+    }
     const stdoutReader = createBoundedLineReader({
       stream: "stdout",
       onLine: processStdoutLine,
@@ -760,5 +806,14 @@ export function runPiStreaming(
         assistantStopReason: finalAssistantStopReason,
       });
     });
+    // Still inside the synchronous spawn turn: record the group before anything
+    // can yield, so a crash after this point leaves it in the session lease.
+    if (processGroupId && context?.onChildSpawned) {
+      try {
+        context.onChildSpawned(processGroupId);
+      } catch (spawnHookError) {
+        failOnChildPersistence("Failed to record child process group", spawnHookError);
+      }
+    }
   });
 }

@@ -6,6 +6,7 @@ import { readStatus, resolveChildCwd } from "../../shared/utils.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { isActiveLifecycleState, isCompletedLifecycleStepState, isLifecycleTransitionContentionError, isTerminalLifecycleState, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, applyActiveRuntimeCheckpoint, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/active-runtime.js";
+import { parseContextUsageDiagnostics } from "../../shared/context-diagnostics.js";
 import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
 import { persistedTicketId } from "../shared/ticket-context.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
@@ -149,6 +150,7 @@ export function createBackgroundRunStatusOwner(input) {
     writeNormalizedLifecycleStatus(asyncDir, statusPayload);
     const terminalReason = {};
     const activeRuntimeTrackers = new Map();
+    const sessionLeaseCheckpointHooks = new Map();
     let runtimeCheckpointTimer;
     const trackedSessions = initialStatusSteps.map((step) => step.sessionFile
         ? {
@@ -185,6 +187,26 @@ export function createBackgroundRunStatusOwner(input) {
             ...(file ? { discovered: path.resolve(file) } : {}),
         };
     }
+    function recordAttemptSessionFile(index, file) {
+        const step = statusPayload.steps[index];
+        const resolved = path.resolve(file);
+        trackedSessions[index] = {
+            sessionDir: path.dirname(resolved),
+            baseline: new Set(),
+            discovered: resolved,
+            pinned: true,
+        };
+        if (step)
+            step.sessionFile = resolved;
+        latestSessionFile = resolved;
+        statusPayload.sessionFile = resolved;
+    }
+    function registerSessionLeaseCheckpoint(index, hook) {
+        if (hook)
+            sessionLeaseCheckpointHooks.set(index, hook);
+        else
+            sessionLeaseCheckpointHooks.delete(index);
+    }
     function refreshTrackedSessionFile(index, fallback) {
         const step = statusPayload.steps[index];
         const tracked = trackedSessions[index];
@@ -198,6 +220,8 @@ export function createBackgroundRunStatusOwner(input) {
                 statusPayload.sessionFile = statusPayload.steps.length === 1 ? fallback : latestSessionFile;
             return fallback;
         }
+        if (tracked?.pinned)
+            return step?.sessionFile ?? tracked.discovered;
         if (!step || !tracked?.sessionDir)
             return step?.sessionFile;
         const files = listSessionFiles(tracked.sessionDir).sort((a, b) => {
@@ -288,17 +312,37 @@ export function createBackgroundRunStatusOwner(input) {
                 },
             ];
         });
-        return applyActiveRuntimeCheckpoint(candidates, {
-            now,
-            freeze,
-            persist: () => {
-                const aggregate = statusPayload.steps.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
-                statusPayload.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0, aggregate);
-                statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(now) ?? 0);
-                statusPayload.lastUpdate = now;
-                writeStatusPayload();
-            },
-        });
+        const mirrorToSessionLeases = () => {
+            for (const [index, hook] of sessionLeaseCheckpointHooks) {
+                const step = statusPayload.steps[index];
+                const activeRuntimeMs = normalizeActiveRuntimeMs(step?.activeRuntimeMs);
+                const contextUsage = parseContextUsageDiagnostics(step?.contextUsage);
+                try {
+                    hook({
+                        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+                        ...(contextUsage ? { contextUsage } : {}),
+                    });
+                }
+                catch {
+                }
+            }
+        };
+        try {
+            return applyActiveRuntimeCheckpoint(candidates, {
+                now,
+                freeze,
+                persist: () => {
+                    const aggregate = statusPayload.steps.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
+                    statusPayload.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0, aggregate);
+                    statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(now) ?? 0);
+                    statusPayload.lastUpdate = now;
+                    writeStatusPayload();
+                },
+            });
+        }
+        finally {
+            mirrorToSessionLeases();
+        }
     }
     function startRuntimeCheckpointTimer() {
         disposeRuntimeCheckpointTimer();
@@ -714,6 +758,8 @@ export function createBackgroundRunStatusOwner(input) {
         },
         beginTrackedSessionStep,
         refreshTrackedSessionFile,
+        recordAttemptSessionFile,
+        registerSessionLeaseCheckpoint,
         writeStatusPayload,
         recordAttemptFacts,
         recordStepTimeout,

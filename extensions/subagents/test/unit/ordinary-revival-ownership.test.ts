@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -65,6 +66,7 @@ function writeRun(
   const sessionFile = path.join(asyncDir, "child.jsonl");
   fs.mkdirSync(asyncDir, { recursive: true });
   fs.writeFileSync(sessionFile, "", "utf-8");
+  seedSessionRecord(sessionFile);
   if (opts.withStatus !== false) {
     const pause = { kind: "awaiting_supervisor" };
     writeJson(path.join(asyncDir, "status.json"), {
@@ -511,6 +513,7 @@ describe("durable revival owner gate for ordinary runs", () => {
         // Keep the child session outside the lifecycle dir that is about to vanish.
         const keptSession = path.join(root, "child.jsonl");
         fs.writeFileSync(keptSession, "", "utf-8");
+        seedSessionRecord(keptSession);
         const record = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
         record.results[0].sessionFile = keptSession;
         fs.writeFileSync(resultPath, JSON.stringify(record), "utf-8");

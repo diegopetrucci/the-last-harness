@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.js";
+import { isResumableSessionCheckpoint } from "../runs/shared/session-admission.js";
 import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.js";
 import { MAX_ASYNC_STATUS_BYTES } from "../shared/utils.js";
 import { ASYNC_DIR } from "../shared/types.js";
@@ -172,6 +173,7 @@ function inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill
                     const recovered = recoverStoppedLifecycleOwnership(status, {
                         kill,
                         now: () => now,
+                        isResumableSession: (file) => isResumableSessionCheckpoint(file, { kill }),
                     });
                     if (recovered.repaired) {
                         return { keep: true, activeOrLive: true };

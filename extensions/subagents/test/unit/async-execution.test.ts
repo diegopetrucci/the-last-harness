@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -304,6 +305,7 @@ describe("async runner execution", () => {
       ].join("\n");
       fs.mkdirSync(profile, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf8");
+      seedSessionRecord(sessionFile);
       writeJson(path.join(asyncDir, "status.json"), {
         runId,
         mode: "single",

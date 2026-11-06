@@ -6,6 +6,7 @@ import test from "node:test";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
+import { seedSessionRecord } from "../extensions/subagents/test/support/session-record-fixture.ts";
 import { createSubagentExecutor } from "../extensions/subagents/src/extension/subagent-executor.ts";
 import {
   ASYNC_DIR,
@@ -269,6 +270,7 @@ function rushRunFixture(t, fixture) {
     mkdirSync(dir, { recursive: true });
     const sessionFile = join(dir, "child.jsonl");
     writeFileSync(sessionFile, "");
+    seedSessionRecord(sessionFile);
     writeFileSync(
       join(dir, "status.json"),
       JSON.stringify({

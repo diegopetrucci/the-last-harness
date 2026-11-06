@@ -53,7 +53,7 @@ A custom-agent frontmatter value of `false` is invalid; omit the field for the b
 
 The cumulative active-runtime ledger belongs to an unfinished logical child/job and its role ceiling. The same job accumulates active time across awaited, async, fallback, retry, pause, and resume continuations. Durable paused/offline wall time, when no child process is running, is excluded. A recoverable pause resumes the same persisted child lineage and context with its remaining budget; it does not reset the ledger. Same-lineage resumes, including after successful completion, keep consumed runtime; only a fresh dispatch gets a new budget; an exhausted continuation fails before launch. Runners persist checkpoints at roughly 30-second intervals, so hard-kill recovery can conservatively undercount active time by up to one interval.
 
-A role-budget expiry permanently poisons that child instance. The architect must inspect its partial output, artifacts, and files, may narrow or split the remaining scope, and decides whether a fresh dispatch is warranted. TLH never automatically replaces the instance, rolls work back, or mechanically redispatches the unchanged task. Exhausted results, notifications, and status omit resume commands; ordinary paused or otherwise recoverable results retain only valid same-lineage resume hints.
+A role-budget expiry permanently poisons that child instance, and the retirement is recorded per session ([One live writer per child session](#one-live-writer-per-child-session)). The architect must inspect its partial output, artifacts, and files, may narrow or split the remaining scope, and decides whether a fresh dispatch is warranted. TLH never automatically replaces the instance, rolls work back, or mechanically redispatches the unchanged task. Exhausted results, notifications, and status omit resume commands; ordinary paused or otherwise recoverable results retain only valid same-lineage resume hints.
 
 Timeout markers follow the same ownership boundary: a role-budget timeout sets `timedOut` on the affected child step/result, not on the top-level run. A run can therefore finish in `failed` state because one role timed out without its top-level `timedOut` marker being set; inspect the per-child marker and `terminationReason` to identify that case. A top-level `timedOut` marker is historical-only: it belongs to older artifacts written under the retired shared `maxRunTimeMs` ceiling (`timeoutOwner: "run"`) and is kept as readable compatibility metadata.
 
@@ -336,6 +336,7 @@ This is human-approved recovery, not a technically enforced boundary: a same-use
    ```
 
    Children run in their own detached process groups, which a dead runner does not clean up. The persisted `processCleanup.processGroupId` values exist only after a cleanup attempt, and a child's session file may be discovered after launch, so the absence of a match does not account for every group. A listed process is not necessarily this run's (for example an unrelated Pi session); reconcile each one. **If any child process group cannot be accounted for, or anything remains, stop and investigate. Do not edit ownership.**
+
 4. **Back up every record that exists**, outside the result directory (the result watcher scans it). Note which records are absent. If any command prints `STOP` or errors, do not continue:
 
    ```sh
@@ -347,10 +348,39 @@ This is human-approved recovery, not a technically enforced boundary: a same-use
      echo "STOP: no backup directory; do not continue" >&2
    fi
    ```
+
 5. **Edit.** In each existing record, change only the top-level `sessionId` to the same key from step 1. Never create a missing record, and change nothing else.
 6. **Verify and reopen.** Re-read the edited records, then reopen the session whose exact key you wrote and retry the resume.
 
 **Undo.** Re-establish quiescence (steps 2–3), then copy `<backup>/status.json` back to `$RUN/status.json` and `<backup>/result.json` back to `$RESULT` (only for the records you backed up), using the backup path printed in step 4.
+
+### One live writer per child session
+
+Every child session file has a sidecar ownership record, `<session>.jsonl.owner.json`, next to it (`tlh sessions` and Pi's session listing scan only `*.jsonl`, so they ignore it). The record holds the session's exclusive lease, its cumulative active runtime, its latest context usage, and a retired flag. It contains no transcript content and follows the session file's retention. Moved, copied, and hard-linked session files are unsupported.
+
+**Contract.** The runner is the authoritative boundary: it takes the lease itself, immediately before it spawns Pi, and keeps the record current while the child runs. It releases the lease only after its child process groups are proven gone, so two Pi processes never write one session file. Only a fully written clean-final record makes a session resumable again. A crash leaves the lease held and then abandoned, and an abandoned session is never reused. TLH never signals a process to recover a session. Resume admission runs the same classification first, before it claims anything or spawns a runner, and refuses synchronously with the same wording (one shared source, [`session-admission.ts`](../extensions/subagents/src/runs/shared/session-admission.ts)). Any run ID that shares the session file is a valid entry point, so an older ID can neither bypass the cumulative runtime and role-timeout retirement nor the 80% context block. A role-budget timeout retires the session in the record, so retirement survives the lifecycle directory being cleaned up.
+
+**Refusals.** Each refusal omits resume hints. Apart from "held", the text tells the architect to inspect the partial work and start a fresh dispatch.
+
+| Record state                            | Meaning                                                                       | Refusal                                                                  |
+| --------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| retired                                 | A role budget expired.                                                        | Permanent.                                                               |
+| held by a live owner                    | A runner, or a child process group it recorded, is alive or cannot be probed. | Wait for that run to finish, or interrupt the live owner, then retry.    |
+| abandoned                               | The last attempt did not finish cleanly and its owners are gone.              | Permanent.                                                               |
+| missing                                 | No record: a run started before this change, or a deleted or moved record.    | Permanent.                                                               |
+| corrupt, unreadable, unsupported schema | The record cannot be trusted.                                                 | Permanent until a human repairs it; a fresh dispatch is the normal path. |
+| busy                                    | Another process holds the record's short lock.                                | Retry shortly.                                                           |
+
+**Budgets.** Resume starts from `max(run status runtime, record runtime)`, and the relaunched runner starts from that same value, so its own budget enforcement is cumulative. The context gate uses the record's latest context usage. Cleanly finished runs, including failed ones, remain resumable. A live follow-up to a running child reuses the live owner's lease and never takes a new one. A paused run's claim is checked after admission, so a refused session leaves that run paused and claimable.
+
+**Upgrade.** Runs started before this change have no record and cannot be resumed; dispatch fresh. Only a session file that does not exist yet gets a new record, so an existing file without one is never adopted.
+
+**Platform gap.** Child process groups are recorded and probed only on POSIX. Elsewhere none are recorded, so only the runner pid protects the session: if the runner crashes, an orphaned child is not detected, and the session reads as abandoned while that child may still be writing. Check for a surviving Pi process before relying on such a session. Records written on POSIX are unaffected: an unprobeable recorded group counts as alive.
+
+**Manual recovery.** Both cases below need a human; an agent must not do either on its own initiative.
+
+- _Stale `<lock>.break-<hash>` marker._ Two short-lived directory locks can leave one behind: the session-record lock at `<session>.jsonl.owner.json.lock` and the lifecycle transition lock at `<asyncDir>/.lifecycle-transition.lock`. A crash during stale-lock recovery leaves a `<lock>.break-<hash>` marker beside the lock, and later operations then report the record or run busy. Confirm that no TLH process is mid-recovery (stop every TLH/Pi session, as in step 2 of [Recovering ownerless or foreign runs](#recovering-ownerless-or-foreign-runs)), then delete only that marker.
+- _Session held by an orphaned child._ If the runner died but its child Pi is still running, the session stays held. Wait for the child to exit, or stop it yourself after verifying its identity. TLH never kills it. Once its recorded groups are gone the session reads as abandoned, which is also refused; start a fresh dispatch.
 
 ### Terminal result and post-run facts
 

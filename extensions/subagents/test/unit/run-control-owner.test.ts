@@ -93,6 +93,8 @@ function makeOwner(options: { enabled: boolean } = { enabled: true }): {
     concurrentTerminalStatusAdopted: false,
     setControlHooks() {},
     beginTrackedSessionStep() {},
+    recordAttemptSessionFile() {},
+    registerSessionLeaseCheckpoint() {},
     refreshTrackedSessionFile() {
       return undefined;
     },

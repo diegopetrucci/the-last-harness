@@ -22,6 +22,7 @@ import {
   formatSingleCompletion,
 } from "../../src/runs/background/notify.ts";
 import { formatAwaitedNativeSubagentResult } from "../../src/shared/result-formatting.ts";
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 
 function artifactConfig() {
   return {
@@ -70,6 +71,7 @@ describe("async post-run facts", () => {
     const sessionFile = path.join(tempDir, "developer-session.jsonl");
     const startedMarker = path.join(tempDir, "developer-started");
     fs.writeFileSync(sessionFile, '{"type":"session","id":"developer"}\n', "utf-8");
+    seedSessionRecord(sessionFile);
     mockPi.onCall({
       matchArgIncludes: "developer-style-edit",
       writeMarker: startedMarker,

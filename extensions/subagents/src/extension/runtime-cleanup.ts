@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.ts";
+import { isResumableSessionCheckpoint } from "../runs/shared/session-admission.ts";
 import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.ts";
 import { MAX_ASYNC_STATUS_BYTES } from "../shared/utils.ts";
 import { ASYNC_DIR, type AsyncStatus } from "../shared/types.ts";
@@ -247,6 +248,7 @@ function inspectKnownLifecycleState(
           const recovered = recoverStoppedLifecycleOwnership(status, {
             kill,
             now: () => now,
+            isResumableSession: (file) => isResumableSessionCheckpoint(file, { kill }),
           });
           if (recovered.repaired) {
             // Lifecycle recovery would finalize this checkpoint to paused. Keep
