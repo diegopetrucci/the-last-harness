@@ -163,7 +163,14 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             const event = parsed.event;
             appendChildEvent(event);
             transcriptWriter?.writeChildEvent(event);
-            onChildEvent?.(event);
+            if (!persistenceFailure) {
+                try {
+                    onChildEvent?.(event);
+                }
+                catch (callbackError) {
+                    failOnChildPersistence("Failed to persist child event", callbackError);
+                }
+            }
             if (event.type === "tool_execution_start" && event.toolName) {
                 const toolArgs = extractToolArgsPreview(event.args ?? {});
                 writeOutputLine(toolArgs ? `${event.toolName}: ${toolArgs}` : event.toolName);
@@ -193,6 +200,13 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                     restored: context?.restored === true,
                     contextWindow: context?.contextWindow,
                 });
+                if (contextUsage) {
+                    try {
+                        context?.onContextUsage?.(contextUsage);
+                    }
+                    catch {
+                    }
+                }
                 const eventUsage = event.message.usage;
                 if (eventUsage) {
                     usage.turns++;
@@ -242,6 +256,8 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
         let timeoutHardKillTimer;
         let protocolLimitHardKillTimer;
         let settled = false;
+        let persistenceFailure = false;
+        let persistenceHardKillTimer;
         let softInterruptsEnabled = true;
         let interruptRegistered = false;
         let exitCodeFromExit = null;
@@ -303,6 +319,9 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             clearDrainTimers();
             clearCloseFallbackTimer();
             clearProtocolLimitHardKillTimer();
+            if (persistenceHardKillTimer)
+                clearTimeout(persistenceHardKillTimer);
+            persistenceHardKillTimer = undefined;
             clearStdioGuard();
             stdoutReader.end();
             stderrLineReader.end();
@@ -389,6 +408,26 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                 contextExhausted: contextExhausted === "context_exhausted" || undefined,
             });
         };
+        function failOnChildPersistence(label, callbackError) {
+            if (persistenceFailure)
+                return;
+            persistenceFailure = true;
+            if (terminalReason.reason !== undefined)
+                return;
+            interrupted = false;
+            const detail = callbackError instanceof Error ? callbackError.message : String(callbackError);
+            error = boundChildError(`${label}: ${detail}`);
+            if (settled || childExited)
+                return;
+            trySignalChild(child, "SIGTERM");
+            void resolveProcessCleanup("SIGTERM");
+            persistenceHardKillTimer = setTimeout(() => {
+                persistenceHardKillTimer = undefined;
+                if (!settled && !childExited)
+                    trySignalChild(child, "SIGKILL");
+            }, CHILD_PROTOCOL_HARD_KILL_GRACE_MS);
+            persistenceHardKillTimer.unref?.();
+        }
         const stdoutReader = createBoundedLineReader({
             stream: "stdout",
             onLine: processStdoutLine,
@@ -592,5 +631,13 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                 assistantStopReason: finalAssistantStopReason,
             });
         });
+        if (processGroupId && context?.onChildSpawned) {
+            try {
+                context.onChildSpawned(processGroupId);
+            }
+            catch (spawnHookError) {
+                failOnChildPersistence("Failed to record child process group", spawnHookError);
+            }
+        }
     });
 }

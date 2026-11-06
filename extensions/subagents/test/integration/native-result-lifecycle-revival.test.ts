@@ -27,6 +27,7 @@ import {
   waitForRevivedAsyncResult,
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
+import { seedSessionRecord } from "../support/session-record-fixture.ts";
 
 describe("completed-run revival", () => {
   let tempDir: string;
@@ -67,6 +68,7 @@ describe("completed-run revival", () => {
       fs.mkdirSync(asyncDir, { recursive: true });
       const sessionFile = path.join(asyncDir, "worker.jsonl");
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify(
@@ -150,6 +152,7 @@ describe("completed-run revival", () => {
       fs.mkdirSync(sourceAsyncDir, { recursive: true });
       fs.mkdirSync(RESULTS_DIR, { recursive: true });
       fs.writeFileSync(sourceSession, "", "utf-8");
+      seedSessionRecord(sourceSession);
       fs.writeFileSync(
         path.join(sourceAsyncDir, "status.json"),
         JSON.stringify(
@@ -265,6 +268,7 @@ describe("completed-run revival", () => {
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify(
@@ -330,6 +334,7 @@ describe("completed-run revival", () => {
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify(
@@ -387,6 +392,7 @@ describe("completed-run revival", () => {
     const sessionFile = path.join(tempDir, `${runId}.jsonl`);
     fs.mkdirSync(asyncDir, { recursive: true });
     fs.writeFileSync(sessionFile, "", "utf-8");
+    seedSessionRecord(sessionFile);
     fs.writeFileSync(
       statusPath,
       JSON.stringify(
@@ -456,6 +462,7 @@ describe("completed-run revival", () => {
       const sessionFile = path.join(tempDir, `${runId}.jsonl`);
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         statusPath,
         JSON.stringify(
@@ -533,7 +540,9 @@ describe("completed-run revival", () => {
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(firstSession, "", "utf-8");
+      seedSessionRecord(firstSession);
       fs.writeFileSync(secondSession, "", "utf-8");
+      seedSessionRecord(secondSession);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify(
@@ -589,7 +598,9 @@ describe("completed-run revival", () => {
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(firstSession, "", "utf-8");
+      seedSessionRecord(firstSession);
       fs.writeFileSync(secondSession, "", "utf-8");
+      seedSessionRecord(secondSession);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify(
@@ -692,6 +703,8 @@ describe("completed-run revival", () => {
     fs.mkdirSync(asyncDir, { recursive: true });
     fs.writeFileSync(poisonedSession, "poisoned session", "utf-8");
     fs.writeFileSync(healthySession, "healthy session", "utf-8");
+    seedSessionRecord(poisonedSession);
+    seedSessionRecord(healthySession);
     fs.writeFileSync(
       statusPath,
       JSON.stringify(
@@ -787,6 +800,7 @@ describe("completed-run revival", () => {
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify(
@@ -870,6 +884,7 @@ describe("completed-run revival", () => {
       const { executor } = makeExecutor();
       let revivedId: string | undefined;
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
@@ -970,6 +985,7 @@ describe("completed-run revival", () => {
     try {
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
+      seedSessionRecord(sessionFile);
       fs.writeFileSync(
         path.join(asyncDir, "status.json"),
         JSON.stringify(
@@ -1045,6 +1061,7 @@ describe("completed-run revival", () => {
     fs.mkdirSync(asyncDir, { recursive: true });
     fs.mkdirSync(path.dirname(resultPath), { recursive: true });
     fs.writeFileSync(sessionFile, "", "utf-8");
+    seedSessionRecord(sessionFile);
     fs.writeFileSync(
       statusPath,
       JSON.stringify(
@@ -1158,6 +1175,7 @@ describe("completed-run revival", () => {
     fs.mkdirSync(asyncDir, { recursive: true });
     fs.mkdirSync(path.dirname(resultPath), { recursive: true });
     fs.writeFileSync(sessionFile, "", "utf-8");
+    seedSessionRecord(sessionFile);
     // Status persists a malformed (uppercase) timeoutOwner that normalizes to
     // undefined, which previously could mask the valid result evidence.
     fs.writeFileSync(
@@ -1254,6 +1272,7 @@ describe("completed-run revival", () => {
     const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
     const sessionFile = path.join(tempDir, `${runId}.jsonl`);
     fs.writeFileSync(sessionFile, "", "utf-8");
+    seedSessionRecord(sessionFile);
     fs.mkdirSync(path.dirname(resultPath), { recursive: true });
     fs.writeFileSync(
       resultPath,

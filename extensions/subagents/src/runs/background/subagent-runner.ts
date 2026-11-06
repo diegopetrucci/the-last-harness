@@ -1101,6 +1101,9 @@ async function runSubagentWithInput(
               cwd,
               sessionEnabled,
               sessionDir: taskSessionDir,
+              onAttemptSessionFile: (file) => statusOwner.recordAttemptSessionFile(fi, file),
+              registerLeaseCheckpoint: (hook) =>
+                statusOwner.registerSessionLeaseCheckpoint(fi, hook),
               artifactsDir,
               artifactConfig,
               id,
@@ -1364,6 +1367,9 @@ async function runSubagentWithInput(
           cwd,
           sessionEnabled,
           sessionDir: config.sessionDir,
+          onAttemptSessionFile: (file) => statusOwner.recordAttemptSessionFile(flatIndex, file),
+          registerLeaseCheckpoint: (hook) =>
+            statusOwner.registerSessionLeaseCheckpoint(flatIndex, hook),
           artifactsDir,
           artifactConfig,
           id,

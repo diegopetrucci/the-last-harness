@@ -105,4 +105,27 @@ describe("durable active-runtime checkpoints", () => {
     ])
       assert.ok(malformedActiveRuntimeAccountingField(bad), JSON.stringify(bad));
   });
+
+  it("rebase shifts the base: record runtime plus this runner's own elapsed time", () => {
+    let clock = 1_000;
+    const tracker = createActiveRuntimeTracker({ priorActiveRuntimeMs: 400, now: () => clock });
+    clock += 100;
+    assert.equal(tracker.rebase(2_700), 2_800);
+    assert.equal(tracker.current(), 2_800, "the segment origin moves, nothing is charged twice");
+    clock += 50;
+    assert.equal(tracker.current(), 2_850);
+    // A lower record never lowers the total.
+    assert.equal(tracker.rebase(100), 2_850);
+    assert.equal(tracker.current(), 2_850);
+  });
+
+  it("rebase leaves a frozen tracker unchanged", () => {
+    let clock = 0;
+    const tracker = createActiveRuntimeTracker({ priorActiveRuntimeMs: 400, now: () => clock });
+    clock += 100;
+    tracker.freeze();
+    clock += 500;
+    assert.equal(tracker.rebase(5_000), 500);
+    assert.equal(tracker.current(), 500);
+  });
 });

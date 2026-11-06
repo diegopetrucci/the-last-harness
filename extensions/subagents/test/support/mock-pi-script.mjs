@@ -374,6 +374,10 @@ function writeSessionFile(args) {
     if (args[i] === "--session") {
       const sessionFile = args[i + 1];
       if (!sessionFile) return;
+      // Runner-allocated fresh-attempt paths (Pi-style timestamp_uuid names) stand in for the
+      // former --session-dir launches, so they follow the same opt-in rule below.
+      const allocated = /^\d{4}-[\dT-]+Z_[0-9a-f-]{36}\.jsonl$/.test(path.basename(sessionFile));
+      if (allocated && process.env.MOCK_PI_SESSION_DIR_FILE !== "1") return;
       fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
       fs.writeFileSync(sessionFile, "", { flag: "a" });
       return;

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.js";
 import { getArtifactsDir } from "../../shared/artifacts.js";
 import { UNCHANGED_SUPERVISOR_RESUME_MESSAGE } from "../../shared/pause-messages.js";
+import { admitSessionForResume, describeSessionRefusal, roleBudgetExhaustedMessage, } from "../shared/session-admission.js";
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 import { resolveControlConfig } from "../shared/subagent-control.js";
 import { canonicalSubagentModelIdentity, modelReferenceFromIdentity, } from "../shared/model-fallback.js";
@@ -151,7 +152,9 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId, callerKe
                 ? `Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`
                 : `Paused run '${target.runId}' child ${target.index} already launched its continuation and cannot be resumed again.`);
         }
-        const latestContextUsage = parseContextUsageDiagnostics(currentStep?.contextUsage) ?? target.contextUsage;
+        const latestContextUsage = options.recordContextUsage ??
+            parseContextUsageDiagnostics(currentStep?.contextUsage) ??
+            target.contextUsage;
         const contextAssessment = assessDurableResumeContext(latestContextUsage, effectiveContextWindow);
         if (contextAssessment.blocked)
             return { blockedMessage: formatDurableResumeContextBlock(contextAssessment) };
@@ -549,7 +552,7 @@ async function resolveResumeActionTarget(input) {
     }
     return target;
 }
-function preflightResumeRuntimePolicy(target, agentConfig) {
+function preflightResumeRuntimePolicy(target, agentConfig, record) {
     const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
     if (target.activeRuntimeMs !== undefined && normalizedTargetActiveRuntimeMs === undefined) {
         return {
@@ -564,7 +567,7 @@ function preflightResumeRuntimePolicy(target, agentConfig) {
             message: "Invalid active runtime checkpoint; continuation cannot start.",
         };
     }
-    const activeRuntimeMs = normalizedTargetActiveRuntimeMs ?? 0;
+    const activeRuntimeMs = Math.max(normalizedTargetActiveRuntimeMs ?? 0, record?.activeRuntimeMs ?? 0);
     const roleTimeoutEvidence = target.timeoutOwner === "role" &&
         (target.timedOut === true || target.terminationReason === "timed_out");
     const remainingAgentTimeMs = remainingExecutionTimeMs(agentConfig.maxExecutionTimeMs, activeRuntimeMs);
@@ -573,7 +576,7 @@ function preflightResumeRuntimePolicy(target, agentConfig) {
             kind: "error",
             message: roleTimeoutEvidence
                 ? `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.`
-                : `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
+                : roleBudgetExhaustedMessage(target.agent, activeRuntimeMs),
         };
     }
     return {
@@ -582,7 +585,9 @@ function preflightResumeRuntimePolicy(target, agentConfig) {
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     };
 }
-function preflightResumeContextPolicy(target, agentConfig, modelOverride, currentModel, availableModels) {
+function preflightResumeContextPolicy(target, agentConfig, modelOverride, currentModel, availableModels, contextUsage = target.kind === "revive"
+    ? target.contextUsage
+    : undefined) {
     if (target.kind !== "revive")
         return { kind: "ready" };
     const selectedModel = explicitResumeModel(modelOverride) ??
@@ -590,7 +595,7 @@ function preflightResumeContextPolicy(target, agentConfig, modelOverride, curren
         agentConfig.model ??
         (currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined);
     const modelContextWindow = resolveEffectiveContextWindow(selectedModel, availableModels, currentModel?.provider);
-    const contextAssessment = assessDurableResumeContext(target.contextUsage, modelContextWindow ?? target.contextUsage?.contextWindow);
+    const contextAssessment = assessDurableResumeContext(contextUsage, modelContextWindow ?? contextUsage?.contextWindow);
     if (contextAssessment.blocked) {
         return { kind: "error", message: formatDurableResumeContextBlock(contextAssessment) };
     }
@@ -715,7 +720,27 @@ export async function resumeAsyncRun(input) {
             details: { mode: "management", results: [] },
         };
     }
-    const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig);
+    let sessionRecord;
+    if (target.kind === "revive") {
+        const admission = target.sessionFile
+            ? admitSessionForResume(target.sessionFile, { kill: input.deps.kill })
+            : { ok: false, refusal: { kind: "missing" } };
+        if (!admission.ok) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Cannot resume '${target.runId}': ${describeSessionRefusal(admission.refusal)}`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
+        }
+        sessionRecord = admission.record;
+    }
+    const recordContextUsage = sessionRecord?.contextUsage?.usage;
+    const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig, sessionRecord);
     if (runtimePolicy.kind === "error") {
         return {
             content: [{ type: "text", text: runtimePolicy.message }],
@@ -726,7 +751,7 @@ export async function resumeAsyncRun(input) {
     const { activeRuntimeMs, activeRuntimeCheckpointAt } = runtimePolicy;
     const modelRegistrySnapshot = readModelRegistrySnapshot(input.ctx);
     const { availableModels } = modelRegistrySnapshot;
-    const contextPolicy = preflightResumeContextPolicy(target, agentConfig, input.params.model, input.ctx.model, availableModels);
+    const contextPolicy = preflightResumeContextPolicy(target, agentConfig, input.params.model, input.ctx.model, availableModels, recordContextUsage ?? (target.kind === "revive" ? target.contextUsage : undefined));
     if (contextPolicy.kind === "error") {
         return {
             content: [{ type: "text", text: contextPolicy.message }],
@@ -738,7 +763,7 @@ export async function resumeAsyncRun(input) {
     const continuationRunId = randomUUID().slice(0, 8);
     let claimedPause;
     try {
-        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, callerKey, modelContextWindow, { kill: input.deps.kill });
+        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, callerKey, modelContextWindow, { kill: input.deps.kill, recordContextUsage });
         if (claimDecision && "blockedMessage" in claimDecision) {
             return {
                 content: [{ type: "text", text: claimDecision.blockedMessage }],
@@ -794,9 +819,11 @@ export async function resumeAsyncRun(input) {
             modelOverride: input.params.model,
             ...(restoredModelIdentity ? { restoredModelIdentity } : {}),
             ...(resumeModelResolution ? { modelResolution: resumeModelResolution } : {}),
-            ...(target.kind === "revive" && "contextUsage" in target && target.contextUsage
-                ? { contextUsage: target.contextUsage }
-                : {}),
+            ...(() => {
+                const contextUsage = recordContextUsage ??
+                    (target.kind === "revive" && "contextUsage" in target ? target.contextUsage : undefined);
+                return contextUsage ? { contextUsage } : {};
+            })(),
             ...revivedPressureOptions(target, claimedPause),
             agentConfig,
             projectAgent: persistedProjectAuthorization?.identity,

@@ -14,6 +14,13 @@ import type { AgentConfig, AgentScope } from "../../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { getArtifactsDir } from "../../shared/artifacts.ts";
 import { UNCHANGED_SUPERVISOR_RESUME_MESSAGE } from "../../shared/pause-messages.ts";
+import {
+  admitSessionForResume,
+  describeSessionRefusal,
+  roleBudgetExhaustedMessage,
+  type SessionAdmission,
+} from "../shared/session-admission.ts";
+import type { SessionRecord } from "../shared/session-record.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import type { ModelInfo } from "../../shared/model-info.ts";
 import { resolveControlConfig } from "../shared/subagent-control.ts";
@@ -69,6 +76,7 @@ import {
 import {
   type AsyncStatus,
   type Details,
+  type ContextUsageDiagnostics,
   type ResolvedArtifactConfig,
   type SubagentModelResolution,
   type SubagentTerminalResult,
@@ -264,7 +272,11 @@ function claimPausedAwaitingSupervisorTarget(
   continuationRunId: string,
   callerKey: string,
   effectiveContextWindow?: number,
-  options: { kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean } = {},
+  options: {
+    kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+    /** Latest context usage from the session record; wins over the lifecycle step's. */
+    recordContextUsage?: ContextUsageDiagnostics;
+  } = {},
 ): ContinuationClaimDecision {
   if (target.kind !== "revive") return undefined;
   // Result-only targets have no lifecycle lock; the result record is the only
@@ -313,7 +325,9 @@ function claimPausedAwaitingSupervisorTarget(
       );
     }
     const latestContextUsage =
-      parseContextUsageDiagnostics(currentStep?.contextUsage) ?? target.contextUsage;
+      options.recordContextUsage ??
+      parseContextUsageDiagnostics(currentStep?.contextUsage) ??
+      target.contextUsage;
     const contextAssessment = assessDurableResumeContext(
       latestContextUsage,
       effectiveContextWindow,
@@ -793,6 +807,7 @@ type ResumeRuntimePolicyPreflight =
 function preflightResumeRuntimePolicy(
   target: ResumeSourceTarget,
   agentConfig: AgentConfig,
+  record?: SessionRecord,
 ): ResumeRuntimePolicyPreflight {
   // Completion does not reset a persisted child lineage. Every resumable
   // outcome carries its validated logical runtime evidence; paused wall time
@@ -815,7 +830,12 @@ function preflightResumeRuntimePolicy(
       message: "Invalid active runtime checkpoint; continuation cannot start.",
     };
   }
-  const activeRuntimeMs = normalizedTargetActiveRuntimeMs ?? 0;
+  // The session record is the shared evidence for every run ID on this session
+  // file, so an older ID cannot start from a smaller runtime than the lineage spent.
+  const activeRuntimeMs = Math.max(
+    normalizedTargetActiveRuntimeMs ?? 0,
+    record?.activeRuntimeMs ?? 0,
+  );
   const roleTimeoutEvidence =
     target.timeoutOwner === "role" &&
     (target.timedOut === true || target.terminationReason === "timed_out");
@@ -828,7 +848,7 @@ function preflightResumeRuntimePolicy(
       kind: "error",
       message: roleTimeoutEvidence
         ? `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.`
-        : `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
+        : roleBudgetExhaustedMessage(target.agent, activeRuntimeMs),
     };
   }
   return {
@@ -848,6 +868,9 @@ function preflightResumeContextPolicy(
   modelOverride: string | undefined,
   currentModel: { provider: string; id: string } | undefined,
   availableModels: ModelInfo[],
+  contextUsage: ContextUsageDiagnostics | undefined = target.kind === "revive"
+    ? target.contextUsage
+    : undefined,
 ): ResumeContextPolicyPreflight {
   if (target.kind !== "revive") return { kind: "ready" };
   const selectedModel =
@@ -861,8 +884,8 @@ function preflightResumeContextPolicy(
     currentModel?.provider,
   );
   const contextAssessment = assessDurableResumeContext(
-    target.contextUsage,
-    modelContextWindow ?? target.contextUsage?.contextWindow,
+    contextUsage,
+    modelContextWindow ?? contextUsage?.contextWindow,
   );
   if (contextAssessment.blocked) {
     return { kind: "error", message: formatDurableResumeContextBlock(contextAssessment) };
@@ -1006,7 +1029,30 @@ export async function resumeAsyncRun(input: {
     };
   }
 
-  const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig);
+  // One live writer per session: classify the shared session record before any
+  // claim or spawn. The runner re-checks atomically when it takes the lease.
+  let sessionRecord: SessionRecord | undefined;
+  if (target.kind === "revive") {
+    const admission: SessionAdmission = target.sessionFile
+      ? admitSessionForResume(target.sessionFile, { kill: input.deps.kill })
+      : { ok: false, refusal: { kind: "missing" } };
+    if (!admission.ok) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Cannot resume '${target.runId}': ${describeSessionRefusal(admission.refusal)}`,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+    sessionRecord = admission.record;
+  }
+  const recordContextUsage = sessionRecord?.contextUsage?.usage;
+
+  const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig, sessionRecord);
   if (runtimePolicy.kind === "error") {
     return {
       content: [{ type: "text", text: runtimePolicy.message }],
@@ -1024,6 +1070,7 @@ export async function resumeAsyncRun(input: {
     input.params.model,
     input.ctx.model,
     availableModels,
+    recordContextUsage ?? (target.kind === "revive" ? target.contextUsage : undefined),
   );
   if (contextPolicy.kind === "error") {
     return {
@@ -1042,7 +1089,7 @@ export async function resumeAsyncRun(input: {
       continuationRunId,
       callerKey,
       modelContextWindow,
-      { kill: input.deps.kill },
+      { kill: input.deps.kill, recordContextUsage },
     );
     if (claimDecision && "blockedMessage" in claimDecision) {
       return {
@@ -1111,9 +1158,12 @@ export async function resumeAsyncRun(input: {
       modelOverride: input.params.model,
       ...(restoredModelIdentity ? { restoredModelIdentity } : {}),
       ...(resumeModelResolution ? { modelResolution: resumeModelResolution } : {}),
-      ...(target.kind === "revive" && "contextUsage" in target && target.contextUsage
-        ? { contextUsage: target.contextUsage }
-        : {}),
+      ...(() => {
+        const contextUsage =
+          recordContextUsage ??
+          (target.kind === "revive" && "contextUsage" in target ? target.contextUsage : undefined);
+        return contextUsage ? { contextUsage } : {};
+      })(),
       // A same-segment revival restores the latest display projection and the
       // machine deduplication history independently. A claimed pause creates a
       // new continuation segment and intentionally starts with neither.

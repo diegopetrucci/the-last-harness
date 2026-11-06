@@ -545,7 +545,7 @@ describe("async execution lifecycle supervisor races", () => {
         assert.equal(blockedResume.isError, true, "live source ownership must block resume");
         assert.match(
           (blockedResume.content[0] as { text?: string })?.text ?? "",
-          /still stopping.*persisted owner pid/i,
+          /held by a live owner/i,
           "blocked resume must report the live persisted owner",
         );
         assert.equal(

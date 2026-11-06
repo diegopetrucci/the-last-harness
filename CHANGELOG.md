@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Breaking
 
 - Node.js 22 is no longer supported. The installer and package now require Node.js `^24.22.1 || >=26.12.1` (24.x from 24.22.1, and 26.12.1 or newer); Node.js 25.x and older releases are rejected, as are Node.js prerelease/nightly builds. Upgrade Node.js, then rerun the installer.
+- Subagent resume now goes through a per-session ownership record. Runs started before this release have no record and cannot be resumed; dispatch them fresh. See [One live writer per child session](docs/subagents.md#one-live-writer-per-child-session).
 
 ### What's new
 
@@ -41,6 +42,9 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
+- Concurrent resumes of one subagent run no longer start two writers on one session. The runner takes an exclusive session lease, and resume refuses retired, held, abandoned, record-less, corrupt and unreadable sessions with distinct messages and no resume hints (#829, #823, #874).
+- Resuming an older run ID can no longer bypass cumulative runtime, role-timeout retirement or the 80% context block, and retirement survives lifecycle-directory cleanup (#829, #830).
+- A subagent run whose runner died without a clean finish, or whose session file was never written, is no longer advertised as a resumable pause.
 - Restored Herdr panes now relaunch the same TLH session instead of a plain shell; see [docs/integrations.md](docs/integrations.md) ([#864](https://github.com/diegopetrucci/the-last-harness/pull/864)).
 - The footer's extension status line (e.g. `MCP: 0/2 servers`) now renders dimmed like the other footer lines.
 - Declared npm `allowScripts` so only `glimpseui`'s native-window postinstall runs, avoiding npm 11.20 blocked-install-script warnings.

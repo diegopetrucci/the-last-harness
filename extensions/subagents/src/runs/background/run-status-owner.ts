@@ -36,6 +36,8 @@ import {
 } from "../shared/active-runtime.ts";
 import type { RunnerSubagentStep, SubagentRunPlan } from "../shared/parallel-utils.ts";
 import type { runSingleStep } from "./single-step-execution.ts";
+import type { AttemptLeaseProgress } from "./attempt-session-lease.ts";
+import { parseContextUsageDiagnostics } from "../../shared/context-diagnostics.ts";
 import {
   appendBoundedSubagentAttemptFact,
   boundSubagentAttemptFacts,
@@ -120,6 +122,12 @@ export interface BackgroundRunStatusOwner {
     sessionFile?: string,
   ): void;
   refreshTrackedSessionFile(index: number, fallback?: string): string | undefined;
+  recordAttemptSessionFile(index: number, file: string): void;
+  /** Mirror this step's runtime checkpoints into its session lease (cleared with undefined). */
+  registerSessionLeaseCheckpoint(
+    index: number,
+    hook: ((progress: AttemptLeaseProgress) => void) | undefined,
+  ): void;
   writeStatusPayload(options?: { lifecycleLocked?: boolean }): void;
   recordAttemptFacts(index: number, facts: SubagentAttemptFacts): void;
   recordStepTimeout(flatIndex: number, message?: string): void;
@@ -397,6 +405,7 @@ export function createBackgroundRunStatusOwner(
   writeNormalizedLifecycleStatus(asyncDir, statusPayload);
   const terminalReason: ChildTerminalReasonLatch = {};
   const activeRuntimeTrackers = new Map<number, ActiveRuntimeTracker>();
+  const sessionLeaseCheckpointHooks = new Map<number, (progress: AttemptLeaseProgress) => void>();
   let runtimeCheckpointTimer: NodeJS.Timeout | undefined;
   const trackedSessions: Array<TrackedStepSession | undefined> = initialStatusSteps.map((step) =>
     step.sessionFile
@@ -435,6 +444,29 @@ export function createBackgroundRunStatusOwner(
     };
   }
 
+  /** Record the pre-assigned file of the latest fresh attempt; later attempts supersede it. */
+  function recordAttemptSessionFile(index: number, file: string): void {
+    const step = statusPayload.steps[index];
+    const resolved = path.resolve(file);
+    trackedSessions[index] = {
+      sessionDir: path.dirname(resolved),
+      baseline: new Set(),
+      discovered: resolved,
+      pinned: true,
+    };
+    if (step) step.sessionFile = resolved;
+    latestSessionFile = resolved;
+    statusPayload.sessionFile = resolved;
+  }
+
+  function registerSessionLeaseCheckpoint(
+    index: number,
+    hook: ((progress: AttemptLeaseProgress) => void) | undefined,
+  ): void {
+    if (hook) sessionLeaseCheckpointHooks.set(index, hook);
+    else sessionLeaseCheckpointHooks.delete(index);
+  }
+
   function refreshTrackedSessionFile(index: number, fallback?: string): string | undefined {
     const step = statusPayload.steps[index];
     const tracked = trackedSessions[index];
@@ -447,6 +479,7 @@ export function createBackgroundRunStatusOwner(
       return fallback;
     }
 
+    if (tracked?.pinned) return step?.sessionFile ?? tracked.discovered;
     if (!step || !tracked?.sessionDir) return step?.sessionFile;
     const files = listSessionFiles(tracked.sessionDir).sort((a, b) => {
       try {
@@ -547,26 +580,45 @@ export function createBackgroundRunStatusOwner(
     });
     // Checkpoints are internal accounting evidence: persist them through the
     // generation-safe merge path without a control notification or heartbeat.
-    return applyActiveRuntimeCheckpoint(candidates, {
-      now,
-      freeze,
-      persist: () => {
-        const aggregate = statusPayload.steps.reduce(
-          (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
-          0,
-        );
-        statusPayload.activeRuntimeMs = Math.max(
-          normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0,
-          aggregate,
-        );
-        statusPayload.activeRuntimeCheckpointAt = Math.max(
-          normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
-          normalizeActiveRuntimeCheckpointAt(now) ?? 0,
-        );
-        statusPayload.lastUpdate = now;
-        writeStatusPayload();
-      },
-    });
+    const mirrorToSessionLeases = (): void => {
+      for (const [index, hook] of sessionLeaseCheckpointHooks) {
+        const step = statusPayload.steps[index];
+        const activeRuntimeMs = normalizeActiveRuntimeMs(step?.activeRuntimeMs);
+        const contextUsage = parseContextUsageDiagnostics(step?.contextUsage);
+        try {
+          hook({
+            ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+            ...(contextUsage ? { contextUsage } : {}),
+          });
+        } catch {
+          // Best-effort mirror; the final lease write is authoritative.
+        }
+      }
+    };
+    try {
+      return applyActiveRuntimeCheckpoint(candidates, {
+        now,
+        freeze,
+        persist: () => {
+          const aggregate = statusPayload.steps.reduce(
+            (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
+            0,
+          );
+          statusPayload.activeRuntimeMs = Math.max(
+            normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0,
+            aggregate,
+          );
+          statusPayload.activeRuntimeCheckpointAt = Math.max(
+            normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
+            normalizeActiveRuntimeCheckpointAt(now) ?? 0,
+          );
+          statusPayload.lastUpdate = now;
+          writeStatusPayload();
+        },
+      });
+    } finally {
+      mirrorToSessionLeases();
+    }
   }
 
   function startRuntimeCheckpointTimer(): void {
@@ -1085,6 +1137,8 @@ export function createBackgroundRunStatusOwner(
     },
     beginTrackedSessionStep,
     refreshTrackedSessionFile,
+    recordAttemptSessionFile,
+    registerSessionLeaseCheckpoint,
     writeStatusPayload,
     recordAttemptFacts,
     recordStepTimeout,
@@ -1113,4 +1167,6 @@ interface TrackedStepSession {
   sessionDir?: string;
   baseline: Set<string>;
   discovered?: string;
+  /** Pre-assigned attempt file: reported as-is, never replaced by directory discovery. */
+  pinned?: boolean;
 }
