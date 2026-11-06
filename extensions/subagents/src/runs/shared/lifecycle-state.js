@@ -727,48 +727,49 @@ function continuationGate(status, index, claimToken, runId) {
     return { kind: continuation.phase === "launched" ? "launched" : "ready", continuation };
 }
 export function advanceLifecycleContinuation(asyncDir, index, claimToken, runId, finalize, now) {
-    const current = readStatus(asyncDir, { cache: false });
-    if (!current)
-        return { status: null, changed: false, done: false, lost: true };
-    const gate = continuationGate(current, index, claimToken, runId);
-    if (gate.kind === "done")
-        return { status: current, changed: false, done: gate.same, lost: !gate.same };
-    if (gate.kind === "lost")
-        return { status: current, changed: false, done: false, lost: true };
-    if (!finalize && gate.kind === "launched")
-        return { status: current, changed: false, done: false, lost: false };
-    const at = now?.() ?? Date.now();
-    try {
-        const result = transitionLifecycleStatus({
-            asyncDir,
-            expectedGeneration: lifecycleGeneration(current),
-            mutate: (status) => finalize
-                ? continuationResult(status, index, gate.continuation, at, runId)
-                : (() => {
-                    const continuationTelemetry = appendSubagentTelemetryContinuation(status.telemetry, {
-                        sourceStepIndex: index,
-                        continuationRunId: runId,
-                    });
-                    return {
-                        ...status,
-                        lastUpdate: at,
-                        ...(continuationTelemetry ? { telemetry: continuationTelemetry } : {}),
-                        lifecycle: withLifecycleContinuation(status, index, {
-                            ...gate.continuation,
-                            phase: "launched",
-                            ownerPid: undefined,
-                            launchedAt: at,
+    for (;;) {
+        const current = readStatus(asyncDir, { cache: false });
+        if (!current)
+            return { status: null, changed: false, done: false, lost: true };
+        const gate = continuationGate(current, index, claimToken, runId);
+        if (gate.kind === "done")
+            return { status: current, changed: false, done: gate.same, lost: !gate.same };
+        if (gate.kind === "lost")
+            return { status: current, changed: false, done: false, lost: true };
+        if (!finalize && gate.kind === "launched")
+            return { status: current, changed: false, done: false, lost: false };
+        const at = now?.() ?? Date.now();
+        try {
+            const result = transitionLifecycleStatus({
+                asyncDir,
+                expectedGeneration: lifecycleGeneration(current),
+                mutate: (status) => finalize
+                    ? continuationResult(status, index, gate.continuation, at, runId)
+                    : (() => {
+                        const continuationTelemetry = appendSubagentTelemetryContinuation(status.telemetry, {
+                            sourceStepIndex: index,
                             continuationRunId: runId,
-                        }),
-                    };
-                })(),
-        });
-        return { status: result.status, changed: true, done: false, lost: false };
-    }
-    catch (error) {
-        if (error instanceof LifecycleGenerationConflictError)
-            return advanceLifecycleContinuation(asyncDir, index, claimToken, runId, finalize, now);
-        throw error;
+                        });
+                        return {
+                            ...status,
+                            lastUpdate: at,
+                            ...(continuationTelemetry ? { telemetry: continuationTelemetry } : {}),
+                            lifecycle: withLifecycleContinuation(status, index, {
+                                ...gate.continuation,
+                                phase: "launched",
+                                ownerPid: undefined,
+                                launchedAt: at,
+                                continuationRunId: runId,
+                            }),
+                        };
+                    })(),
+            });
+            return { status: result.status, changed: true, done: false, lost: false };
+        }
+        catch (error) {
+            if (!(error instanceof LifecycleGenerationConflictError))
+                throw error;
+        }
     }
 }
 export function recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options = {}) {

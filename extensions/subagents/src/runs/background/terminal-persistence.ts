@@ -1,7 +1,7 @@
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
   isTerminalLifecycleState,
-  LifecycleGenerationConflictError,
+  isLifecycleTransitionContentionError,
   lifecycleGeneration,
   transitionLifecycleStatus,
 } from "../shared/lifecycle-state.ts";
@@ -588,7 +588,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
           committed = readStatus(input.asyncDir, { cache: false }) ?? undefined;
           break;
         }
-        if (!(error instanceof LifecycleGenerationConflictError) || attempt >= 2) throw error;
+        if (!isLifecycleTransitionContentionError(error) || attempt >= 2) throw error;
         const latest = readStatus(input.asyncDir, { cache: false });
         if (!latest) throw error;
         // Adopt the newer generation and retry against it.

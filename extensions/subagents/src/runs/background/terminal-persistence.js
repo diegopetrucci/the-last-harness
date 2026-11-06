@@ -1,6 +1,6 @@
 // Generated from extensions/subagents/src/runs/background/terminal-persistence.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { writeAtomicJson } from "../../shared/atomic-json.js";
-import { isTerminalLifecycleState, LifecycleGenerationConflictError, lifecycleGeneration, transitionLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { isTerminalLifecycleState, isLifecycleTransitionContentionError, lifecycleGeneration, transitionLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { readStatus } from "../../shared/utils.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { resolveSubagentTelemetryOutcome, telemetryFromRunnerResults, } from "../../shared/telemetry.js";
@@ -386,7 +386,7 @@ export function persistContinuationGateRejection(input) {
                     committed = readStatus(input.asyncDir, { cache: false }) ?? undefined;
                     break;
                 }
-                if (!(error instanceof LifecycleGenerationConflictError) || attempt >= 2)
+                if (!isLifecycleTransitionContentionError(error) || attempt >= 2)
                     throw error;
                 const latest = readStatus(input.asyncDir, { cache: false });
                 if (!latest)
