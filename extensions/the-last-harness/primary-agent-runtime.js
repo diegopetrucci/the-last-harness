@@ -76,6 +76,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     let primaryAgentDefaultSelection = DEFAULT_PRIMARY_AGENT;
     let sessionPrimaryAgentOverride;
     const preflightThrottle = new Map();
+    let preflightEpoch = 0;
     const notifiedForReauth = new Set();
     const pendingReauthNotifications = new Set();
     function shouldPreflightAtDispatch(provider, store, now) {
@@ -116,9 +117,12 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             failures: existing?.failures ?? 0,
             nextAllowedAt: currentNow + 300_000,
         });
+        const scheduledEpoch = preflightEpoch;
         void store
             .probeProvider(modelRegistry, provider)
             .then((status) => {
+            if (scheduledEpoch !== preflightEpoch)
+                return;
             const t = nowFn();
             if (status === "healthy") {
                 preflightThrottle.delete(provider);
@@ -275,9 +279,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             pi.setActiveTools(restoredTools);
         }
     }
-    let tlhApplyingModel = false;
-    let tlhApplyingThinking = false;
     const tlhInternalChange = new AsyncLocalStorage();
+    const isTlhInternalChange = () => tlhInternalChange.getStore() !== undefined;
+    let sessionOnlyRevision = 0;
+    const runTlhInternalChange = (fn) => tlhInternalChange.run({ sessionOnlyRevision }, fn);
     let lastObservedModel;
     let sessionOnlyModel;
     let sessionThinkingOverride;
@@ -285,6 +290,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     let modelSelectionSession;
     function updateSessionOnlyModel(model) {
         sessionOnlyModel = model;
+        if (!isTlhInternalChange())
+            sessionOnlyRevision += 1;
     }
     function isCurrentRuntime() {
         return projectAgentLifecycle.isCurrentRuntime();
@@ -333,13 +340,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         }
     }
     function setTlhThinkingLevel(level) {
-        tlhApplyingThinking = true;
-        try {
-            tlhInternalChange.run(true, () => setExtensionThinkingLevel(pi, level));
-        }
-        finally {
-            tlhApplyingThinking = false;
-        }
+        runTlhInternalChange(() => setExtensionThinkingLevel(pi, level));
     }
     function recordUserThinkingLevel(level) {
         const selection = currentPrimaryAgentSelection();
@@ -415,14 +416,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
             return model;
         }
-        tlhApplyingModel = true;
-        let success;
-        try {
-            success = await tlhInternalChange.run(true, () => pi.setModel(model));
-        }
-        finally {
-            tlhApplyingModel = false;
-        }
+        const success = await runTlhInternalChange(() => pi.setModel(model));
         if (!success) {
             warnOnce(ctx, `primary-model-unavailable-${primary.name}`, `TLH could not switch to primary agent model: ${model.provider}/${model.id}`);
             return undefined;
@@ -503,7 +497,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         await applyPrimaryDefaults(ctx);
     }
     function handlePersistedModelSelection(ctx, model) {
-        if (tlhApplyingModel) {
+        if (isTlhInternalChange()) {
             return;
         }
         updateSessionOnlyModel(undefined);
@@ -716,8 +710,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             const modelChanged = lastObservedModel !== undefined &&
                 ctx.model !== undefined &&
                 !modelsMatch(lastObservedModel, ctx.model);
-            const internalChange = tlhApplyingModel || tlhApplyingThinking || tlhInternalChange.getStore() === true;
-            if (!internalChange) {
+            if (!isTlhInternalChange()) {
                 if (modelChanged) {
                     const selection = currentPrimaryAgentSelection();
                     if (activePrimaryAgent()) {
@@ -736,8 +729,11 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 : undefined;
             lastObservedModel = event.model;
             updateModelSelectionContext(ctx);
-            if (tlhApplyingModel) {
-                updateSessionOnlyModel(undefined);
+            const internalOperation = tlhInternalChange.getStore();
+            if (internalOperation) {
+                if (internalOperation.sessionOnlyRevision === sessionOnlyRevision) {
+                    updateSessionOnlyModel(undefined);
+                }
                 return;
             }
             if (event.source === "set") {
@@ -787,6 +783,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 notifiedForReauth.clear();
                 pendingReauthNotifications.clear();
                 preflightThrottle.clear();
+                preflightEpoch += 1;
             });
         });
         pi.on("before_agent_start", async (event, ctx) => {

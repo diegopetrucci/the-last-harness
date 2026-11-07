@@ -469,6 +469,26 @@ export function createNotifyExtension(
       }
     };
 
+    // Complete fire-time guard shared by the normal and re-armed timer paths.
+    // When suppressed by active background jobs, keep context for the next falling edge.
+    const fireSettleNotification = async (ctx: SettleCtx): Promise<void> => {
+      const config = loadConfig(ctx);
+      if (!config.enabled) return;
+      if (config.onlyWhenInteractive && !ctx.hasUI) return;
+      if (typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
+
+      if (
+        config.suppressWhileActive &&
+        latestActiveAsyncJobIds !== undefined &&
+        latestActiveAsyncJobIds.length > 0
+      ) {
+        pendingSettleCtx = ctx;
+        return;
+      }
+
+      await sendNotification(config);
+    };
+
     // Subscribe to the activity bus only if pi.events is available.
     if (pi.events) {
       activityUnsubscribe = pi.events.on(TLH_EFFECTIVE_ACTIVITY_EVENT, (data: unknown) => {
@@ -484,11 +504,7 @@ export function createNotifyExtension(
             }
             debounceTimer = setTimeoutImpl(async () => {
               debounceTimer = undefined;
-              const config = loadConfig(ctx);
-              if (!config.enabled) return;
-              if (config.onlyWhenInteractive && !ctx.hasUI) return;
-              if (typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
-              await sendNotification(config);
+              await fireSettleNotification(ctx);
             }, settleDebounceMs);
           }
         }
@@ -531,26 +547,12 @@ export function createNotifyExtension(
 
       debounceTimer = setTimeoutImpl(async () => {
         debounceTimer = undefined;
-        const config = loadConfig(ctx);
-        if (!config.enabled) return;
-        if (config.onlyWhenInteractive && !ctx.hasUI) return;
-        if (typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
-
-        if (
-          config.suppressWhileActive &&
-          latestActiveAsyncJobIds !== undefined &&
-          latestActiveAsyncJobIds.length > 0
-        ) {
-          pendingSettleCtx = {
-            cwd: ctx.cwd,
-            hasUI: ctx.hasUI,
-            isProjectTrusted: ctx.isProjectTrusted,
-            isIdle: ctx.isIdle,
-          };
-          return;
-        }
-
-        await sendNotification(config);
+        await fireSettleNotification({
+          cwd: ctx.cwd,
+          hasUI: ctx.hasUI,
+          isProjectTrusted: ctx.isProjectTrusted,
+          isIdle: ctx.isIdle,
+        });
       }, settleDebounceMs);
     });
   };

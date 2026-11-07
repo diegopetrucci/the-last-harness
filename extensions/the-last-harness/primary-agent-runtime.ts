@@ -308,6 +308,9 @@ function createTlhPrimaryAgentRuntime(
   // In-flight coalescing is handled by the store itself; this throttle prevents
   // re-scheduling more often than the chosen backoff window.
   const preflightThrottle = new Map<string, { failures: number; nextAllowedAt: number }>();
+  // Lifecycle epoch: bumped at session_shutdown so preflights scheduled before
+  // shutdown cannot mutate throttle state or notify after the session ended.
+  let preflightEpoch = 0;
 
   // Session-scoped per-provider notification state for reauth warnings.
   // Tracks which providers have already received a one-time actionable notification
@@ -431,9 +434,11 @@ function createTlhPrimaryAgentRuntime(
       nextAllowedAt: currentNow + 300_000,
     });
 
+    const scheduledEpoch = preflightEpoch;
     void store
       .probeProvider(modelRegistry, provider)
       .then((status) => {
+        if (scheduledEpoch !== preflightEpoch) return;
         const t = nowFn();
         if (status === "healthy") {
           preflightThrottle.delete(provider);
@@ -669,9 +674,15 @@ function createTlhPrimaryAgentRuntime(
     }
   }
 
-  let tlhApplyingModel = false;
-  let tlhApplyingThinking = false;
-  const tlhInternalChange = new AsyncLocalStorage<boolean>();
+  // Operation-local provenance: Pi dispatches model_select/thinking_level_select
+  // handlers inside the caller's async context, so only TLH's own calls see an
+  // operation token. The token records the session-only revision at operation
+  // start so a late internal event cannot erase newer user intent.
+  const tlhInternalChange = new AsyncLocalStorage<{ sessionOnlyRevision: number }>();
+  const isTlhInternalChange = (): boolean => tlhInternalChange.getStore() !== undefined;
+  let sessionOnlyRevision = 0;
+  const runTlhInternalChange = <T>(fn: () => T): T =>
+    tlhInternalChange.run({ sessionOnlyRevision }, fn);
   let lastObservedModel: ActiveModel | undefined;
   let sessionOnlyModel: ActiveModel | undefined;
   let sessionThinkingOverride: SessionThinkingOverride | undefined;
@@ -680,6 +691,7 @@ function createTlhPrimaryAgentRuntime(
 
   function updateSessionOnlyModel(model: ActiveModel | undefined): void {
     sessionOnlyModel = model;
+    if (!isTlhInternalChange()) sessionOnlyRevision += 1;
   }
 
   function isCurrentRuntime(): boolean {
@@ -737,12 +749,7 @@ function createTlhPrimaryAgentRuntime(
   function setTlhThinkingLevel(level: ThinkingLevel): void {
     // Keep TLH's own default application in an async-local context so the
     // resulting thinking_level_select event is not recorded as user intent.
-    tlhApplyingThinking = true;
-    try {
-      tlhInternalChange.run(true, () => setExtensionThinkingLevel(pi, level));
-    } finally {
-      tlhApplyingThinking = false;
-    }
+    runTlhInternalChange(() => setExtensionThinkingLevel(pi, level));
   }
 
   function recordUserThinkingLevel(level: ThinkingLevel): void {
@@ -862,13 +869,7 @@ function createTlhPrimaryAgentRuntime(
     if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
       return model;
     }
-    tlhApplyingModel = true;
-    let success: boolean;
-    try {
-      success = await tlhInternalChange.run(true, () => pi.setModel(model));
-    } finally {
-      tlhApplyingModel = false;
-    }
+    const success = await runTlhInternalChange(() => pi.setModel(model));
     if (!success) {
       warnOnce(
         ctx,
@@ -1005,7 +1006,7 @@ function createTlhPrimaryAgentRuntime(
     ctx: ExtensionContext,
     model: Pick<ActiveModel, "provider" | "id">,
   ): void {
-    if (tlhApplyingModel) {
+    if (isTlhInternalChange()) {
       return;
     }
     updateSessionOnlyModel(undefined);
@@ -1293,9 +1294,7 @@ function createTlhPrimaryAgentRuntime(
         lastObservedModel !== undefined &&
         ctx.model !== undefined &&
         !modelsMatch(lastObservedModel, ctx.model);
-      const internalChange =
-        tlhApplyingModel || tlhApplyingThinking || tlhInternalChange.getStore() === true;
-      if (!internalChange) {
+      if (!isTlhInternalChange()) {
         if (modelChanged) {
           const selection = currentPrimaryAgentSelection();
           if (activePrimaryAgent()) {
@@ -1321,8 +1320,13 @@ function createTlhPrimaryAgentRuntime(
 
       // TLH's own primary-agent application is not a user choice. Its model
       // event must not create a session-only gate or a primary override.
-      if (tlhApplyingModel) {
-        updateSessionOnlyModel(undefined);
+      const internalOperation = tlhInternalChange.getStore();
+      if (internalOperation) {
+        // Handlers run sequentially, so a user selection that was handled after
+        // this operation began has newer session-only intent to preserve.
+        if (internalOperation.sessionOnlyRevision === sessionOnlyRevision) {
+          updateSessionOnlyModel(undefined);
+        }
         return;
       }
 
@@ -1419,6 +1423,7 @@ function createTlhPrimaryAgentRuntime(
         notifiedForReauth.clear();
         pendingReauthNotifications.clear();
         preflightThrottle.clear();
+        preflightEpoch += 1;
       });
     });
 

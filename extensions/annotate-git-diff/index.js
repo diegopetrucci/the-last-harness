@@ -555,6 +555,11 @@ export function createAnnotateGitDiffController(pi, dependencies = {}) {
                     if (settled)
                         return;
                     settled = true;
+                    try {
+                        window.close();
+                    }
+                    catch {
+                    }
                     cleanup();
                     reject(error);
                 };

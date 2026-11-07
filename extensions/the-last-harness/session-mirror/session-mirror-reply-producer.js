@@ -263,6 +263,7 @@ export function createSessionMirrorReplyProducer(options) {
     let compactionLatched = false;
     let lifecycleSerial = 0;
     let lifecycleOperation;
+    let carriedCompaction;
     let completedCompactionEvents = new WeakSet();
     let channel;
     let channelGeneration;
@@ -282,6 +283,14 @@ export function createSessionMirrorReplyProducer(options) {
     };
     const beginLifecycleOperation = (kind) => {
         lifecycleSerial = nextCounter(lifecycleSerial);
+        const previous = lifecycleOperation;
+        if (kind === "compaction")
+            carriedCompaction = undefined;
+        else if (previous?.kind === "compaction" &&
+            previous.completed &&
+            previous.completionEvidenceValid &&
+            !previous.willRetry)
+            carriedCompaction = previous;
         lifecycleOperation = {
             kind,
             serial: lifecycleSerial,
@@ -317,6 +326,9 @@ export function createSessionMirrorReplyProducer(options) {
             lifecycleOperation = undefined;
             if (operation.kind === "compaction")
                 compactionLatched = false;
+            else if (carriedCompaction !== undefined)
+                compactionLatched = false;
+            carriedCompaction = undefined;
             if (!agentActive)
                 busyLatch = false;
         };
@@ -699,6 +711,7 @@ export function createSessionMirrorReplyProducer(options) {
         agentActive = false;
         compactionLatched = false;
         lifecycleOperation = undefined;
+        carriedCompaction = undefined;
         completedCompactionEvents = new WeakSet();
         rememberedRequests = [];
         invalidatePending("disconnected");
@@ -716,6 +729,7 @@ export function createSessionMirrorReplyProducer(options) {
         agentActive = false;
         compactionLatched = false;
         lifecycleOperation = undefined;
+        carriedCompaction = undefined;
         completedCompactionEvents = new WeakSet();
         rememberedRequests = [];
         invalidatePending("disconnected");
@@ -767,6 +781,7 @@ export function createSessionMirrorReplyProducer(options) {
     const agentSettled = () => {
         agentActive = false;
         lifecycleOperation = undefined;
+        carriedCompaction = undefined;
         busyLatch = false;
         compactionLatched = false;
     };

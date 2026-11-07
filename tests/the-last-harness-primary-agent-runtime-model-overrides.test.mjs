@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { AsyncResource } from "node:async_hooks";
 import test from "node:test";
 import { AgentSession, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
@@ -12,6 +13,8 @@ import {
   createPiHarness,
   registerRuntimeHarness,
   createPrimaryPrompt,
+  createBeforeAgentStartHarness,
+  writePrimaryConfig,
   rushLikePrimary,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
@@ -1081,5 +1084,190 @@ test("adding a model override beside an existing effort override does not re-rec
       readReconcileState().acknowledgedSnapshot?.architect?.byProvider?.anthropic?.model,
       "anthropic/OLD-packaged-default",
     );
+  });
+});
+
+// --- tlh-3za2: model/thinking provenance is per operation, not shared state ---
+
+function createProvenanceHarness(fixture) {
+  const pi = createPiHarness();
+  const initialModel = { provider: "anthropic", id: "claude-opus-5" };
+  pi.model = initialModel;
+  const ctx = {
+    cwd: fixture.cwd,
+    sessionManager: { getBranch: () => [] },
+    ui: { notify() {} },
+    modelRegistry: {
+      getAvailable: () => [
+        { provider: "anthropic", id: "claude-sonnet-4-6", reasoning: true },
+        { provider: "anthropic", id: "claude-haiku-4-5", reasoning: true },
+      ],
+    },
+    get model() {
+      return pi.model;
+    },
+  };
+  const runtime = registerTlhPrimaryAgentRuntime(pi, {
+    env: {},
+    primaryAgents: new Map([["architect", rushLikePrimary()]]),
+    subagentMetadata: [],
+  });
+  assert.ok(runtime);
+  const emit = async (name, event) => {
+    for (const registered of pi.events.filter((candidate) => candidate.name === name)) {
+      await registered.handler(event, ctx);
+    }
+  };
+  return { pi, ctx, runtime, emit, initialModel };
+}
+
+test("a user model_select during an in-flight TLH setModel keeps session intent", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { pi, ctx, runtime, emit, initialModel } = createProvenanceHarness(fixture);
+    const userModel = { provider: "anthropic", id: "claude-haiku-4-5" };
+    const tlhCalls = [];
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let entered;
+    const started = new Promise((resolve) => {
+      entered = resolve;
+    });
+    pi.setModel = async (model) => {
+      tlhCalls.push(model.id);
+      if (tlhCalls.length === 1) {
+        entered();
+        await gate;
+        return true;
+      }
+      pi.model = model;
+      return true;
+    };
+
+    const applying = runtime.applySessionStart(ctx);
+    await started;
+    // An independent, session-only user selection (Enter) lands mid-flight.
+    pi.model = userModel;
+    await emit("model_select", {
+      type: "model_select",
+      model: userModel,
+      previousModel: initialModel,
+      source: "set",
+    });
+    release();
+    await applying;
+
+    await createBeforeAgentStartHarness(pi)({ systemPrompt: "base" }, ctx);
+    assert.equal(tlhCalls.length, 1, "defaults reapplication must not replace the user selection");
+    assert.equal(pi.model.id, userModel.id);
+  });
+});
+
+test("overlapping TLH model applications do not clear each other's internal classification", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { pi, ctx, runtime, emit, initialModel } = createProvenanceHarness(fixture);
+    const writeOverride = (model) =>
+      writePrimaryConfig(fixture.agent, {
+        enabled: true,
+        selected: "architect",
+        modelOverrides: { architect: model },
+      });
+    writeOverride("anthropic/claude-haiku-4-5");
+    const gates = [];
+    pi.setModel = (model) =>
+      new Promise((resolve) => {
+        // Bind to the caller's async context, as Pi's awaited dispatch would be.
+        gates.push(
+          AsyncResource.bind(async () => {
+            pi.model = model;
+            // Pi emits the model event from inside the awaited call.
+            await emit("model_select", {
+              type: "model_select",
+              model,
+              previousModel: initialModel,
+              source: "set",
+            });
+            resolve(true);
+          }),
+        );
+      });
+
+    const first = runtime.applySessionStart(ctx);
+    const second = createBeforeAgentStartHarness(pi)({ systemPrompt: "base" }, ctx);
+    for (let i = 0; i < 200 && gates.length < 2; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(gates.length, 2, "both applications must reach setModel");
+    // The first application finishes while the second is still in flight.
+    await gates[0]();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await gates[1]();
+    await Promise.all([first, second]);
+
+    assert.equal(pi.model.id, "claude-haiku-4-5");
+
+    // Neither TLH application was a user choice, so no session-only gate may
+    // pin the model: a changed persisted override still applies on the next pass.
+    writeOverride("anthropic/claude-sonnet-4-6");
+    pi.setModel = async (model) => {
+      pi.model = model;
+      return true;
+    };
+    await createBeforeAgentStartHarness(pi)({ systemPrompt: "base" }, ctx);
+    assert.equal(pi.model.id, "claude-sonnet-4-6");
+  });
+});
+
+test("a late internal model_select does not erase newer user session-only intent", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { pi, ctx, runtime, emit, initialModel } = createProvenanceHarness(fixture);
+    const userModel = { provider: "anthropic", id: "claude-haiku-4-5" };
+    const tlhCalls = [];
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let entered;
+    const started = new Promise((resolve) => {
+      entered = resolve;
+    });
+    pi.setModel = async (model) => {
+      tlhCalls.push(model.id);
+      if (tlhCalls.length > 1) {
+        pi.model = model;
+        return true;
+      }
+      entered();
+      await gate;
+      // Pi's sequential dispatch delivers this older internal event after the
+      // user's newer selection has already been handled.
+      await emit("model_select", {
+        type: "model_select",
+        model,
+        previousModel: initialModel,
+        source: "set",
+      });
+      return true;
+    };
+
+    const applying = runtime.applySessionStart(ctx);
+    await started;
+    pi.model = userModel;
+    await emit("model_select", {
+      type: "model_select",
+      model: userModel,
+      previousModel: initialModel,
+      source: "set",
+    });
+    release();
+    await applying;
+
+    await createBeforeAgentStartHarness(pi)({ systemPrompt: "base" }, ctx);
+    assert.equal(tlhCalls.length, 1, "defaults reapplication must not replace the user selection");
+    assert.equal(pi.model.id, userModel.id);
   });
 });

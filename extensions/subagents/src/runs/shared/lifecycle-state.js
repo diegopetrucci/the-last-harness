@@ -726,7 +726,9 @@ function continuationGate(status, index, claimToken, runId) {
         return { kind: "lost" };
     return { kind: continuation.phase === "launched" ? "launched" : "ready", continuation };
 }
+const MAX_CONTINUATION_LOCK_RETRIES = 3;
 export function advanceLifecycleContinuation(asyncDir, index, claimToken, runId, finalize, now) {
+    let lockExhaustions = 0;
     for (;;) {
         const current = readStatus(asyncDir, { cache: false });
         if (!current)
@@ -767,7 +769,11 @@ export function advanceLifecycleContinuation(asyncDir, index, claimToken, runId,
             return { status: result.status, changed: true, done: false, lost: false };
         }
         catch (error) {
-            if (!(error instanceof LifecycleGenerationConflictError))
+            if (error instanceof LifecycleLockExhaustedError) {
+                if (++lockExhaustions > MAX_CONTINUATION_LOCK_RETRIES)
+                    throw error;
+            }
+            else if (!(error instanceof LifecycleGenerationConflictError))
                 throw error;
         }
     }
