@@ -41,6 +41,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Subagent continuation advance now retries lifecycle lock exhaustion a small bounded number of times, so a briefly held lock no longer aborts gate rejection or fails a resume after a successful spawn.
 - Subagent continuation gate rejection now retries lifecycle lock exhaustion, and continuation advance now retries generation conflicts iteratively instead of recursing, so sustained contention cannot overflow the stack.
 - Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
 - Concurrent resumes of one subagent run no longer start two writers on one session. The runner takes an exclusive session lease, and resume refuses retired, held, abandoned, record-less, corrupt and unreadable sessions with distinct messages and no resume hints (#829, #823, #874).

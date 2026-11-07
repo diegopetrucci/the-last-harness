@@ -1011,6 +1011,8 @@ function continuationGate(
   return { kind: continuation.phase === "launched" ? "launched" : "ready", continuation };
 }
 
+const MAX_CONTINUATION_LOCK_RETRIES = 3;
+
 type ContinuationAdvance = {
   status: AsyncStatus | null;
   changed: boolean;
@@ -1028,6 +1030,9 @@ export function advanceLifecycleContinuation(
 ): ContinuationAdvance {
   // A generation conflict means another writer committed, so retrying makes system
   // progress; loop (not recurse) so sustained contention cannot grow the stack.
+  // Lock exhaustion means a live owner held the lock past the wait budget; retry
+  // it a few times (counted separately) and then surface the error.
+  let lockExhaustions = 0;
   for (;;) {
     const current = readStatus(asyncDir, { cache: false });
     if (!current) return { status: null, changed: false, done: false, lost: true };
@@ -1071,7 +1076,9 @@ export function advanceLifecycleContinuation(
 
       return { status: result.status, changed: true, done: false, lost: false };
     } catch (error) {
-      if (!(error instanceof LifecycleGenerationConflictError)) throw error;
+      if (error instanceof LifecycleLockExhaustedError) {
+        if (++lockExhaustions > MAX_CONTINUATION_LOCK_RETRIES) throw error;
+      } else if (!(error instanceof LifecycleGenerationConflictError)) throw error;
     }
   }
 }
