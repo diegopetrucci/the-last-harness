@@ -41,6 +41,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Notify now re-checks active background jobs when a re-armed settle timer fires, so jobs restarting during the debounce no longer produce a false finished notification.
 - Provider auth-health now keeps a run-level reauth-required observation over an older in-flight probe, and credential preflights that finish after session shutdown no longer notify or alter throttle state.
 - Primary-agent model and thinking changes are now classified as TLH-internal per operation instead of through shared flags, so a user model selection made while TLH is applying defaults keeps its session-only intent.
 - Session mirror replies no longer stay busy when a tree operation begins after a completed compaction but before its deferred release runs; unfinished and `willRetry` compactions still block.

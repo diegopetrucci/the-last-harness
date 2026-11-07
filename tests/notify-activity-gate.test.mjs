@@ -734,3 +734,38 @@ test("malformed notify.json is ignored and valid fields still apply", async () =
     rmSync(projectDir, { recursive: true, force: true });
   }
 });
+
+test("[tlh-tdqf] re-armed timer re-checks active jobs and keeps pending context for the next falling edge", async () => {
+  const timers = createFakeTimers();
+  const pi = createPiHarness();
+  let notifyCount = 0;
+
+  const ext = createNotifyExtension({
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    settleDebounceMs: 50,
+    onNotify: () => {
+      notifyCount += 1;
+    },
+  });
+  ext(pi);
+
+  // Job A is active; the settle timer is suppressed and pending context recorded.
+  pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: true, activeAsyncJobIds: ["A"] });
+  pi.fireEvent("agent_settled", {}, makeCtx());
+  await timers.advanceAsync(50);
+  assert.equal(notifyCount, 0, "suppressed while job A is active");
+
+  // Jobs drain (falling edge re-arms the debounce), then job B starts before it fires.
+  pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: false, activeAsyncJobIds: [] });
+  pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: true, activeAsyncJobIds: ["B"] });
+  await timers.advanceAsync(50);
+  assert.equal(notifyCount, 0, "re-armed timer must not notify while job B is active");
+
+  // Job B finishes: next falling edge re-arms again and yields exactly one notification.
+  pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, { inProgress: false, activeAsyncJobIds: [] });
+  await timers.advanceAsync(50);
+  assert.equal(notifyCount, 1, "exactly one notification after job B finishes");
+  await timers.advanceAsync(200);
+  assert.equal(notifyCount, 1, "no further notifications");
+});
