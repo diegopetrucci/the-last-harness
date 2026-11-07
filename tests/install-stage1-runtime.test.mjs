@@ -6,10 +6,10 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -1324,82 +1324,98 @@ test("runtime ownership: fresh checkpoint survives post-swap failure and allows 
   assert.ok(existsSync(join(runtimeDir, "bin", "pi")), "retry must provision the private runtime");
   assert.ok(existsSync(markerPath), "ownership marker must remain after retry");
 });
-
-test("runtime ownership: interrupted first provision residue is recoverable after checkpoint", (t) => {
-  const root = makeTempDir("tlh-runtime-retry-interrupted-");
-  const homeDir = join(root, "home");
-  const agentDir = join(root, "agent");
-  const binDir = join(root, "bin");
-  const fakebin = join(root, "fakebin");
-  const packageDir = join(root, "package-source");
-  const templateDir = join(root, "pi-template");
-  const runtimeDir = join(root, "runtime");
-  const npmLog = join(root, "npm.log");
+function createRuntimeInstallFixture(t, prefix) {
+  const root = makeTempDir(prefix);
+  const names = "home agent bin fakebin package-source pi-template runtime npm.log".split(" ");
+  const [homeDir, agentDir, binDir, fakebin, packageDir, templateDir, runtimeDir, npmLog] =
+    names.map((name) => join(root, name));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageDir, { recursive: true });
-  mkdirSync(runtimeDir, { recursive: true });
-  const markerPath = join(runtimeDir, ".tlh-runtime-owned");
-  writeFileSync(
-    markerPath,
-    JSON.stringify({
-      schemaVersion: 1,
-      packageName: "@earendil-works/pi-coding-agent",
-      runtimeAbsPath: realpathSync(runtimeDir),
-      origin: "created",
-    }),
-    "utf8",
-  );
-  // Model an interruption after the fresh-prefix checkpoint and while the
-  // installer had its lock and staging directory on disk.
-  const interruptedStaging = join(runtimeDir, `${RUNTIME_STAGING_DIR_PREFIX}interrupted`);
-  mkdirSync(interruptedStaging, { recursive: true });
-  writeFileSync(join(interruptedStaging, "sentinel"), "owned partial state", "utf8");
-  const lockDir = join(runtimeDir, RUNTIME_INSTALL_LOCK_NAME);
-  mkdirSync(lockDir);
-  writeFileSync(join(lockDir, "owner.json"), "{ malformed", "utf8");
-  const staleTime = new Date(Date.now() - 11 * 60 * 1000);
-  utimesSync(lockDir, staleTime, staleTime);
   writeFakeCommand(fakebin, "git", "exit 0");
   writeFakeTk(fakebin);
-  writeLoggingPi(templateDir, join(root, "pi.log"), TLH_PINNED_PI_VERSION);
-  writeFakeNpmCiInstaller(fakebin, {
+  return {
+    fakebin,
+    templateDir,
+    runtimeDir,
     npmLog,
-    templatePiPath: join(templateDir, "pi"),
-  });
-
-  const env = scrubInstallerEnv({
-    HOME: homeDir,
-    PATH: safeInstallerPath(fakebin),
-    TLH_PACKAGE_SOURCE: packageDir,
-    TLH_SKIP_GNOSIS_INSTALL: "1",
-  });
-  const result = runInstaller(
-    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
-    env,
+    args: ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
+    env: scrubInstallerEnv({
+      HOME: homeDir,
+      PATH: safeInstallerPath(fakebin),
+      TLH_PACKAGE_SOURCE: packageDir,
+      TLH_SKIP_GNOSIS_INSTALL: "1",
+    }),
+  };
+}
+// oxfmt-ignore
+const runInstallerWithImport = (preloadPath, args, env) => spawnSync(process.execPath, ["--import", preloadPath, join(repoRoot, "scripts/tlh-install.mjs"), ...args], { cwd: repoRoot, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const checkpointRacePreload = (runtimeDir) =>
+  `import fs from "node:fs";import{syncBuiltinESMExports}from"node:module";import{join,resolve}from"node:path";const p=${JSON.stringify(runtimeDir)},o=fs.mkdirSync;let i=false;fs.mkdirSync=(...a)=>{const r=o(...a);if(!i&&typeof a[0]==="string"&&resolve(a[0])===p){i=true;fs.writeFileSync(join(p,"foreign.txt"),"foreign\\n")}return r};syncBuiltinESMExports();`;
+test("runtime ownership: SIGKILL during first staging leaves checkpoint residue recoverable", (t) => {
+  if (process.platform === "win32") return t.skip("POSIX SIGKILL fixture");
+  const { runtimeDir, fakebin, npmLog, templateDir, env, args } = createRuntimeInstallFixture(
+    t,
+    "tlh-runtime-retry-killed-",
   );
-  const output = `${result.stdout}\n${result.stderr}`;
-  assert.equal(result.status, 0, `retry after interrupted provisioning failed\n${output}`);
+  const markerPath = join(runtimeDir, ".tlh-runtime-owned");
+  const lockDir = join(runtimeDir, RUNTIME_INSTALL_LOCK_NAME);
+  writeLoggingPi(templateDir, join(dirname(runtimeDir), "pi.log"), TLH_PINNED_PI_VERSION);
+  writeFakeCommand(
+    fakebin,
+    "npm",
+    `printf '%s\\n' "$*" >>"${npmLog}"\nif [[ "\${1:-}" == "ci" ]]; then printf 'partial staging\\n' >partial-state.txt; kill -KILL "$PPID" 2>/dev/null || { sleep 1; exit 97; }; fi`,
+  );
+  const first = runInstaller(args, env);
+  assert.equal(first.status, null, `${first.stdout}\n${first.stderr}`);
+  assert.equal(first.signal, "SIGKILL", `${first.stdout}\n${first.stderr}`);
+  const markerAfterKill = JSON.parse(readFileSync(markerPath, "utf8"));
+  assert.equal(markerAfterKill.origin, "created");
+  assert.equal(markerAfterKill.runtimeAbsPath, realpathSync(runtimeDir));
+  assert.ok(existsSync(lockDir), "killed installer must leave its install lock");
+  const staging = readdirSync(runtimeDir).find((entry) =>
+    entry.startsWith(RUNTIME_STAGING_DIR_PREFIX),
+  );
+  // oxfmt-ignore
+  assert.equal(readFileSync(join(runtimeDir, staging ?? "", "partial-state.txt"), "utf8"), "partial staging\n");
+  writeFakeNpmCiInstaller(fakebin, { npmLog, templatePiPath: join(templateDir, "pi") });
+  const retry = runInstaller(args, env);
+  assert.equal(retry.status, 0, `retry after SIGKILL failed\n${retry.stdout}\n${retry.stderr}`);
+  assert.ok(existsSync(join(runtimeDir, "bin", "pi")), "retry must provision bin/pi");
+  assert.equal(existsSync(lockDir), false, "retry must remove the reclaimed install lock");
   assert.equal(
-    existsSync(interruptedStaging),
-    false,
-    "owned stale staging residue must be cleaned",
+    readdirSync(runtimeDir).filter((entry) => entry.startsWith(RUNTIME_STAGING_DIR_PREFIX)).length,
+    0,
   );
-  assert.equal(existsSync(lockDir), false, "stale install lock must be reclaimed");
-  assert.equal(
-    JSON.parse(readFileSync(markerPath, "utf8")).runtimeAbsPath,
-    realpathSync(runtimeDir),
-  );
-  assert.ok(existsSync(join(runtimeDir, "bin", "pi")), "retry must provision after interruption");
+  const markerAfterRetry = JSON.parse(readFileSync(markerPath, "utf8"));
+  assert.equal(markerAfterRetry.origin, "created");
+  assert.equal(markerAfterRetry.runtimeAbsPath, realpathSync(runtimeDir));
 });
-
+test("runtime ownership: fresh checkpoint rejects concurrent population before marker write", (t) => {
+  const { runtimeDir, templateDir, fakebin, npmLog, env, args } = createRuntimeInstallFixture(
+    t,
+    "tlh-runtime-checkpoint-race-",
+  );
+  const preloadPath = join(dirname(runtimeDir), "populate-runtime-prefix.mjs");
+  const markerPath = join(runtimeDir, ".tlh-runtime-owned");
+  const foreignPath = join(runtimeDir, "foreign.txt");
+  writeLoggingPi(templateDir, join(dirname(runtimeDir), "pi.log"), TLH_PINNED_PI_VERSION);
+  writeFakeNpmCiInstaller(fakebin, { npmLog, templatePiPath: join(templateDir, "pi") });
+  writeFileSync(preloadPath, checkpointRacePreload(runtimeDir), "utf8");
+  const result = runInstallerWithImport(preloadPath, args, env);
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.notEqual(result.status, 0, `concurrent population was unexpectedly accepted\n${output}`);
+  assert.match(output, /not a fresh, non-symlink empty directory/);
+  assert.equal(existsSync(markerPath), false, "foreign content must prevent marker write");
+  assert.equal(readFileSync(foreignPath, "utf8"), "foreign\n");
+  assert.equal(existsSync(npmLog), false, "npm must not run after the checkpoint race");
+});
 test("runtime ownership: malformed, symlinked, and path-mismatched markers are refused", (t) => {
   const scenarios = [
     { label: "malformed marker", kind: "malformed" },
     { label: "path-mismatched marker", kind: "mismatch" },
     { label: "symlinked marker", kind: "symlink" },
   ];
-
   for (const scenario of scenarios) {
     if (scenario.kind === "symlink" && process.platform === "win32") continue;
     const root = makeTempDir(`tlh-runtime-marker-${scenario.kind}-`);
