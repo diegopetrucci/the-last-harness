@@ -575,3 +575,204 @@ test("loadReviewFileContents loads original and modified sides concurrently for 
   assert.equal(branchContents.originalContent, "content:base:a.txt");
   assert.equal(branchContents.modifiedContent, "content:HEAD:b.txt");
 });
+
+// BUG-01 regression: name-status paths must round-trip independently of core.quotePath.
+
+function initRepoWithQuotePath(dir, quotePath) {
+  runCommand("git", ["init", "-b", "main"], dir);
+  runCommand("git", ["config", "user.name", "TLH Test"], dir);
+  runCommand("git", ["config", "user.email", "tlh@example.com"], dir);
+  runCommand("git", ["config", "core.quotePath", String(quotePath)], dir);
+  runCommand("git", ["config", "commit.gpgsign", "false"], dir);
+}
+
+function commitAll(repoRoot, message) {
+  runCommand("git", ["add", "."], repoRoot);
+  runCommand("git", ["commit", "-m", message], repoRoot);
+}
+
+function latestCommitSha(repoRoot) {
+  return runCommand("git", ["rev-parse", "HEAD"], repoRoot).stdout.trim();
+}
+
+function tryCreateFilename(t, repoRoot, filename, contents, label) {
+  try {
+    writeFileSync(join(repoRoot, filename), contents);
+  } catch {
+    t.skip(`OS cannot create ${label} filenames`);
+    return false;
+  }
+  return true;
+}
+
+for (const quotePath of [true, false]) {
+  test(`getReviewWindowData resolves café.txt in branch scope (core.quotePath=${quotePath})`, async (t) => {
+    const repoRoot = tempFixture(t);
+    initRepoWithQuotePath(repoRoot, quotePath);
+    writeFileSync(join(repoRoot, "café.txt"), "before\n");
+    commitAll(repoRoot, "seed café");
+    writeFileSync(join(repoRoot, "café.txt"), "after\n");
+
+    const reviewData = await getReviewWindowData(createExecApi(), repoRoot);
+    const changedFiles = reviewData.files.filter((file) => file.inGitDiff);
+    assert.equal(changedFiles.length, 1, "expected exactly one changed row");
+    assert.equal(changedFiles[0].path, "café.txt");
+    assert.equal(changedFiles[0].gitDiff?.oldPath, "café.txt");
+    assert.equal(changedFiles[0].gitDiff?.newPath, "café.txt");
+
+    const contents = await loadReviewFileContents(
+      createExecApi(),
+      repoRoot,
+      changedFiles[0],
+      "branch",
+      null,
+      reviewData.branchMergeBaseSha,
+    );
+    assert.equal(contents.originalContent, "before\n");
+    assert.equal(contents.modifiedContent, "after\n");
+  });
+
+  test(`getCommitFiles resolves café.txt in working-tree scope (core.quotePath=${quotePath})`, async (t) => {
+    const repoRoot = tempFixture(t);
+    initRepoWithQuotePath(repoRoot, quotePath);
+    writeFileSync(join(repoRoot, "café.txt"), "before\n");
+    commitAll(repoRoot, "seed café");
+    writeFileSync(join(repoRoot, "café.txt"), "after\n");
+
+    const reviewData = await getReviewWindowData(createExecApi(), repoRoot);
+    const workingTreeCommit = reviewData.commits.find((commit) => commit.kind === "working-tree");
+    assert.ok(workingTreeCommit, "expected working-tree commit in review data");
+
+    const commitFiles = await getCommitFiles(createExecApi(), repoRoot, workingTreeCommit.sha);
+    assert.equal(commitFiles.length, 1, "expected exactly one working-tree changed row");
+    assert.equal(commitFiles[0].path, "café.txt");
+    assert.equal(commitFiles[0].gitDiff?.oldPath, "café.txt");
+    assert.equal(commitFiles[0].gitDiff?.newPath, "café.txt");
+
+    const contents = await loadReviewFileContents(
+      createExecApi(),
+      repoRoot,
+      commitFiles[0],
+      "commits",
+      workingTreeCommit.sha,
+    );
+    assert.equal(contents.originalContent, "before\n");
+    assert.equal(contents.modifiedContent, "after\n");
+  });
+
+  test(`getCommitFiles resolves café.txt in historical commit scope (core.quotePath=${quotePath})`, async (t) => {
+    const repoRoot = tempFixture(t);
+    initRepoWithQuotePath(repoRoot, quotePath);
+    writeFileSync(join(repoRoot, "café.txt"), "before\n");
+    commitAll(repoRoot, "seed café");
+    writeFileSync(join(repoRoot, "café.txt"), "after\n");
+    commitAll(repoRoot, "modify café");
+
+    const commitFiles = await getCommitFiles(createExecApi(), repoRoot, latestCommitSha(repoRoot));
+    assert.equal(commitFiles.length, 1, "expected exactly one historical changed row");
+    assert.equal(commitFiles[0].path, "café.txt");
+    assert.equal(commitFiles[0].gitDiff?.oldPath, "café.txt");
+    assert.equal(commitFiles[0].gitDiff?.newPath, "café.txt");
+
+    const contents = await loadReviewFileContents(
+      createExecApi(),
+      repoRoot,
+      commitFiles[0],
+      "commits",
+      latestCommitSha(repoRoot),
+    );
+    assert.equal(contents.originalContent, "before\n");
+    assert.equal(contents.modifiedContent, "after\n");
+  });
+}
+
+test("getCommitFiles preserves exact rename source and destination paths", async (t) => {
+  const repoRoot = tempFixture(t);
+  initRepoWithQuotePath(repoRoot, true);
+  writeFileSync(join(repoRoot, "old café.txt"), "rename me\n");
+  commitAll(repoRoot, "seed rename");
+  runCommand("git", ["mv", "old café.txt", "new café.txt"], repoRoot);
+  commitAll(repoRoot, "rename file");
+
+  const commitFiles = await getCommitFiles(createExecApi(), repoRoot, latestCommitSha(repoRoot));
+  assert.equal(commitFiles.length, 1, "expected exactly one renamed row");
+  assert.equal(commitFiles[0].path, "new café.txt");
+  assert.equal(commitFiles[0].gitDiff?.status, "renamed");
+  assert.equal(commitFiles[0].gitDiff?.oldPath, "old café.txt");
+  assert.equal(commitFiles[0].gitDiff?.newPath, "new café.txt");
+});
+
+for (const { label, filename, before, after, workingTree } of [
+  {
+    label: "tab",
+    filename: "file\twith\ttab.txt",
+    before: "tab-before\n",
+    after: "tab-after\n",
+    workingTree: false,
+  },
+  {
+    label: "double quote",
+    filename: 'file"with"quotes.txt',
+    before: "quote-before\n",
+    after: "quote-after\n",
+    workingTree: false,
+  },
+  {
+    label: "backslash",
+    filename: "file\\with\\backslash.txt",
+    before: "backslash-before\n",
+    after: "backslash-after\n",
+    workingTree: false,
+  },
+  {
+    label: "newline",
+    filename: "file\nwith\nnewline.txt",
+    before: "newline-before\n",
+    after: "newline-after\n",
+    workingTree: true,
+  },
+  {
+    label: "trailing-space",
+    filename: "trailing-space ",
+    before: "trailing-before\n",
+    after: "trailing-after\n",
+    workingTree: false,
+  },
+]) {
+  test(`name-status round-trips ${label} filenames`, async (t) => {
+    const repoRoot = tempFixture(t);
+    initRepoWithQuotePath(repoRoot, true);
+    if (!tryCreateFilename(t, repoRoot, filename, before, label)) return;
+    commitAll(repoRoot, `seed ${label}`);
+
+    let commitSha;
+    if (workingTree) {
+      // Keep this case in the working-tree scope to exercise the bash -z path.
+      writeFileSync(join(repoRoot, filename), after);
+      const reviewData = await getReviewWindowData(createExecApi(), repoRoot);
+      const workingTreeCommit = reviewData.commits.find((commit) => commit.kind === "working-tree");
+      assert.ok(workingTreeCommit, "expected working-tree commit in review data");
+      commitSha = workingTreeCommit.sha;
+    } else {
+      writeFileSync(join(repoRoot, filename), after);
+      commitAll(repoRoot, `modify ${label}`);
+      commitSha = latestCommitSha(repoRoot);
+    }
+
+    const commitFiles = await getCommitFiles(createExecApi(), repoRoot, commitSha);
+    assert.equal(commitFiles.length, 1, `expected exactly one ${label} changed row`);
+    assert.equal(commitFiles[0].path, filename);
+    assert.equal(commitFiles[0].gitDiff?.oldPath, filename);
+    assert.equal(commitFiles[0].gitDiff?.newPath, filename);
+
+    const contents = await loadReviewFileContents(
+      createExecApi(),
+      repoRoot,
+      commitFiles[0],
+      "commits",
+      commitSha,
+    );
+    assert.equal(contents.originalContent, before);
+    assert.equal(contents.modifiedContent, after);
+  });
+}
