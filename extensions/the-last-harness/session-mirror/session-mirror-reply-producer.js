@@ -378,7 +378,10 @@ export function createSessionMirrorReplyProducer(options) {
             accepted = boundedCounter(accepted);
         if (normalized === "unconfirmed")
             unconfirmed = boundedCounter(unconfirmed);
-        if (normalized !== "accepted" && !agentActive && lifecycleOperation === undefined) {
+        const unfinishedTree = lifecycleOperation?.kind === "tree" && lifecycleOperation.completed !== true;
+        if (normalized !== "accepted" &&
+            !agentActive &&
+            (lifecycleOperation === undefined || unfinishedTree)) {
             busyLatch = false;
         }
         if (normalized === "accepted" || normalized === "unconfirmed")
@@ -788,7 +791,6 @@ export function createSessionMirrorReplyProducer(options) {
     const sessionBeforeTree = () => {
         beginLifecycleOperation("tree");
         invalidatePending("unconfirmed");
-        busyLatch = true;
     };
     const sessionTree = (event, context) => {
         busyLatch = true;

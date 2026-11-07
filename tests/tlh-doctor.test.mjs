@@ -1314,3 +1314,228 @@ test("tlh doctor skips lockfile check when shipped config/pi-runtime/package-loc
   assert.match(output, /OK\s+runtime lockfile:.*skipping lockfile check/);
   assert.doesNotMatch(output, /WARN\s+runtime lockfile:/);
 });
+
+test("tlh doctor preserves a pinned package source from install-state during drift checks", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const pinnedSource = "git:github.com/diegopetrucci/the-last-harness@v1.2.3";
+
+  const seed = spawnSync(
+    process.execPath,
+    [
+      mergeSettingsScript,
+      settingsDefaultsPath,
+      "--settings",
+      settingsPath,
+      "--default-extensions",
+      defaultExtensionsPath,
+      "--package-source",
+      pinnedSource,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agentDir },
+    },
+  );
+  assert.equal(seed.status, 0, `${seed.stdout}\n${seed.stderr}`);
+  writeFileSync(
+    join(fixture.agentDir, "tlh", "install-state.json"),
+    JSON.stringify({ packageSource: pinnedSource }, null, 2),
+  );
+  const seededSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const seededSources = seededSettings.packages.map((entry) =>
+    typeof entry === "string" ? entry : entry?.source,
+  );
+  assert.equal(seededSources.filter((source) => source === pinnedSource).length, 1);
+  assert.equal(seededSources.filter((source) => source === harnessPackage).length, 0);
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+    env: { HOME: fixture.home, PATH: `${fixture.fakebin}:${process.env.PATH}` },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.match(output, /OK\s+settings drift:/, output);
+  assert.doesNotMatch(output, /WARN\s+settings drift:/, output);
+});
+
+test("tlh doctor repair preserves a pinned package source from install-state", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const pinnedSource = "git:github.com/diegopetrucci/the-last-harness@v1.2.3";
+
+  const seed = spawnSync(
+    process.execPath,
+    [
+      mergeSettingsScript,
+      settingsDefaultsPath,
+      "--settings",
+      settingsPath,
+      "--default-extensions",
+      defaultExtensionsPath,
+      "--package-source",
+      pinnedSource,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agentDir },
+    },
+  );
+  assert.equal(seed.status, 0, `${seed.stdout}\n${seed.stderr}`);
+  writeFileSync(
+    join(fixture.agentDir, "tlh", "install-state.json"),
+    JSON.stringify({ packageSource: pinnedSource }, null, 2),
+  );
+
+  const result = runDoctor(
+    ["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot],
+    { env: { HOME: fixture.home, PATH: `${fixture.fakebin}:${process.env.PATH}` } },
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const sources = settings.packages.map((entry) =>
+    typeof entry === "string" ? entry : entry?.source,
+  );
+  assert.equal(
+    sources.filter((source) => source === pinnedSource).length,
+    1,
+    JSON.stringify(sources),
+  );
+  assert.equal(
+    sources.filter((source) => source === harnessPackage).length,
+    0,
+    JSON.stringify(sources),
+  );
+});
+
+test("tlh doctor preserves an installer-normalized local package source", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const localPackageDir = join(fixture.root, "local-package");
+  const normalizedSource = localPackageDir;
+  const rawSource = `file://${localPackageDir}`;
+  mkdirSync(localPackageDir, { recursive: true });
+  writeFileSync(
+    join(localPackageDir, "package.json"),
+    JSON.stringify({ name: "the-last-harness" }),
+  );
+
+  const seed = spawnSync(
+    process.execPath,
+    [
+      mergeSettingsScript,
+      settingsDefaultsPath,
+      "--settings",
+      settingsPath,
+      "--default-extensions",
+      defaultExtensionsPath,
+      "--package-source",
+      normalizedSource,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agentDir },
+    },
+  );
+  assert.equal(seed.status, 0, `${seed.stdout}\n${seed.stderr}`);
+  const seededSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const seededSources = seededSettings.packages.map((entry) =>
+    typeof entry === "string" ? entry : entry?.source,
+  );
+  assert.equal(seededSources.filter((source) => source === normalizedSource).length, 1);
+  assert.equal(seededSources.filter((source) => source === rawSource).length, 0);
+
+  const installStatePath = join(fixture.agentDir, "tlh", "install-state.json");
+  const installState = JSON.parse(readFileSync(installStatePath, "utf8"));
+  installState.packageSource = rawSource;
+  writeFileSync(installStatePath, JSON.stringify(installState, null, 2));
+
+  const env = { HOME: fixture.home, PATH: `${fixture.fakebin}:${process.env.PATH}` };
+  const check = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+    env,
+  });
+  const checkOutput = `${check.stdout}\n${check.stderr}`;
+  assert.equal(check.status, 0, checkOutput);
+  assert.match(checkOutput, /OK\s+settings drift:/, checkOutput);
+  assert.doesNotMatch(checkOutput, /WARN\s+settings drift:/, checkOutput);
+
+  const repair = runDoctor(
+    ["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot],
+    { env },
+  );
+  assert.equal(repair.status, 0, `${repair.stdout}\n${repair.stderr}`);
+  const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const repairedSources = repairedSettings.packages.map((entry) =>
+    typeof entry === "string" ? entry : entry?.source,
+  );
+  const tlhSources = repairedSources.filter((source) =>
+    [normalizedSource, rawSource, harnessPackage].includes(source),
+  );
+  assert.deepEqual(tlhSources, [normalizedSource], JSON.stringify(repairedSources));
+});
+
+test("tlh doctor preserves an installer-normalized git URL source", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const rawSource = "https://github.com/diegopetrucci/the-last-harness#v1.2.3";
+  const normalizedSource = "git:https://github.com/diegopetrucci/the-last-harness@v1.2.3";
+
+  const seed = spawnSync(
+    process.execPath,
+    [
+      mergeSettingsScript,
+      settingsDefaultsPath,
+      "--settings",
+      settingsPath,
+      "--default-extensions",
+      defaultExtensionsPath,
+      "--package-source",
+      normalizedSource,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agentDir },
+    },
+  );
+  assert.equal(seed.status, 0, `${seed.stdout}\n${seed.stderr}`);
+  const seededSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const seededSources = seededSettings.packages.map((entry) =>
+    typeof entry === "string" ? entry : entry?.source,
+  );
+  assert.equal(seededSources.filter((source) => source === normalizedSource).length, 1);
+  assert.equal(seededSources.filter((source) => source === harnessPackage).length, 0);
+
+  const installStatePath = join(fixture.agentDir, "tlh", "install-state.json");
+  const installState = JSON.parse(readFileSync(installStatePath, "utf8"));
+  installState.packageSource = rawSource;
+  writeFileSync(installStatePath, JSON.stringify(installState, null, 2));
+
+  const env = { HOME: fixture.home, PATH: `${fixture.fakebin}:${process.env.PATH}` };
+  const check = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+    env,
+  });
+  const checkOutput = `${check.stdout}\n${check.stderr}`;
+  assert.equal(check.status, 0, checkOutput);
+  assert.match(checkOutput, /OK\s+settings drift:/, checkOutput);
+  assert.doesNotMatch(checkOutput, /WARN\s+settings drift:/, checkOutput);
+
+  const repair = runDoctor(
+    ["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot],
+    { env },
+  );
+  assert.equal(repair.status, 0, `${repair.stdout}\n${repair.stderr}`);
+  const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const repairedSources = repairedSettings.packages.map((entry) =>
+    typeof entry === "string" ? entry : entry?.source,
+  );
+  const tlhSources = repairedSources.filter((source) =>
+    [normalizedSource, rawSource, harnessPackage].includes(source),
+  );
+  assert.deepEqual(tlhSources, [normalizedSource], JSON.stringify(repairedSources));
+});

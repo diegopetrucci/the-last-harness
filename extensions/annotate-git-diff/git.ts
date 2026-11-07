@@ -794,17 +794,34 @@ export async function getCommitFiles(
       .sort(compareReviewFiles);
   }
 
-  const output = await runGitAllowFailure(pi, repoRoot, [
-    "diff-tree",
-    "--root",
-    "--find-renames",
-    "-M",
-    "--name-status",
-    "-z",
-    "--no-commit-id",
-    "-r",
-    sha,
-  ]);
+  // Merge commits need an explicit first-parent comparison. Without it,
+  // diff-tree's default combined-diff mode omits files whose resolution is
+  // reviewable against the first parent.
+  const isMerge =
+    (await pi.exec("git", ["rev-parse", "--verify", `${sha}^2`], { cwd: repoRoot })).code === 0;
+  const output = isMerge
+    ? await runGitAllowFailure(pi, repoRoot, [
+        "diff-tree",
+        "--find-renames",
+        "-M",
+        "--name-status",
+        "-z",
+        "--no-commit-id",
+        "-r",
+        `${sha}^1`,
+        sha,
+      ])
+    : await runGitAllowFailure(pi, repoRoot, [
+        "diff-tree",
+        "--root",
+        "--find-renames",
+        "-M",
+        "--name-status",
+        "-z",
+        "--no-commit-id",
+        "-r",
+        sha,
+      ]);
   const changes = parseNameStatus(output).filter(
     (change) => (change.newPath ?? change.oldPath ?? "").length > 0,
   );

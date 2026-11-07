@@ -606,17 +606,30 @@ export async function getCommitFiles(pi, repoRoot, sha) {
         })
             .sort(compareReviewFiles);
     }
-    const output = await runGitAllowFailure(pi, repoRoot, [
-        "diff-tree",
-        "--root",
-        "--find-renames",
-        "-M",
-        "--name-status",
-        "-z",
-        "--no-commit-id",
-        "-r",
-        sha,
-    ]);
+    const isMerge = (await pi.exec("git", ["rev-parse", "--verify", `${sha}^2`], { cwd: repoRoot })).code === 0;
+    const output = isMerge
+        ? await runGitAllowFailure(pi, repoRoot, [
+            "diff-tree",
+            "--find-renames",
+            "-M",
+            "--name-status",
+            "-z",
+            "--no-commit-id",
+            "-r",
+            `${sha}^1`,
+            sha,
+        ])
+        : await runGitAllowFailure(pi, repoRoot, [
+            "diff-tree",
+            "--root",
+            "--find-renames",
+            "-M",
+            "--name-status",
+            "-z",
+            "--no-commit-id",
+            "-r",
+            sha,
+        ]);
     const changes = parseNameStatus(output).filter((change) => (change.newPath ?? change.oldPath ?? "").length > 0);
     return changes
         .map((change) => {
