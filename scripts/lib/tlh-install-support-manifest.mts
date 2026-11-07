@@ -66,6 +66,13 @@ const BASE_SUPPORT_FILES = Object.freeze<readonly SupportFileDescriptor[]>([
     installName: "",
   },
   {
+    variable: "TLH_INSTALL_HERDR_APP_LIB",
+    requirement: REQUIRED,
+    relativePath: "scripts/lib/tlh-install-herdr-app.mjs",
+    tempPath: "lib/tlh-install-herdr-app.mjs",
+    installName: "",
+  },
+  {
     variable: "TLH_INSTALL_SUBAGENTS_LIB",
     requirement: REQUIRED,
     relativePath: "scripts/lib/tlh-install-subagents.mjs",
@@ -196,6 +203,14 @@ const BASE_SUPPORT_FILES = Object.freeze<readonly SupportFileDescriptor[]>([
     requirement: REQUIRED,
     relativePath: "config/default-extensions.json",
     tempPath: "default-extensions.json",
+    installName: "",
+  },
+  {
+    // Copied into the Herdr.app home (never into `icons/`, which Herdr rewrites).
+    variable: "TLH_HERDR_ICON_FILE",
+    requirement: REQUIRED,
+    relativePath: "config/herdr/tlh-mark.svg",
+    tempPath: "herdr-tlh-mark.svg",
     installName: "",
   },
 ]);

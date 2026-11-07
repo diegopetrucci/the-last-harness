@@ -37,6 +37,33 @@ installer_smoke_setup() {
   TMP_ROOT="$(mktemp -d)"
   EXTRA_CLEANUP_PATHS=()
   trap cleanup EXIT
+  # Never let install/uninstall smoke runs reach the developer's real Herdr.app
+  # home: override any inherited HERDR_APP_HOME with a temp dir under TMP_ROOT.
+  SMOKE_REAL_HOME="${HOME}"
+  HERDR_APP_HOME="${TMP_ROOT}/herdr-app-home"
+  export HERDR_APP_HOME
+  assert_herdr_app_home_isolated
+}
+
+# Fails when HERDR_APP_HOME is unset/empty or resolves outside TMP_ROOT, or
+# under the real user home (captured at setup, before any per-case HOME override).
+assert_herdr_app_home_isolated() {
+  local app_home="${HERDR_APP_HOME:-}"
+  if [[ -z "${app_home}" ]]; then
+    fail "HERDR_APP_HOME is unset during smoke run"
+  fi
+  case "${app_home}" in
+    "${TMP_ROOT}"/*) ;;
+    *) fail "HERDR_APP_HOME is outside TMP_ROOT: ${app_home}" ;;
+  esac
+  case "${app_home}" in
+    *"/../"* | */..) fail "HERDR_APP_HOME contains '..': ${app_home}" ;;
+  esac
+  if [[ -n "${SMOKE_REAL_HOME:-}" ]]; then
+    case "${app_home}" in
+      "${SMOKE_REAL_HOME%/}"/*) fail "HERDR_APP_HOME resolves under the real HOME: ${app_home}" ;;
+    esac
+  fi
 }
 
 log() {
@@ -49,6 +76,9 @@ fail() {
 }
 
 run_scrubbed_installer_env() {
+  # HERDR_APP_HOME is pinned to the smoke temp dir, not unset (unset would fall
+  # back to $HOME/.config/herdr-app, which is the real home for some cases).
+  assert_herdr_app_home_isolated
   local -a env_cmd=(env -u PI_CODING_AGENT_DIR)
   local name
   while IFS='=' read -r name _; do
@@ -56,6 +86,7 @@ run_scrubbed_installer_env() {
       env_cmd+=(-u "${name}")
     fi
   done < <(env)
+  env_cmd+=("HERDR_APP_HOME=${HERDR_APP_HOME}")
   "${env_cmd[@]}" "$@"
 }
 

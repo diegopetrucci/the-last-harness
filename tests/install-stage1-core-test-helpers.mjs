@@ -9,7 +9,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { tmpdir, userInfo } from "node:os";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { makeTempDir } from "./install-stage1-test-helpers.mjs";
@@ -38,13 +39,49 @@ export function pathWithoutRepoNodeModulesBin(pathValue = process.env.PATH || ""
     .join(delimiter);
 }
 
+/**
+ * Throws when `env` would let an installer/uninstaller reach the developer's real
+ * Herdr.app home (HERDR_APP_HOME, or <HOME>/.config/herdr-app when unset) under the
+ * real user home directory.
+ */
+export function assertHerdrAppHomeIsolated(env) {
+  const realHome = resolve(userInfo().homedir);
+  const home = env.HOME || realHome;
+  let configured = (env.HERDR_APP_HOME || "").trim();
+  if (configured === "~" || configured.startsWith("~/"))
+    configured = join(home, configured.slice(1));
+  const appHome = resolve(configured || join(home, ".config", "herdr-app"));
+  const rel = relative(realHome, appHome);
+  if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
+    throw new Error(`test env would touch the real Herdr.app home: ${appHome}`);
+  }
+}
+
+/**
+ * Builds an installer env without inherited PI/TLH/HERDR overrides. HERDR_APP_HOME
+ * is always pinned to a temp-side path (under the overridden HOME when given) and
+ * the result is asserted not to resolve under the real user home. Pass
+ * `HERDR_APP_HOME` in `overrides` to choose a specific temp app home.
+ */
 export function scrubInstallerEnv(overrides = {}, baseEnv = process.env) {
   const env = {};
   for (const [key, value] of Object.entries(baseEnv)) {
-    if (key === "PI_CODING_AGENT_DIR" || key.startsWith("TLH_")) continue;
+    if (key === "PI_CODING_AGENT_DIR" || key === "HERDR_APP_HOME" || key.startsWith("TLH_")) {
+      continue;
+    }
     env[key] = value;
   }
-  return { ...env, ...overrides };
+  const merged = { ...env, ...overrides };
+  if (!Object.hasOwn(overrides, "HERDR_APP_HOME")) {
+    merged.HERDR_APP_HOME = overrides.HOME
+      ? join(overrides.HOME, ".config", "herdr-app")
+      : join(tmpdir(), "tlh-test-herdr-app-home");
+  } else if (overrides.HERDR_APP_HOME === undefined) {
+    // Explicit opt-in to "unset": the default then derives from the (temp) HOME.
+    delete merged.HERDR_APP_HOME;
+  }
+  assertHerdrAppHomeIsolated(merged);
+  return merged;
 }
 
 export function readJson(path) {

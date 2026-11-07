@@ -637,6 +637,34 @@ test("producer releases tree busy only after the completed tree is idle", async 
   await acceptFreshReply(harness, "tree-after-completion");
 });
 
+test("producer does not strand replies when /tree is cancelled before session_tree", async () => {
+  const harness = createHarness();
+  harness.producer.sessionBeforeTree();
+  assert.equal(harness.producer.getState().busyLatch, false);
+  await acceptFreshReply(harness, "tree-cancelled");
+});
+
+test("producer clears a busy reply after an active /tree is cancelled", async () => {
+  const harness = createHarness();
+  harness.producer.sessionBeforeTree();
+  harness.setIdle(false);
+  assert.equal(await harness.request({ requestId: "tree-active" }), "busy");
+  assert.equal(harness.producer.getState().busyLatch, false);
+
+  // Pi returns from a cancelled /tree without emitting session_tree. A fresh
+  // publication is still valid once the live idle seam becomes true again.
+  harness.setIdle(true);
+  harness.observer.revision = 8;
+  harness.publish({ sourceRevision: 8 });
+  const recovered = harness.request({ requestId: "tree-after-cancel" });
+  assert.equal(harness.producer.getState().inFlight, true);
+  harness.producer.messageEnd({ message: { role: "user", content: "reply text" } });
+  harness.appendReply();
+  harness.persistenceChecks.shift()();
+  assert.equal(await recovered, "accepted");
+  assert.equal(harness.producer.getState().lastOutcome, "accepted");
+});
+
 test("producer releases manual compaction success only after idle evidence", async () => {
   const harness = createHarness();
   let harnessIdle = false;

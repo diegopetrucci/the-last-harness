@@ -4,6 +4,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -1827,4 +1828,172 @@ test("stage-1 wrapper summary PATH warning appears before summary block when bin
     !linesBetween.some((l) => l.includes("is not on PATH")),
     `PATH warning must not appear between header and backtick command; lines between: ${JSON.stringify(linesBetween)}`,
   );
+});
+
+// BUG-04 regression: dangling-symlink protection in the full installer path.
+function assertSymlink(path, message) {
+  assert.ok(lstatSync(path).isSymbolicLink(), message);
+}
+
+function makeDanglingSymlinkAtWrapper(binDir, wrapperName) {
+  mkdirSync(binDir, { recursive: true });
+  const wrapperPath = join(binDir, wrapperName);
+  symlinkSync(join(binDir, "__nonexistent_target__"), wrapperPath);
+  return wrapperPath;
+}
+
+function makeFullInstallerEnvAndFixture(
+  root,
+  { fakebin, homeDir, templateDir, binDir, packageDir },
+) {
+  const piLog = join(root, "pi.log");
+  const npmLog = join(root, "npm.log");
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  writeFakeTk(fakebin);
+  writeLoggingPi(fakebin, piLog);
+  writeLoggingPi(templateDir, piLog);
+  writeFakeNpmCiInstaller(fakebin, {
+    npmLog,
+    templatePiPath: join(templateDir, "pi"),
+  });
+  return scrubInstallerEnv({
+    HOME: homeDir,
+    PATH: `${fakebin}:${binDir}:${process.env.PATH || ""}`,
+    TLH_PACKAGE_SOURCE: packageDir,
+    TLH_SKIP_GNOSIS_INSTALL: "1",
+  });
+}
+
+test("stage-1 installer refuses to replace dangling wrapper symlink without --force (BUG-04)", (t) => {
+  const root = makeTempDir("tlh-install-stage1-wrapper-dangling-no-force-");
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const packageDir = join(root, "package-source");
+  const templateDir = join(root, "pi-template");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const env = makeFullInstallerEnvAndFixture(root, {
+    fakebin,
+    homeDir,
+    templateDir,
+    binDir,
+    packageDir,
+  });
+
+  const wrapperPath = makeDanglingSymlinkAtWrapper(binDir, "tlh");
+  assertSymlink(wrapperPath, "pre-condition: dangling symlink must exist (lstat)");
+  assert.equal(
+    existsSync(wrapperPath),
+    false,
+    "pre-condition: existsSync must return false for dangling symlink",
+  );
+
+  const result = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--no-settings"],
+    env,
+  );
+
+  assert.notEqual(
+    result.status,
+    0,
+    `expected nonzero exit; stdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  assert.ok(
+    result.stderr.includes("already exists") || result.stderr.includes("not managed"),
+    `expected actionable message in stderr; got:\n${result.stderr}`,
+  );
+  assertSymlink(wrapperPath, "wrapper path must still be a symlink after refused install");
+});
+
+test("stage-1 installer replaces dangling wrapper symlink with --force (BUG-04)", (t) => {
+  const root = makeTempDir("tlh-install-stage1-wrapper-dangling-force-");
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const packageDir = join(root, "package-source");
+  const templateDir = join(root, "pi-template");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const env = makeFullInstallerEnvAndFixture(root, {
+    fakebin,
+    homeDir,
+    templateDir,
+    binDir,
+    packageDir,
+  });
+  makeDanglingSymlinkAtWrapper(binDir, "tlh");
+
+  const result = runInstaller(
+    [
+      "--agent-dir",
+      agentDir,
+      "--bin-dir",
+      binDir,
+      "--wrapper-name",
+      "tlh",
+      "--no-settings",
+      "--force",
+    ],
+    env,
+  );
+
+  assert.equal(
+    result.status,
+    0,
+    `expected zero exit with --force; stdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  const stat = lstatSync(join(binDir, "tlh"));
+  assert.ok(!stat.isSymbolicLink(), "wrapper must be a regular file after --force replacement");
+  const contents = readFileSync(join(binDir, "tlh"), "utf8");
+  assert.ok(
+    contents.includes("# Managed by The Last Harness installer"),
+    "replaced wrapper must carry the managed marker",
+  );
+});
+
+test("stage-1 installer dry-run warns about dangling wrapper symlink without --force (BUG-04)", (t) => {
+  const root = makeTempDir("tlh-install-stage1-wrapper-dangling-dryrun-");
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const packageDir = join(root, "package-source");
+  const templateDir = join(root, "pi-template");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const env = makeFullInstallerEnvAndFixture(root, {
+    fakebin,
+    homeDir,
+    templateDir,
+    binDir,
+    packageDir,
+  });
+  const wrapperPath = makeDanglingSymlinkAtWrapper(binDir, "tlh");
+
+  const result = runInstaller(
+    [
+      "--agent-dir",
+      agentDir,
+      "--bin-dir",
+      binDir,
+      "--wrapper-name",
+      "tlh",
+      "--no-settings",
+      "--dry-run",
+    ],
+    env,
+  );
+
+  // Dry-run must exit zero but report the would-not-overwrite decision.
+  assert.equal(result.status, 0, `expected zero exit for dry-run; stderr:\n${result.stderr}`);
+  assert.ok(
+    result.stderr.includes("would not overwrite"),
+    `expected 'would not overwrite' warning in stderr; got:\n${result.stderr}`,
+  );
+  // The dangling symlink must survive dry-run unchanged.
+  assertSymlink(wrapperPath, "wrapper path must still be a symlink after dry-run");
 });

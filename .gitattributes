@@ -18,6 +18,7 @@ scripts/lib/subagent-analysis-types.mjs linguist-generated=true
 scripts/lib/subagent-analysis-validation.mjs linguist-generated=true
 scripts/lib/subagent-analysis-wakeup.mjs linguist-generated=true
 scripts/lib/tlh-install-git.mjs linguist-generated=true
+scripts/lib/tlh-install-herdr-app.mjs linguist-generated=true
 scripts/lib/tlh-install-runtime.mjs linguist-generated=true
 scripts/lib/tlh-install-npm.mjs linguist-generated=true
 scripts/lib/tlh-install-package-source.mjs linguist-generated=true

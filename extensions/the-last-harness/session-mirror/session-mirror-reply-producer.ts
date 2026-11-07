@@ -494,7 +494,13 @@ export function createSessionMirrorReplyProducer(
     lastOutcome = normalized;
     if (normalized === "accepted") accepted = boundedCounter(accepted);
     if (normalized === "unconfirmed") unconfirmed = boundedCounter(unconfirmed);
-    if (normalized !== "accepted" && !agentActive && lifecycleOperation === undefined) {
+    const unfinishedTree =
+      lifecycleOperation?.kind === "tree" && lifecycleOperation.completed !== true;
+    if (
+      normalized !== "accepted" &&
+      !agentActive &&
+      (lifecycleOperation === undefined || unfinishedTree)
+    ) {
       busyLatch = false;
     }
     if (normalized === "accepted" || normalized === "unconfirmed") notify(normalized);
@@ -890,7 +896,10 @@ export function createSessionMirrorReplyProducer(
   const sessionBeforeTree = (): void => {
     beginLifecycleOperation("tree");
     invalidatePending("unconfirmed");
-    busyLatch = true;
+    // Pi emits no completion event when /tree is cancelled or aborted. Do not
+    // strand the reply latch on the before hook; while navigation is active,
+    // handleReply's isIdle() guard still rejects injection. A successful tree
+    // completion latches again until its lifecycle release is observed.
   };
 
   const sessionTree = (event?: unknown, context?: unknown): void => {
