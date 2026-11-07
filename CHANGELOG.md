@@ -43,6 +43,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Provider auth-health now keeps a run-level reauth-required observation over an older in-flight probe, and credential preflights that finish after session shutdown no longer notify or alter throttle state.
 - Primary-agent model and thinking changes are now classified as TLH-internal per operation instead of through shared flags, so a user model selection made while TLH is applying defaults keeps its session-only intent.
+- Session mirror replies no longer stay busy when a tree operation begins after a completed compaction but before its deferred release runs; unfinished and `willRetry` compactions still block.
 - Subagent continuation advance now retries lifecycle lock exhaustion a small bounded number of times, so a briefly held lock no longer aborts gate rejection or fails a resume after a successful spawn.
 - Subagent continuation gate rejection now retries lifecycle lock exhaustion, and continuation advance now retries generation conflicts iteratively instead of recursing, so sustained contention cannot overflow the stack.
 - Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.

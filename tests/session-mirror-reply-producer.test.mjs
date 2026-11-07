@@ -862,6 +862,46 @@ test("producer keeps active compaction blocked and ignores stale completion call
   assert.equal(retry.producer.getState().compactionLatched, false);
 });
 
+test("producer releases a completed compaction latch when a tree operation follows before deferred release", async () => {
+  const harness = createHarness();
+  let harnessIdle = false;
+  const context = { isIdle: () => harnessIdle };
+
+  harness.producer.sessionBeforeCompact();
+  harness.producer.sessionCompact(
+    { type: "session_compact", reason: "manual", willRetry: false },
+    context,
+  );
+  assert.equal(harness.producer.getState().compactionLatched, true);
+
+  harnessIdle = true;
+  harness.producer.sessionBeforeTree();
+  harness.producer.sessionTree(
+    { type: "session_tree", newLeafId: LEAF_ID, oldLeafId: ROOT_ID },
+    context,
+  );
+  while (harness.lifecycleChecks.length > 0) harness.lifecycleChecks.shift()();
+
+  assert.equal(harness.producer.getState().compactionLatched, false);
+  assert.equal(harness.producer.getState().busyLatch, false);
+  await acceptFreshReply(harness, "tree-after-compaction");
+
+  // A retrying compaction followed by a tree operation must stay latched.
+  const retry = createHarness();
+  retry.producer.sessionBeforeCompact();
+  retry.producer.sessionCompact(
+    { type: "session_compact", reason: "threshold", willRetry: true },
+    { isIdle: () => true },
+  );
+  retry.producer.sessionBeforeTree();
+  retry.producer.sessionTree(
+    { type: "session_tree", newLeafId: LEAF_ID, oldLeafId: ROOT_ID },
+    { isIdle: () => true },
+  );
+  while (retry.lifecycleChecks.length > 0) retry.lifecycleChecks.shift()();
+  assert.equal(retry.producer.getState().compactionLatched, true);
+});
+
 test("producer expiry before injection does not inject text and suppresses duplicates", async () => {
   const harness = createHarness({ expireBeforeInjection: true });
   const result = harness.request({ requestId: "pre-injection-expiry", ttlSeconds: 1 });
