@@ -6,8 +6,8 @@ EXECUTION
 • SINGLE: { agent, task?, ticket? }.
 • PARALLEL: { tasks:[{ agent, task, ticket?, cwd?, output?, outputMode?, model? }, ...] }.
 • ticket is an optional ticket ID. TLH runs tk show <id> in the effective task cwd before launch, injects the exact body under ## Ticket <id>, and records only the ID in status/results.
-• Sync (default): the parent awaits the run and receives its terminal result; ordinary single/parallel calls use the TLH-tracked awaited runner.
-• Optional execution fields: async:true, cwd, artifacts. async:true keeps the detached background behavior.
+• Async (default in interactive TUI and RPC sessions): single/parallel calls detach and completion notifications arrive later. async:false awaits the terminal result. In one-shot print/json runs an omitted async awaits; async:true always detaches.
+• Optional execution fields: async, cwd, artifacts.
 • artifacts controls whether per-child run artifacts are written; diagnostic detail is profile-configured.
 
 OUTPUT / MODELS

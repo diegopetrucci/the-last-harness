@@ -720,6 +720,20 @@ function noDeveloperExecutionError(): string {
   return "TLH execution rejected: the bundled developer subagent is unavailable while the host no-developer policy is active.";
 }
 
+/**
+ * Resolve whether a single/parallel run is awaited. Explicit `async` always wins;
+ * when omitted, only one-shot modes (print/json) await, since the process exits
+ * after the turn and could never deliver a completion notice. TUI and RPC hosts
+ * stay alive and receive completion notices, so they detach by default.
+ */
+export function resolveAwaited(
+  asyncParam: boolean | undefined,
+  ctx: Pick<ExtensionContext, "mode">,
+): boolean {
+  if (asyncParam !== undefined) return !asyncParam;
+  return ctx.mode === "print" || ctx.mode === "json";
+}
+
 function awaitedLifecycleFailure(): SubagentToolResult<Details> {
   return {
     content: [
@@ -1016,7 +1030,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       return buildRequestedModeError(effectiveParams, ticketPreparation.error);
     }
     const ticketBodies = ticketPreparation.ticketBodies;
-    const awaited = effectiveParams.async !== true;
+    const awaited = resolveAwaited(effectiveParams.async, ctx);
     const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 
     const artifactConfig: ResolvedArtifactConfig = {
