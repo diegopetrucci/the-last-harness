@@ -372,6 +372,9 @@ export function createSessionMirrorReplyProducer(
   let compactionLatched = false;
   let lifecycleSerial = 0;
   let lifecycleOperation: LifecycleOperation | undefined;
+  // A successfully completed compaction whose deferred release was superseded
+  // by a tree operation; the tree's release finishes releasing its latch.
+  let carriedCompaction: LifecycleOperation | undefined;
   let completedCompactionEvents = new WeakSet<object>();
   let channel: SessionMirrorReplyChannel | undefined;
   let channelGeneration: number | undefined;
@@ -392,6 +395,15 @@ export function createSessionMirrorReplyProducer(
 
   const beginLifecycleOperation = (kind: LifecycleOperation["kind"]): void => {
     lifecycleSerial = nextCounter(lifecycleSerial);
+    const previous = lifecycleOperation;
+    if (kind === "compaction") carriedCompaction = undefined;
+    else if (
+      previous?.kind === "compaction" &&
+      previous.completed &&
+      previous.completionEvidenceValid &&
+      !previous.willRetry
+    )
+      carriedCompaction = previous;
     lifecycleOperation = {
       kind,
       serial: lifecycleSerial,
@@ -435,6 +447,8 @@ export function createSessionMirrorReplyProducer(
         return;
       lifecycleOperation = undefined;
       if (operation.kind === "compaction") compactionLatched = false;
+      else if (carriedCompaction !== undefined) compactionLatched = false;
+      carriedCompaction = undefined;
       if (!agentActive) busyLatch = false;
     };
     operation.release = release;
@@ -793,6 +807,7 @@ export function createSessionMirrorReplyProducer(
     agentActive = false;
     compactionLatched = false;
     lifecycleOperation = undefined;
+    carriedCompaction = undefined;
     completedCompactionEvents = new WeakSet<object>();
     rememberedRequests = [];
     invalidatePending("disconnected");
@@ -810,6 +825,7 @@ export function createSessionMirrorReplyProducer(
     agentActive = false;
     compactionLatched = false;
     lifecycleOperation = undefined;
+    carriedCompaction = undefined;
     completedCompactionEvents = new WeakSet<object>();
     rememberedRequests = [];
     invalidatePending("disconnected");
@@ -866,6 +882,7 @@ export function createSessionMirrorReplyProducer(
   const agentSettled = (): void => {
     agentActive = false;
     lifecycleOperation = undefined;
+    carriedCompaction = undefined;
     busyLatch = false;
     compactionLatched = false;
   };

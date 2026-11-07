@@ -1,12 +1,9 @@
 /**
- * Internal awaited-run owner.
- *
- * Ordinary execution uses this awaited owner while explicit async:true calls
- * remain detached. This module is deliberately a narrow parent-side adapter:
- * it subscribes before spawn, arbitrates the
- * result artifact with the background watcher, validates run identity and
- * lifecycle generation, and turns the terminal artifact into the same native
- * tool result used by the synchronous paths.
+ * Internal awaited-run owner. Ordinary execution uses it while explicit
+ * async:true calls remain detached. It is a narrow parent-side adapter: it
+ * subscribes before spawn, arbitrates the result artifact with the background
+ * watcher, validates run identity and lifecycle generation, and turns the
+ * terminal artifact into the same native tool result as synchronous paths.
  */
 
 import * as fs from "node:fs";
@@ -1547,6 +1544,9 @@ export function createAwaitedRunOwner(input: AwaitedRunOwnerOptions): AwaitedRun
     };
   }
 
+  // With an explicit owner deadlineAt and a pending supervisor pause, forced hard
+  // settlement reports cancelled, not the pause/timeout (cancelInternal's pause early
+  // return does not apply). Latent: no production owner passes deadlineAt; decide policy first.
   function forceHardSettlement(): void {
     if (settled || !ownsRegistration()) return;
     // Bound an abort/timeout path if cleanup remains wedged.

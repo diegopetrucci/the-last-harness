@@ -4,11 +4,12 @@ import fsMutable from "node:fs";
 import * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import {
   advanceLifecycleContinuation,
   boundSupervisorSummary,
   isTerminalLifecycleState,
+  LifecycleLockExhaustedError,
   lifecycleGeneration,
   recoverStaleLifecycleContinuationClaim,
   transitionLifecycleStatus,
@@ -1148,6 +1149,79 @@ describe("lifecycle state helpers", () => {
     }
   });
 
+  describe("advanceLifecycleContinuation lock exhaustion", () => {
+    const setup = () => {
+      const root = tempRoot("pi-lifecycle-lock-retry-");
+      const asyncDir = path.join(root, "run-lock-retry");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-lock-retry",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "paused" }],
+        lifecycle: {
+          generation: 0,
+          continuation: {
+            phase: "reserved",
+            claimToken: "claim-lock",
+            claimedAt: 150,
+            ownerPid: 9003,
+            continuationRunId: "revived-lock",
+          },
+        },
+      });
+      const lock = path.join(asyncDir, ".lifecycle-transition.lock");
+      fs.mkdirSync(lock);
+      fs.writeFileSync(
+        path.join(lock, "owner.json"),
+        JSON.stringify({ token: "holder", pid: process.pid, acquiredAt: Date.now() }),
+      );
+      return { root, asyncDir, lock };
+    };
+    const advance = (asyncDir: string) =>
+      advanceLifecycleContinuation(asyncDir, 0, "claim-lock", "revived-lock", true, () => 250);
+
+    it("retries lock exhaustion after the lock is released", () => {
+      const { root, asyncDir, lock } = setup();
+      let waits = 0;
+      const realWait = Atomics.wait;
+      // 5 default waits exhaust the first attempt; release on the retry's first wait.
+      const waitMock = mock.method(Atomics, "wait", (...args: Parameters<typeof Atomics.wait>) => {
+        waits++;
+        if (waits === 6) {
+          fs.rmSync(lock, { recursive: true, force: true });
+          return "ok" as const;
+        }
+        return realWait(...args);
+      });
+      try {
+        const result = advance(asyncDir);
+        assert.equal(result.changed, true);
+        assert.equal(readStatus(asyncDir, { cache: false })?.state, "complete");
+      } finally {
+        waitMock.mock.restore();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("surfaces lock exhaustion after a bounded number of retries", () => {
+      const { root, asyncDir } = setup();
+      let waits = 0;
+      const waitMock = mock.method(Atomics, "wait", () => {
+        waits++;
+        return "ok" as const;
+      });
+      try {
+        assert.throws(() => advance(asyncDir), LifecycleLockExhaustedError);
+        // 1 initial attempt + 3 retries, 5 lock waits each.
+        assert.equal(waits, 20);
+      } finally {
+        waitMock.mock.restore();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("finalizes reserved continuations during launch gating before any target work begins", () => {
     const root = tempRoot("pi-lifecycle-finalize-reserved-");
     try {
@@ -1519,6 +1593,83 @@ describe("lifecycle state helpers", () => {
         "continued",
         "terminal telemetry must not be replaced by the stale paused envelope",
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("survives sustained generation-only contention without stack growth, then succeeds", () => {
+    const root = tempRoot("pi-lifecycle-advance-contended-");
+    try {
+      const asyncDir = path.join(root, "run-advance-contended");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-advance-contended",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            pause: { kind: "awaiting_supervisor", pausedAt: 140 },
+          },
+        ],
+        pause: { kind: "awaiting_supervisor", pausedAt: 140 },
+        lifecycle: {
+          generation: 0,
+          continuation: {
+            phase: "launched",
+            claimToken: "claim-contended",
+            claimedAt: 150,
+            launchedAt: 160,
+            continuationRunId: "contended-run",
+          },
+        },
+        telemetry: buildSubagentRunTelemetry({
+          runId: "run-advance-contended",
+          execution: "foreground",
+          mode: "single",
+          provenance: { tlhVersion: "test", piVersion: "test", loadedAt: 100 },
+          controls: {
+            needsAttentionAfterMs: 2_000,
+            failedToolAttemptsBeforeAttention: 0,
+            notifyOn: ["needs_attention"],
+            notifyChannels: ["event"],
+          },
+          steps: [{ index: 0, agent: "worker", outcome: { state: "paused" } }],
+          outcome: { state: "paused" },
+        }),
+      });
+      // Deeper than the recursive implementation's stack can survive.
+      const contendedAttempts = 6_000;
+      let attempts = 0;
+      // `now` runs between the status read and the transition, so bumping the
+      // generation here makes the attempt lose the generation race.
+      const contended = () => {
+        attempts++;
+        if (attempts <= contendedAttempts)
+          transitionLifecycleStatus({
+            asyncDir,
+            expectedGeneration: lifecycleGeneration(readStatus(asyncDir, { cache: false })),
+            mutate: (current) => ({ ...current, lastUpdate: 1_000 + attempts }),
+          });
+        return 250;
+      };
+      const result = advanceLifecycleContinuation(
+        asyncDir,
+        0,
+        "claim-contended",
+        "contended-run",
+        true,
+        contended,
+      );
+      assert.equal(attempts, contendedAttempts + 1);
+      assert.equal(result.changed, true);
+      assert.equal(result.lost, false);
+      const persisted = readStatus(asyncDir, { cache: false });
+      assert.equal(persisted?.state, "complete");
+      assert.equal(persisted?.lifecycle?.continuation?.phase, "completed");
+      assert.equal(persisted?.telemetry?.outcome?.state, "continued");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
