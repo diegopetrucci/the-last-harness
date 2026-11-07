@@ -126,12 +126,17 @@ EOF_PRESENT_GIT
   # runtimeAbsPath uses pwd -P so macOS /var -> /private/var matches Node.js realpathSync.
   write_tlh_runtime_marker "${present_dir}/runtime" created
   # Seed a valid private runtime pi (pinned version) at the expected location.
-  cat >"${present_runtime_bin}/pi" <<'EOF_PRESENT_RUNTIME_PI'
+  # bin/pi must resolve to the CLI inside lib/ (reuse identity check), so seed the
+  # fake pi at the lib CLI path and link bin/pi to it like a real TLH runtime.
+  local present_cli_dir="${present_dir}/runtime/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle"
+  mkdir -p "${present_cli_dir}"
+  cat >"${present_cli_dir}/cli.js" <<'EOF_PRESENT_RUNTIME_PI'
 #!/bin/sh
 if [ "${1:-}" = "--version" ]; then printf '1.5.0\n'; exit 0; fi
 printf 'fake private runtime pi invoked unexpectedly\n' >&2; exit 98
 EOF_PRESENT_RUNTIME_PI
-  chmod +x "${present_runtime_bin}/pi"
+  chmod +x "${present_cli_dir}/cli.js"
+  ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js "${present_runtime_bin}/pi"
   # Seed lib/package-lock.json matching the shipped lock so the reuse check passes.
   # Without this, the lock mismatch triggers reinstall \ the fake npm exits 98.
   mkdir -p "${present_dir}/runtime/lib"

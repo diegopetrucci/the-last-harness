@@ -6,7 +6,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
@@ -184,12 +186,39 @@ export function writeVersionedWrapperPi(commandDir, logPath, version = TLH_PINNE
 /**
  * Seed a runtime's lib/package-lock.json with the shipped lock so that the
  * reuse-check (byte-identical comparison) passes for the given runtimeDir.
+ * With `linkPi`, also link bin/pi to the lib CLI (see linkRuntimePiToLibCli).
  */
-export function seedRuntimeLock(runtimeDir) {
+export function seedRuntimeLock(runtimeDir, { linkPi = false } = {}) {
   const shippedLock = join(repoRoot, "config", "pi-runtime", "package-lock.json");
-  if (!existsSync(shippedLock)) return; // shipped lock not present (shouldn't happen in tests)
-  mkdirSync(join(runtimeDir, "lib"), { recursive: true });
-  copyFileSync(shippedLock, join(runtimeDir, "lib", "package-lock.json"));
+  if (existsSync(shippedLock)) {
+    mkdirSync(join(runtimeDir, "lib"), { recursive: true });
+    copyFileSync(shippedLock, join(runtimeDir, "lib", "package-lock.json"));
+  }
+  if (linkPi) linkRuntimePiToLibCli(runtimeDir);
+}
+
+/**
+ * Make an existing regular-file <runtimeDir>/bin/pi resolve like a real TLH
+ * runtime: move it to the lib CLI path and replace it with the managed relative
+ * symlink, so the reuse identity check (bin/pi -> current lib CLI) passes.
+ */
+export function linkRuntimePiToLibCli(runtimeDir) {
+  const cli = join(
+    runtimeDir,
+    "lib",
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
+    "dist",
+    "bundle",
+    "cli.js",
+  );
+  mkdirSync(dirname(cli), { recursive: true });
+  renameSync(join(runtimeDir, "bin", "pi"), cli);
+  symlinkSync(
+    "../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+    join(runtimeDir, "bin", "pi"),
+  );
 }
 
 export function writeWrapperHelperLogger(scriptPath, logEnvVar, source) {

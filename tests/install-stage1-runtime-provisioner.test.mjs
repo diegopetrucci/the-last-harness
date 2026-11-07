@@ -6,6 +6,8 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import {
   chmodSync,
   existsSync,
@@ -15,17 +17,19 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import test from "node:test";
 
 import {
+  PI_BIN_SYMLINK_TARGET,
   RUNTIME_FAILED_DIR_PREFIX,
   RUNTIME_INSTALL_LOCK_NAME,
   RUNTIME_INSTALL_LOCK_RECLAIM_NAME,
@@ -55,6 +59,26 @@ function makeIo({ checkVersion, printedCommands = [], logs = [] } = {}) {
     runCommand: () => {},
     checkVersion: checkVersion ?? (() => {}),
   };
+}
+
+/** Replace regular-file bin/pi with the managed symlink to a CLI inside lib/. */
+function linkPiToLibCli(prefix, { absolute = false } = {}) {
+  const cli = join(
+    prefix,
+    "lib",
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
+    "dist",
+    "bundle",
+    "cli.js",
+  );
+  mkdirSync(dirname(cli), { recursive: true });
+  writeFileSync(cli, "#!/bin/sh\n# pi\n", "utf8");
+  const piBin = join(prefix, "bin", "pi");
+  rmSync(piBin, { force: true });
+  symlinkSync(absolute ? cli : PI_BIN_SYMLINK_TARGET, piBin);
+  return cli;
 }
 
 /** Write the staged node_modules structure that simulates what npm ci would create. */
@@ -1036,6 +1060,7 @@ test("provisionPiRuntime reuse path: removes stale dirs and bin backup while kee
   mkdirSync(binDir, { recursive: true });
   writeFileSync(join(libDir, "package-lock.json"), lockContent, "utf8");
   writeFileSync(piBin, "#!/bin/sh\n# pi\n", "utf8");
+  linkPiToLibCli(prefix);
 
   // Leftover stale entries from a previous crashed install.
   const stalePrevDir = join(prefix, `${RUNTIME_PREVIOUS_DIR_PREFIX}9001`);
@@ -1102,6 +1127,7 @@ test("provisionPiRuntime reuse path dry-run: leaves stale dirs in place and logs
   mkdirSync(binDir, { recursive: true });
   writeFileSync(join(libDir, "package-lock.json"), lockContent, "utf8");
   writeFileSync(piBin, "#!/bin/sh\n# pi\n", "utf8");
+  linkPiToLibCli(prefix);
 
   // Leftover stale entries.
   const stalePrevDir = join(prefix, `${RUNTIME_PREVIOUS_DIR_PREFIX}9002`);
@@ -1155,6 +1181,7 @@ function writeReuseableRuntime(prefix, lockContent) {
   mkdirSync(binDir, { recursive: true });
   writeFileSync(join(libDir, "package-lock.json"), lockContent, "utf8");
   writeFileSync(piBin, "#!/bin/sh\n# pi\n", "utf8");
+  linkPiToLibCli(prefix);
   return { libDir, binDir, piBin };
 }
 
@@ -1661,4 +1688,304 @@ test("Lock-10: reclaimStaleLock removes reclaim dir after successful reclaim", (
   // Must have logged reclaim.
   const reclaimed = logs.some((l) => l.includes("reclaiming stale lock"));
   assert.ok(reclaimed, `must log reclaim; logs: ${logs.join(" | ")}`);
+});
+
+// ---------------------------------------------------------------------------
+// tlh-0wrz: recovery failures are reported and backups survive until replacement
+// ---------------------------------------------------------------------------
+
+function makeShipped(root) {
+  const tmpDir = join(root, "tmpdir");
+  mkdirSync(tmpDir, { recursive: true });
+  const shippedPackageJsonPath = join(tmpDir, "package.json");
+  const shippedLockPath = join(tmpDir, "package-lock.json");
+  writeFileSync(shippedPackageJsonPath, JSON.stringify({ name: "tlh-pi-runtime" }), "utf8");
+  writeFileSync(shippedLockPath, JSON.stringify({ lockfileVersion: 3 }), "utf8");
+  return { shippedPackageJsonPath, shippedLockPath };
+}
+
+/**
+ * Deterministic, permission-independent fault injection: make renameSync throw
+ * for a chosen destination while delegating everything else to the real one.
+ */
+function failRenameTo(t, destination) {
+  const realRename = fs.renameSync;
+  const mock = t.mock.method(fs, "renameSync", (from, to) => {
+    if (to === destination) throw new Error(`injected rename failure to ${to}`);
+    return realRename(from, to);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  });
+}
+
+function setupRecoveryFixture(root) {
+  const prefix = join(root, "prefix");
+  const prevDir = join(prefix, `${RUNTIME_PREVIOUS_DIR_PREFIX}4242`);
+  mkdirSync(prevDir, { recursive: true });
+  writeFileSync(join(prevDir, "sentinel"), "recoverable runtime", "utf8");
+  const binDir = join(prefix, "bin");
+  mkdirSync(binDir, { recursive: true });
+  const prevPiBin = join(binDir, `${RUNTIME_PREVIOUS_DIR_PREFIX}4242-bin-pi`);
+  writeFileSync(prevPiBin, "#!/bin/sh\n# recoverable pi\n", "utf8");
+  return { prefix, prevDir, prevPiBin, piBin: join(binDir, "pi") };
+}
+
+function npmFailingIo(logs) {
+  const io = makeIo({ logs });
+  io.runCommand = () => {
+    throw new Error("Simulated npm ci failure");
+  };
+  return io;
+}
+
+test("provisionPiRuntime: failed bin/pi restore is reported with the surviving bin backup, then npm failure keeps backups", (t) => {
+  const root = makeTmp("tlh-rt-unit-recovery-fail-bin-");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { prefix, prevPiBin, piBin } = setupRecoveryFixture(root);
+  const shipped = makeShipped(root);
+  failRenameTo(t, piBin);
+
+  const logs = [];
+  assert.throws(
+    () =>
+      provisionPiRuntime(
+        { prefix, ...shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" },
+        npmFailingIo(logs),
+      ),
+    /Simulated npm ci failure/,
+  );
+
+  const warning = logs.find((l) => l.includes("could not fully recover"));
+  assert.ok(warning, `recovery failure must be reported; logs: ${JSON.stringify(logs)}`);
+  assert.ok(warning.includes("injected rename failure"), warning);
+  assert.ok(warning.includes(prevPiBin), `warning must name surviving bin backup: ${warning}`);
+  assert.ok(existsSync(prevPiBin), "bin/pi backup must survive");
+  assert.ok(existsSync(join(prefix, "lib", "sentinel")), "lib restored by recovery must survive");
+});
+
+test("provisionPiRuntime: failed lib restore is reported with the surviving lib backup, then npm failure keeps backups", (t) => {
+  const root = makeTmp("tlh-rt-unit-recovery-fail-lib-");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { prefix, prevDir, prevPiBin } = setupRecoveryFixture(root);
+  const shipped = makeShipped(root);
+  failRenameTo(t, join(prefix, "lib"));
+
+  const logs = [];
+  assert.throws(
+    () =>
+      provisionPiRuntime(
+        { prefix, ...shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" },
+        npmFailingIo(logs),
+      ),
+    /Simulated npm ci failure/,
+  );
+
+  const warning = logs.find((l) => l.includes("could not fully recover"));
+  assert.ok(warning, `recovery failure must be reported; logs: ${JSON.stringify(logs)}`);
+  assert.ok(warning.includes(prevDir), `warning must name surviving lib backup: ${warning}`);
+  assert.ok(existsSync(join(prevDir, "sentinel")), "previous-runtime backup must survive");
+  assert.ok(existsSync(prevPiBin), "bin/pi backup must survive");
+});
+
+test("provisionPiRuntime: same-pid recoverable backup survives a post-swap validation failure", (t) => {
+  const root = makeTmp("tlh-rt-unit-samepid-backup-");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const prefix = join(root, "prefix");
+  const shipped = makeShipped(root);
+  // Broken live lib plus a recoverable backup that collides with this process's pid.
+  mkdirSync(join(prefix, "lib"), { recursive: true });
+  writeFileSync(join(prefix, "lib", "sentinel"), "broken live lib", "utf8");
+  const samePidBackup = join(prefix, `${RUNTIME_PREVIOUS_DIR_PREFIX}${process.pid}`);
+  mkdirSync(samePidBackup, { recursive: true });
+  writeFileSync(join(samePidBackup, "sentinel"), "last good runtime", "utf8");
+  const piBin = join(prefix, "bin", "pi");
+
+  const io = makeIo();
+  io.runCommand = (args, o) => {
+    if (args[0] === "npm") writeStagedNodeModules(o.cwd);
+  };
+  io.checkVersion = (path) => {
+    if (path === piBin) throw new Error("Simulated post-swap validation failure");
+  };
+
+  assert.throws(
+    () =>
+      provisionPiRuntime(
+        { prefix, ...shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" },
+        io,
+      ),
+    /Simulated post-swap validation failure/,
+  );
+
+  assert.equal(
+    readFileSync(join(samePidBackup, "sentinel"), "utf8"),
+    "last good runtime",
+    "same-pid recoverable backup must not be deleted or overwritten",
+  );
+  assert.equal(
+    readFileSync(join(prefix, "lib", "sentinel"), "utf8"),
+    "broken live lib",
+    "rollback must restore the previous live lib",
+  );
+});
+
+test("provisionPiRuntime: stale backups are kept when npm ci fails and removed after a successful install", (t) => {
+  const root = makeTmp("tlh-rt-unit-backup-lifecycle-");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const prefix = join(root, "prefix");
+  const shipped = makeShipped(root);
+  mkdirSync(join(prefix, "lib"), { recursive: true });
+  mkdirSync(join(prefix, "bin"), { recursive: true });
+  const stalePrev = join(prefix, `${RUNTIME_PREVIOUS_DIR_PREFIX}9001`);
+  const staleBin = join(prefix, "bin", `${RUNTIME_PREVIOUS_DIR_PREFIX}9001-bin-pi`);
+  const staleStaging = join(prefix, `${RUNTIME_STAGING_DIR_PREFIX}9001`);
+  mkdirSync(stalePrev, { recursive: true });
+  mkdirSync(staleStaging, { recursive: true });
+  writeFileSync(staleBin, "backup", "utf8");
+  const opts = { prefix, ...shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" };
+
+  const failingIo = makeIo();
+  failingIo.runCommand = () => {
+    throw new Error("Simulated npm ci failure");
+  };
+  assert.throws(() => provisionPiRuntime(opts, failingIo), /Simulated npm ci failure/);
+  assert.ok(existsSync(stalePrev), "previous backup must survive failed npm ci");
+  assert.ok(existsSync(staleBin), "bin/pi backup must survive failed npm ci");
+
+  const okIo = makeIo();
+  okIo.runCommand = (args, o) => {
+    if (args[0] === "npm") writeStagedNodeModules(o.cwd);
+  };
+  assert.deepEqual(provisionPiRuntime(opts, okIo), { installed: true });
+  assert.equal(existsSync(stalePrev), false, "previous backup removed after success");
+  assert.equal(existsSync(staleBin), false, "bin/pi backup removed after success");
+  assert.equal(existsSync(staleStaging), false, "stale staging removed");
+});
+
+// ---------------------------------------------------------------------------
+// Reuse identity: bin/pi must resolve to the current lib's CLI
+// ---------------------------------------------------------------------------
+
+const SHIPPED_LOCK_CONTENT = JSON.stringify({ lockfileVersion: 3 });
+
+function setupIdentityFixture(t, label) {
+  const root = makeTmp(`tlh-rt-identity-${label}-`);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const prefix = join(root, "prefix");
+  const shipped = makeShipped(root);
+  writeReuseableRuntime(prefix, SHIPPED_LOCK_CONTENT);
+  const logs = [];
+  const npmCalls = [];
+  const io = makeIo({ logs });
+  io.runCommand = (args, o) => {
+    npmCalls.push(args.join(" "));
+    if (args[0] === "npm") writeStagedNodeModules(o.cwd);
+  };
+  return { root, prefix, shipped, logs, npmCalls, io };
+}
+
+test("provisionPiRuntime reuse: same-version regular-file bin/pi in a TLH-created runtime is repaired", (t) => {
+  const f = setupIdentityFixture(t, "regular");
+  const piBin = join(f.prefix, "bin", "pi");
+  // Simulate an interrupted swap: same-version regular-file bin/pi left behind.
+  rmSync(piBin, { force: true });
+  writeFileSync(piBin, "#!/bin/sh\n# stale pi\n", "utf8");
+  assert.equal(lstatSync(piBin).isSymbolicLink(), false, "precondition: regular file");
+
+  const result = provisionPiRuntime(
+    { prefix: f.prefix, ...f.shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" },
+    f.io,
+  );
+
+  assert.deepEqual(result, { installed: true });
+  assert.ok(
+    f.npmCalls.some((c) => c.startsWith("npm ci")),
+    "must reprovision via npm ci",
+  );
+  assert.equal(lstatSync(piBin).isSymbolicLink(), true, "bin/pi must be the managed symlink");
+  assert.equal(
+    realpathSync(piBin),
+    realpathSync(
+      join(
+        f.prefix,
+        "lib",
+        "node_modules",
+        "@earendil-works",
+        "pi-coding-agent",
+        "dist",
+        "bundle",
+        "cli.js",
+      ),
+    ),
+  );
+});
+
+test("provisionPiRuntime reuse: equivalent absolute symlink is reused unchanged", (t) => {
+  const f = setupIdentityFixture(t, "absolute");
+  const cli = linkPiToLibCli(f.prefix, { absolute: true });
+  const piBin = join(f.prefix, "bin", "pi");
+
+  const result = provisionPiRuntime(
+    { prefix: f.prefix, ...f.shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" },
+    f.io,
+  );
+
+  assert.deepEqual(result, { installed: false });
+  assert.deepEqual(f.npmCalls, []);
+  assert.equal(readlinkSync(piBin), cli, "link text must be left as-is");
+});
+
+test("provisionPiRuntime reuse: custom prefix reached through a symlinked path is reused", (t) => {
+  const f = setupIdentityFixture(t, "custom");
+  const alias = join(f.root, "alias-prefix");
+  symlinkSync(f.prefix, alias);
+
+  const result = provisionPiRuntime(
+    { prefix: alias, ...f.shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" },
+    f.io,
+  );
+
+  assert.deepEqual(result, { installed: false });
+  assert.deepEqual(f.npmCalls, []);
+});
+
+test("provisionPiRuntime reuse: migrated prefix with non-resolving bin/pi is not replaced (warn only)", (t) => {
+  const f = setupIdentityFixture(t, "migrated");
+  const piBin = join(f.prefix, "bin", "pi");
+  rmSync(piBin, { force: true });
+  writeFileSync(piBin, "#!/bin/sh\n# foreign pi\n", "utf8");
+  // Foreign lib content must keep today's behavior too (reuse, no refusal).
+  mkdirSync(join(f.prefix, "lib", "node_modules", "left-pad"), { recursive: true });
+
+  const result = provisionPiRuntime(
+    { prefix: f.prefix, ...f.shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "migrated" },
+    f.io,
+  );
+
+  assert.deepEqual(result, { installed: false });
+  assert.deepEqual(f.npmCalls, []);
+  assert.equal(readFileSync(piBin, "utf8"), "#!/bin/sh\n# foreign pi\n");
+  assert.ok(
+    f.logs.some((l) => l.includes("does not resolve to the TLH runtime CLI")),
+    `must warn; logs: ${JSON.stringify(f.logs)}`,
+  );
+});
+
+test("provisionPiRuntime reuse: dangling bin/pi symlink is not reused", (t) => {
+  const f = setupIdentityFixture(t, "dangling");
+  const piBin = join(f.prefix, "bin", "pi");
+  rmSync(piBin, { force: true });
+  symlinkSync(join(f.root, "does-not-exist"), piBin);
+
+  const result = provisionPiRuntime(
+    { prefix: f.prefix, ...f.shipped, pinnedVersion: "1.0.0", dryRun: false, origin: "created" },
+    f.io,
+  );
+
+  assert.deepEqual(result, { installed: true });
+  assert.equal(realpathSync(piBin).endsWith("dist/bundle/cli.js"), true);
 });
