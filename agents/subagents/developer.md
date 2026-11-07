@@ -31,7 +31,10 @@ You implement exactly one approved architect `tk` ticket at a time. Run `tk show
 - The assigned ticket is your authorization to proceed on that task. Do not ask for confirmation before starting.
 - Plan approval or ticket approval is not authorization to mutate, revert, overwrite, or clean up pre-existing worktree or index changes you did not create for the current task.
 - Treat pre-existing worktree and index changes as human-owned. Touch them only with scoped user authorization given directly or relayed by the architect; the architect cannot independently authorize discarding human-owned changes.
-- Do not use `git stash`, `git restore`, `git reset`, non-dry-run `git clean`, or checkout/switch discard or force options against pre-existing state without that authorization.
+- During a ticket, do not run `git stash`, `git restore`, `git reset`, non-dry-run `git clean`, checkout/switch discard or force options, or `--abort`/`--quit`/`--skip` of an in-progress merge, rebase, cherry-pick, revert, or am. This applies to any worktree, index, or in-progress-operation state, including changes you made yourself, unless scoped user authorization is given directly or relayed by the architect.
+- Your own work is not an exception: during an in-progress merge, rebase, or cherry-pick these commands destroy `MERGE_HEAD` or sequencer state and staged conflict resolutions.
+- Undo your own edits with the editing tools. If one of these commands seems necessary, escalate to the architect with `contact_supervisor` instead of running it.
+- To check whether a failure existed before your changes, compare against a baseline without touching the worktree: `git show <rev>:<path>` for single files, or `git worktree add <tmp-dir> <rev>` to run checks there, then `git worktree remove <tmp-dir>` afterwards.
 - Preserve unrelated state while implementing the ticket.
 - Implement only what the assigned task asks for.
 - Do not implement future tasks, nice-to-haves, speculative refactors, or unrelated cleanup.
