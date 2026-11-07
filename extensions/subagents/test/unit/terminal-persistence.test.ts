@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, mock } from "node:test";
 import {
   buildSubagentRunTelemetry,
   type SubagentTelemetryProvenance,
@@ -975,6 +975,48 @@ describe("continuation gate rejection persistence", () => {
     assert.equal(lifecycleGeneration(status), 2);
     assert.equal(status?.sessionFile, "newer-writer.jsonl");
     assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf8")).generation, 2);
+  });
+
+  it("retries lifecycle lock exhaustion, adopts a newer generation, and writes the failed result", () => {
+    const { asyncDir, resultPath, reject } = setup();
+    const lock = path.join(asyncDir, ".lifecycle-transition.lock");
+    // Hold the lock with a live owner so the first attempt exhausts its retries.
+    fs.mkdirSync(lock);
+    fs.writeFileSync(
+      path.join(lock, "owner.json"),
+      JSON.stringify({ token: "holder", pid: process.pid, acquiredAt: Date.now() }),
+    );
+    let waits = 0;
+    // Default lock retries wait 5 times; the 6th wait is the retry's first, so
+    // release the lock there and commit a newer generation (metadata only).
+    const realWait = Atomics.wait;
+    const waitMock = mock.method(Atomics, "wait", (...args: Parameters<typeof Atomics.wait>) => {
+      waits++;
+      if (waits === 6) {
+        fs.rmSync(lock, { recursive: true, force: true });
+        transitionLifecycleStatus({
+          asyncDir,
+          expectedGeneration: 0,
+          mutate: (current) => ({ ...current, sessionFile: "newer-writer.jsonl" }),
+        });
+        return "ok" as const;
+      }
+      return realWait(...args);
+    });
+    try {
+      reject();
+    } finally {
+      waitMock.mock.restore();
+      fs.rmSync(lock, { recursive: true, force: true });
+    }
+    assert.equal(waits, 6);
+    const status = readStatus(asyncDir, { cache: false });
+    assert.equal(status?.state, "failed");
+    assert.equal(lifecycleGeneration(status), 2);
+    assert.equal(status?.sessionFile, "newer-writer.jsonl");
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    assert.equal(result.generation, 2);
+    assert.equal(result.state, "failed");
   });
 
   it("does not replace a newer completed state or its result", () => {

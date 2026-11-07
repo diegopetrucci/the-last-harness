@@ -277,6 +277,7 @@ export function createProviderAuthHealthStore(options = {}) {
         recordRunLevelAuthObservation(provider) {
             if (disposed)
                 return;
+            bumpGeneration(provider);
             recordEntry(provider, "reauth-required");
             notifyListeners();
         },

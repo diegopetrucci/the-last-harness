@@ -666,11 +666,11 @@ export function createHerdrActivityReporter(
       // Keep it pending for this session so every heartbeat reasserts the
       // display name if Herdr restarts after the initial report.
       displayMetadataPending = true;
-      // Mark dirty so that if a metadata send from a previous session is still
-      // in flight when this session starts (e.g. shutdown → restart on the
-      // same instance), the in-flight send's finally() handler will trigger a
-      // follow-up with the new session's title rather than leaving the stale
-      // title in place until the next heartbeat.
+      // Mark dirty so a still-in-flight metadata send's finally() handler
+      // re-sends with this session's title instead of leaving a stale one until
+      // the next heartbeat. Defensive only: Pi creates fresh extension
+      // instances per session replacement/reload, and disposed reporters are
+      // not reused.
       displayMetadataDirty = true;
       retryDisplayMetadata();
     },

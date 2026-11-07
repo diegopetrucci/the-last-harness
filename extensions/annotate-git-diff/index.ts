@@ -679,6 +679,13 @@ export function createAnnotateGitDiffController(
           const onError = (error: Error): void => {
             if (settled) return;
             settled = true;
+            // Request close before releasing ownership so a protocol error cannot leave
+            // an unresponsive window open while a new invocation opens another.
+            try {
+              window.close();
+            } catch {
+              // Window already exited or is shutting down; ignore close races.
+            }
             cleanup();
             reject(error);
           };

@@ -529,6 +529,10 @@ export function createProviderAuthHealthStore(
 
     recordRunLevelAuthObservation(provider) {
       if (disposed) return;
+      // Invalidate older in-flight probes so a probe started before this
+      // observation cannot overwrite it with a stale healthy result. The
+      // identity-checked cleanup in probeProvider still removes only its own entry.
+      bumpGeneration(provider);
       recordEntry(provider, "reauth-required");
       notifyListeners();
     },

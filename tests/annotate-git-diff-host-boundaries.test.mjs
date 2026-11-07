@@ -1248,3 +1248,44 @@ test("annotate-git-diff draft-on-close pastes into editor and does not send", as
     false,
   );
 });
+
+test("annotate-git-diff closes a still-open window on protocol error before allowing another open", async () => {
+  const firstWindow = new FakeWindow();
+  const secondWindow = new FakeWindow();
+  const windows = [firstWindow, secondWindow];
+  let openCalls = 0;
+  const { controller, context } = createController({
+    openReviewWindow: async () => windows[openCalls++],
+  });
+
+  await controller.handler("", context.ctx);
+  firstWindow.emit("error", new Error("Malformed glimpse protocol line: nope"));
+  await flushAsyncWork();
+  assert.equal(firstWindow.closeCalls, 1);
+  assert.equal(
+    context.notifications.at(-1)?.message,
+    "Review failed: Malformed glimpse protocol line: nope",
+  );
+
+  await controller.handler("", context.ctx);
+  assert.equal(openCalls, 2);
+  assert.equal(secondWindow.closeCalls, 0);
+  controller.shutdown();
+  assert.equal(secondWindow.closeCalls, 1);
+});
+
+test("annotate-git-diff tolerates a window whose close throws after a protocol error", async () => {
+  const window = new FakeWindow();
+  window.close = () => {
+    window.closeCalls += 1;
+    throw new Error("process already exited");
+  };
+  const { controller, context } = createController({ window });
+
+  await controller.handler("", context.ctx);
+  assert.doesNotThrow(() => window.emit("error", new Error("boom")));
+  await flushAsyncWork();
+  assert.equal(window.closeCalls, 1);
+  assert.equal(context.notifications.at(-1)?.message, "Review failed: boom");
+  controller.shutdown();
+});

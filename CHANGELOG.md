@@ -42,6 +42,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- The annotate-git-diff review window is now closed when it reports a protocol error, so a malformed host message no longer leaves an unresponsive window open alongside a second one.
+- Notify now re-checks active background jobs when a re-armed settle timer fires, so jobs restarting during the debounce no longer produce a false finished notification.
+- Provider auth-health now keeps a run-level reauth-required observation over an older in-flight probe, and credential preflights that finish after session shutdown no longer notify or alter throttle state.
+- Primary-agent model and thinking changes are now classified as TLH-internal per operation instead of through shared flags, so a user model selection made while TLH is applying defaults keeps its session-only intent.
+- Session mirror replies no longer stay busy when a tree operation begins after a completed compaction but before its deferred release runs; unfinished and `willRetry` compactions still block.
+- Subagent continuation advance now retries lifecycle lock exhaustion a small bounded number of times, so a briefly held lock no longer aborts gate rejection or fails a resume after a successful spawn.
+- Subagent continuation gate rejection now retries lifecycle lock exhaustion, and continuation advance now retries generation conflicts iteratively instead of recursing, so sustained contention cannot overflow the stack.
 - Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
 - Concurrent resumes of one subagent run no longer start two writers on one session. The runner takes an exclusive session lease, and resume refuses retired, held, abandoned, record-less, corrupt and unreadable sessions with distinct messages and no resume hints (#829, #823, #874).
 - Resuming an older run ID can no longer bypass cumulative runtime, role-timeout retirement or the 80% context block, and retirement survives lifecycle-directory cleanup (#829, #830).
