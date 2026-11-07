@@ -68,10 +68,6 @@ TLH never automatically installs or pairs the companion, edits the normal profil
 
 ## Everything else
 
-### Footer status
-
-The footer refreshes local Git status every 8 seconds. Eligible non-default branches refresh GitHub pull-request metadata at most every 5 minutes; the next refresh after a branch or directory change bypasses that interval. Default branches are skipped, and local upstream tracking is not required. Cached PR data remains visible while a transient lookup fails and is retried on the same cadence.
-
 ### Subagents
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there's no separate subagent package to install or pin. Every bundled subagent starts a fresh child session, isolated from the primary agent and from each other, and gets only its task plus explicitly configured instructions. Which roles exist, how dispatch works, what's not supported (like caller-supplied `timeoutMs`), and how status, artifacts, and context diagnostics behave all live in [docs/subagents.md](docs/subagents.md). The imported test suites run in CI but are not published.
@@ -87,6 +83,17 @@ The full roster of bundled primaries and minors is in [docs/subagents.md](docs/s
 ### Direct model providers
 
 TLH treats Anthropic, OpenAI Codex, and xAI as first-class direct providers. Its bundled xAI defaults use Grok 4.6 for primary and higher-reasoning roles and Grok 4.3 for utility roles. For xAI subscription access, use `/login xai` when available; OpenAI defaults intentionally use `openai-codex` for the Codex subscription provider. Anthropic and xAI subscription and API-key authentication share the provider IDs `anthropic` and `xai`, so Pi's stored `/login` credential takes precedence over the corresponding environment key (`ANTHROPIC_API_KEY` or `XAI_API_KEY`). TLH does not select among multiple simultaneous credentials, add auth storage, or mutate user credentials.
+
+### Footer status
+
+The footer refreshes local Git status every 8 seconds. Eligible non-default branches refresh GitHub pull-request metadata at most every 5 minutes; the next refresh after a branch or directory change bypasses that interval. Default branches are skipped, and local upstream tracking is not required. Cached PR data remains visible while a transient lookup fails and is retried on the same cadence.
+
+### Bundled skills
+
+- [Show me](skills/show-me).
+- [Herdr](skills/herdr).
+- [Cmux](skills/cmux-cli).
+- [Tmux](skills/tmux).
 
 ### Customisation
 
@@ -148,21 +155,4 @@ This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: 
 - Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 - Maintainer release process: [`docs/releasing.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/releasing.md)
-
-## Third-party attribution
-
-The compact live-progress display shows whimsical thinking phrases while a subagent is reasoning. The phrase pool is adapted from [`mitsuhiko/agent-stuff`](https://github.com/mitsuhiko/agent-stuff) under the Apache-2.0 license. The full license text is at [`licenses/agent-stuff-Apache-2.0.txt`](licenses/agent-stuff-Apache-2.0.txt).
-
-### Bundled terminal skills
-
-TLH packages three upstream terminal-integration skills from reproducible commit pins. The consolidated license texts and attribution notices for all packaged upstream skills are in [`licenses/terminal-skills.txt`](licenses/terminal-skills.txt).
-
-- **Herdr** — [`herdrdev/herdr`](https://github.com/herdrdev/herdr/tree/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/skills/herdr), pinned to commit `2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01` (`herdr v0.9.5`, Apache-2.0). Runtime prerequisite: the `herdr` binary must be on `PATH`, and the agent must be inside a Herdr-managed pane with `HERDR_ENV=1`.
-- **cmux CLI** — [`manaflow-ai/cmux-skills`](https://github.com/manaflow-ai/cmux-skills/tree/c669666f8607529a39a1f74ac0e8462e922dd13f/skills/cmux-cli), pinned to commit `c669666f8607529a39a1f74ac0e8462e922dd13f` (MIT). Runtime prerequisite: the `cmux` binary must be on `PATH` and able to reach the cmux app/socket for the requested workflow. Its `scripts/reload.sh` and `scripts/cmux-debug-cli.sh` references are only for a tagged cmux source checkout and are intentionally not part of the packaged runtime closure.
-- **tmux** — [`openclaw/openclaw`](https://github.com/openclaw/openclaw/tree/7861f59337f9163040c9ccfb1c1f682ede689e27/skills/tmux), pinned to commit `7861f59337f9163040c9ccfb1c1f682ede689e27` (MIT). Runtime prerequisite: `tmux` must be on `PATH`; the upstream skill targets Darwin and Linux, and its helper scripts require Bash and standard `grep`, `date`, and `sleep` utilities.
-
-Only the runtime files directly referenced by these skills are bundled; upstream README files, `AGENTS.md`, and agent metadata are intentionally excluded. The optional related cmux skills named by the upstream guide are source-repository references, not runtime dependencies, and are not bundled.
-
-### Bundled show-me skill
-
-- **show-me** — [`humanlayer/skills`](https://github.com/humanlayer/skills/tree/6ab9013a10c28f5046f7f999549cd5328a0b30d7/plugins/show-me/skills/show-me), pinned to commit `6ab9013a10c28f5046f7f999549cd5328a0b30d7` (MIT).
+- Third-party attributions: [`licenses/`](licenses/).
