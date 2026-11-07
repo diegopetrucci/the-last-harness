@@ -2,11 +2,11 @@
  * Subagent Tool
  *
  * Full-featured subagent with sync and async modes.
- * - Sync (default): Streams output, renders markdown, tracks usage
- * - Async: Background execution, emits events when done
+ * - Async (default in TUI and RPC sessions): Background execution, emits events when done
+ * - Sync (async:false, or default in one-shot print/json runs): Streams output, renders markdown, tracks usage
  *
  * Modes: single (agent + task), parallel (tasks[]), and management/control actions
- * Toggle: async parameter (default: false)
+ * Toggle: async parameter (default: true in TUI/RPC, false in print/json)
  *
  * Config file: <getAgentDir()>/extensions/subagent/config.json (isolated TLH profile)
  */

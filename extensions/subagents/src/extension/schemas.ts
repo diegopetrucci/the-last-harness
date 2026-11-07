@@ -89,7 +89,8 @@ const SubagentParamsSchema = Type.Object(
     ),
     async: Type.Optional(
       Type.Boolean({
-        description: "Launch detached background work (default: false, or per config)",
+        description:
+          "Detached background work. Default: detached in interactive TUI and RPC sessions, awaited in one-shot print/json runs. async:false waits for the terminal result; async:true always detaches.",
       }),
     ),
     action: Type.Optional(

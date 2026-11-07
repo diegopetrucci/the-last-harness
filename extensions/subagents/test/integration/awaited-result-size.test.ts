@@ -174,7 +174,7 @@ describe("awaited result payload compaction", () => {
     const executor = makeExecutor(tempDir);
     const result = await executor.execute(
       "id",
-      { agent: "tester", task: "Run the full noisy test sweep" },
+      { agent: "tester", task: "Run the full noisy test sweep", async: false },
       new AbortController().signal,
       undefined,
       makeCtx(tempDir),

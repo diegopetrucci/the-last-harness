@@ -111,6 +111,7 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
         agent: "developer",
         task: "Return the deterministic faux child marker",
         agentScope: "user",
+        async: false,
       },
       new AbortController().signal,
       undefined,
@@ -306,7 +307,7 @@ second.result.runtime.getSessionName = () => undefined;
 const subagentTool = subagentExtension.tools.get("subagent").definition;
 const failedSubagentResult = await subagentTool.execute(
   "package-smoke-failure",
-  { agent: "__tlh_missing_agent__", task: "exercise Pi 0.83 failure patch" },
+  { agent: "__tlh_missing_agent__", task: "exercise Pi 0.83 failure patch", async: false },
   new AbortController().signal,
   undefined,
   secondSession.context,
