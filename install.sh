@@ -148,6 +148,15 @@ need_value() {
   printf '%s\n' "${value}"
 }
 
+# Trims leading/trailing whitespace so stage-0 treats a whitespace-padded value
+# like stage-1 does.
+trim_whitespace_stage0() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s\n' "${value}"
+}
+
 expand_path() {
   local path="$1"
   # literal '~/' in case arms is intentional; these arms detect unexpanded tildes passed as path arguments
@@ -637,6 +646,7 @@ required|scripts/lib/tlh-install-paths.mjs
 required|scripts/lib/tlh-safe-profile-write.mjs
 required|scripts/lib/tlh-install-utils.mjs
 required|scripts/lib/tlh-install-git.mjs
+required|scripts/lib/tlh-install-herdr-app.mjs
 required|scripts/lib/tlh-install-subagents.mjs
 required|scripts/lib/tlh-install-npm.mjs
 required|scripts/lib/tlh-install-profile-cleanup.mjs
@@ -656,6 +666,7 @@ optional|scripts/tlh-wrapper.mjs
 optional|scripts/tlh-install-state.mjs
 required|config/settings.defaults.json
 required|config/default-extensions.json
+required|config/herdr/tlh-mark.svg
 EOF_SUPPORT_FILES
   if [[ "${NO_SETTINGS}" != "true" ]]; then
     cat <<'EOF_SETTINGS_SUPPORT_FILES'
@@ -952,11 +963,21 @@ run_stage1() {
 
 dry_run_without_stage1() {
   local agent_dir bin_dir settings_path keybindings_path package_source
+  local herdr_app_home herdr_app_home_input herdr_programs_path
   agent_dir="$(normalize_path_for_stage0 "${AGENT_DIR_INPUT}")"
   bin_dir="$(normalize_path_for_stage0 "${BIN_DIR_INPUT}")"
   settings_path="${agent_dir}/settings.json"
   keybindings_path="${agent_dir}/keybindings.json"
   package_source="${TLH_PACKAGE_SOURCE:-git:github.com/${REPO}@${REF}}"
+  # Mirrors herdrAppHomePath() in scripts/tlh-install.mts: $HERDR_APP_HOME when set
+  # (trimmed, leading ~ expanded), else <home>/.config/herdr-app. Never created.
+  herdr_app_home_input="$(trim_whitespace_stage0 "${HERDR_APP_HOME:-}")"
+  if [[ -n "${herdr_app_home_input}" ]]; then
+    herdr_app_home="$(normalize_path_for_stage0 "${herdr_app_home_input}")"
+  else
+    herdr_app_home="$(normalize_path_for_stage0 "${HOME}/.config/herdr-app")"
+  fi
+  herdr_programs_path="${herdr_app_home%/}/programs.json"
 
   log "The Last Harness installer"
   log "Bootstrap-level/no-stage1 dry-run approximation (stage-1 was not downloaded or run)."
@@ -977,6 +998,27 @@ dry_run_without_stage1() {
   log "Would fetch tlh tickets support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."
+  local herdr_physical herdr_physical_home herdr_physical_agent herdr_protected=""
+  herdr_physical="$(realpath_for_compare_stage0 "${herdr_app_home}")"
+  herdr_physical_home="$(realpath_for_compare_stage0 "${HOME}")"
+  herdr_physical_agent="$(realpath_for_compare_stage0 "${agent_dir}")"
+  if [[ "${herdr_physical}" == "/" || "${herdr_physical}" == "${herdr_physical_home}" ]] \
+    || path_is_protected_pi_config_stage0 "${herdr_physical}" \
+    || path_within_or_equal_stage0 "${herdr_physical_agent}" "${herdr_physical}"; then
+    herdr_protected="true"
+  fi
+  if [[ "${herdr_protected}" == "true" ]]; then
+    log "Would skip the Herdr.app program entry: protected location (${herdr_app_home})"
+  elif [[ -d "${herdr_app_home}" ]]; then
+    if [[ "${herdr_physical}" != "${herdr_app_home%/}" ]]; then
+      log "Herdr.app home ${herdr_app_home} resolves to ${herdr_physical}"
+      herdr_app_home="${herdr_physical}"
+      herdr_programs_path="${herdr_app_home}/programs.json"
+    fi
+    log "Would merge the TLH program entry into the Herdr.app programs.json: ${herdr_programs_path} (backup first; icon in ${herdr_app_home%/}/tlh/; skipped if tlh.herdrApp.enabled is false)"
+  else
+    log "Would skip the Herdr.app program entry: app home not found (${herdr_app_home})."
+  fi
   log "Dry run only; no support files were downloaded."
   log ""
   log "Done. The Last Harness dry run completed without downloads or writes."

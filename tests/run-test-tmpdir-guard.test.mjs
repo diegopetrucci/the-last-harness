@@ -306,6 +306,18 @@ test("runWithTmpdirGuard sets TMPDIR/TMP/TEMP in child env", async () => {
   }
 });
 
+test("runWithTmpdirGuard pins HERDR_APP_HOME under the per-run TMPDIR", async () => {
+  const calls = [];
+  function spawn(cmd, args, opts) {
+    calls.push(opts?.env);
+    return fakeChild(0);
+  }
+  await runWithTmpdirGuard({ spawn, env: { ...process.env, HERDR_APP_HOME: "/real/herdr-app" } });
+  for (const env of calls) {
+    assert.equal(env?.HERDR_APP_HOME, join(env?.TMPDIR ?? "", "herdr-app-home"));
+  }
+});
+
 test("runWithTmpdirGuard scrubs PI_SUBAGENT_* env but preserves other keys", async () => {
   const envs = [];
   function spawn(_cmd, _args, opts) {

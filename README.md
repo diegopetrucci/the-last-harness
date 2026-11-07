@@ -138,7 +138,7 @@ This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: 
 - First-party subagent dispatch, supervision, migration, and undo steps: [`docs/subagents.md`](docs/subagents.md)
 - [Project custom subagents](docs/custom-subagents.md) — exact Git-root layout, persisted trust, and migration/undo rules
 - TLH model defaults, thinking levels, and provider selection: [`docs/models.md`](docs/models.md)
-- Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
+- Install, update, uninstall, paths, undo steps, and the Herdr.app entry opt-out: [`docs/install.md`](docs/install.md)
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)

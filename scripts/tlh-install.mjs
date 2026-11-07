@@ -15,6 +15,7 @@ import { LEGACY_MANAGED_PROFILE_ARTIFACTS, cleanupLegacyManagedProfileArtifacts 
 import { mcpAdapterCutoverHeldForInstall, pinnedNpmInstallPresent, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
 import { MIN_NODE_VERSIONS, NODE_REQUIREMENT_TEXT, assertSupportedNodeRuntime, assignRequiredEqualsValue, nodeVersionMeetsMinimum, outputLines, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { configureHerdrPrograms } from "./lib/tlh-install-herdr-app.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
@@ -1428,6 +1429,14 @@ async function runInstallFlow(config) {
     configureGnosis(config);
     configureTickets(config);
     await writeWrapper(config);
+    configureHerdrPrograms({
+        ...config,
+        iconSourcePath: config.supportFilePaths.TLH_HERDR_ICON_FILE || "",
+    }, {
+        log: (message) => log(config, message),
+        detail: (message) => detailLog(config, message),
+        warn,
+    });
     pruneRuntimeCache(config, profileCleanupIo(config, config), runtimePrefix);
     printSummary(config);
 }
