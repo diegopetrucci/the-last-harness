@@ -30,6 +30,16 @@ Bundled files: skills/show-me/SKILL.md
 License: MIT
 Copyright: Copyright (c) 2026 HumanLayer
 
+Merge-risk skill
+----------------
+Source: https://github.com/warpdotdev/common-skills/tree/8792394ff1b655e0af451b8fabb68ef0cfcbd208/.agents/skills/merge-risk
+Pinned commit: 8792394ff1b655e0af451b8fabb68ef0cfcbd208
+Bundled files: skills/merge-risk/SKILL.md
+License: MIT
+Copyright: Copyright (c) 2026 Denver Technologies, Inc.
+Note: The upstream frontmatter credits Matt Pocock's pr skill
+(https://github.com/mattpocock/skills/blob/main/skills/engineering/pr/SKILL.md).
+
 OpenClaw tmux skill
 -------------------
 Source: https://github.com/openclaw/openclaw/tree/7861f59337f9163040c9ccfb1c1f682ede689e27/skills/tmux
@@ -253,6 +263,7 @@ MIT License
 Copyright (c) 2026 Manaflow, Inc.
 Copyright (c) 2026 OpenClaw Foundation
 Copyright (c) 2026 HumanLayer
+Copyright (c) 2026 Denver Technologies, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

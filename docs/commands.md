@@ -355,12 +355,13 @@ These commands are provided by bundled default extensions and are visible in TLH
 
 These bundled skills ship with TLH and remain visible in TLH autocomplete.
 
-| Command           | Description                                                                                                |
-| ----------------- | ---------------------------------------------------------------------------------------------------------- |
-| `/skill:cmux-cli` | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows             |
-| `/skill:herdr`    | Load the bundled Herdr skill for explicitly requested pane, tab, workspace, and agent control              |
-| `/skill:show-me`  | Load the bundled show-me skill for visual explanations with diagrams, sketches, and focused HTML artifacts |
-| `/skill:tmux`     | Load the bundled tmux skill for session/pane control, output capture, key sending, and prompt monitoring   |
+| Command             | Description                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `/skill:cmux-cli`   | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows                         |
+| `/skill:herdr`      | Load the bundled Herdr skill for explicitly requested pane, tab, workspace, and agent control                          |
+| `/skill:merge-risk` | Load the bundled merge-risk skill to score a PR on alignment, impact, verification, rollback cost, and error detection |
+| `/skill:show-me`    | Load the bundled show-me skill for visual explanations with diagrams, sketches, and focused HTML artifacts             |
+| `/skill:tmux`       | Load the bundled tmux skill for session/pane control, output capture, key sending, and prompt monitoring               |
 
 ---
 

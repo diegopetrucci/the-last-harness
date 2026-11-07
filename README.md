@@ -91,6 +91,7 @@ The footer refreshes local Git status every 8 seconds. Eligible non-default bran
 ### Bundled skills
 
 - [Show me](skills/show-me).
+- [Merge risk](skills/merge-risk).
 - [Herdr](skills/herdr).
 - [Cmux](skills/cmux-cli).
 - [Tmux](skills/tmux).
