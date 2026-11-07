@@ -1070,3 +1070,61 @@ test("backoff escalates 60s → 120s → 300s and resets to no-throttle after su
 
   cleanupTempDir(fixture);
 });
+
+test("preflight resolving after session_shutdown does not notify or mutate throttle state", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-preflight-test-", { cwd: true, test: t });
+  const clock = createClock(1_000_000);
+  const store = createProviderAuthHealthStore({ now: clock.now });
+  let probeCallCount = 0;
+  let rejectFirst;
+  const getProviderAuth = () => {
+    probeCallCount += 1;
+    if (probeCallCount === 1) {
+      return new Promise((_resolve, reject) => {
+        rejectFirst = () =>
+          reject(
+            Object.assign(new Error("OAuth refresh failed for anthropic"), {
+              name: "ModelsError",
+              code: "oauth",
+              cause: new Error("invalid_grant"),
+            }),
+          );
+      });
+    }
+    return new Promise(() => {});
+  };
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    registerTlhPrimaryAgentRuntime(pi, {
+      env: {},
+      subagentMetadata: [],
+      getProviderAuthHealthStore: () => store,
+      now: clock.now,
+    });
+    const toolCall = pi.events.find((e) => e.name === "tool_call")?.handler;
+    const shutdown = pi.events.filter((e) => e.name === "session_shutdown");
+    assert.ok(toolCall, "tool_call handler must be registered");
+
+    const notifications = [];
+    const ctx = createToolCallCtx({ getProviderAuth });
+    ctx.sessionManager = { getBranch: () => ARCHITECT_BRANCH };
+    ctx.ui = { notify: (message) => notifications.push(message) };
+
+    await toolCall(subagentEvent("anthropic/claude-opus-4"), ctx);
+    assert.equal(probeCallCount, 1, "preflight must have started");
+
+    for (const entry of shutdown) await entry.handler({}, ctx);
+
+    rejectFirst();
+    await new Promise((r) => setImmediate(r));
+
+    assert.deepEqual(notifications, [], "obsolete preflight must not notify");
+
+    // Had the stale completion set a backoff, this dispatch would be throttled.
+    await toolCall(subagentEvent("anthropic/claude-opus-4"), ctx);
+    assert.equal(probeCallCount, 2, "obsolete preflight must not leave throttle state behind");
+  });
+
+  cleanupTempDir(fixture);
+});

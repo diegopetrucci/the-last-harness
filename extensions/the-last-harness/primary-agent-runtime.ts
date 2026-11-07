@@ -308,6 +308,9 @@ function createTlhPrimaryAgentRuntime(
   // In-flight coalescing is handled by the store itself; this throttle prevents
   // re-scheduling more often than the chosen backoff window.
   const preflightThrottle = new Map<string, { failures: number; nextAllowedAt: number }>();
+  // Lifecycle epoch: bumped at session_shutdown so preflights scheduled before
+  // shutdown cannot mutate throttle state or notify after the session ended.
+  let preflightEpoch = 0;
 
   // Session-scoped per-provider notification state for reauth warnings.
   // Tracks which providers have already received a one-time actionable notification
@@ -431,9 +434,11 @@ function createTlhPrimaryAgentRuntime(
       nextAllowedAt: currentNow + 300_000,
     });
 
+    const scheduledEpoch = preflightEpoch;
     void store
       .probeProvider(modelRegistry, provider)
       .then((status) => {
+        if (scheduledEpoch !== preflightEpoch) return;
         const t = nowFn();
         if (status === "healthy") {
           preflightThrottle.delete(provider);
@@ -1419,6 +1424,7 @@ function createTlhPrimaryAgentRuntime(
         notifiedForReauth.clear();
         pendingReauthNotifications.clear();
         preflightThrottle.clear();
+        preflightEpoch += 1;
       });
     });
 

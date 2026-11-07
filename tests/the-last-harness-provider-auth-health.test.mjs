@@ -828,3 +828,22 @@ test("pinned-runtime API contract: getProviderAuthStatus exists on ModelRegistry
     ].join(" "),
   );
 });
+
+test("run-level observation recorded while a probe is in flight is not overwritten by the older probe", async () => {
+  const clock = createNow();
+  const store = createProviderAuthHealthStore({ now: clock.now });
+  let release;
+  const registry = makeRegistry({
+    getProviderAuth: () =>
+      new Promise((resolve) => {
+        release = () => resolve({ ok: true, auth: {} });
+      }),
+  });
+
+  const probe = store.probeProvider(registry, "anthropic");
+  store.recordRunLevelAuthObservation("anthropic");
+  release();
+  await probe;
+
+  assert.equal(store.getEntry("anthropic")?.status, "reauth-required");
+});

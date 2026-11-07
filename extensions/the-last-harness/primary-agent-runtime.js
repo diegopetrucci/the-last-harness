@@ -76,6 +76,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     let primaryAgentDefaultSelection = DEFAULT_PRIMARY_AGENT;
     let sessionPrimaryAgentOverride;
     const preflightThrottle = new Map();
+    let preflightEpoch = 0;
     const notifiedForReauth = new Set();
     const pendingReauthNotifications = new Set();
     function shouldPreflightAtDispatch(provider, store, now) {
@@ -116,9 +117,12 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             failures: existing?.failures ?? 0,
             nextAllowedAt: currentNow + 300_000,
         });
+        const scheduledEpoch = preflightEpoch;
         void store
             .probeProvider(modelRegistry, provider)
             .then((status) => {
+            if (scheduledEpoch !== preflightEpoch)
+                return;
             const t = nowFn();
             if (status === "healthy") {
                 preflightThrottle.delete(provider);
@@ -787,6 +791,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 notifiedForReauth.clear();
                 pendingReauthNotifications.clear();
                 preflightThrottle.clear();
+                preflightEpoch += 1;
             });
         });
         pi.on("before_agent_start", async (event, ctx) => {

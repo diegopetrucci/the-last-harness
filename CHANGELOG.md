@@ -41,6 +41,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Provider auth-health now keeps a run-level reauth-required observation over an older in-flight probe, and credential preflights that finish after session shutdown no longer notify or alter throttle state.
 - Subagent continuation advance now retries lifecycle lock exhaustion a small bounded number of times, so a briefly held lock no longer aborts gate rejection or fails a resume after a successful spawn.
 - Subagent continuation gate rejection now retries lifecycle lock exhaustion, and continuation advance now retries generation conflicts iteratively instead of recursing, so sustained contention cannot overflow the stack.
 - Fixed the session mirror observer reporting idle while the agent was active when lifecycle events arrived faster than queued markers drained.
