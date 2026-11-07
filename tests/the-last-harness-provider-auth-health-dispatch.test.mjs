@@ -1128,3 +1128,50 @@ test("preflight resolving after session_shutdown does not notify or mutate throt
 
   cleanupTempDir(fixture);
 });
+
+test("stale healthy preflight after run-level reauth observation keeps throttle state", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-preflight-test-", { cwd: true, test: t });
+  const clock = createClock(1_000_000);
+  const store = createProviderAuthHealthStore({ now: clock.now });
+  let probeCallCount = 0;
+  let resolveFirst;
+  const getProviderAuth = () => {
+    probeCallCount += 1;
+    if (probeCallCount === 1) {
+      return new Promise((resolve) => {
+        resolveFirst = () => resolve({ ok: true });
+      });
+    }
+    return new Promise(() => {});
+  };
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    registerTlhPrimaryAgentRuntime(pi, {
+      env: {},
+      subagentMetadata: [],
+      getProviderAuthHealthStore: () => store,
+      now: clock.now,
+    });
+    const toolCall = pi.events.find((e) => e.name === "tool_call")?.handler;
+    assert.ok(toolCall, "tool_call handler must be registered");
+
+    const ctx = createToolCallCtx({ getProviderAuth });
+    ctx.sessionManager = { getBranch: () => ARCHITECT_BRANCH };
+
+    await toolCall(subagentEvent("anthropic/claude-opus-4"), ctx);
+    assert.equal(probeCallCount, 1, "preflight must have started");
+
+    // A real rejected request lands while the probe is in flight.
+    store.recordRunLevelAuthObservation("anthropic");
+    resolveFirst();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(store.getEntry("anthropic")?.status, "reauth-required");
+
+    // Had the stale healthy result deleted the throttle, this would re-probe.
+    await toolCall(subagentEvent("anthropic/claude-opus-4"), ctx);
+    assert.equal(probeCallCount, 1, "stale healthy result must not clear preflight throttle");
+  });
+
+  cleanupTempDir(fixture);
+});
