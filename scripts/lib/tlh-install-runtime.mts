@@ -16,6 +16,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -98,6 +99,23 @@ export interface RuntimeProvisionResult {
 // ---------------------------------------------------------------------------
 // Exported helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * True when <prefix>/bin/pi resolves (realpath) to the CLI inside the current
+ * <prefix>/lib.  Compares resolved destinations, not link text, so equivalent
+ * absolute links stay valid.  Regular files, dangling links, and links to other
+ * locations return false.
+ */
+export function piBinResolvesToCurrentRuntimeCli(prefix: string): boolean {
+  try {
+    const expected = realpathSync(
+      join(prefix, "lib", PI_BIN_SYMLINK_TARGET.slice("../lib/".length)),
+    );
+    return realpathSync(join(prefix, "bin", "pi")) === expected;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Compare the runtime's lib/package-lock.json byte-for-byte with the shipped lock.
@@ -677,19 +695,36 @@ export function provisionPiRuntime(
           io.verboseLog(`[dry-run] Would recover interrupted swap: ${newestPrev} → ${libDir}`);
         } else {
           io.verboseLog(`Recovering from interrupted swap: ${newestPrev} → ${libDir}`);
+          let libRestored = false;
+          let pairedPiBin: string | null = null;
           try {
             renameSync(newestPrev, libDir);
+            libRestored = true;
             // Restore paired bin/pi backup if bin/pi is absent.
             if (!pathExistsOrIsSymlink(piBin)) {
-              const pairedPiBinName = `${basename(newestPrev)}-bin-pi`;
-              const pairedPiBin = join(piBinDir, pairedPiBinName);
-              if (pathExistsOrIsSymlink(pairedPiBin)) {
+              const candidate = join(piBinDir, `${basename(newestPrev)}-bin-pi`);
+              if (pathExistsOrIsSymlink(candidate)) {
+                pairedPiBin = candidate;
                 mkdirSync(piBinDir, { recursive: true });
-                renameSync(pairedPiBin, piBin);
+                renameSync(candidate, piBin);
+                pairedPiBin = null;
               }
             }
-          } catch {
-            // best-effort; continue so the reuse check and stale cleanup can run
+          } catch (recoveryError) {
+            // Continue so the reuse check and a fresh install can run, but report
+            // the failure; the backups are kept until a replacement runtime is
+            // staged and swapped in successfully.
+            const reason =
+              recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+            const surviving = libRestored
+              ? `The runtime was restored to ${libDir}, but the bin/pi backup remains at ${pairedPiBin}; ` +
+                `restore it to ${piBin} manually if needed.`
+              : `The runtime backup remains at ${newestPrev}; ` +
+                `restore it to ${libDir} manually if the fresh install fails.`;
+            io.log(
+              `Warning: could not fully recover interrupted runtime swap: ${reason}. ` +
+                `${surviving} TLH keeps backups until a replacement runtime is installed.`,
+            );
           }
         }
       }
@@ -707,7 +742,25 @@ export function provisionPiRuntime(
         );
       }
       const lockOk = runtimeLockIsIdentical(prefix, shippedLockPath);
-      if (versionOk && lockOk) {
+      // bin/pi must resolve to the current lib's CLI; an interrupted swap can
+      // leave a same-version regular-file bin/pi.  Only a TLH-created runtime is
+      // repaired; migrated/shared prefixes keep today's reuse (warn only) so
+      // foreign executables are never replaced.
+      let binOk = true;
+      if (versionOk && lockOk && !piBinResolvesToCurrentRuntimeCli(prefix)) {
+        if (origin === "created") {
+          binOk = false;
+          io.verboseLog(
+            `TLH private Pi runtime bin/pi does not resolve to the current runtime CLI — repairing: ${piBin}`,
+          );
+        } else {
+          io.log(
+            `Warning: ${piBin} does not resolve to the TLH runtime CLI in ${libDir}; ` +
+              `leaving the existing migrated runtime unchanged.`,
+          );
+        }
+      }
+      if (versionOk && lockOk && binOk) {
         io.verboseLog(`TLH private Pi runtime is valid: ${piBin}`);
         if (!dryRun) {
           // Clean up any stale staging/previous/failed dirs and bin/pi backups left
@@ -780,7 +833,16 @@ export function provisionPiRuntime(
     }
 
     // ── Stale dir cleanup (TLH-owned prefix, real run only) ──────────────────
-    cleanupStaleRuntimeDirs(prefix);
+    // Only disposable staging/failed dirs are removed now; previous-runtime and
+    // bin/pi backups may be the only recoverable copy, so they are kept until the
+    // replacement runtime has been swapped in and validated.
+    const isRecoverableBackup = (entry: string): boolean => {
+      const name = basename(entry);
+      return name.startsWith(RUNTIME_PREVIOUS_DIR_PREFIX);
+    };
+    for (const entry of listStaleRuntimeEntries(prefix)) {
+      if (!isRecoverableBackup(entry)) rmSync(entry, { recursive: true, force: true });
+    }
 
     // ── Create staging dir and copy shipped manifest ──────────────────────────
     mkdirSync(prefix, { recursive: true });
@@ -817,7 +879,21 @@ export function provisionPiRuntime(
     rmSync(stagedBinDir, { recursive: true, force: true });
 
     // ── Swap: lib → previous, staging → lib ──────────────────────────────────
-    const previousDir = join(prefix, `${RUNTIME_PREVIOUS_DIR_PREFIX}${process.pid}`);
+    // Pick a collision-free backup name: a same-pid leftover (pid reuse) may be
+    // the only recoverable copy, so never overwrite or delete it.  Consumers
+    // match backups by prefix only, and the paired bin/pi backup derives its name
+    // from the chosen one.
+    let previousName = `${RUNTIME_PREVIOUS_DIR_PREFIX}${process.pid}`;
+    for (let n = 1; ; n++) {
+      if (
+        !pathExistsOrIsSymlink(join(prefix, previousName)) &&
+        !pathExistsOrIsSymlink(join(piBinDir, `${previousName}-bin-pi`))
+      ) {
+        break;
+      }
+      previousName = `${RUNTIME_PREVIOUS_DIR_PREFIX}${process.pid}-${n}`;
+    }
+    const previousDir = join(prefix, previousName);
     let renamedLibToPrevious = false;
     try {
       if (existsSync(libDir)) {
@@ -844,7 +920,7 @@ export function provisionPiRuntime(
     // stale-cleanup and uninstall patterns already cover it.
     // mkdirSync, rename-aside, and symlinkSync are all inside the rollback-
     // protected block so any failure there also triggers lib restore.
-    const prevPiBinName = `${RUNTIME_PREVIOUS_DIR_PREFIX}${process.pid}-bin-pi`;
+    const prevPiBinName = `${previousName}-bin-pi`;
     const prevPiBin = join(piBinDir, prevPiBinName);
     try {
       mkdirSync(piBinDir, { recursive: true });
@@ -866,6 +942,7 @@ export function provisionPiRuntime(
     }
 
     // ── Remove backups now that the new runtime is validated ────────────────────
+    // Includes older recoverable backups kept earlier (e.g. after a failed recovery).
     if (renamedLibToPrevious && existsSync(previousDir)) {
       rmSync(previousDir, { recursive: true, force: true });
     }
@@ -877,6 +954,8 @@ export function provisionPiRuntime(
         // best-effort
       }
     }
+
+    cleanupStaleRuntimeDirs(prefix);
 
     return { installed: true };
   } finally {

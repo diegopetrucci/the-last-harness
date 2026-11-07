@@ -45,6 +45,10 @@ All notable changes to The Last Harness will be documented in this file.
 - The annotate-git-diff review window is now closed when it reports a protocol error, so a malformed host message no longer leaves an unresponsive window open alongside a second one.
 - Notify now re-checks active background jobs when a re-armed settle timer fires, so jobs restarting during the debounce no longer produce a false finished notification.
 - Provider auth-health now keeps a run-level reauth-required observation over an older in-flight probe, and credential preflights that finish after session shutdown no longer notify or alter throttle state.
+- A discarded stale healthy credential preflight no longer clears reauth throttle or notification state while the provider is still marked reauth-required.
+- The installer now reports a failed interrupted-runtime-swap recovery and keeps previous-runtime and `bin/pi` backups until the replacement runtime is installed and validated.
+- The installer now verifies that a TLH-created runtime's `bin/pi` resolves to the CLI in its current `lib` before reusing it, repairing a stale regular-file `bin/pi` left by an interrupted swap; migrated prefixes only get a warning.
+- Uninstall's skip message for a runtime whose pi layout is missing now names the exact TLH-owned leftover paths (ownership marker, TLH manifests, install locks) that exist so they can be removed manually; nothing extra is deleted.
 - Primary-agent model and thinking changes are now classified as TLH-internal per operation instead of through shared flags, so a user model selection made while TLH is applying defaults keeps its session-only intent.
 - Session mirror replies no longer stay busy when a tree operation begins after a completed compaction but before its deferred release runs; unfinished and `willRetry` compactions still block.
 - Subagent continuation advance now retries lifecycle lock exhaustion a small bounded number of times, so a briefly held lock no longer aborts gate rejection or fails a resume after a successful spawn.

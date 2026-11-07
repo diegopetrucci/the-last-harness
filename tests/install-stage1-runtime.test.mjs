@@ -1051,7 +1051,7 @@ function createOwnedRuntimeCompileCacheFixture(t) {
   );
   writeRuntimeMarker(runtimeDir);
   // Seed lib/package-lock.json so the reuse check passes without calling npm.
-  seedRuntimeLock(runtimeDir);
+  seedRuntimeLock(runtimeDir, { linkPi: true });
   writeFakeCommand(fakebin, "git", "exit 0");
   writeFakeCommand(fakebin, "npm", "exit 97");
   writeFakeTk(fakebin);
@@ -1566,7 +1566,7 @@ test("runtime ownership: existing valid marker (path-matched) is accepted on reu
   writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"\nexit 97`);
   writeLoggingPi(join(runtimeDir, "bin"), piLog, TLH_PINNED_PI_VERSION);
   // Seed lib/package-lock.json so the reuse check passes without calling npm.
-  seedRuntimeLock(runtimeDir);
+  seedRuntimeLock(runtimeDir, { linkPi: true });
 
   // Write a valid ownership marker into the pre-existing runtime.
   const realRuntimeDir = realpathSync(runtimeDir);

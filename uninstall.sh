@@ -830,6 +830,16 @@ INSTALL_STATE="$(tlh_ownership_marker_path "${AGENT_DIR}")"
 RUNTIME_DIR="${PROFILE_ROOT}/runtime"
 RUNTIME_BIN="${RUNTIME_DIR}/bin/pi"
 
+# True when $1 is a regular non-symlink file whose line 1 is exactly '{' and line 2
+# is exactly '  "name": "tlh-pi-runtime",' (generator/npm shape; fail-closed).
+runtime_manifest_is_tlh_owned() {
+  local _manifest="$1" _l1 _l2
+  [[ -f "${_manifest}" && ! -L "${_manifest}" ]] || return 1
+  _l1="$(sed -n '1p' "${_manifest}" 2>/dev/null || true)"
+  _l2="$(sed -n '2p' "${_manifest}" 2>/dev/null || true)"
+  [[ "${_l1}" == '{' && "${_l2}" == '  "name": "tlh-pi-runtime",' ]]
+}
+
 # ── safety guard: refuse any path under normal Pi config (~/.pi) ───────────────
 # Runs before wrapper-name character validation so that traversal via ".." in
 # WRAPPER_NAME (e.g. "../.pi/agent/foo") is caught here rather than by the
@@ -1012,8 +1022,22 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
     PI_SKIP_REASON="TLH will not remove through a symlinked runtime child (${RUNTIME_DIR}/lib or ${RUNTIME_DIR}/bin is a symlink); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
   elif [[ ! -f "${RUNTIME_BIN}" || ! -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
     # Marker valid but positive pi layout absent.
+    # Message-only: name the TLH-owned leftovers that exist (same names and
+    # ownership checks as the migrated cleanup below) so they can be removed
+    # manually. Nothing is deleted here.
+    _leftover_list="$(printf '%q' "${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}")"
+    for _leftover_manifest in "${RUNTIME_DIR}/lib/package.json" "${RUNTIME_DIR}/lib/package-lock.json"; do
+      if runtime_manifest_is_tlh_owned "${_leftover_manifest}"; then
+        _leftover_list+=", $(printf '%q' "${_leftover_manifest}")"
+      fi
+    done
+    for _leftover_lock in "${RUNTIME_DIR}/.tlh-runtime-install.lock" "${RUNTIME_DIR}/.tlh-runtime-install.lock.reclaim"; do
+      if [[ -d "${_leftover_lock}" && ! -L "${_leftover_lock}" ]]; then
+        _leftover_list+=", $(printf '%q' "${_leftover_lock}")"
+      fi
+    done
     REMOVE_PI=false
-    PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
+    PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). TLH-owned leftover paths that currently exist (not removed): ${_leftover_list}. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
   elif [[ "${_runtime_marker_origin}" == "migrated" ]]; then
     # Marker is authoritative: origin=migrated always removes surgically,
     # regardless of install-state or co-located packages.
@@ -1028,19 +1052,11 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
     # the file (fail-closed; no greedy mid-line name match).
     _lib_pjson="${RUNTIME_DIR}/lib/package.json"
     _lib_lock="${RUNTIME_DIR}/lib/package-lock.json"
-    if [[ -f "${_lib_pjson}" && ! -L "${_lib_pjson}" ]]; then
-      _pjson_l1="$(sed -n '1p' "${_lib_pjson}" 2>/dev/null || true)"
-      _pjson_l2="$(sed -n '2p' "${_lib_pjson}" 2>/dev/null || true)"
-      if [[ "${_pjson_l1}" == '{' && "${_pjson_l2}" == '  "name": "tlh-pi-runtime",' ]]; then
-        _RUNTIME_PKG_JSON_REMOVE=true
-      fi
+    if runtime_manifest_is_tlh_owned "${_lib_pjson}"; then
+      _RUNTIME_PKG_JSON_REMOVE=true
     fi
-    if [[ -f "${_lib_lock}" && ! -L "${_lib_lock}" ]]; then
-      _lock_l1="$(sed -n '1p' "${_lib_lock}" 2>/dev/null || true)"
-      _lock_l2="$(sed -n '2p' "${_lib_lock}" 2>/dev/null || true)"
-      if [[ "${_lock_l1}" == '{' && "${_lock_l2}" == '  "name": "tlh-pi-runtime",' ]]; then
-        _RUNTIME_LOCK_JSON_REMOVE=true
-      fi
+    if runtime_manifest_is_tlh_owned "${_lib_lock}"; then
+      _RUNTIME_LOCK_JSON_REMOVE=true
     fi
     # Remove the per-runtime install lock dir when it is a non-symlink directory.
     _install_lock_dir="${RUNTIME_DIR}/.tlh-runtime-install.lock"

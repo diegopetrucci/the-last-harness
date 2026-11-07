@@ -125,6 +125,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 return;
             const t = nowFn();
             if (status === "healthy") {
+                if (store.getEntry(provider)?.status !== "healthy")
+                    return;
                 preflightThrottle.delete(provider);
                 notifiedForReauth.delete(provider);
             }
