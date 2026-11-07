@@ -776,3 +776,51 @@ for (const { label, filename, before, after, workingTree } of [
     assert.equal(contents.modifiedContent, after);
   });
 }
+
+test("getCommitFiles compares merge commits with their first parent", async (t) => {
+  const repoRoot = tempFixture(t);
+  runCommand("git", ["init", "-b", "main"], repoRoot);
+  runCommand("git", ["config", "user.name", "TLH Test"], repoRoot);
+  runCommand("git", ["config", "user.email", "tlh@example.com"], repoRoot);
+
+  writeFileSync(join(repoRoot, "config.txt"), "base\\n");
+  runCommand("git", ["add", "."], repoRoot);
+  runCommand("git", ["commit", "-m", "root"], repoRoot);
+  const rootSha = latestCommitSha(repoRoot);
+  runCommand("git", ["checkout", "-b", "topic"], repoRoot);
+  writeFileSync(join(repoRoot, "config.txt"), "topic\\n");
+  runCommand("git", ["add", "."], repoRoot);
+  runCommand("git", ["commit", "-m", "topic"], repoRoot);
+  const topicSha = latestCommitSha(repoRoot);
+  runCommand("git", ["checkout", "main"], repoRoot);
+  writeFileSync(join(repoRoot, "config.txt"), "main\\n");
+  runCommand("git", ["add", "."], repoRoot);
+  runCommand("git", ["commit", "-m", "main"], repoRoot);
+  spawnSync("git", ["merge", "--no-ff", "--no-commit", "topic"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  writeFileSync(join(repoRoot, "config.txt"), "resolved\\n");
+  runCommand("git", ["add", "config.txt"], repoRoot);
+  runCommand("git", ["commit", "-m", "merge"], repoRoot);
+  const mergeSha = runCommand("git", ["rev-parse", "HEAD"], repoRoot).stdout.trim();
+
+  const pi = createExecApi();
+
+  const rootFiles = await getCommitFiles(pi, repoRoot, rootSha);
+  assert.equal(rootFiles.length, 1, "expected exactly one root commit file");
+  assert.equal(rootFiles[0].gitDiff?.status, "added");
+  assert.equal(rootFiles[0].path, "config.txt");
+
+  const topicFiles = await getCommitFiles(pi, repoRoot, topicSha);
+  assert.equal(topicFiles.length, 1, "expected exactly one topic commit file");
+  assert.equal(topicFiles[0].gitDiff?.status, "modified");
+  assert.equal(topicFiles[0].path, "config.txt");
+
+  const files = await getCommitFiles(pi, repoRoot, mergeSha);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].path, "config.txt");
+  const contents = await loadReviewFileContents(pi, repoRoot, files[0], "commits", mergeSha);
+  assert.equal(contents.originalContent, "main\\n");
+  assert.equal(contents.modifiedContent, "resolved\\n");
+});
