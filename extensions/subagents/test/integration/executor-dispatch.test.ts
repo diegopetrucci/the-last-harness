@@ -26,7 +26,7 @@ import {
   PROVIDER_AWARE_FALLBACK_MODELS,
 } from "../../../the-last-harness-subagent-safety.mjs";
 import type { MockPi } from "../support/helpers.ts";
-import { readAsyncPayload } from "../support/async-execution-helpers.ts";
+import { readAsyncPayload, waitForPidsToExit } from "../support/async-execution-helpers.ts";
 
 type DiscoverAgents = typeof discoverAgents;
 
@@ -1261,4 +1261,67 @@ process.stdout.write(ticket.body);
       removeTempDir(tempHome);
     }
   });
+  {
+    const runWith = async (
+      mode: "tui" | "rpc" | "json" | "print",
+      params: Record<string, unknown>,
+    ) => {
+      const ctx = makeMinimalCtx(tempDir);
+      ctx.mode = mode;
+      const result = await makeExecutor().execute(
+        "id",
+        { agent: "echo", task: "hi", ...params },
+        new AbortController().signal,
+        undefined,
+        ctx,
+      );
+      assert.equal(result.isError, undefined);
+      const text = result.content[0]?.text ?? "";
+      const asyncId = result.details?.asyncId;
+      const asyncDir = result.details?.asyncDir;
+      if (text.startsWith("Async: ")) {
+        // Detached runs return an immediate "Async:" handle with no child results yet.
+        assert.ok(asyncId && asyncDir, "expected a detached run handle");
+        assert.deepEqual(result.details?.results, []);
+        // Reap the runner before fixture teardown so it cannot outlive tempDir or race the
+        // next test's mock queue.
+        await readAsyncPayload(asyncId);
+        const statusPath = path.join(asyncDir, "status.json");
+        const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as {
+          pid?: number;
+          runnerPid?: number;
+        };
+        await waitForPidsToExit([status.pid, status.runnerPid], `detached runner ${asyncId}`);
+        return "detached" as const;
+      }
+      // Awaited runs return the terminal result directly.
+      assert.match(text, /^subagent results\n[\s\S]*Status: completed/);
+      assert.equal(result.details?.results?.length, 1);
+      return "awaited" as const;
+    };
+
+    it("detaches when async is omitted in a TUI session", async () => {
+      assert.equal(await runWith("tui", {}), "detached");
+    });
+
+    it("detaches when async is omitted in an RPC session", async () => {
+      assert.equal(await runWith("rpc", {}), "detached");
+    });
+
+    it("awaits when async is omitted in a print session", async () => {
+      assert.equal(await runWith("print", {}), "awaited");
+    });
+
+    it("awaits when async:false is explicit in a TUI session", async () => {
+      assert.equal(await runWith("tui", { async: false }), "awaited");
+    });
+
+    it("awaits when async is omitted in a json session", async () => {
+      assert.equal(await runWith("json", {}), "awaited");
+    });
+
+    it("detaches when async:true is explicit in a json session", async () => {
+      assert.equal(await runWith("json", { async: true }), "detached");
+    });
+  }
 });

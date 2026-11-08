@@ -49,7 +49,7 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
     run = undefined;
   });
 
-  it("uses the default awaited route in a real parent session", async () => {
+  it("uses the explicit async:false awaited route in a real parent session", async () => {
     const {
       routeParentThroughSubagent,
       runRealSubagentSession,
@@ -83,6 +83,7 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
             agent: "developer",
             task: "Return the marker from the faux child provider.",
             agentScope: "user",
+            async: false,
           },
         }),
       });

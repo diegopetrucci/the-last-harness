@@ -441,6 +441,9 @@ function createTlhPrimaryAgentRuntime(
         if (scheduledEpoch !== preflightEpoch) return;
         const t = nowFn();
         if (status === "healthy") {
+          // A run-level auth observation invalidates this probe's store write but
+          // not its returned status; only trust "healthy" if the store agrees.
+          if (store.getEntry(provider)?.status !== "healthy") return;
           preflightThrottle.delete(provider);
           notifiedForReauth.delete(provider); // re-arm for a future genuine failure
           // Do NOT clear pendingReauthNotifications here. A pending intent is

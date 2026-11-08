@@ -18,6 +18,7 @@ import {
   runInstaller,
   safeInstallerPath,
   scrubInstallerEnv,
+  linkRuntimePiToLibCli,
   seedRuntimeLock,
   writeFakeCommand,
   writeFakeNpmCiInstaller,
@@ -219,6 +220,7 @@ test("lockfile install: matching version + identical lock reuses without npm", (
   mkdirSync(join(runtimeDir, "bin"), { recursive: true });
   writeLoggingPi(join(runtimeDir, "bin"), piLog, TLH_PINNED_PI_VERSION);
   seedRuntimeLock(runtimeDir);
+  linkRuntimePiToLibCli(runtimeDir);
   const realRuntimeDir = realpathSync(runtimeDir);
   writeFileSync(
     join(runtimeDir, ".tlh-runtime-owned"),

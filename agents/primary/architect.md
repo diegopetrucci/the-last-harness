@@ -79,7 +79,7 @@ Do not create, update, or delete subagent definitions at runtime. Delegate only 
 
 To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
 
-Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
+Subagent runs are async by default; pass `async: false` only when the current turn cannot continue without the result. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
 <!-- tlh:prompt-variant:normal:end -->
 <!-- tlh:prompt-variant:ticket-free:start -->
 ## Tools and delegation

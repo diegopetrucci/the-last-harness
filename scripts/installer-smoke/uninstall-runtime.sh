@@ -2074,3 +2074,50 @@ EOF_STATE_CREATED
   # The dangling symlink target path must still not exist.
   assert_absent "${created_lib_target}"
 }
+
+run_uninstall_layout_missing_leftovers_smoke() {
+  log "Running uninstall.sh layout-missing leftover-path hint smoke check..."
+  # Valid marker but pi layout missing (interrupted earlier uninstall): the skip
+  # message must name each existing TLH-owned leftover; nothing may be removed.
+  local case_dir="${TMP_ROOT}/uninstall-layout-missing-leftovers"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local runtime_dir="${profile_root}/runtime"
+  local bin_dir="${case_dir}/bin"
+  local before_file="${case_dir}/before.txt"
+  local after_file="${case_dir}/after.txt"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${bin_dir}" "${runtime_dir}/lib" \
+    "${runtime_dir}/.tlh-runtime-install.lock" "${runtime_dir}/.tlh-runtime-install.lock.reclaim"
+  write_tlh_install_state "${agent_dir}" true
+  write_tlh_runtime_marker "${runtime_dir}" migrated
+  # TLH-shaped package.json (owned) and a foreign package-lock.json (not owned).
+  printf '{\n  "name": "tlh-pi-runtime",\n  "private": true\n}\n' >"${runtime_dir}/lib/package.json"
+  printf '{\n  "name": "someone-else"\n}\n' >"${runtime_dir}/lib/package-lock.json"
+
+  (cd "${runtime_dir}" && find . | LC_ALL=C sort) >"${before_file}"
+  set +e
+  bash uninstall.sh --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "layout-missing leftovers uninstall smoke exited with non-zero status: ${status}"
+  fi
+  assert_contains "${combined_file}" "pi layout is missing"
+  assert_contains "${combined_file}" "${runtime_dir}/.tlh-runtime-owned"
+  assert_contains "${combined_file}" "${runtime_dir}/lib/package.json"
+  assert_contains "${combined_file}" "${runtime_dir}/.tlh-runtime-install.lock,"
+  assert_contains "${combined_file}" "${runtime_dir}/.tlh-runtime-install.lock.reclaim."
+  assert_not_contains "${combined_file}" "${runtime_dir}/lib/package-lock.json"
+  # Whole-prefix hint is preserved.
+  assert_contains "${combined_file}" "If this is TLH's private runtime"
+  # No runtime deletion: the tree is byte-for-byte the same listing.
+  (cd "${runtime_dir}" && find . | LC_ALL=C sort) >"${after_file}"
+  diff -u "${before_file}" "${after_file}" >&2 || fail "layout-missing skip changed the runtime tree"
+}

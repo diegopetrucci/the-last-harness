@@ -510,6 +510,11 @@ function targetsBundledDeveloper(params) {
 function noDeveloperExecutionError() {
     return "TLH execution rejected: the bundled developer subagent is unavailable while the host no-developer policy is active.";
 }
+export function resolveAwaited(asyncParam, ctx) {
+    if (asyncParam !== undefined)
+        return !asyncParam;
+    return ctx.mode === "print" || ctx.mode === "json";
+}
 function awaitedLifecycleFailure() {
     return {
         content: [
@@ -742,7 +747,7 @@ export function createSubagentExecutor(deps) {
             return buildRequestedModeError(effectiveParams, ticketPreparation.error);
         }
         const ticketBodies = ticketPreparation.ticketBodies;
-        const awaited = effectiveParams.async !== true;
+        const awaited = resolveAwaited(effectiveParams.async, ctx);
         const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
         const artifactConfig = {
             ...configuredArtifactConfig,
