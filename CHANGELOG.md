@@ -11,6 +11,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
+- TLH now bundles the merge-risk skill for scoring PR merge risk, plus a startup tip for it.
 - The installer and `tlh update` now register TLH (name, icon, launcher) in an existing Herdr.app home; opt out with `tlh.herdrApp.enabled: false`, and uninstall removes the entry it owns (and its icon file) without ever deleting unowned folders; protected app homes such as `~/.pi` are refused. See [Herdr.app integration](docs/install.md#herdrapp-integration) ([#876](https://github.com/diegopetrucci/the-last-harness/pull/876)).
 - In a Rex terminal, TLH now gives the primary agent Rex's session-start context; see [Rex integration](docs/integrations.md#rex-integration).
 - Bumped managed Gnosis (`gn`) to 0.5.5.
@@ -129,6 +130,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Extended the pinned skill audit in the dependency-bump prompt to all five bundled skills (adds Show-me and Merge-risk).
 - Made the subagent result watcher transport mode (native watch, restart wait, polling, stopped) an explicit local state union and removed the shared `watcherRestartTimer` slot.
 - Fixed temporary-root inspection false successes and removed proven-unused subagent, extension, and installer code while moving meaningful tests onto live paths.
 - Removed the union-merge Gnosis conflict guidance from `AGENTS.md`; Gnosis 0.5.5 keeps entries sorted by ID and warns on duplicates.

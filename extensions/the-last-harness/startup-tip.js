@@ -23,6 +23,7 @@ export const TLH_STARTUP_TIPS = [
     "TLH can search the web, just ask it to.",
     "After opening a PR, TLH automatically monitors CI and reports failures.",
     "Ask for a diagram or visual explanation and TLH will sketch logic, flows, or UI structure (show-me skill).",
+    "Ask TLH to assess merge risk and it will score a PR on alignment, impact, verification, rollback cost, and error detection (merge-risk skill).",
 ];
 export function selectTlhStartupTip(random = Math.random) {
     const tips = TLH_STARTUP_TIPS;
