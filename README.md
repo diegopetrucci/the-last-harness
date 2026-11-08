@@ -76,7 +76,7 @@ Every child instance has a bounded run-time budget per role, owned by the role d
 
 You can also add project custom subagents, but only from an exact file at the Git root's `.tlh/agents/custom/` and only after you've persistently `/trust`ed the project. The full rules (and what generic discovery no longer picks up) are in [docs/custom-subagents.md](docs/custom-subagents.md).
 
-Projects can also provide session-scoped model and effort defaults for the packaged primary agents and bundled subagent roles in `.tlh/defaults.json`. Defaults use a separate, weaker configuration-trust decision: persisted `/trust` permits both surfaces, while an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents. See [docs/models.md § Project model/effort defaults](docs/models.md#project-modeleffort-defaults).
+TLH no longer reads project-local `.tlh/defaults.json`; model and effort overrides for bundled roles are described in [docs/models.md](docs/models.md).
 
 The full roster of bundled primaries and minors is in [docs/subagents.md](docs/subagents.md#isolation-and-discovery).
 
