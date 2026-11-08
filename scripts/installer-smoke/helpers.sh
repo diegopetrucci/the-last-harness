@@ -397,36 +397,19 @@ if [[ -n "${track_dir}" ]]; then
   printf '%s\n' "${original_args}" >>"${track_dir}/args.log"
   printf '%s\n' "${out}" >>"${track_dir}/started.log"
 
-  lock_dir="${track_dir}/lock"
-  while ! mkdir "${lock_dir}" 2>/dev/null; do
-    sleep 0.001
-  done
-  active=0
-  if [[ -f "${track_dir}/active" ]]; then
-    active="$(cat "${track_dir}/active")"
-  fi
-  active=$((active + 1))
-  printf '%s\n' "${active}" >"${track_dir}/active"
-  max_active=0
-  if [[ -f "${track_dir}/max-active" ]]; then
-    max_active="$(cat "${track_dir}/max-active")"
-  fi
-  if [[ "${active}" -gt "${max_active}" ]]; then
-    printf '%s\n' "${active}" >"${track_dir}/max-active"
-  fi
-  rmdir "${lock_dir}"
+  # Lock-free concurrency tracking: one marker per live invocation, sampled by count.
+  marker_dir="${track_dir}/active.d"
+  mkdir -p "${marker_dir}"
+  marker="${marker_dir}/$$"
+  : >"${marker}"
+  set -- "${marker_dir}"/*
+  printf '%s\n' "$#" >>"${track_dir}/active-samples.log"
 
   if [[ -n "${FAKE_CURL_DELAY:-}" ]]; then
     sleep "${FAKE_CURL_DELAY}"
   fi
 
-  while ! mkdir "${lock_dir}" 2>/dev/null; do
-    sleep 0.001
-  done
-  active="$(cat "${track_dir}/active")"
-  active=$((active - 1))
-  printf '%s\n' "${active}" >"${track_dir}/active"
-  rmdir "${lock_dir}"
+  rm -f "${marker}"
 fi
 
 if [[ ! -f "${source_path}" ]]; then
