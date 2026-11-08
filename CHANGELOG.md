@@ -95,6 +95,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Made the installer smoke stage-0 tracking fake `curl` lock-free to fix ubuntu-26.04 CI failures.
 - Extended the pinned skill audit in the dependency-bump prompt to all five bundled skills (adds Show-me and Merge-risk).
 - Made the subagent result watcher transport mode (native watch, restart wait, polling, stopped) an explicit local state union and removed the shared `watcherRestartTimer` slot.
 - Fixed temporary-root inspection false successes and removed proven-unused subagent, extension, and installer code while moving meaningful tests onto live paths.

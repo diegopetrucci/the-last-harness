@@ -302,11 +302,11 @@ run_stage0_remote_support_fetch_smoke() {
   if [[ "${actual_count}" -ne "${expected_count}" ]]; then
     fail "stage-0 required remote support fetch did not await every worker (expected ${expected_count}, got ${actual_count})"
   fi
-  max_active="$(cat "${track_dir}/max-active")"
+  max_active="$(sort -n "${track_dir}/active-samples.log" | tail -n 1)"
   if [[ "${max_active}" -gt 8 || "${max_active}" -lt 2 ]]; then
     fail "stage-0 remote support fetch concurrency was not bounded as expected (max active: ${max_active})"
   fi
-  if [[ "$(cat "${track_dir}/active")" -ne 0 ]]; then
+  if [[ -n "$(ls -A "${track_dir}/active.d")" ]]; then
     fail "stage-0 remote support fetch left an active worker"
   fi
   assert_contains "${track_dir}/args.log" "--retry 2"
