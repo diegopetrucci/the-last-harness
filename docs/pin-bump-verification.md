@@ -216,6 +216,13 @@ At the time of this candidate-only run, published-ref update convergence was **n
 
 The post-publication check used a ticket-owned isolated `v0.42.1` latest-release install. Updating it converged to ref `v0.43.0` with `track=latest-release` and private Pi `0.87.1`. The isolated profile, runtime, wrapper, and temporary artifacts were cleaned up after verification; no secrets or ephemeral credential material were recorded.
 
+## Historical Pi 1.5.0 comparison status (reviewed 2026-11-02)
+
+The dated 1.4.0→1.5.0 package comparison is complete and recorded in [the upstream-sync inventory](upstream-sync-inventory.md#historical-pi-150-review-evidence). It was source/package inspection plus deterministic test runs, not live release validation: no provider, credential, installed-profile, or release-tier checks were run. The provider-backed checks below remain pending:
+
+- **Summaries with OAuth providers:** compact a session on a stored-OAuth provider to verify summaries still authenticate now that Pi no longer passes the stored OAuth token as the API key.
+- **Carried forward from 1.4.0 (still apply to the pinned runtime):** Claude Pro/Max OAuth provider request/header path; OpenAI Codex mid-conversation tool-set changes; real-session resume with `/tree` tool restoration; long-session compaction at high, xhigh, and max effort ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785)); and the items in the [1.4.0 status](#historical-pi-140-comparison-status-reviewed-2026-10-22), including those it carries forward from 1.3.0.
+
 ## Historical Pi 1.4.0 comparison status (reviewed 2026-10-22)
 
 The dated 1.3.0→1.4.0 package comparison is complete and recorded in [the upstream-sync inventory](upstream-sync-inventory.md#historical-pi-140-review-evidence). It was source/package inspection plus deterministic test runs, not live release validation: no provider, credential, installed-profile, or release-tier checks were run. The [resume regression](../tests/the-last-harness-pi-1-3-resume-regressions.test.mjs) now includes Pi 1.4 cases and, with the [model-resolution regression](../tests/the-last-harness-pi-1-3-model-resolution-regressions.test.mjs), passes without live providers. The provider-backed checks below remain pending:
