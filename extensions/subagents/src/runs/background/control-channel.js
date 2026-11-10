@@ -270,8 +270,18 @@ export function consumeChildMessageRequests(asyncDir, fsImpl = fs) {
 function parseInterruptRequest(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return undefined;
-    const request = value;
-    return request.type === "interrupt" ? request : undefined;
+    if (!("type" in value) || value.type !== "interrupt")
+        return undefined;
+    if ("ts" in value &&
+        value.ts !== undefined &&
+        (typeof value.ts !== "number" || !Number.isFinite(value.ts)))
+        return undefined;
+    return {
+        type: "interrupt",
+        ...("ts" in value && typeof value.ts === "number" ? { ts: value.ts } : {}),
+        ...("source" in value && typeof value.source === "string" ? { source: value.source } : {}),
+        ...("reason" in value && typeof value.reason === "string" ? { reason: value.reason } : {}),
+    };
 }
 export function readInterruptRequest(asyncDir, fsImpl = fs) {
     try {

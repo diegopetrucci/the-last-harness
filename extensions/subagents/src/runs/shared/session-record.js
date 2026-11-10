@@ -211,6 +211,23 @@ export function createSessionRecord(sessionFile, init = {}, deps = {}) {
     });
     return result;
 }
+export function classifySessionForResume(record, leaseIsStale) {
+    if (record.retired) {
+        return {
+            status: "retired",
+            ...(record.retiredReason ? { reason: record.retiredReason } : {}),
+        };
+    }
+    if (record.lease) {
+        return leaseIsStale
+            ? { status: "abandoned", generation: record.generation, staleLease: record.lease }
+            : { status: "held", holder: record.lease };
+    }
+    if (record.generation > 0 && record.cleanFinal?.generation !== record.generation) {
+        return { status: "abandoned", generation: record.generation };
+    }
+    return undefined;
+}
 export function acquireSessionLease(sessionFile, holder, deps = {}) {
     const resolved = resolveRecordFile(sessionFile);
     if (!resolved.ok)
@@ -221,20 +238,9 @@ export function acquireSessionLease(sessionFile, holder, deps = {}) {
         if (read.status !== "ok")
             return read;
         const { record } = read;
-        if (record.retired) {
-            return {
-                status: "retired",
-                ...(record.retiredReason ? { reason: record.retiredReason } : {}),
-            };
-        }
-        if (record.lease) {
-            return isSessionLeaseStale(record.lease, deps)
-                ? { status: "abandoned", generation: record.generation, staleLease: record.lease }
-                : { status: "held", holder: record.lease };
-        }
-        if (record.generation > 0 && record.cleanFinal?.generation !== record.generation) {
-            return { status: "abandoned", generation: record.generation };
-        }
+        const refusal = classifySessionForResume(record, !record.retired && !!record.lease && isSessionLeaseStale(record.lease, deps));
+        if (refusal)
+            return refusal;
         const token = randomUUID();
         const next = {
             ...record,

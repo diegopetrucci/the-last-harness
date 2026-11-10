@@ -1,7 +1,7 @@
 // Generated from extensions/subagents/src/runs/shared/session-admission.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import { assessDurableResumeContext, formatDurableResumeContextBlock, } from "../../shared/context-diagnostics.js";
-import { isSessionLeaseStale, readSessionRecord, } from "./session-record.js";
+import { classifySessionForResume, isSessionLeaseStale, readSessionRecord, } from "./session-record.js";
 const FRESH_DISPATCH = "Inspect the partial work in the session and start a fresh dispatch instead of resuming it.";
 export function describeSessionRefusal(refusal) {
     switch (refusal.kind) {
@@ -38,22 +38,17 @@ export function admitSessionForResume(sessionFile, deps = {}) {
             break;
     }
     const { record } = read;
-    if (record.retired) {
-        return {
-            ok: false,
-            refusal: {
-                kind: "retired",
-                ...(record.retiredReason ? { reason: record.retiredReason } : {}),
-            },
-        };
-    }
-    if (record.lease) {
-        return isSessionLeaseStale(record.lease, deps)
-            ? { ok: false, refusal: { kind: "abandoned" } }
-            : { ok: false, refusal: { kind: "held", runnerPid: record.lease.runnerPid } };
-    }
-    if (record.generation > 0 && record.cleanFinal?.generation !== record.generation) {
-        return { ok: false, refusal: { kind: "abandoned" } };
+    const refusal = classifySessionForResume(record, !record.retired && !!record.lease && isSessionLeaseStale(record.lease, deps));
+    switch (refusal?.status) {
+        case "retired":
+            return {
+                ok: false,
+                refusal: { kind: "retired", ...(refusal.reason ? { reason: refusal.reason } : {}) },
+            };
+        case "held":
+            return { ok: false, refusal: { kind: "held", runnerPid: refusal.holder.runnerPid } };
+        case "abandoned":
+            return { ok: false, refusal: { kind: "abandoned" } };
     }
     return { ok: true, record };
 }

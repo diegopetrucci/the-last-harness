@@ -186,7 +186,7 @@ test("removing the no-developer preference restores developer dispatch in a new 
   });
 });
 
-test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
+test("primary delegation allows approved targets and forces safe top-level defaults", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
   const event = {
     toolName: "subagent",
@@ -210,7 +210,7 @@ test("enabled primary mode allows approved delegation targets and forces safe to
   assert.equal(Object.hasOwn(event.input, "context"), false);
 });
 
-test("enabled primary mode allows final-validation delegation to test-runner", async () => {
+test("primary delegation allows final-validation delegation to test-runner", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
   const event = {
     toolName: "subagent",
@@ -380,7 +380,7 @@ test("tool_call leaves every resume timeout unchanged while still normalizing sc
   assert.equal(opaqueResumeEvent.input.timeoutMs, 420_000);
 });
 
-test("enabled primary mode allows contrarian by default and stale contrarian settings stay harmless", async (t) => {
+test("architect delegation allows contrarian by default and stale contrarian settings stay harmless", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const subagentMetadata = [contrarianMetadata()];
   const branchEntries = [
@@ -415,18 +415,20 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
     assert.equal(defaultEvent.input.agentScope, "user");
     assert.equal(Object.hasOwn(defaultEvent.input, "context"), false);
 
-    writeFileSync(
-      join(fixture.agent, "settings.json"),
-      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["contrarian"] } } }, null, 2)}\n`,
-    );
-    const legacyFlagEvent = {
-      toolName: "subagent",
-      input: { agent: "contrarian", task: "stress-test this plan" },
-    };
-    assert.equal(await toolCall(legacyFlagEvent, blockedCtx), undefined);
-    assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5:high");
-    assert.equal(legacyFlagEvent.input.agentScope, "user");
-    assert.equal(Object.hasOwn(legacyFlagEvent.input, "context"), false);
+    for (const enabledFeatures of [["Contrarian", 123], ["Contrarian"], ["contrarian"]]) {
+      writeFileSync(
+        join(fixture.agent, "settings.json"),
+        `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+      );
+      const legacyFlagEvent = {
+        toolName: "subagent",
+        input: { agent: "contrarian", task: "stress-test this plan" },
+      };
+      assert.equal(await toolCall(legacyFlagEvent, blockedCtx), undefined);
+      assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5:high");
+      assert.equal(legacyFlagEvent.input.agentScope, "user");
+      assert.equal(Object.hasOwn(legacyFlagEvent.input, "context"), false);
+    }
   });
 });
 
@@ -470,7 +472,7 @@ test("provider-aware defaults still apply to a single target when tasks is empty
   });
 });
 
-test("enabled primary mode blocks disallowed task delegation targets after forcing safe defaults", async (t) => {
+test("primary delegation blocks disallowed task targets after forcing safe defaults", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const ctx = createToolCallContext(
     [
@@ -506,7 +508,7 @@ test("enabled primary mode blocks disallowed task delegation targets after forci
   });
 });
 
-test("enabled primary mode normalizes safe management list/get/resume inputs and blocks unsafe resume calls", async () => {
+test("primary delegation normalizes safe management list/get/resume inputs and blocks unsafe resume calls", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
   const ctx = createToolCallContext([
     {
