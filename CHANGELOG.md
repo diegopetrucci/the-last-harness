@@ -14,6 +14,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Simplify annotate-git-diff content loading and remove unreachable image-extension checks ([#897](https://github.com/diegopetrucci/the-last-harness/pull/897)).
 - Share the packaged agent roster across guidance, execution budgets, and launch telemetry, and simplify guidance directory checks ([#896](https://github.com/diegopetrucci/the-last-harness/pull/896)).
 
 ## [0.47.0] - 2026-11-08
