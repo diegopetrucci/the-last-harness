@@ -7,7 +7,6 @@ export const TLH_STARTUP_TIPS = [
     "Press Shift+Tab to switch to Rush for a small bounded task TLH can implement directly.",
     "Press Shift+Tab to switch to product for framing, tradeoffs, or implementation-ready ticket shaping.",
     "Press Shift+Tab to switch to bug-hunter for read-only debugging and root-cause analysis.",
-    "Use “disabled” mode (Shift+Tab) to keep TLH’s tools and subagents without architect-specific guidance.",
     "Project custom subagents live in .tlh/agents/custom/<UPPERCASE-SLUG>.md; ask TLH to use one by name.",
     "Pin stored model or effort overrides per role through /subagent-settings.",
     "Run /fork to branch from an earlier user message and explore an alternate path.",

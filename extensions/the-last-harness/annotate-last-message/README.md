@@ -33,7 +33,7 @@ Buttons and keys in the window:
 | Click **Cancel**                                               | TLH discards the notes and closes the window.                                                                      |
 | Close the window with its close button                         | TLH discards unsent notes and sends nothing to the agent.                                                          |
 
-This is TLH's first-party replacement for the older Plannotator-based last-message annotation flow. Use `/annotate-last-message` directly; this workflow does not require Plannotator.
+Use `/annotate-last-message` directly; this workflow does not require Plannotator.
 
 ## Appearance
 
