@@ -1076,12 +1076,7 @@ describe("async resume lookup", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// BUG-02: per-child cwd revival — explicit step cwd, childLocation fallback,
-// run-cwd fallback, and legacy artifact compatibility.
-// ---------------------------------------------------------------------------
-
-describe("revival cwd precedence (BUG-02)", () => {
+describe("revival cwd precedence", () => {
   it("prefers explicit per-step cwd over run cwd when reviving a completed child", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-cwd-step-"));
     try {
@@ -1249,9 +1244,6 @@ describe("revival cwd precedence (BUG-02)", () => {
   });
 
   it("malformed childLocation.childCwd (non-string) falls through to next-tier cwd", () => {
-    // Codex P2: childLocation.childCwd is used without validation in
-    // buildTerminalAsyncResumeTarget; a non-string value must fall through to
-    // the result-step or run-level cwd rather than being used as-is.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-cwd-clocbad-"));
     try {
       const asyncRoot = path.join(root, "runs");
@@ -1298,13 +1290,7 @@ describe("revival cwd precedence (BUG-02)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// BUG-02: result-only async revival must use per-child cwd from result item.
-// These tests confirm that when status.json is absent (result-only revival),
-// the revival target cwd is taken from the result step, not the run cwd.
-// ---------------------------------------------------------------------------
-
-describe("result-only revival cwd (BUG-02)", () => {
+describe("result-only revival cwd", () => {
   it("result-only revival uses step cwd from result.json, not run cwd", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-stepcwd-"));
     try {

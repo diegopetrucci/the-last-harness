@@ -1206,9 +1206,6 @@ describe("async stale-run reconciliation", () => {
   });
 
   it("carries telemetry into status and result artifact when repairing a dead-PID run", () => {
-    // Regression test for P1-c: stale-PID repair (no existing result artifact) must
-    // transition the telemetry outcome to 'failed' in the committed status and include
-    // the telemetry in the written result artifact.
     const root = tempRoot("pi-stale-dead-pid-telemetry-");
     try {
       const runId = "run-dead-pid-telemetry";
@@ -1272,8 +1269,6 @@ describe("async stale-run reconciliation", () => {
   });
 
   it("result-based repair is aborted when a terminal transition lands between observation and commit", () => {
-    // Regression: a terminal transition (or continuation claim) landing between the observation
-    // snapshot and the result-based repair must never be silently overwritten.
     const root = tempRoot("pi-stale-result-concurrent-terminal-");
     try {
       const asyncDir = path.join(root, "run-concurrent-terminal");
@@ -1343,8 +1338,6 @@ describe("async stale-run reconciliation", () => {
   });
 
   it("result-based repair is aborted when a PID is acquired between observation and commit", () => {
-    // Regression: a continuation claim that publishes a new PID between observation and repair
-    // must abort the result-based repair, not overwrite the claiming runner's ownership.
     const root = tempRoot("pi-stale-result-concurrent-pid-");
     try {
       const asyncDir = path.join(root, "run-concurrent-pid");
@@ -1404,9 +1397,7 @@ describe("async stale-run reconciliation", () => {
     }
   });
 
-  it("buildFailedRepair carries validated step cwd into repaired result items (Codex P2)", () => {
-    // Codex P2: buildFailedRepair was building result.json items without step.cwd,
-    // so result-only revival after stale repair would not find the child cwd.
+  it("buildFailedRepair carries validated step cwd into repaired result items", () => {
     const root = tempRoot("pi-stale-step-cwd-");
     try {
       const asyncDir = path.join(root, "run-stepcwd");

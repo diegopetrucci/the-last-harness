@@ -14,9 +14,15 @@ export function acknowledgeResumeRequests(asyncDir: string): () => void {
     for (const file of fs.readdirSync(dir)) {
       if (seen.has(file)) continue;
       try {
-        const request = JSON.parse(fs.readFileSync(path.join(dir, file), "utf-8")) as {
-          id: string;
-        };
+        const request: unknown = JSON.parse(fs.readFileSync(path.join(dir, file), "utf-8"));
+        if (
+          typeof request !== "object" ||
+          request === null ||
+          !("id" in request) ||
+          typeof request.id !== "string" ||
+          request.id.trim().length === 0
+        )
+          continue;
         writeChildMessageAcceptance(asyncDir, {
           requestId: request.id,
           type: "resume",

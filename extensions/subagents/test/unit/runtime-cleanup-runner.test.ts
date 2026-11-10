@@ -68,18 +68,6 @@ function createStaleAsyncDir(asyncDir: string, name: string, mtimeMs: number): v
 }
 
 // ---------------------------------------------------------------------------
-// Side-effect guard: importing the module must not run any cleanup or exit
-// ---------------------------------------------------------------------------
-
-it("importing runtime-cleanup-runner has no side effects", async () => {
-  // If the module ran at import time it would have called process.exit() or
-  // modified the file system. The mere fact that this file imported the module
-  // above (and the test suite is still running) proves there are no side effects.
-  // Verify the export is a function as an additional sanity check.
-  assert.strictEqual(typeof runCleanupRunner, "function");
-});
-
-// ---------------------------------------------------------------------------
 // Unit tests using injectable deps (deterministic, no subprocess)
 // ---------------------------------------------------------------------------
 

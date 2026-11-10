@@ -38,6 +38,7 @@ import {
   executeAsyncParallel,
   executeAsyncSingle,
   readAsyncPayload,
+  readStatus,
   removeLifecycleLock,
   requestAsyncInterrupt,
   startedMockPiPids,
@@ -61,6 +62,33 @@ import {
   appendSubagentTelemetryContinuation,
   transitionSubagentRunTelemetryLifecycle,
 } from "../../src/shared/telemetry.ts";
+
+function cancelRunOnDisk(asyncDir: string, summary: string): void {
+  const status = readStatus(asyncDir);
+  assert.ok(status, "expected persisted run status");
+  const cancelledAt = Date.now();
+  transitionLifecycleStatus({
+    asyncDir,
+    expectedGeneration: lifecycleGeneration(status),
+    mutate: (current) => ({
+      ...current,
+      state: "cancelled" as const,
+      pid: undefined,
+      pause: undefined,
+      cancel: { summary, cancelledAt },
+      endedAt: cancelledAt,
+      lastUpdate: cancelledAt,
+      steps: current.steps?.map((step) => ({
+        ...step,
+        status: "cancelled" as const,
+        endedAt: cancelledAt,
+        exitCode: 0,
+        pause: undefined,
+        cancel: { summary, cancelledAt },
+      })),
+    }),
+  });
+}
 
 function recordStartedPid(pids: Set<number>, payload: unknown): void {
   if (typeof payload !== "object" || payload === null) return;
@@ -243,13 +271,7 @@ describe("async execution lifecycle supervisor races", () => {
 
       const asyncDir = path.join(ASYNC_DIR, id);
 
-      {
-        const deadline = Date.now() + scaleTestTimeout(20_000);
-        while (!fs.existsSync(readyMarker)) {
-          if (Date.now() > deadline) assert.fail("Timed out waiting for mock child ready marker");
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      }
+      await waitForMarker(readyMarker, scaleTestTimeout(20_000));
 
       requestAsyncInterrupt(asyncDir, { source: "tlhm-8typ-test" });
 
@@ -366,46 +388,13 @@ describe("async execution lifecycle supervisor races", () => {
 
       const asyncDir = path.join(ASYNC_DIR, id);
 
-      {
-        const deadline = Date.now() + scaleTestTimeout(20_000);
-        while (!fs.existsSync(readyMarker)) {
-          if (Date.now() > deadline) assert.fail("Timed out waiting for mock child ready marker");
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      }
+      await waitForMarker(readyMarker, scaleTestTimeout(20_000));
 
       requestAsyncInterrupt(asyncDir, { source: "tlhm-8typ-r5-test" });
 
       await waitForAsyncState(asyncDir, "paused");
 
-      const pausedStatusRaw = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      const pausedGen = lifecycleGeneration(
-        pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0],
-      );
-
-      const cancelledAt = Date.now();
-      transitionLifecycleStatus({
-        asyncDir,
-        expectedGeneration: pausedGen,
-        mutate: (status) => ({
-          ...status,
-          state: "cancelled" as const,
-          pid: undefined,
-          cancel: { summary: "Test cancellation", cancelledAt },
-          endedAt: cancelledAt,
-          lastUpdate: cancelledAt,
-          steps: status.steps?.map((step) => ({
-            ...step,
-            status: "cancelled" as const,
-            endedAt: cancelledAt,
-            exitCode: 0,
-            pause: undefined,
-            cancel: { summary: "Test cancellation", cancelledAt },
-          })),
-        }),
-      });
+      cancelRunOnDisk(asyncDir, "Test cancellation");
 
       // Sanity: verify the cancelled state is on disk before releasing the child.
       const afterCancel = JSON.parse(
@@ -1274,42 +1263,12 @@ describe("async execution lifecycle supervisor races", () => {
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
-      const readyDeadline = Date.now() + scaleTestTimeout(20_000);
-      while (!fs.existsSync(readyMarker)) {
-        if (Date.now() > readyDeadline)
-          assert.fail("Timed out waiting for mock child ready marker");
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      await waitForMarker(readyMarker, scaleTestTimeout(20_000));
       await waitForMockPiCall(mockPi, 0);
       const childPids = startedMockPiPids(mockPi);
       assert.equal(childPids.length, 1);
 
-      const runningStatus = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      const generation = lifecycleGeneration(
-        runningStatus as Parameters<typeof lifecycleGeneration>[0],
-      );
-      const cancelledAt = Date.now();
-      transitionLifecycleStatus({
-        asyncDir,
-        expectedGeneration: generation,
-        mutate: (status) => ({
-          ...status,
-          state: "cancelled" as const,
-          pid: undefined,
-          cancel: { summary: "Concurrent terminal adoption", cancelledAt },
-          endedAt: cancelledAt,
-          lastUpdate: cancelledAt,
-          steps: status.steps?.map((step) => ({
-            ...step,
-            status: "cancelled" as const,
-            endedAt: cancelledAt,
-            exitCode: 0,
-            cancel: { summary: "Concurrent terminal adoption", cancelledAt },
-          })),
-        }),
-      });
+      cancelRunOnDisk(asyncDir, "Concurrent terminal adoption");
       fs.writeFileSync(releaseMarker, "", "utf-8");
 
       const resultPath = await waitForAsyncResultFile(id);
@@ -1371,49 +1330,12 @@ describe("async execution lifecycle supervisor races", () => {
 
       const asyncDir2 = path.join(ASYNC_DIR, id);
 
-      {
-        const deadline = Date.now() + scaleTestTimeout(20_000);
-        while (!fs.existsSync(task1ReadyMarker)) {
-          if (Date.now() > deadline)
-            assert.fail("Timed out waiting for task 1 ready marker (finding-1-parallel)");
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      }
+      await waitForMarker(task1ReadyMarker, scaleTestTimeout(20_000));
 
       requestAsyncInterrupt(asyncDir2, { source: "finding1-parallel-test" });
       await waitForAsyncState(asyncDir2, "paused");
 
-      const pausedStatusRaw2 = JSON.parse(
-        fs.readFileSync(path.join(asyncDir2, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      const pausedGen2 = lifecycleGeneration(
-        pausedStatusRaw2 as Parameters<typeof lifecycleGeneration>[0],
-      );
-
-      const cancelledAt2 = Date.now();
-      transitionLifecycleStatus({
-        asyncDir: asyncDir2,
-        expectedGeneration: pausedGen2,
-        mutate: (status) => ({
-          ...status,
-          state: "cancelled" as const,
-          pid: undefined,
-          cancel: { summary: "Test cancellation (finding-1-parallel)", cancelledAt: cancelledAt2 },
-          endedAt: cancelledAt2,
-          lastUpdate: cancelledAt2,
-          steps: status.steps?.map((step) => ({
-            ...step,
-            status: "cancelled" as const,
-            endedAt: cancelledAt2,
-            exitCode: 0,
-            pause: undefined,
-            cancel: {
-              summary: "Test cancellation (finding-1-parallel)",
-              cancelledAt: cancelledAt2,
-            },
-          })),
-        }),
-      });
+      cancelRunOnDisk(asyncDir2, "Test cancellation (finding-1-parallel)");
 
       const afterCancel2 = JSON.parse(
         fs.readFileSync(path.join(asyncDir2, "status.json"), "utf-8"),
@@ -1517,34 +1439,7 @@ describe("async execution lifecycle supervisor races", () => {
       requestAsyncInterrupt(asyncDir, { source: "invariant-pin-test" });
       await waitForAsyncState(asyncDir, "paused");
 
-      const pausedStatusRaw = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      const pausedGen = lifecycleGeneration(
-        pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0],
-      );
-
-      const cancelledAt = Date.now();
-      transitionLifecycleStatus({
-        asyncDir,
-        expectedGeneration: pausedGen,
-        mutate: (status) => ({
-          ...status,
-          state: "cancelled" as const,
-          pid: undefined,
-          cancel: { summary: "invariant pin test cancellation", cancelledAt },
-          endedAt: cancelledAt,
-          lastUpdate: cancelledAt,
-          steps: status.steps?.map((step) => ({
-            ...step,
-            status: "cancelled" as const,
-            endedAt: cancelledAt,
-            exitCode: 0,
-            pause: undefined,
-            cancel: { summary: "invariant pin test cancellation", cancelledAt },
-          })),
-        }),
-      });
+      cancelRunOnDisk(asyncDir, "invariant pin test cancellation");
 
       // Sanity: cancelled is on disk before releasing the children.
       const afterCancel = JSON.parse(

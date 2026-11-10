@@ -1,7 +1,5 @@
 /**
- * Unit tests for child-location fields that the async plan-build suite does not cover:
- * AsyncJobStep assignability, JSON round-trip of the plan snapshot, and
- * BUG-02 per-step cwd persistence and revival through the real producer chain.
+ * Tests for child-location plan snapshots, per-step cwd persistence, and revival.
  */
 
 import assert from "node:assert/strict";
@@ -71,13 +69,7 @@ describe("child-location snapshot in async dispatch plan", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// BUG-02: per-step cwd written by the real producer chain
-// buildAsyncRunnerPlan + createBackgroundRunStatusOwner must write step.cwd;
-// resolveAsyncResumeTarget must return the per-step cwd, not the run cwd.
-// ---------------------------------------------------------------------------
-
-describe("async per-step cwd from real producer chain (BUG-02)", () => {
+describe("async per-step cwd from real producer chain", () => {
   const agentDef2 = {
     name: "worker",
     description: "test agent",
@@ -227,11 +219,7 @@ describe("async per-step cwd from real producer chain (BUG-02)", () => {
         sessionCwd,
         "revival target cwd must be the task cwd (= session cwd), not the run cwd",
       );
-      assert.notEqual(
-        target.cwd,
-        built.runnerCwd,
-        "revival cwd must not be the run cwd (BUG-02 regression)",
-      );
+      assert.notEqual(target.cwd, built.runnerCwd, "revival cwd must not be the run cwd");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
