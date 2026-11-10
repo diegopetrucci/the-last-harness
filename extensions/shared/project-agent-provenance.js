@@ -1,7 +1,8 @@
 // Generated from extensions/shared/project-agent-provenance.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as os from "node:os";
 import * as path from "node:path";
-const PACKAGED_MINOR_AGENT_ROLES = new Set([
+export const PACKAGED_PRIMARY_AGENT_ROLES = ["architect", "rush", "product", "bug-hunter"];
+export const PACKAGED_MINOR_AGENT_ROLES = [
     "developer",
     "test-runner",
     "code-reviewer",
@@ -11,7 +12,8 @@ const PACKAGED_MINOR_AGENT_ROLES = new Set([
     "web-scout",
     "oracle",
     "contrarian",
-]);
+];
+const packagedMinorAgentRoles = new Set(PACKAGED_MINOR_AGENT_ROLES);
 function agentDir() {
     const configured = process.env.PI_CODING_AGENT_DIR?.trim();
     if (configured) {
@@ -29,7 +31,7 @@ export function isCanonicalPackagedMinorAgent(agent) {
         return false;
     const candidate = agent;
     if (typeof candidate.name !== "string" ||
-        !PACKAGED_MINOR_AGENT_ROLES.has(candidate.name) ||
+        !packagedMinorAgentRoles.has(candidate.name) ||
         typeof candidate.filePath !== "string") {
         return false;
     }

@@ -485,17 +485,7 @@ function hasBoundedEntryPayload(entry) {
 function envelopeByteLength(envelope) {
     return Buffer.byteLength(JSON.stringify(envelope), "utf8");
 }
-export function projectSessionMirrorSnapshot(sessionManager, metadata) {
-    let validatedMetadata;
-    try {
-        const metadataResult = validateMetadata(metadata);
-        if (!metadataResult.ok)
-            return failure(metadataResult.reason);
-        validatedMetadata = metadataResult.value;
-    }
-    catch {
-        return failure("invalid-metadata");
-    }
+function readSessionMirrorSource(sessionManager) {
     if (sessionManager === null || typeof sessionManager !== "object") {
         return failure("session-unavailable");
     }
@@ -544,10 +534,31 @@ export function projectSessionMirrorSnapshot(sessionManager, metadata) {
         if (activeLeafFailure)
             return failure(activeLeafFailure);
     }
+    return {
+        ok: true,
+        sessionId,
+        activeLeafId,
+        sourceEntries: sourceEntries,
+    };
+}
+export function projectSessionMirrorSnapshot(sessionManager, metadata) {
+    let validatedMetadata;
+    try {
+        const metadataResult = validateMetadata(metadata);
+        if (!metadataResult.ok)
+            return failure(metadataResult.reason);
+        validatedMetadata = metadataResult.value;
+    }
+    catch {
+        return failure("invalid-metadata");
+    }
+    const source = readSessionMirrorSource(sessionManager);
+    if (!source.ok)
+        return source;
+    const { sessionId, activeLeafId, sourceEntries } = source;
     let sourceEntryValues;
     try {
-        const sourceEntriesArray = sourceEntries;
-        const lengthDescriptor = Object.getOwnPropertyDescriptor(sourceEntriesArray, "length");
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(sourceEntries, "length");
         if (!lengthDescriptor ||
             !("value" in lengthDescriptor) ||
             !isNonNegativeSafeInteger(lengthDescriptor.value)) {
@@ -558,7 +569,7 @@ export function projectSessionMirrorSnapshot(sessionManager, metadata) {
             return failure("bounds-exceeded");
         const values = [];
         for (let index = 0; index < sourceEntryCount; index += 1) {
-            const descriptor = Object.getOwnPropertyDescriptor(sourceEntriesArray, String(index));
+            const descriptor = Object.getOwnPropertyDescriptor(sourceEntries, String(index));
             if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
                 return failure("unsafe-session-data");
             }
@@ -653,47 +664,10 @@ export function projectRecentSessionMirrorSnapshot(sessionManager, metadata) {
     if (!metadataResult.ok)
         return failure(metadataResult.reason);
     const validatedMetadata = metadataResult.value;
-    if (sessionManager === null || typeof sessionManager !== "object") {
-        return failure("session-unavailable");
-    }
-    let sessionFile;
-    let sessionId;
-    let activeLeafId;
-    let sourceEntries;
-    try {
-        const getSessionFile = readSessionManagerMethod(sessionManager, "getSessionFile");
-        const getSessionId = readSessionManagerMethod(sessionManager, "getSessionId");
-        const getLeafId = readSessionManagerMethod(sessionManager, "getLeafId");
-        const getEntries = readSessionManagerMethod(sessionManager, "getEntries");
-        if (!getSessionFile || !getSessionId || !getLeafId || !getEntries) {
-            return failure("session-unavailable");
-        }
-        sessionFile = getSessionFile.call(sessionManager);
-        sessionId = getSessionId.call(sessionManager);
-        activeLeafId = getLeafId.call(sessionManager);
-        sourceEntries = getEntries.call(sessionManager);
-    }
-    catch {
-        return failure("session-unavailable");
-    }
-    if (typeof sessionFile !== "string" || sessionFile.length === 0) {
-        return failure("session-unavailable");
-    }
-    if (!isNonEmptyString(sessionId))
-        return failure("unsafe-session-data");
-    const sessionIdFailure = sourceIdentityFailure(sessionId);
-    if (sessionIdFailure)
-        return failure(sessionIdFailure);
-    if (!(activeLeafId === null || typeof activeLeafId === "string")) {
-        return failure("unsafe-session-data");
-    }
-    if (typeof activeLeafId === "string") {
-        const activeLeafFailure = sourceIdentityFailure(activeLeafId);
-        if (activeLeafFailure)
-            return failure(activeLeafFailure);
-    }
-    if (!Array.isArray(sourceEntries))
-        return failure("unsafe-session-data");
+    const source = readSessionMirrorSource(sessionManager);
+    if (!source.ok)
+        return source;
+    const { sessionId, activeLeafId, sourceEntries } = source;
     const lengthDescriptor = Object.getOwnPropertyDescriptor(sourceEntries, "length");
     if (!lengthDescriptor ||
         !("value" in lengthDescriptor) ||
