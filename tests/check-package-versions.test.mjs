@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { after, test } from "node:test";
 
@@ -86,6 +86,7 @@ function tempFixture({
   const packageJson = {
     name: "fixture",
     version: packageVersion,
+    engines: { node: "^24.1.0 || >=26.2.0" },
     dependencies: {
       ...dependencies,
     },
@@ -164,7 +165,22 @@ function tempFixture({
     }
   }
   writeFileSync(defaultExtensionsPath, `${JSON.stringify(defaultExtensions, null, 2)}\n`);
-  writeFileSync(installShPath, `TLH_PINNED_PI_VERSION=${JSON.stringify(installShPiVersion)}\n`);
+  writeFileSync(
+    installShPath,
+    `TLH_PINNED_PI_VERSION=${JSON.stringify(installShPiVersion)}\n` +
+      'TLH_MIN_NODE_VERSIONS=("24.1.0" "26.2.0")\n' +
+      'TLH_NODE_REQUIREMENT_TEXT="Node.js >=24.1.0 <25 or >=26.2.0"\n',
+  );
+  mkdirSync(join(dir, "scripts/lib"), { recursive: true });
+  writeFileSync(
+    join(dir, "scripts/lib/tlh-install-utils.mts"),
+    'export const MIN_NODE_VERSIONS = ["24.1.0", "26.2.0"] as const;\n' +
+      'export const NODE_REQUIREMENT_TEXT = "Node.js >=24.1.0 <25 or >=26.2.0";\n',
+  );
+  mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+  for (const workflow of ["ci", "macos-ci-benchmark", "release", "startup-performance"]) {
+    writeFileSync(join(dir, `.github/workflows/${workflow}.yml`), "node-version: '24.1.0'\n");
+  }
   writeFileSync(
     gnosisScriptMtsPath,
     `const DEFAULT_GNOSIS_VERSION = ${JSON.stringify(gnosisMtsVersion)};\n`,
@@ -244,6 +260,50 @@ function runCheckPackageVersions(fixture, extraArgs = []) {
       encoding: "utf8",
     },
   );
+}
+
+for (const [label, path, before, replacement, message] of [
+  ["engine range", "package.json", "^24.1.0", "^24.1.1", "engines.node"],
+  ["shell floors", "install.sh", '("24.1.0"', '("24.1.1"', "engines.node"],
+  ["shell text", "install.sh", ">=26.2.0", ">=26.2.1", "TLH_NODE_REQUIREMENT_TEXT"],
+  [
+    "runtime floors",
+    "scripts/lib/tlh-install-utils.mts",
+    '["24.1.0"',
+    '["24.1.1"',
+    "MIN_NODE_VERSIONS",
+  ],
+  [
+    "runtime text",
+    "scripts/lib/tlh-install-utils.mts",
+    ">=26.2.0",
+    ">=26.2.1",
+    "NODE_REQUIREMENT_TEXT",
+  ],
+  ...["ci", "macos-ci-benchmark", "release", "startup-performance"].map((workflow) => [
+    `${workflow} pin`,
+    `.github/workflows/${workflow}.yml`,
+    "24.1.0",
+    "24.1.1",
+    "Node 24 pins",
+  ]),
+  [
+    "missing floor declaration",
+    "install.sh",
+    "TLH_MIN_NODE_VERSIONS",
+    "REMOVED",
+    "Cannot read TLH_MIN_NODE_VERSIONS",
+  ],
+  ["missing workflow pin", ".github/workflows/ci.yml", "node-version", "removed", "Node 24 pins"],
+]) {
+  test(`check-package-versions rejects Node requirement drift: ${label}`, () => {
+    const fixture = tempFixture({ packageVersion: "1.2.3" });
+    const target = join(dirname(fixture.packagePath), path);
+    writeFileSync(target, readFileSync(target, "utf8").replace(before, replacement));
+    const result = runCheckPackageVersions(fixture);
+    assert.equal(result.status, 1);
+    assert.ok(result.stderr.includes(message), result.stderr);
+  });
 }
 
 test("check-package-versions passes with pinned dependency exceptions and ignores allowed ranges/URLs", () => {
