@@ -564,6 +564,21 @@ export function readStatus(
 export function readRawAttributionStatus(
   statusPath: string,
 ): Record<string, unknown> | null | undefined {
+  const result = readBoundedStatusFile(statusPath);
+  if (result === null || result === undefined) return result;
+  try {
+    const parsed: unknown = JSON.parse(result.content);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Returns null for a missing file and undefined for an unsafe or unreadable file. */
+export function readBoundedStatusFile(
+  statusPath: string,
+): { content: string; stat: fs.Stats } | null | undefined {
   let fd: number | undefined;
   try {
     try {
@@ -572,52 +587,16 @@ export function readRawAttributionStatus(
       if (isNotFoundError(error)) return null;
       return undefined;
     }
-
-    let stat: fs.Stats;
     try {
-      stat = fs.fstatSync(fd);
-    } catch {
-      return undefined;
-    }
-    if (!stat.isFile()) return undefined;
-    if (stat.size > MAX_ASYNC_STATUS_BYTES) return undefined;
-
-    let content: string;
-    try {
-      content = readBoundedStatusContent(fd);
-    } catch {
-      return undefined;
-    }
-
-    try {
-      const parsed: unknown = JSON.parse(content);
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-      return parsed as Record<string, unknown>;
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || stat.size > MAX_ASYNC_STATUS_BYTES) return undefined;
+      return { content: readBoundedStatusContent(fd), stat };
     } catch {
       return undefined;
     }
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
-}
-
-/**
- * Find the latest session file in a directory
- */
-export function findLatestSessionFile(sessionDir: string): string | null {
-  if (!fs.existsSync(sessionDir)) return null;
-  const files = fs
-    .readdirSync(sessionDir)
-    .filter((f) => f.endsWith(".jsonl"))
-    .map((f) => {
-      const filePath = path.join(sessionDir, f);
-      return {
-        path: filePath,
-        mtime: fs.statSync(filePath).mtimeMs,
-      };
-    })
-    .sort((a, b) => b.mtime - a.mtime);
-  return files.length > 0 ? files[0].path : null;
 }
 
 // ============================================================================

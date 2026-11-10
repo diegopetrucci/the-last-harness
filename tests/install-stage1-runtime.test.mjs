@@ -174,7 +174,7 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
       "exit 0",
     ].join("\n"),
   );
-  // Stale private runtime at 0.80.7 (above pin) triggers repair.
+  // Stale private runtime at 0.80.7 (below pin) triggers repair.
   writeFakePi(
     runtimeBinDir,
     [

@@ -335,6 +335,20 @@ export function readStatus(asyncDir, options = {}) {
     throw failure;
 }
 export function readRawAttributionStatus(statusPath) {
+    const result = readBoundedStatusFile(statusPath);
+    if (result === null || result === undefined)
+        return result;
+    try {
+        const parsed = JSON.parse(result.content);
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+            return undefined;
+        return parsed;
+    }
+    catch {
+        return undefined;
+    }
+}
+export function readBoundedStatusFile(statusPath) {
     let fd;
     try {
         try {
@@ -345,29 +359,11 @@ export function readRawAttributionStatus(statusPath) {
                 return null;
             return undefined;
         }
-        let stat;
         try {
-            stat = fs.fstatSync(fd);
-        }
-        catch {
-            return undefined;
-        }
-        if (!stat.isFile())
-            return undefined;
-        if (stat.size > MAX_ASYNC_STATUS_BYTES)
-            return undefined;
-        let content;
-        try {
-            content = readBoundedStatusContent(fd);
-        }
-        catch {
-            return undefined;
-        }
-        try {
-            const parsed = JSON.parse(content);
-            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+            const stat = fs.fstatSync(fd);
+            if (!stat.isFile() || stat.size > MAX_ASYNC_STATUS_BYTES)
                 return undefined;
-            return parsed;
+            return { content: readBoundedStatusContent(fd), stat };
         }
         catch {
             return undefined;
@@ -377,22 +373,6 @@ export function readRawAttributionStatus(statusPath) {
         if (fd !== undefined)
             fs.closeSync(fd);
     }
-}
-export function findLatestSessionFile(sessionDir) {
-    if (!fs.existsSync(sessionDir))
-        return null;
-    const files = fs
-        .readdirSync(sessionDir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => {
-        const filePath = path.join(sessionDir, f);
-        return {
-            path: filePath,
-            mtime: fs.statSync(filePath).mtimeMs,
-        };
-    })
-        .sort((a, b) => b.mtime - a.mtime);
-    return files.length > 0 ? files[0].path : null;
 }
 export function getFinalOutput(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {

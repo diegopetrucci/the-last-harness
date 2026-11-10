@@ -981,7 +981,7 @@ test("overrideable primary (architect) honors global applyThinking=false overrid
   });
 });
 
-test("enabled architect primary mode propagates the pre-bind action runtime error", async (t) => {
+test("architect startup propagates the pre-bind action runtime error", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const architectPrimary = createPrimaryPrompt("architect", {
     tools: ["read", "grep"],
@@ -1081,7 +1081,7 @@ test("primary runtime defers missing-tool startup warnings and keeps the archite
     assert.deepEqual(
       pi.activeTools,
       ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"],
-      "enabled primary mode must keep subagent_supervisor while excluding the unrestricted intercom alias",
+      "the architect tool surface must keep subagent_supervisor while excluding the unrestricted intercom alias",
     );
   });
 });
