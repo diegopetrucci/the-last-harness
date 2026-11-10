@@ -21,7 +21,7 @@ import {
   isHighConfidenceAuthSignatureInAttemptError,
   processSubagentRunDetails,
 } from "../extensions/the-last-harness/primary-agent-runtime.ts";
-import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
+import { ARCHITECT_BRANCH } from "./the-last-harness-provider-auth-health-test-helpers.mjs";
 import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 import {
   registerTlhPrimaryAgentRuntime,
@@ -31,15 +31,6 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Session branch entries that select the architect primary agent. */
-const ARCHITECT_BRANCH = [
-  {
-    type: "custom",
-    customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-    data: { selected: "architect" },
-  },
-];
 
 function createToolResultCtx({ getProviderAuth } = {}) {
   return {

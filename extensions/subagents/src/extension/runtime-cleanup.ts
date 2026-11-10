@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.ts";
 import { isResumableSessionCheckpoint } from "../runs/shared/session-admission.ts";
 import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.ts";
-import { MAX_ASYNC_STATUS_BYTES } from "../shared/utils.ts";
+import { readBoundedStatusFile } from "../shared/utils.ts";
 import { ASYNC_DIR, type AsyncStatus } from "../shared/types.ts";
 
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -74,76 +74,26 @@ function listAsyncRunDirs(paths: RuntimeCleanupPaths, strict: boolean): AsyncRun
   return entries;
 }
 
-// O_NONBLOCK prevents blocking on FIFOs; O_NOFOLLOW prevents following symlinks.
-const CLEANUP_OPEN_FLAGS =
-  fs.constants.O_RDONLY |
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ((fs.constants as any).O_NONBLOCK ?? 0) |
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ((fs.constants as any).O_NOFOLLOW ?? 0);
-
 function readAsyncStatus(asyncDir: string): AsyncStatusReadResult {
-  // Route through a safe O_NONBLOCK|O_NOFOLLOW descriptor read so FIFOs
-  // never block and symlinks are never followed. The raw JSON is returned
-  // without schema validation to support legacy/partial test statuses.
-  const statusPath = path.join(asyncDir, "status.json");
-  let fd: number | undefined;
+  const result = readBoundedStatusFile(path.join(asyncDir, "status.json"));
+  if (result === null) return { status: null, invalid: false };
+  if (result === undefined) return { status: null, invalid: true };
+  const { content, stat } = result;
+  let parsed: unknown;
   try {
-    try {
-      fd = fs.openSync(statusPath, CLEANUP_OPEN_FLAGS);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return { status: null, invalid: false };
-      return { status: null, invalid: true };
-    }
-
-    let stat: fs.Stats;
-    try {
-      stat = fs.fstatSync(fd);
-    } catch {
-      return { status: null, invalid: true };
-    }
-    if (!stat.isFile()) return { status: null, invalid: true };
-    if (stat.size > MAX_ASYNC_STATUS_BYTES) return { status: null, invalid: true };
-
-    let content: string;
-    try {
-      const chunks: Buffer[] = [];
-      let bytesRead = 0;
-      const chunkSize = 64 * 1024;
-      while (bytesRead <= MAX_ASYNC_STATUS_BYTES) {
-        const remaining = MAX_ASYNC_STATUS_BYTES + 1 - bytesRead;
-        const buffer = Buffer.allocUnsafe(Math.min(chunkSize, remaining));
-        const n = fs.readSync(fd, buffer, 0, buffer.byteLength, null);
-        if (n === 0) break;
-        chunks.push(buffer.subarray(0, n));
-        bytesRead += n;
-      }
-      if (bytesRead > MAX_ASYNC_STATUS_BYTES) return { status: null, invalid: true };
-      content = Buffer.concat(chunks, bytesRead).toString("utf-8");
-    } catch {
-      return { status: null, invalid: true };
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
-    }
-
-    if (parsed === null) {
-      // null is a sentinel written by some lifecycle transitions; not invalid.
-      return { status: null, statusMtimeMs: stat.mtimeMs, invalid: false };
-    }
-    if (typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
-    }
-    // Retrieve mtime for retention-window calculations.
-    return { status: parsed as AsyncStatus, statusMtimeMs: stat.mtimeMs, invalid: false };
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    parsed = JSON.parse(content);
+  } catch {
+    return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
   }
+
+  // null is a sentinel written by some lifecycle transitions; not invalid.
+  if (parsed === null) {
+    return { status: null, statusMtimeMs: stat.mtimeMs, invalid: false };
+  }
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
+  }
+  return { status: parsed as AsyncStatus, statusMtimeMs: stat.mtimeMs, invalid: false };
 }
 
 function newestTreeMtimeMs(dirPath: string): number {

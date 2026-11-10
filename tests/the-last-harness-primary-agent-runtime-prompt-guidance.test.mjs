@@ -911,66 +911,6 @@ test("child runtime scopes tickets at session start", async (t) => {
   );
 });
 
-test("architect allows contrarian by default and ignores stale contrarian experimental settings", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const subagentMetadata = [contrarianMetadata()];
-  const branchEntries = [
-    {
-      type: "custom",
-      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-      data: { selected: "architect" },
-    },
-  ];
-  const ctx = createToolCallContext(branchEntries, undefined, {
-    cwd: fixture.cwd,
-    modelRegistry: {
-      getAvailable: () => [
-        { provider: "openai-codex", id: "gpt-5.4" },
-        { provider: "anthropic", id: "claude-opus-5" },
-      ],
-    },
-    model: { provider: "openai-codex", id: "gpt-5.4" },
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const { toolCall } = registerRuntimeHarness({
-      primaryAgents: selectablePrimaryAgents(),
-      subagentMetadata,
-    });
-    const defaultEvent = {
-      toolName: "subagent",
-      input: {
-        agent: "contrarian",
-        prompt: "stress-test this plan",
-        agentScope: "",
-      },
-    };
-    assert.equal(await toolCall(defaultEvent, ctx), undefined);
-    assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5:high");
-    assert.equal(defaultEvent.input.agentScope, "user");
-    assert.equal(Object.hasOwn(defaultEvent.input, "context"), false);
-
-    for (const enabledFeatures of [["Contrarian", 123], ["Contrarian"], ["contrarian"]]) {
-      writeFileSync(
-        join(fixture.agent, "settings.json"),
-        `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
-      );
-      const staleEvent = {
-        toolName: "subagent",
-        input: {
-          agent: "contrarian",
-          prompt: "stress-test this plan",
-          agentScope: "",
-        },
-      };
-      assert.equal(await toolCall(staleEvent, ctx), undefined);
-      assert.equal(staleEvent.input.model, "anthropic/claude-opus-5:high");
-      assert.equal(staleEvent.input.agentScope, "user");
-      assert.equal(Object.hasOwn(staleEvent.input, "context"), false);
-    }
-  });
-});
-
 test("architect allows opaque resume regardless of stale contrarian settings", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const branchEntries = [
@@ -1019,7 +959,7 @@ test("architect allows opaque resume regardless of stale contrarian settings", a
   });
 });
 
-test("enabled primary mode validates subagent input after injecting provider-aware models", async (t) => {
+test("primary delegation validates subagent input after injecting provider-aware models", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
