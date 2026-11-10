@@ -193,7 +193,7 @@ TLH ships `cacheWarming: "idle"` as a packaged default. Install and update apply
 
 This setting is user-owned and global to the isolated profile (`~/.the-last-harness/agent/settings.json`, or the active `PI_CODING_AGENT_DIR`), not project-scoped. Use Pi's `/settings` screen or edit that profile deliberately; back up before manual edits and preserve unknown keys. Canonical TLH parent and child processes share the isolated profile, so one global value governs both unless a separately configured profile is intentionally used. Pi exposes warm status and its economic decision through `/session`. TLH's packaged defaults set `showCacheMissNotices` to `true`, so successful native refreshes appear as `Cache warmed ...` transcript notices by default; set it to `false` to hide them.
 
-Pi-native warming is separate from the retired TLH async-parent prompt-cache heartbeat. The heartbeat code has been removed; a legacy `heartbeat` key is ignored at runtime and preserved for manual cleanup, while any historical `heartbeat.jsonl` is left in place. To stop Pi-native warming, set `cacheWarming` to `off`; to restore the upstream default, remove the key or choose `streaming`. See [subagents.md](subagents.md#prompt-cache-warming) for the native warming limits, legacy-key notice, and rollback steps.
+Pi-native warming is separate from the retired TLH async-parent prompt-cache heartbeat. The heartbeat code has been removed; a legacy `heartbeat` key is ignored at runtime and preserved for manual cleanup, while any historical `heartbeat.jsonl` is left in place. To stop Pi-native warming, set `cacheWarming` to `off`. See [subagents.md](subagents.md#prompt-cache-warming) for the native warming limits, legacy-key notice, and rollback steps.
 
 ## Compaction reserve default
 

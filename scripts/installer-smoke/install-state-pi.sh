@@ -132,7 +132,7 @@ EOF_PRESENT_GIT
   mkdir -p "${present_cli_dir}"
   cat >"${present_cli_dir}/cli.js" <<'EOF_PRESENT_RUNTIME_PI'
 #!/bin/sh
-if [ "${1:-}" = "--version" ]; then printf '1.5.0\n'; exit 0; fi
+if [ "${1:-}" = "--version" ]; then printf '1.5.2\n'; exit 0; fi
 printf 'fake private runtime pi invoked unexpectedly\n' >&2; exit 98
 EOF_PRESENT_RUNTIME_PI
   chmod +x "${present_cli_dir}/cli.js"

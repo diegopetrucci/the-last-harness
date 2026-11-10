@@ -1,17 +1,17 @@
 {
   "name": "tlh-pi-runtime",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "private": true,
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.5.0"
+    "@earendil-works/pi-coding-agent": "1.5.2"
   },
   "overrides": {
-    "@earendil-works/pi-agent-core": "1.5.0",
-    "@earendil-works/pi-ai": "1.5.0",
-    "@earendil-works/pi-codemode": "1.5.0",
-    "@earendil-works/pi-mcp": "1.5.0",
-    "@earendil-works/pi-schema": "1.5.0",
-    "@earendil-works/pi-telemetry": "1.5.0",
-    "@earendil-works/pi-tui": "1.5.0"
+    "@earendil-works/pi-agent-core": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-codemode": "1.5.2",
+    "@earendil-works/pi-mcp": "1.5.2",
+    "@earendil-works/pi-schema": "1.5.2",
+    "@earendil-works/pi-telemetry": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2"
   }
 }

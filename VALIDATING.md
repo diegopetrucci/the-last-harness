@@ -255,14 +255,14 @@ The following carried-forward checks are required release-preparation work for t
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
 - **Published-ref update convergence:** once the release ref advertises the Pi version pinned in `config/pi-runtime/package.json`, verify update convergence from that published ref.
 
-### Pi 1.5.0 comparison status (reviewed 2026-11-02)
+### Pi 1.5.2 comparison status (reviewed 2026-11-10)
 
-The dated 1.4.0→1.5.0 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-150-review-evidence). It was source/package inspection plus deterministic test runs, not live release validation: no provider, credential, installed-profile, or release-tier checks were run. The provider-backed checks below remain pending:
+The dated 1.5.0→1.5.2 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-152-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The provider-backed checks below remain pending:
 
-- **Summaries with OAuth providers:** compact a session on a stored-OAuth provider to verify summaries still authenticate now that Pi no longer passes the stored OAuth token as the API key.
-- **Carried forward from 1.4.0 (still apply to the pinned runtime):** Claude Pro/Max OAuth provider request/header path; OpenAI Codex mid-conversation tool-set changes; real-session resume with `/tree` tool restoration; long-session compaction at high, xhigh, and max effort ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785)); and the items in the [1.4.0 status](docs/pin-bump-verification.md#historical-pi-140-comparison-status-reviewed-2026-10-22), including those it carries forward from 1.3.0.
+- **Release gate — Claude Pro/Max OAuth message threads:** run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` and verify thread continuations succeed with no extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- **Carried forward from 1.5.0 (still apply to the pinned runtime):** the items in the [1.5.0 status](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02), including those it carries forward from 1.4.0 and earlier.
 
-Historical Pi 1.4.0, 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-140-comparison-status-reviewed-2026-10-22).
+Historical Pi 1.5.0, 1.4.0, 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02).
 
 ## Final validation guidance
 
