@@ -39,7 +39,7 @@ test("generated child Pi arguments select generated JavaScript runtime extension
   );
 });
 
-test("Pi 0.83 tool-result bridge preserves rich failures and patches the matching execution", () => {
+test("subagent tool-result bridge preserves rich failures and patches the matching execution", () => {
   const bridge = createSubagentToolResultBridge();
   const content = [{ type: "text", text: "Unknown agent with useful detail" }];
   const details = { mode: "single", results: [], diagnostic: { agent: "missing" } };
