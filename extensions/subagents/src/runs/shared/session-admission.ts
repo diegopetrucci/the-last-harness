@@ -13,6 +13,7 @@ import {
 } from "../../shared/context-diagnostics.ts";
 import type { ContextUsageDiagnostics } from "../../shared/types.ts";
 import {
+  classifySessionForResume,
   isSessionLeaseStale,
   readSessionRecord,
   type SessionRecord,
@@ -58,11 +59,7 @@ export type SessionAdmission =
   | { ok: true; record: SessionRecord }
   | { ok: false; refusal: SessionRefusal };
 
-/**
- * Classify a session for resume without mutating anything. Mirrors the order of
- * `acquireSessionLease`: read failure, retired, held, abandoned, otherwise
- * admissible (including a never-acquired generation-0 record).
- */
+/** Classify a session for resume without mutating its ownership record. */
 export function admitSessionForResume(
   sessionFile: string,
   deps: SessionRecordDeps = {},
@@ -81,22 +78,20 @@ export function admitSessionForResume(
       break;
   }
   const { record } = read;
-  if (record.retired) {
-    return {
-      ok: false,
-      refusal: {
-        kind: "retired",
-        ...(record.retiredReason ? { reason: record.retiredReason } : {}),
-      },
-    };
-  }
-  if (record.lease) {
-    return isSessionLeaseStale(record.lease, deps)
-      ? { ok: false, refusal: { kind: "abandoned" } }
-      : { ok: false, refusal: { kind: "held", runnerPid: record.lease.runnerPid } };
-  }
-  if (record.generation > 0 && record.cleanFinal?.generation !== record.generation) {
-    return { ok: false, refusal: { kind: "abandoned" } };
+  const refusal = classifySessionForResume(
+    record,
+    !record.retired && !!record.lease && isSessionLeaseStale(record.lease, deps),
+  );
+  switch (refusal?.status) {
+    case "retired":
+      return {
+        ok: false,
+        refusal: { kind: "retired", ...(refusal.reason ? { reason: refusal.reason } : {}) },
+      };
+    case "held":
+      return { ok: false, refusal: { kind: "held", runnerPid: refusal.holder.runnerPid } };
+    case "abandoned":
+      return { ok: false, refusal: { kind: "abandoned" } };
   }
   return { ok: true, record };
 }

@@ -1,52 +1,18 @@
 import { createJiti } from "jiti";
+import { normalizeAgentModelFixture } from "./the-last-harness-agent-model-test-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const modelDefaults = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
-const { normalizeAgentModelDefaults } = await jiti.import(
-  "../extensions/the-last-harness/prompts.ts",
-);
 const { findAvailableProviderModel, formatProviderModelReference, splitKnownThinkingSuffix } =
   modelDefaults;
 const { getProviderAwareFallbackModels } =
   await import("../extensions/the-last-harness-subagent-safety.mjs");
 
-function frontmatterModelFields(agent) {
-  const frontmatter = {};
-  for (const key of [
-    "model",
-    "thinking",
-    "tlhOpenaiModels",
-    "tlhAnthropicModels",
-    "tlhOpenaiThinking",
-    "tlhAnthropicThinking",
-    "tlhOpenrouterThinking",
-  ]) {
-    const value = agent[key];
-    if (Array.isArray(value)) {
-      frontmatter[key] = value.join(",");
-    } else if (typeof value === "string") {
-      frontmatter[key] = value;
-    }
-  }
-  return frontmatter;
-}
-
 function normalizeAgentFixture(agent) {
   if (!agent) {
     return agent;
   }
-  const {
-    tlhOpenaiModels: _openaiModels,
-    tlhAnthropicModels: _anthropicModels,
-    tlhOpenaiThinking: _openaiThinking,
-    tlhAnthropicThinking: _anthropicThinking,
-    tlhOpenrouterThinking: _openrouterThinking,
-    ...withoutLegacyFields
-  } = agent;
-  return {
-    ...withoutLegacyFields,
-    ...normalizeAgentModelDefaults(frontmatterModelFields(agent), agent.tlhModelDefaults),
-  };
+  return normalizeAgentModelFixture(agent);
 }
 
 function normalizeAgents(agents) {
