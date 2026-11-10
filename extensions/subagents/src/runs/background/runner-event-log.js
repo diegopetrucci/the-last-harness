@@ -1,6 +1,5 @@
 // Generated from extensions/subagents/src/runs/background/runner-event-log.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { appendJsonl as appendRawJsonl } from "../../shared/artifacts.js";
 const DEFAULT_MAX_ASYNC_EVENTS_BYTES = 50 * 1024 * 1024;
 const ASYNC_EVENTS_MAX_BYTES_ENV = "PI_SUBAGENT_ASYNC_EVENTS_MAX_BYTES";
@@ -66,19 +65,4 @@ export function appendDiagnosticJsonl(filePath, line, droppedEventType) {
         appendJsonl(filePath, marker);
     }
     state.diagnosticsTruncated = true;
-}
-export function findLatestSessionFile(sessionDir) {
-    try {
-        const files = fs
-            .readdirSync(sessionDir)
-            .filter((f) => f.endsWith(".jsonl"))
-            .map((f) => path.join(sessionDir, f));
-        if (files.length === 0)
-            return null;
-        files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-        return files[0] ?? null;
-    }
-    catch {
-        return null;
-    }
 }
