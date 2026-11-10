@@ -16,6 +16,10 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
+  PACKAGED_PRIMARY_AGENT_ROLES,
+  PACKAGED_MINOR_AGENT_ROLES,
+} from "../shared/project-agent-provenance.js";
+import {
   THINKING_LEVELS,
   TLH_LAUNCH_TELEMETRY_EVENT_TYPE,
   TLH_NAME,
@@ -89,21 +93,9 @@ const PUBLIC_PROVIDER_IDS = new Set([
   "zai-coding-cn",
 ]);
 
-const BUNDLED_PRIMARY_AGENT_NAMES = new Set(["architect", "bug-hunter", "product", "rush"]);
+const BUNDLED_PRIMARY_AGENT_NAMES = new Set<string>([...PACKAGED_PRIMARY_AGENT_ROLES].sort());
 
-// Keep this catalog aligned with the installer-managed TLH minor-agent prompts.
-// Never emit a telemetry key for an agent name outside this set.
-const BUNDLED_SUBAGENT_NAMES = Object.freeze([
-  "code-reviewer",
-  "contrarian",
-  "developer",
-  "diff-summarizer",
-  "librarian",
-  "oracle",
-  "repo-scout",
-  "test-runner",
-  "web-scout",
-]) as readonly string[];
+const BUNDLED_SUBAGENT_NAMES = Object.freeze([...PACKAGED_MINOR_AGENT_ROLES].sort());
 
 const execFileAsync = promisify(execFile);
 
@@ -670,13 +662,6 @@ function readSubagentFrontmatterConfig(
  *
  * Both sides must already be privacy-filtered before calling this helper. The colon mirrors
  * the separator used by upstream Pi's applyThinkingSuffix.
- *
- * Edge cases:
- *   - Normal:  joinModelEffort("claude-opus-4-5", "high")    → "claude-opus-4-5:high"
- *   - Unknown: joinModelEffort("unknown", "unknown")         → "unknown:unknown"
- *   - Custom:  joinModelEffort("custom", "high")             → "custom:high"
- *   - Cleared: joinModelEffort("cleared", "high")            → "cleared:high"
- *              joinModelEffort("claude-opus-4-5", "cleared") → "claude-opus-4-5:cleared"
  */
 function joinModelEffort(model: string, effort: string): string {
   return `${model}:${effort}`;

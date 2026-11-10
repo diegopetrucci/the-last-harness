@@ -6,6 +6,7 @@ import { homedir, arch as osArch, platform as osPlatform, release as osRelease, 
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { CONFIG_DIR_NAME, getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { PACKAGED_PRIMARY_AGENT_ROLES, PACKAGED_MINOR_AGENT_ROLES, } from "../shared/project-agent-provenance.js";
 import { THINKING_LEVELS, TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_APP_ID, TLH_TELEMETRY_INGEST_BASE_URL, TLH_TELEMETRY_NAMESPACE, TLH_TELEMETRY_STATE_SCHEMA_VERSION, TLH_TELEMETRY_TIMEOUT_MS, } from "./constants.js";
 import { isFalseyEnvFlag, isPlainObject, isTruthyEnvFlag, readText } from "./common.js";
 import { buildExperimentalFeatureTelemetryPayload } from "./experimental.js";
@@ -56,18 +57,8 @@ const PUBLIC_PROVIDER_IDS = new Set([
     "zai",
     "zai-coding-cn",
 ]);
-const BUNDLED_PRIMARY_AGENT_NAMES = new Set(["architect", "bug-hunter", "product", "rush"]);
-const BUNDLED_SUBAGENT_NAMES = Object.freeze([
-    "code-reviewer",
-    "contrarian",
-    "developer",
-    "diff-summarizer",
-    "librarian",
-    "oracle",
-    "repo-scout",
-    "test-runner",
-    "web-scout",
-]);
+const BUNDLED_PRIMARY_AGENT_NAMES = new Set([...PACKAGED_PRIMARY_AGENT_ROLES].sort());
+const BUNDLED_SUBAGENT_NAMES = Object.freeze([...PACKAGED_MINOR_AGENT_ROLES].sort());
 const execFileAsync = promisify(execFile);
 let sentTlhLaunchTelemetry = false;
 function configuredTlhTelemetryNamespace() {
