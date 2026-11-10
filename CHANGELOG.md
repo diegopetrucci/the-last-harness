@@ -12,6 +12,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
+### Internal
+
+- Check Node requirement copies for drift, derive smoke-test prompts from the installer, and tidy install documentation ([#898](https://github.com/diegopetrucci/the-last-harness/pull/898)).
+
 ## [0.47.0] - 2026-11-08
 
 ### Breaking
