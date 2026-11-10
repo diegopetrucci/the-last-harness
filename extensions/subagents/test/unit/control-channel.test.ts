@@ -12,6 +12,7 @@ import {
   deliverInterruptRequest,
   enqueueStepChildMessage,
   interruptRequestPath,
+  readInterruptRequest,
   requestAsyncInterrupt,
   requestAsyncResume,
   requestAsyncSteer,
@@ -60,6 +61,48 @@ describe("control channel: request file", () => {
       const data = JSON.parse(fs.readFileSync(requestPath, "utf-8"));
       assert.equal(data.type, "interrupt");
       assert.equal(data.source, "test");
+    } finally {
+      cleanup(asyncDir);
+    }
+  });
+
+  it("reads interrupts with a missing or finite timestamp and only typed fields", () => {
+    const asyncDir = tmpAsyncDir("pi-control-read-");
+    try {
+      const requestPath = requestAsyncInterrupt(asyncDir);
+      for (const ts of [undefined, 0, -1, 999]) {
+        fs.writeFileSync(
+          requestPath,
+          JSON.stringify({
+            type: "interrupt",
+            ts,
+            source: "test",
+            reason: "pause",
+            extra: true,
+          }),
+        );
+        assert.deepEqual(readInterruptRequest(asyncDir), {
+          type: "interrupt",
+          ...(ts !== undefined ? { ts } : {}),
+          source: "test",
+          reason: "pause",
+        });
+      }
+      fs.writeFileSync(requestPath, JSON.stringify({ type: "interrupt", source: 1, reason: [] }));
+      assert.deepEqual(readInterruptRequest(asyncDir), { type: "interrupt" });
+    } finally {
+      cleanup(asyncDir);
+    }
+  });
+
+  it("rejects interrupt timestamps that are not finite numbers", () => {
+    const asyncDir = tmpAsyncDir("pi-control-read-invalid-");
+    try {
+      const requestPath = requestAsyncInterrupt(asyncDir);
+      for (const ts of ['"999"', "null", "true", "{}", "[]", "1e400", "-1e400"]) {
+        fs.writeFileSync(requestPath, `{"type":"interrupt","ts":${ts}}`);
+        assert.equal(readInterruptRequest(asyncDir), undefined);
+      }
     } finally {
       cleanup(asyncDir);
     }

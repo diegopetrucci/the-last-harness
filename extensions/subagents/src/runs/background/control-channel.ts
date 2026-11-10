@@ -465,8 +465,19 @@ export function consumeChildMessageRequests(
 /** Parse a request without consuming it; used by read-only status inspection. */
 function parseInterruptRequest(value: unknown): InterruptRequest | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const request = value as Partial<InterruptRequest>;
-  return request.type === "interrupt" ? (request as InterruptRequest) : undefined;
+  if (!("type" in value) || value.type !== "interrupt") return undefined;
+  if (
+    "ts" in value &&
+    value.ts !== undefined &&
+    (typeof value.ts !== "number" || !Number.isFinite(value.ts))
+  )
+    return undefined;
+  return {
+    type: "interrupt",
+    ...("ts" in value && typeof value.ts === "number" ? { ts: value.ts } : {}),
+    ...("source" in value && typeof value.source === "string" ? { source: value.source } : {}),
+    ...("reason" in value && typeof value.reason === "string" ? { reason: value.reason } : {}),
+  };
 }
 
 export function readInterruptRequest(

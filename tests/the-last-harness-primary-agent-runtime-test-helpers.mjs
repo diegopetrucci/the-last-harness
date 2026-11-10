@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createJiti } from "jiti";
+import { normalizeAgentModelFixture } from "./the-last-harness-agent-model-test-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const piSystemPrompt = await import(
@@ -12,9 +13,6 @@ export const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = piSystem
 export const EMBEDDED_SUBAGENTS_FEATURE = "embedded-subagents";
 export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
   "../extensions/the-last-harness/primary-agent-runtime.ts",
-);
-const { normalizeAgentModelDefaults } = await jiti.import(
-  "../extensions/the-last-harness/prompts.ts",
 );
 
 export function createPiHarness() {
@@ -218,48 +216,14 @@ export function writePrimaryConfig(agentDir, primaryAgent = {}) {
   );
 }
 
-function frontmatterModelFields(overrides) {
-  const frontmatter = {};
-  for (const key of [
-    "model",
-    "thinking",
-    "tlhOpenaiModels",
-    "tlhAnthropicModels",
-    "tlhOpenaiThinking",
-    "tlhAnthropicThinking",
-    "tlhOpenrouterThinking",
-  ]) {
-    const value = overrides[key];
-    if (Array.isArray(value)) {
-      frontmatter[key] = value.join(",");
-    } else if (typeof value === "string") {
-      frontmatter[key] = value;
-    }
-  }
-  return frontmatter;
-}
-
 export function createPrimaryPrompt(name, overrides = {}) {
-  const normalized = normalizeAgentModelDefaults(
-    frontmatterModelFields(overrides),
-    overrides.tlhModelDefaults,
-  );
-  const {
-    tlhOpenaiModels: _tlhOpenaiModels,
-    tlhAnthropicModels: _tlhAnthropicModels,
-    tlhOpenaiThinking: _tlhOpenaiThinking,
-    tlhAnthropicThinking: _tlhAnthropicThinking,
-    tlhOpenrouterThinking: _tlhOpenrouterThinking,
-    ...withoutLegacyFields
-  } = overrides;
   return {
     name,
     description: "Test primary",
     tools: ["subagent"],
     systemPrompt: "test",
     filePath: `agents/primary/${name}.md`,
-    ...withoutLegacyFields,
-    ...normalized,
+    ...normalizeAgentModelFixture(overrides),
     ...(overrides.preferredModel ? { preferredModel: overrides.preferredModel } : {}),
   };
 }
