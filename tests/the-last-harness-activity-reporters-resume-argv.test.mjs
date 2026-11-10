@@ -219,10 +219,13 @@ test("Herdr session change reports the new resume argv with heartbeats disabled"
 });
 
 test("Herdr reporter carries resume argv on blocked reports and across a blocked session change", async () => {
+  const timers = createFakeTimers();
   const calls = [];
   const reporter = createHerdrActivityReporter({
     env: herdrEnv({ HERDR_TLH_HEARTBEAT_MS: "0" }),
     sendRequest: async (request) => calls.push(request),
+    now: timers.now,
+    timers,
     idleDebounceMs: 10,
   });
   let sessionPath = "/tmp/first.jsonl";
@@ -237,7 +240,8 @@ test("Herdr reporter carries resume argv on blocked reports and across a blocked
     primaryReasons: [],
     activeAsyncJobIds: [],
   });
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  timers.advance(10);
+  await flushAsyncWork();
   sessionPath = "/tmp/second.jsonl";
   reporter.handleSessionStart(ctx());
   await flushAsyncWork();

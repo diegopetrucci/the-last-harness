@@ -346,6 +346,28 @@ export function createSessionRecord(
   return result;
 }
 
+/** Classify ownership from a record and its observed lease liveness without writing. */
+export function classifySessionForResume(
+  record: SessionRecord,
+  leaseIsStale: boolean,
+): Extract<AcquireResult, { status: "retired" | "held" | "abandoned" }> | undefined {
+  if (record.retired) {
+    return {
+      status: "retired",
+      ...(record.retiredReason ? { reason: record.retiredReason } : {}),
+    };
+  }
+  if (record.lease) {
+    return leaseIsStale
+      ? { status: "abandoned", generation: record.generation, staleLease: record.lease }
+      : { status: "held", holder: record.lease };
+  }
+  if (record.generation > 0 && record.cleanFinal?.generation !== record.generation) {
+    return { status: "abandoned", generation: record.generation };
+  }
+  return undefined;
+}
+
 /**
  * Take the exclusive lease. A record must already exist (never initialized
  * implicitly) and not be retired. Never takes over: a stale lease, or a
@@ -366,20 +388,11 @@ export function acquireSessionLease(
     const read = readRecordFile(file);
     if (read.status !== "ok") return read;
     const { record } = read;
-    if (record.retired) {
-      return {
-        status: "retired",
-        ...(record.retiredReason ? { reason: record.retiredReason } : {}),
-      };
-    }
-    if (record.lease) {
-      return isSessionLeaseStale(record.lease, deps)
-        ? { status: "abandoned", generation: record.generation, staleLease: record.lease }
-        : { status: "held", holder: record.lease };
-    }
-    if (record.generation > 0 && record.cleanFinal?.generation !== record.generation) {
-      return { status: "abandoned", generation: record.generation };
-    }
+    const refusal = classifySessionForResume(
+      record,
+      !record.retired && !!record.lease && isSessionLeaseStale(record.lease, deps),
+    );
+    if (refusal) return refusal;
     const token = randomUUID();
     const next: SessionRecord = {
       ...record,

@@ -151,7 +151,7 @@ function assertIsolatedEnvironment() {
   }
 }
 
-test("Pi 1.3.0 CLI resolver rejects a bare model with no configured matching provider", async () => {
+test("pinned Pi CLI resolver rejects a bare model with no configured matching provider", async () => {
   const runtime = await createRuntime([]);
   const resolved = resolveCliModel({ cliModel: SHARED_MODEL_ID, modelRuntime: runtime });
 
@@ -162,7 +162,7 @@ test("Pi 1.3.0 CLI resolver rejects a bare model with no configured matching pro
   assert.match(resolved.error ?? "", new RegExp(`${PROVIDER_B}/${SHARED_MODEL_ID}`));
 });
 
-test("Pi 1.3.0 CLI resolver chooses the sole configured provider for a bare model", async () => {
+test("pinned Pi CLI resolver chooses the sole configured provider for a bare model", async () => {
   const runtime = await createRuntime([PROVIDER_B]);
   const resolved = resolveCliModel({ cliModel: SHARED_MODEL_ID, modelRuntime: runtime });
 
@@ -171,7 +171,7 @@ test("Pi 1.3.0 CLI resolver chooses the sole configured provider for a bare mode
   assert.equal(resolved.model?.id, SHARED_MODEL_ID);
 });
 
-test("Pi 1.3.0 CLI resolver rejects a bare model when multiple providers are configured", async () => {
+test("pinned Pi CLI resolver rejects a bare model when multiple providers are configured", async () => {
   const runtime = await createRuntime([PROVIDER_A, PROVIDER_B]);
   const resolved = resolveCliModel({ cliModel: SHARED_MODEL_ID, modelRuntime: runtime });
 

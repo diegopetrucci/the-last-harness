@@ -154,7 +154,7 @@ async function createChildSession({
   return session;
 }
 
-test("Pi 1.3 primary resume applies policy at the provider and execution boundaries", async (t) => {
+test("pinned Pi primary resume applies policy at the provider and execution boundaries", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-pi-1-3-primary-resume-", {
     cwd: true,
     test: t,
@@ -422,7 +422,7 @@ test("Pi 1.3 primary resume applies policy at the provider and execution boundar
   );
 });
 
-test("Pi 1.3 child resume honors explicit tools and restores omitted tools from the real transcript", async (t) => {
+test("pinned Pi child resume honors explicit tools and restores omitted tools from the real transcript", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-pi-1-3-child-resume-", { cwd: true, test: t });
   await withEnv(
     isolatedEnv(fixture, {
@@ -601,7 +601,7 @@ test("Pi 1.3 child resume honors explicit tools and restores omitted tools from 
 });
 
 for (const primaryEnabled of [false, true]) {
-  test(`Pi 1.4 resume activates newly installed default-active extension tools only without the TLH primary agent (${primaryEnabled ? "TLH primary enabled" : "control without TLH"})`, async (t) => {
+  test(`pinned Pi resume activates newly installed default-active extension tools only without the TLH primary agent (${primaryEnabled ? "TLH primary enabled" : "control without TLH"})`, async (t) => {
     const fixture = createIsolatedProfileFixture("tlh-pi-1-4-new-tool-resume-", {
       cwd: true,
       test: t,
@@ -611,7 +611,7 @@ for (const primaryEnabled of [false, true]) {
       `${JSON.stringify(
         {
           tlh: {
-            primaryAgent: { enabled: true, selected: "architect" },
+            primaryAgent: { selected: "architect" },
             telemetry: { enabled: false },
             updateCheck: { enabled: false },
           },
@@ -685,7 +685,7 @@ for (const primaryEnabled of [false, true]) {
         noPromptTemplates: true,
         noSkills: true,
         noThemes: true,
-        systemPrompt: "Deterministic Pi 1.4 resume fixture.",
+        systemPrompt: "Deterministic pinned Pi resume fixture.",
         appendSystemPrompt: [],
       });
       await resourceLoader.reload();
@@ -738,8 +738,7 @@ for (const primaryEnabled of [false, true]) {
         assert.equal(boundary.all.includes("new_tool"), true);
 
         if (!primaryEnabled) {
-          // Control: TLH is not loaded (no primary agent applies a tool surface), so this isolates Pi's own resume restore. Pi 1.4 activates extension tools the branch never mentioned.
-          // Pi 1.3 restored only the recorded `toolsAdded`, so this would fail there.
+          // Without TLH, pinned Pi activates extension tools absent from the recorded branch.
           assert.equal(boundary.active.includes("new_tool"), true);
           assert.equal(session.getActiveToolNames().includes("new_tool"), true);
           return;

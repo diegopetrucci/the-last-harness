@@ -19,10 +19,6 @@ const {
   splitKnownThinkingSuffix,
 } = createModelDefaultsTestContext();
 
-// =============================================================================
-// Stored override tests (re-landed from feat/subagent-model-effort-settings)
-// =============================================================================
-
 const limitedReasoningAvailable = [
   {
     provider: "anthropic",
