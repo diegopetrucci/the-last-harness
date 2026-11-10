@@ -1,3 +1,4 @@
+import { writeAtomicJson } from "./write-atomic-json.mjs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -281,21 +282,6 @@ async function cleanupOwnedPids(queueDir: string): Promise<void> {
     throw new Error(`Mock Pi fixture could not reap owned processes: ${live.join(", ")}`);
   }
   throwIfEmergencyExpiry(queueDir);
-}
-
-function writeAtomicJson(filePath: string, value: unknown): void {
-  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  fs.writeFileSync(tempPath, JSON.stringify(value), "utf-8");
-  try {
-    fs.renameSync(tempPath, filePath);
-  } catch (error) {
-    try {
-      fs.rmSync(tempPath, { force: true });
-    } catch {
-      // Preserve the publication error if cleanup also fails.
-    }
-    throw error;
-  }
 }
 
 export function createMockPi(): MockPi {

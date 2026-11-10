@@ -1,3 +1,4 @@
+import { writeAtomicJson } from "./write-atomic-json.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -41,21 +42,6 @@ function exitAfterFlush(code) {
 function fail(message, exitCode = 1) {
   process.stderr.write(`${message}\n`);
   exitAfterFlush(exitCode);
-}
-
-function writeAtomicJson(filePath, value) {
-  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  fs.writeFileSync(tempPath, JSON.stringify(value), "utf-8");
-  try {
-    fs.renameSync(tempPath, filePath);
-  } catch (error) {
-    try {
-      fs.rmSync(tempPath, { force: true });
-    } catch {
-      // Preserve the publication error if cleanup also fails.
-    }
-    throw error;
-  }
 }
 
 function publishOwnership(state) {
@@ -383,12 +369,8 @@ function writeSessionFile(args) {
       return;
     }
     if (args[i] === "--session-dir") {
-      // Opt-in only: creating an (empty) session file for every --session-dir
-      // invocation makes parseSessionTokens return a non-null zero-token object,
-      // which short-circuits the model-attempts token fallback and breaks
-      // unrelated token-tracking tests. Gate it behind an explicit env var so
-      // default behavior matches origin/main byte-for-byte; only the
-      // session-discovery tests set MOCK_PI_SESSION_DIR_FILE=1.
+      // Create session-directory files only when MOCK_PI_SESSION_DIR_FILE=1.
+      // Empty files otherwise short-circuit the token fallback in unrelated tests.
       if (process.env.MOCK_PI_SESSION_DIR_FILE !== "1") continue;
       const sessionDir = args[i + 1];
       if (!sessionDir) continue;

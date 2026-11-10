@@ -78,6 +78,15 @@ function okResponse(opts: {
   return { stdout: gitOutput(opts), processError: false, exitStatus: 0, stderr: "" };
 }
 
+function dubiousOwnershipResponse(): MockResponse {
+  return {
+    stdout: "",
+    processError: false,
+    exitStatus: 128,
+    stderr: "fatal: unsafe repository '/some/path' is owned by someone else",
+  };
+}
+
 /** Convenience: build a MockResponse for a process-level error (e.g. git not found). */
 function processErrorResponse(): MockResponse {
   return { stdout: "", processError: true, exitStatus: null, stderr: "" };
@@ -310,11 +319,6 @@ describe("captureChildLocationSnapshot", () => {
     // spawnSync can return partial stdout on timeout: the toplevel line may
     // have been written before the process was killed, so parentGit.toplevel
     // is non-undefined while processError is true.
-    // The old guard required only parentGit.toplevel !== undefined, which
-    // would accept this partial read as positive evidence. The actual guard
-    // requires !parentGit.processError && parentGit.toplevel !== undefined:
-    // a process error implies the stdout may be truncated, so it is never
-    // treated as positive evidence regardless of exit status.
     const parentToplevelLine = PARENT_CWD + "\n"; // partial stdout, only toplevel was written
     const responses = new Map([
       [
@@ -457,9 +461,6 @@ describe("captureChildLocationSnapshot", () => {
   });
 
   it("does not throw when the real production runner receives a hostile path", () => {
-    // ITEM 3: the production runner wraps spawnSync in a try-catch so a path
-    // with a NUL byte (which triggers ERR_INVALID_ARG_VALUE in Node's spawnSync)
-    // never propagates into the dispatch path.
     const hostilePath = PARENT_CWD + "\x00evil";
     // Call with the real production runner (no injected seam) to exercise the
     // actual spawnSync guard. The result is indeterminate but must not throw.
@@ -469,9 +470,6 @@ describe("captureChildLocationSnapshot", () => {
   });
 
   it("each call runs git independently (no module-level cache)", () => {
-    // ITEM 5: verify there is no process-lifetime memoization. Two separate
-    // calls with the same cwds must each invoke git (callCount === 4 total,
-    // not 2).
     const responses = new Map([
       [
         PARENT_CWD,
@@ -558,8 +556,6 @@ describe("captureChildLocationSnapshot", () => {
   });
 
   it("does NOT set notAGitRepo for a git-level failure that is not a missing-repo error (e.g. dubious ownership)", () => {
-    // ITEM 3: a nonzero git exit with empty stdout but a different stderr message
-    // (e.g. safe.directory refusal) must NOT produce a 'no git repo' marker.
     const responses = new Map([
       [
         PARENT_CWD,
@@ -570,16 +566,7 @@ describe("captureChildLocationSnapshot", () => {
           fullSha: "abc1234000000000000000000000000000000000",
         }),
       ],
-      [
-        CHILD_NO_GIT,
-        {
-          stdout: "",
-          processError: false,
-          exitStatus: 128,
-          // Dubious-ownership message — does NOT contain "not a git repository".
-          stderr: "fatal: unsafe repository '/some/path' is owned by someone else",
-        },
-      ],
+      [CHILD_NO_GIT, dubiousOwnershipResponse()],
     ]);
     const { runner } = makeGitRunner(responses);
 
@@ -796,15 +783,7 @@ describe("captureChildLocationSnapshot", () => {
     // dubious-ownership refusal, config error) is indeterminate. Relational
     // fields must be suppressed; cwd must still be shown.
     const responses = new Map([
-      [
-        PARENT_CWD,
-        {
-          stdout: "",
-          processError: false,
-          exitStatus: 128,
-          stderr: "fatal: unsafe repository '/some/path' is owned by someone else",
-        },
-      ],
+      [PARENT_CWD, dubiousOwnershipResponse()],
       [
         CHILD_OTHER_REPO,
         okResponse({
@@ -859,11 +838,6 @@ describe("captureChildLocationSnapshot", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Item 2 (ts-y7q9): process error with partial stdout must not use the
-// truncated toplevel — render only the cwd, no repoName.
-// ---------------------------------------------------------------------------
-
 describe("captureChildLocationSnapshot — child process error with partial toplevel", () => {
   it("returns only the cwd when the child runner reports a process error, even if stdout contains a partial toplevel", () => {
     // A timeout or spawn failure can truncate stdout mid-line, so the
@@ -916,11 +890,6 @@ describe("captureChildLocationSnapshot — child process error with partial topl
     assert.ok(result.displayPath.length > 0, "displayPath must still be set");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Item 4a (ts-y7q9): git stdout with an implausible line count (newline in a
-// path) must be treated as indeterminate at the parser level.
-// ---------------------------------------------------------------------------
 
 describe("captureChildLocationSnapshot — implausible git stdout line count", () => {
   it("returns no git facts when stdout has more than 4 lines (newline in toplevel path)", () => {
@@ -987,10 +956,6 @@ describe("captureChildLocationSnapshot — implausible git stdout line count", (
     assert.ok(result.displayPath.length > 0, "displayPath must still be set");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Item 4b (ts-y7q9): cwd containing CR or LF must skip git entirely.
-// ---------------------------------------------------------------------------
 
 describe("captureChildLocationSnapshot — cwd contains CR or LF", () => {
   it("skips git lookup and returns only cwd when the child cwd contains a LF", () => {

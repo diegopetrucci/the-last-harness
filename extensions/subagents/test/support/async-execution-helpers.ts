@@ -63,7 +63,7 @@ interface AsyncExecutionModule {
 }
 
 interface UtilsModule {
-  readStatus(dir: string): { runId: string; state: string; mode: string } | null;
+  readStatus(dir: string): AsyncStatus | null;
 }
 
 interface TypesModule {
@@ -173,8 +173,8 @@ export async function waitForAsyncStatusPredicate(
   const deadline = Date.now() + timeoutMs;
   while (true) {
     if (fs.existsSync(statusPath)) {
-      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-      if (predicate(status)) return status;
+      const status = readStatus(asyncDir);
+      if (status && predicate(status)) return status;
     }
     if (Date.now() > deadline)
       assert.fail(`Timed out waiting for async status predicate '${label}' in ${asyncDir}`);
@@ -194,8 +194,8 @@ export async function waitForAsyncControlCondition(
   for (;;) {
     const eventText = fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf-8") : "";
     if (fs.existsSync(statusPath)) {
-      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-      if (predicate(status, eventText)) return { status, eventText };
+      const status = readStatus(asyncDir);
+      if (status && predicate(status, eventText)) return { status, eventText };
     }
     if (fs.existsSync(resultPath)) {
       assert.fail(`run completed before control condition was observed in ${asyncDir}`);
@@ -420,9 +420,39 @@ export function removeLifecycleLock(asyncDir: string): void {
 // readAsyncPayload – thin wrapper used across all suites
 // ---------------------------------------------------------------------------
 
+function isAsyncResultPayload(payload: unknown): payload is AsyncResultPayload {
+  if (!isRecord(payload)) return false;
+  for (const field of ["id", "agent", "summary", "asyncDir"] as const) {
+    if (typeof payload[field] !== "string") return false;
+  }
+  if (payload.mode !== "single" && payload.mode !== "parallel") return false;
+  if (
+    payload.state !== "complete" &&
+    payload.state !== "failed" &&
+    payload.state !== "paused" &&
+    payload.state !== "cancelled"
+  ) {
+    return false;
+  }
+  if (typeof payload.success !== "boolean") return false;
+  for (const field of ["exitCode", "timestamp", "durationMs"] as const) {
+    if (typeof payload[field] !== "number" || !Number.isFinite(payload[field])) return false;
+  }
+  if (!Array.isArray(payload.results)) return false;
+  for (const item of payload.results) {
+    if (!isRecord(item)) return false;
+    if (typeof item.agent !== "string") return false;
+    if (typeof item.success !== "boolean") return false;
+    if (typeof item.output !== "string") return false;
+  }
+  return true;
+}
+
 export async function readAsyncPayload(id: string): Promise<AsyncResultPayload> {
   const resultPath = await waitForAsyncResultFile(id);
-  return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+  const payload: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+  assert.ok(isAsyncResultPayload(payload), "expected a complete async result artifact");
+  return payload;
 }
 
 function git(dir: string, args: string[]): void {

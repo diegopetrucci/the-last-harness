@@ -323,8 +323,6 @@ describe("lifecycle state helpers", () => {
   });
 
   it("persisted failed step error survives onto the merged record (not cleared by in-memory step)", () => {
-    // FIX 1 assertion (a): a persisted failed step's error must be preserved
-    // in the merged result, not overwritten by a stale in-memory step without error.
     const root = tempRoot("pi-lifecycle-step-error-survives-");
     try {
       const asyncDir = path.join(root, "run-step-error-survives");
@@ -390,10 +388,7 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  it("cancelled winner clears stale in-memory error at both run and step level (FIX 1 assertion b)", () => {
-    // FIX 1 assertion (b): a cancelled winner (no error) must clear a stale
-    // in-memory error/failed payload at both run and step level.
-    // Concrete case from PR #503 review.
+  it("cancelled winner clears stale in-memory error at both run and step level", () => {
     const root = tempRoot("pi-lifecycle-cancel-clears-error-");
     try {
       const asyncDir = path.join(root, "run-cancel-clears-error");
@@ -463,14 +458,6 @@ describe("lifecycle state helpers", () => {
   });
 
   it("stale-generation CAS invariant: transitionLifecycleStatus with an old generation is rejected", () => {
-    // This test verifies the generic CAS invariant: a transitionLifecycleStatus call
-    // that presents a generation number that is behind the persisted generation is
-    // rejected with an "expected generation" error. This prevents any stale writer
-    // from downgrading a persisted terminal state.
-    //
-    // Note: this test verifies the CAS mechanism directly by calling
-    // transitionLifecycleStatus with a manually retained old generation. It does
-    // not exercise writeStatusPayload or the runner finalization path.
     const root = tempRoot("pi-lifecycle-cas-downgrade-");
     try {
       const asyncDir = path.join(root, "run-cas-downgrade");
@@ -834,18 +821,7 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  // ── Finding 2: stale run-level pid/pause survive terminal merge ─────────────
-  //
-  // When the persisted run state is terminal and the in-memory state is non-terminal,
-  // the merged record must NOT keep the source runner's stale `pid` or `pause` fields.
-  // A consumer reading `pid` or `pause` on a terminal record would incorrectly
-  // believe the run is still alive and supervised.
-  //
-  // Proof of non-vacuousness: remove `pid: undefined, pause: undefined` from
-  // terminalRunOverrides in lifecycle-state.ts and this test FAILS with:
-  //   "terminal merged record must not carry stale pid"
-  //   "terminal merged record must not carry stale pause"
-  it("mergeAndWriteSourceRunnerStatus clears stale pid and pause on terminal run override (finding-2)", () => {
+  it("mergeAndWriteSourceRunnerStatus clears stale pid and pause on terminal run override", () => {
     const root = tempRoot("pi-lifecycle-finding2-");
     try {
       const asyncDir = path.join(root, "run-finding2");
