@@ -1,3 +1,4 @@
+import type { PACKAGED_MINOR_AGENT_ROLES } from "../../../shared/project-agent-provenance.ts";
 import { normalizeActiveRuntimeMs } from "../runs/shared/active-runtime.ts";
 
 export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = 14_400_000;
@@ -14,7 +15,7 @@ export const CANONICAL_AGENT_MAX_EXECUTION_TIME_MS: Readonly<Record<string, numb
     "repo-scout": 600_000,
     "web-scout": 300_000,
     "diff-summarizer": 300_000,
-  });
+  } satisfies Record<(typeof PACKAGED_MINOR_AGENT_ROLES)[number], number>);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
