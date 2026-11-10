@@ -6,11 +6,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Bumped the bundled Pi runtime from `1.5.0` to `1.5.2`. Anthropic message threads are now on by default upstream, so live Claude Pro/Max OAuth behavior is a release gate; review evidence is in the [upstream-sync inventory](docs/upstream-sync-inventory.md#pi-152-review-evidence) ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- Bumped the bundled Pi runtime from `1.5.0` to `1.5.2`. Anthropic message threads are now on by default upstream, so live Claude Pro/Max OAuth behavior is a release gate ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892), [#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 
 ### Fixed
 
-- Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default.
+- Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
 ## [0.47.0] - 2026-11-08
 
