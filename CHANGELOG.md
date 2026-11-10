@@ -12,6 +12,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
+### Internal
+
+- Share subagent test fixtures, validate async artifact reads, and remove stale test narration ([#894](https://github.com/diegopetrucci/the-last-harness/pull/894)).
+
 ## [0.47.0] - 2026-11-08
 
 ### Breaking
