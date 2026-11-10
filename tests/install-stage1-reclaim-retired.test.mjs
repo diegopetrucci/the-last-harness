@@ -104,7 +104,7 @@ function createGitCheckoutDir(agentDir, host, repoPath) {
 // Case 1: Managed orphan — retired source absent from post-merge settings AND
 //         present on disk → pi remove is invoked.
 //
-// The fake pi faithfully simulates Pi 0.83.0: it deletes the on-disk residue
+// The fake pi deletes the on-disk residue
 // and exits 1 (because no settings entry remains after the post-merge step).
 // Success is determined by verifying the residue is gone, not by exit code.
 // ---------------------------------------------------------------------------
