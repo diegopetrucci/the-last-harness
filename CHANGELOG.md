@@ -12,6 +12,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
+### Internal
+
+- Share the packaged agent roster across guidance, execution budgets, and launch telemetry, and simplify guidance directory checks ([#896](https://github.com/diegopetrucci/the-last-harness/pull/896)).
+
 ## [0.47.0] - 2026-11-08
 
 ### Breaking
