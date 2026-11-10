@@ -1,6 +1,5 @@
 // Generated from extensions/the-last-harness/primary-agent-runtime-lifecycle.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import {} from "../the-last-harness-primary-agent.mjs";
 import { rushResumeDelegationReason, rushSteerDelegationReason, } from "./primary-agent-runtime-delegation.js";
 import { isTlhNoDeveloperSessionActive, retireTlhNoDeveloperPolicyRuntime, setTlhProjectAgentAccessProvider, } from "./project-agent-access.mjs";
 import { inventoryProjectAgentGuidance, } from "../shared/project-agent-guidance.js";
