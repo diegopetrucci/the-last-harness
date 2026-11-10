@@ -12,6 +12,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
+### Internal
+
+- Simplify annotate-git-diff content loading and remove unreachable image-extension checks ([#897](https://github.com/diegopetrucci/the-last-harness/pull/897)).
+
 ## [0.47.0] - 2026-11-08
 
 ### Breaking
