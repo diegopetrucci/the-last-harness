@@ -3,6 +3,8 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { createJiti } from "jiti";
 
+import { createDeferred } from "./test-fixture-helpers.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { buildAnnotateLastMessageHtml } = await jiti.import(
   "../extensions/the-last-harness/annotate-last-message/ui.ts",
@@ -27,16 +29,6 @@ class FakeWindow extends EventEmitter {
     this.closeCalls += 1;
     this.emit("closed");
   }
-}
-
-function createDeferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 function messageEntry(role, content, stopReason = "stop") {

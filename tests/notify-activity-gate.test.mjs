@@ -1,15 +1,3 @@
-/**
- * Tests for notify extension activity-gate behaviour (tickets ts-vy9k, ts-hehb).
- *
- * Covers:
- * - Suppressed while background work is in flight
- * - Notified when nothing is in flight
- * - No duplicate ping when agent_settled fires twice in rapid succession
- * - Normal behaviour (no suppression) when no activity signal is available
- * - Config field suppressWhileActive: work-in-flight cleared before debounce fires → notify
- * - Regression (ts-hehb): final errored settle with retry grace but no background jobs must notify
- * - Regression (ts-hehb): primary-only activity never suppresses notifications
- */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -440,11 +428,7 @@ test("session_shutdown unsubscribes from activity event bus", () => {
   assert.equal(unsubscribeCalled, true, "unsubscribe should be called on session_shutdown");
 });
 
-// ---------------------------------------------------------------------------
-// Regression tests (ts-hehb): gate on background work only, not aggregate activity
-// ---------------------------------------------------------------------------
-
-test("[ts-hehb] final errored settle with retry grace active and no background jobs must notify", async () => {
+test("final errored settle with retry grace active and no background jobs must notify", async () => {
   // Scenario: the tracker holds primary:retry-grace (1500 ms) because the last
   // agent turn ended with an error. inProgress is therefore true, but there are
   // NO background subagent jobs (activeAsyncJobIds is empty).
@@ -502,7 +486,7 @@ test("UI-prompt waiting does not suppress notifications without background work"
   assert.equal(notifyCount, 1, "waiting alone must not suppress a ready notification");
 });
 
-test("[ts-hehb] primary-only activity never suppresses notifications", async () => {
+test("primary-only activity never suppresses notifications", async () => {
   // Scenario: the tracker has a primary-agent-loop reason (or any primaryReasons entry)
   // but activeAsyncJobIds is empty. inProgress is true, but no background work.
   // notify must NOT suppress in this case.

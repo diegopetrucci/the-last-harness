@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
+import { developerSubagent } from "./the-last-harness-model-effort-test-helpers.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
@@ -147,26 +148,6 @@ const bugHunterAgent = {
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/bug-hunter.md",
-};
-
-/** @type {import("../extensions/the-last-harness/types.ts").SubagentMetadata} */
-const developerSubagent = {
-  name: "developer",
-  description: "Developer subagent",
-  tlhModelDefaultsSource: "frontmatter",
-  tlhModelDefaults: [
-    {
-      provider: "openai-codex",
-      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
-      effort: "max",
-    },
-    {
-      provider: "anthropic",
-      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-      effort: "medium",
-    },
-    { provider: "openrouter", effort: "medium" },
-  ],
 };
 
 /** @type {import("../extensions/the-last-harness/types.ts").SubagentMetadata} */

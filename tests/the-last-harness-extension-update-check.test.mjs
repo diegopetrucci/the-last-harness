@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { createJiti } from "jiti";
 
-import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+import { createDeferred, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const {
@@ -77,16 +77,6 @@ function installUpdateCheckHooks(t, hooks = {}) {
   t.after(() => {
     __resetTlhUpdateCheckForTests();
   });
-}
-
-function createDeferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
 }
 
 test("latest-release notifications keep the plain update command and release notes", () => {
