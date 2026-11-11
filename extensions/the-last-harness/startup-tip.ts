@@ -26,10 +26,6 @@ export const TLH_STARTUP_TIPS = [
 
 export function selectTlhStartupTip(random: () => number = Math.random): string | undefined {
   const tips: readonly string[] = TLH_STARTUP_TIPS;
-  if (tips.length === 0) {
-    return undefined;
-  }
-
   const index = Math.min(tips.length - 1, Math.floor(random() * tips.length));
   return tips[index];
 }

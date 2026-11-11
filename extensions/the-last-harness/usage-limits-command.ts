@@ -2,7 +2,10 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
+import {
+  assertTlhSettingsObject,
+  parseTlhSettingsContent,
+} from "./primary-agent-runtime-settings.js";
 import {
   getCachedTlhUsageWeeklyVisibility,
   getPersistedTlhUsageWeeklyVisibility,
@@ -20,14 +23,8 @@ import type {
 type TlhUsageSlashAction = { type: "status" } | { type: "weekly"; action: TlhUsageWeeklyAction };
 
 function validateTlhUsageLimitsSettings(settings: unknown): asserts settings is TlhSettings {
-  if (!isRecord(settings)) {
-    throw new Error("settings.json must contain a JSON object");
-  }
-  const tlh = settings.tlh;
-  if (tlh !== undefined && !isRecord(tlh)) {
-    throw new Error("settings field 'tlh' must be an object if present");
-  }
-  const usageLimits = isRecord(tlh) ? tlh.usageLimits : undefined;
+  assertTlhSettingsObject(settings);
+  const usageLimits = settings.tlh?.usageLimits;
   if (usageLimits !== undefined && !isRecord(usageLimits)) {
     throw new Error("settings field 'tlh.usageLimits' must be an object if present");
   }
