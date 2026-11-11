@@ -1,3 +1,4 @@
+import { DISABLED_COMPACT_ARTIFACT_CONFIG as artifactConfig } from "../support/artifact-config-fixtures.ts";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -11,7 +12,6 @@ import {
   readSessionRecord,
   type SessionRecord,
 } from "../../src/runs/shared/session-record.ts";
-import type { ResolvedArtifactConfig } from "../../src/shared/types.ts";
 import { startedMockPiPids, waitForMockPiCall } from "../support/async-execution-helpers.ts";
 import {
   createMockPi,
@@ -24,18 +24,6 @@ import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 const SIGNAL_HELPER = path.resolve(import.meta.dirname, "../support/live-lease-signal-runner.ts");
 const HELPER = path.resolve(import.meta.dirname, "../support/live-lease-runner.ts");
-
-const artifactConfig: ResolvedArtifactConfig = {
-  mode: "compact",
-  enabled: false,
-  includeInput: false,
-  includeOutput: false,
-  includeJsonl: false,
-  includeTranscript: false,
-  includeMetadata: false,
-  includeChildEventProjections: false,
-  cleanupDays: 7,
-};
 
 /** A caller-supplied binary override would defeat the helper's fail-closed guard. */
 function envWithoutPiBinary(): NodeJS.ProcessEnv {

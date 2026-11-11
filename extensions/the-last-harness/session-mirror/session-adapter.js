@@ -1,9 +1,7 @@
 // Generated from extensions/the-last-harness/session-mirror/session-adapter.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
-import { SESSION_MIRROR_PROJECTION_REASONS } from "./status-allowlists.js";
+import { SESSION_MIRROR_OBSERVER_PROFILE, SESSION_MIRROR_PROJECTION_REASONS, } from "./status-allowlists.js";
 export { SESSION_MIRROR_PROJECTION_REASONS };
-const MAX_ENVELOPE_BYTES = 256 * 1024;
-const MAX_TREE_ENTRIES = 1024;
-const MAX_TREE_DEPTH = 128;
+const { maxEnvelopeBytes: MAX_ENVELOPE_BYTES, maxTreeEntries: MAX_TREE_ENTRIES, maxTreeDepth: MAX_TREE_DEPTH, } = SESSION_MIRROR_OBSERVER_PROFILE.bounds;
 const MAX_ENTRY_PAYLOAD_BYTES = 64 * 1024;
 const MAX_TEXT_BYTES = 32 * 1024;
 const MAX_IDENTITY_CHARACTERS = 128;
@@ -541,6 +539,36 @@ function readSessionMirrorSource(sessionManager) {
         sourceEntries: sourceEntries,
     };
 }
+function buildSnapshotEnvelope(sessionId, metadata, tree) {
+    return {
+        protocol: { family: "session-mirror", major: 1, minor: 0 },
+        source: {
+            runtimeVersion: metadata.runtimeVersion,
+            sessionSchemaVersion: metadata.sessionSchemaVersion,
+        },
+        sessionId,
+        capabilities: [
+            "session-tree",
+            "completed-turns-only",
+            "snapshot",
+            "cursor-recovery",
+            "custom-entries",
+            "coarse-status",
+        ],
+        message: {
+            kind: "snapshot",
+            eventId: metadata.eventId,
+            revision: metadata.revision,
+            cursor: metadata.cursor,
+            operation: "replace",
+            snapshot: {
+                snapshotId: metadata.snapshotId,
+                status: metadata.status,
+                tree,
+            },
+        },
+    };
+}
 export function projectSessionMirrorSnapshot(sessionManager, metadata) {
     let validatedMetadata;
     try {
@@ -615,38 +643,11 @@ export function projectSessionMirrorSnapshot(sessionManager, metadata) {
     const rootIds = projectedEntries
         .filter((entry) => entry.parentId === null)
         .map((entry) => entry.id);
-    const envelope = {
-        protocol: { family: "session-mirror", major: 1, minor: 0 },
-        source: {
-            runtimeVersion: validatedMetadata.runtimeVersion,
-            sessionSchemaVersion: validatedMetadata.sessionSchemaVersion,
-        },
-        sessionId,
-        capabilities: [
-            "session-tree",
-            "completed-turns-only",
-            "snapshot",
-            "cursor-recovery",
-            "custom-entries",
-            "coarse-status",
-        ],
-        message: {
-            kind: "snapshot",
-            eventId: validatedMetadata.eventId,
-            revision: validatedMetadata.revision,
-            cursor: validatedMetadata.cursor,
-            operation: "replace",
-            snapshot: {
-                snapshotId: validatedMetadata.snapshotId,
-                status: validatedMetadata.status,
-                tree: {
-                    rootIds,
-                    activeLeafId,
-                    entries: projectedEntries,
-                },
-            },
-        },
-    };
+    const envelope = buildSnapshotEnvelope(sessionId, validatedMetadata, {
+        rootIds,
+        activeLeafId,
+        entries: projectedEntries,
+    });
     try {
         if (envelopeByteLength(envelope) > MAX_ENVELOPE_BYTES)
             return failure("bounds-exceeded");
@@ -747,34 +748,11 @@ export function projectRecentSessionMirrorSnapshot(sessionManager, metadata) {
         const rootIds = normalizedEntries
             .filter((entry) => entry.parentId === null)
             .map((entry) => entry.id);
-        const envelope = {
-            protocol: { family: "session-mirror", major: 1, minor: 0 },
-            source: {
-                runtimeVersion: validatedMetadata.runtimeVersion,
-                sessionSchemaVersion: validatedMetadata.sessionSchemaVersion,
-            },
-            sessionId,
-            capabilities: [
-                "session-tree",
-                "completed-turns-only",
-                "snapshot",
-                "cursor-recovery",
-                "custom-entries",
-                "coarse-status",
-            ],
-            message: {
-                kind: "snapshot",
-                eventId: validatedMetadata.eventId,
-                revision: validatedMetadata.revision,
-                cursor: validatedMetadata.cursor,
-                operation: "replace",
-                snapshot: {
-                    snapshotId: validatedMetadata.snapshotId,
-                    status: validatedMetadata.status,
-                    tree: { rootIds, activeLeafId: normalizedLeaf, entries: normalizedEntries },
-                },
-            },
-        };
+        const envelope = buildSnapshotEnvelope(sessionId, validatedMetadata, {
+            rootIds,
+            activeLeafId: normalizedLeaf,
+            entries: normalizedEntries,
+        });
         try {
             if (envelopeByteLength(envelope) <= MAX_ENVELOPE_BYTES) {
                 return deepFreeze({ ok: true, envelope: deepFreeze(envelope) });

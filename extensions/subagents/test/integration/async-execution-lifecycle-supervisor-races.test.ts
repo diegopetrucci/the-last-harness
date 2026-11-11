@@ -5,6 +5,7 @@
  * Requires pi packages to be importable.
  */
 
+import { DISABLED_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -172,14 +173,7 @@ describe("async execution lifecycle supervisor races", () => {
         task: "Ask for a supervisor decision and stop there.",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         sessionRoot: path.join(tempDir, "sessions"),
       });
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -259,14 +253,7 @@ describe("async execution lifecycle supervisor races", () => {
         task: "Do work",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-tlhm8typ" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -376,14 +363,7 @@ describe("async execution lifecycle supervisor races", () => {
           cwd: tempDir,
           currentSessionId: "session-tlhm8typ-r5",
         },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -493,14 +473,7 @@ describe("async execution lifecycle supervisor races", () => {
             cwd: tempDir,
             currentSessionId: "session-123",
           },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_ARTIFACT_CONFIG,
           sessionRoot: path.join(tempDir, "sessions"),
           sessionFile: sourceSessionFile,
           controlConfig,
@@ -859,14 +832,7 @@ describe("async execution lifecycle supervisor races", () => {
             cwd: tempDir,
             currentSessionId: "session-late-source",
           },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_ARTIFACT_CONFIG,
           sessionRoot: path.join(tempDir, "sessions"),
           controlConfig,
           telemetryProvenance: provenance,
@@ -1106,14 +1072,7 @@ describe("async execution lifecycle supervisor races", () => {
           task: "Source work for the paused telemetry edge race.",
           agentConfig: makeAgent("worker"),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_ARTIFACT_CONFIG,
           sessionRoot: path.join(tempDir, "sessions"),
           controlConfig,
           telemetryProvenance: provenance,
@@ -1252,14 +1211,7 @@ describe("async execution lifecycle supervisor races", () => {
         task: "Wait for concurrent terminal adoption.",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1318,14 +1270,7 @@ describe("async execution lifecycle supervisor races", () => {
           cwd: tempDir,
           currentSessionId: "session-finding1-parallel",
         },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
       });
 
       const asyncDir2 = path.join(ASYNC_DIR, id);
@@ -1415,14 +1360,7 @@ describe("async execution lifecycle supervisor races", () => {
           cwd: tempDir,
           currentSessionId: "session-invariant-pin",
         },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
@@ -1546,14 +1484,7 @@ describe("async execution lifecycle supervisor races", () => {
         index: 0,
         claimToken: "rival-claim-token", // mismatched → gate rejects
       },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
 
     // The result file must appear. Without the fix (no writeAtomicJson before the

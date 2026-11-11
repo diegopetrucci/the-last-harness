@@ -1,16 +1,12 @@
 // Generated from extensions/the-last-harness/session-mirror-observer-probe.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { performance } from "node:perf_hooks";
+import { SESSION_MIRROR_OBSERVER_PROFILE } from "./session-mirror/status-allowlists.js";
 import { createSessionMirrorObserverRuntime } from "./session-mirror/observer.js";
 import { createSessionMirrorObserverSocketSink } from "./session-mirror/local-bridge-sink.js";
 import { createSessionMirrorReplyProducer, } from "./session-mirror/session-mirror-reply-producer.js";
 import {} from "./session-mirror/local-bridge-boundary.js";
 import { projectRecentSessionMirrorSnapshot, } from "./session-mirror/session-adapter.js";
-export const SESSION_MIRROR_OBSERVER_PROBE_BOUNDS = Object.freeze({
-    maxEnvelopeBytes: 256 * 1024,
-    maxTreeEntries: 1024,
-    maxTreeRoots: 1024,
-    maxTreeDepth: 128,
-});
+export const SESSION_MIRROR_OBSERVER_PROBE_BOUNDS = SESSION_MIRROR_OBSERVER_PROFILE.bounds;
 export const SESSION_MIRROR_OBSERVER_TIMING_BUCKETS = Object.freeze([
     "unknown",
     "fast",
@@ -41,11 +37,11 @@ function incrementCounter(value) {
 function bucketDuration(duration) {
     if (duration === undefined || !Number.isFinite(duration) || duration < 0)
         return "unknown";
-    if (duration <= 1)
+    if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.fastTimingMs)
         return "fast";
-    if (duration <= 10)
+    if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.moderateTimingMs)
         return "moderate";
-    if (duration <= 100)
+    if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.slowTimingMs)
         return "slow";
     return "extended";
 }

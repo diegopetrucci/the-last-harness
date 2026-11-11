@@ -1,8 +1,8 @@
+import { DISABLED_COMPACT_ARTIFACT_CONFIG as terminalArtifactConfig } from "../support/artifact-config-fixtures.ts";
 import assert from "node:assert/strict";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import * as path from "node:path";
 import { runSingleStep } from "../../src/runs/background/single-step-execution.ts";
-import type { ResolvedArtifactConfig } from "../../src/shared/types.ts";
 import {
   createMockPi,
   createTempDir,
@@ -10,18 +10,6 @@ import {
   removeTempDir,
   type MockPi,
 } from "../support/helpers.ts";
-
-const terminalArtifactConfig: ResolvedArtifactConfig = {
-  mode: "compact",
-  enabled: false,
-  includeInput: false,
-  includeOutput: false,
-  includeJsonl: false,
-  includeTranscript: false,
-  includeMetadata: false,
-  includeChildEventProjections: false,
-  cleanupDays: 7,
-};
 
 describe("single-step timeout persistence hardening", () => {
   let mockPi: MockPi;

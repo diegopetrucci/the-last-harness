@@ -1,5 +1,6 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { TlhSettings, TlhUsageLimitsConfig } from "./types.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
+import type { TlhUsageLimitsConfig } from "./types.js";
 
 export const USAGE_COMMAND_HELP =
   "Usage: /usage [status|weekly on|weekly off|weekly toggle]. With no argument, /usage shows status.";
@@ -16,7 +17,7 @@ import { handleUsageCommand } from "./usage-limits-command.js";
 let cachedTlhUsageWeeklyVisibility: boolean | undefined;
 function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | undefined {
   try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+    const settings = getTlhGlobalSettings(cwd);
     return settings.tlh?.usageLimits;
   } catch {
     return undefined;

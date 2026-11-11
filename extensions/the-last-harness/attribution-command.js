@@ -1,18 +1,12 @@
 // Generated from extensions/the-last-harness/attribution-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
+import { assertTlhSettingsObject, parseTlhSettingsContent, } from "./primary-agent-runtime-settings.js";
 import { resolveTlhCommitAttribution } from "./attribution.js";
 const TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP = "Usage: /toggle-tlh-git-attribution";
 function validateTlhAttributionSettings(settings) {
-    if (!isRecord(settings)) {
-        throw new Error("settings.json must contain a JSON object");
-    }
-    const tlh = settings.tlh;
-    if (tlh !== undefined && !isRecord(tlh)) {
-        throw new Error("settings field 'tlh' must be an object if present");
-    }
-    const attribution = isRecord(tlh) ? tlh.attribution : undefined;
+    assertTlhSettingsObject(settings);
+    const attribution = settings.tlh?.attribution;
     if (attribution !== undefined && !isRecord(attribution)) {
         throw new Error("settings field 'tlh.attribution' must be an object if present");
     }

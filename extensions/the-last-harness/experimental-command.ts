@@ -17,7 +17,10 @@ import {
   unknownExperimentalFeatureMessage,
 } from "./experimental.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
+import {
+  assertTlhSettingsObject,
+  parseTlhSettingsContent,
+} from "./primary-agent-runtime-settings.js";
 import type { TlhExperimentalConfig, TlhExperimentalFeatureId, TlhSettings } from "./types.js";
 
 type TlhExperimentalWriteResult = {
@@ -28,14 +31,8 @@ type TlhExperimentalWriteResult = {
 };
 
 function validateTlhExperimentalSettings(settings: unknown): asserts settings is TlhSettings {
-  if (!isRecord(settings)) {
-    throw new Error("settings.json must contain a JSON object");
-  }
-  const tlh = settings.tlh;
-  if (tlh !== undefined && !isRecord(tlh)) {
-    throw new Error("settings field 'tlh' must be an object if present");
-  }
-  const experimental = isRecord(tlh) ? tlh.experimental : undefined;
+  assertTlhSettingsObject(settings);
+  const experimental = settings.tlh?.experimental;
   if (experimental !== undefined && !isRecord(experimental)) {
     throw new Error("settings field 'tlh.experimental' must be an object if present");
   }
