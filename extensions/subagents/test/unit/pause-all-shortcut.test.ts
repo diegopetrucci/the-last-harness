@@ -32,6 +32,22 @@ function readDirectoryEntries(target: fs.PathLike): Dirent<string>[] {
   return originalReaddirSync(target, { withFileTypes: true, encoding: "utf8" });
 }
 
+function onlyAsyncDir(asyncDir: string): void {
+  builtinFs.readdirSync = ((
+    target: fs.PathLike,
+    options?:
+      | BufferEncoding
+      | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+      | null,
+  ) => {
+    if (target === NESTED_RUNS_DIR) return [];
+    if (target === ASYNC_DIR)
+      return readDirectoryEntries(target).filter((entry) => entry.name === path.basename(asyncDir));
+    return originalReaddirSync(target, options as never);
+  }) as typeof fs.readdirSync;
+  syncBuiltinESMExports();
+}
+
 function stubPortableInterruptKill(): Array<{
   pid: number;
   signal: NodeJS.Signals | number | undefined;
@@ -129,23 +145,7 @@ describe("pause-all shortcut handler", () => {
     );
 
     const kills = stubPortableInterruptKill();
-    builtinFs.readdirSync = ((
-      target: fs.PathLike,
-      options?:
-        | BufferEncoding
-        | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
-        | null,
-    ) => {
-      if (target === NESTED_RUNS_DIR) return [];
-      const entries = originalReaddirSync(target, options as never);
-      if (target === ASYNC_DIR)
-        // Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
-        return readDirectoryEntries(target).filter(
-          (entry) => entry.name === path.basename(asyncDir),
-        );
-      return entries;
-    }) as typeof fs.readdirSync;
-    syncBuiltinESMExports();
+    onlyAsyncDir(asyncDir);
 
     const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "info");
@@ -331,23 +331,7 @@ describe("pause-all shortcut handler", () => {
       kills.push({ pid, signal });
       return true;
     }) as typeof process.kill;
-    builtinFs.readdirSync = ((
-      target: fs.PathLike,
-      options?:
-        | BufferEncoding
-        | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
-        | null,
-    ) => {
-      if (target === NESTED_RUNS_DIR) return [];
-      const entries = originalReaddirSync(target, options as never);
-      if (target === ASYNC_DIR)
-        // Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
-        return readDirectoryEntries(target).filter(
-          (entry) => entry.name === path.basename(asyncDir),
-        );
-      return entries;
-    }) as typeof fs.readdirSync;
-    syncBuiltinESMExports();
+    onlyAsyncDir(asyncDir);
 
     const result = handlePauseAllShortcut(state, pauseCtx());
     assert.equal(result.level, "warning");
@@ -376,23 +360,6 @@ describe("pause-all shortcut ownership (#826)", () => {
       "utf-8",
     );
     return asyncDir;
-  }
-  function onlyAsyncDir(asyncDir: string): void {
-    builtinFs.readdirSync = ((
-      target: fs.PathLike,
-      options?:
-        | BufferEncoding
-        | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
-        | null,
-    ) => {
-      if (target === NESTED_RUNS_DIR) return [];
-      if (target === ASYNC_DIR)
-        return readDirectoryEntries(target).filter(
-          (entry) => entry.name === path.basename(asyncDir),
-        );
-      return originalReaddirSync(target, options as never);
-    }) as typeof fs.readdirSync;
-    syncBuiltinESMExports();
   }
   function assertUntouched(asyncDir: string, kills: unknown[], before: string): void {
     assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);

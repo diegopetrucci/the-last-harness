@@ -1,3 +1,4 @@
+import { DISABLED_COMPACT_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -40,17 +41,7 @@ function makeStatusOwner(asyncDir: string, runId = "heartbeat-test") {
       },
     },
     overallStartTime: startedAt,
-    artifactConfig: {
-      mode: "compact",
-      enabled: false,
-      includeInput: false,
-      includeOutput: false,
-      includeJsonl: false,
-      includeTranscript: false,
-      includeMetadata: false,
-      includeChildEventProjections: false,
-      cleanupDays: 7,
-    },
+    artifactConfig: DISABLED_COMPACT_ARTIFACT_CONFIG,
     appendEvent() {},
   });
   // Advance step to running state so the heartbeat has something to write for.
