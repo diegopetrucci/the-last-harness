@@ -100,6 +100,7 @@ function isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now) {
 function inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill) {
     switch (status.state) {
         case "complete":
+        case "completed":
         case "failed":
         case "cancelled":
         case "continued":

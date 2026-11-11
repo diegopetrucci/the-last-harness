@@ -18,24 +18,26 @@ export function parseFrontmatter(content) {
     let currentKey = null;
     let currentBlockLines = null;
     let currentIndent = null;
+    function flushBlockValue() {
+        if (currentKey === null || currentBlockLines === null)
+            return;
+        const rawBlock = currentBlockLines.join("\n");
+        const leadingSpaces = rawBlock.match(/^([ \t]+)/m);
+        const prefix = leadingSpaces?.[1] ?? "";
+        frontmatter[currentKey] = prefix
+            ? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
+            : rawBlock;
+        currentKey = null;
+        currentBlockLines = null;
+        currentIndent = null;
+    }
     for (const line of lines) {
         const indent = line.search(/\S|$/);
         if (currentKey !== null && currentBlockLines !== null && indent > (currentIndent ?? 0)) {
             currentBlockLines.push(line);
             continue;
         }
-        if (currentKey !== null && currentBlockLines !== null) {
-            const rawBlock = currentBlockLines.join("\n");
-            const leadingSpaces = rawBlock.match(/^([ \t]+)/m);
-            const prefix = leadingSpaces?.[1] ?? "";
-            const stripped = prefix
-                ? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
-                : rawBlock;
-            frontmatter[currentKey] = stripped;
-            currentKey = null;
-            currentBlockLines = null;
-            currentIndent = null;
-        }
+        flushBlockValue();
         const match = line.match(/^([\w-]+):\s*(.*)$/);
         if (match) {
             let value = match[2].trim();
@@ -53,14 +55,6 @@ export function parseFrontmatter(content) {
             }
         }
     }
-    if (currentKey !== null && currentBlockLines !== null) {
-        const rawBlock = currentBlockLines.join("\n");
-        const leadingSpaces = rawBlock.match(/^([ \t]+)/m);
-        const prefix = leadingSpaces?.[1] ?? "";
-        const stripped = prefix
-            ? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
-            : rawBlock;
-        frontmatter[currentKey] = stripped;
-    }
+    flushBlockValue();
     return { frontmatter, body };
 }
