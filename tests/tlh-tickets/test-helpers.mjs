@@ -163,88 +163,35 @@ exit 88
   chmodSync(commandPath, 0o755);
 }
 
-function writeFetchPreload(fixture) {
-  const preload = join(fixture.dir, "stub-ticket-fetch.mjs");
-  writeFileSync(
-    preload,
-    `import { readFileSync, writeFileSync } from "node:fs";
-const archive = readFileSync(process.env.TLH_TEST_ARCHIVE);
-const archiveBytes = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength);
-globalThis.fetch = async (url) => {
-	writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
-	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
-};
-`,
-  );
-  return preload;
-}
-
-function writeSwapTargetParentBeforeOpenPreload(fixture) {
-  const preload = join(fixture.dir, "swap-target-parent-before-open.mjs");
-  writeFileSync(
-    preload,
-    `import fs from "node:fs";
-import { dirname } from "node:path";
-import { syncBuiltinESMExports } from "node:module";
-
-const originalOpenSync = fs.openSync;
-let sabotaged = false;
-fs.openSync = (path, flags, mode) => {
-	const pathString = String(path);
-	if (!sabotaged && pathString === process.env.TLH_TEST_SWAP_OPEN_PATH) {
-		sabotaged = true;
-		const parent = dirname(pathString);
-		fs.rmSync(parent, { recursive: true, force: true });
-		fs.symlinkSync(process.env.TLH_TEST_EXTERNAL, parent, "dir");
-		return originalOpenSync(path, flags, mode);
-	}
-	return originalOpenSync(path, flags, mode);
-};
-syncBuiltinESMExports();
-`,
-  );
-  return preload;
-}
-
-function writeFetchAndSwapTargetParentBeforeOpenPreload(fixture) {
-  const preload = join(fixture.dir, "fetch-and-swap-target-parent-before-open.mjs");
-  writeFileSync(
-    preload,
-    `import fs from "node:fs";
-import { dirname } from "node:path";
-import { syncBuiltinESMExports } from "node:module";
-
-const originalOpenSync = fs.openSync;
-let sabotaged = false;
-fs.openSync = (path, flags, mode) => {
-	const pathString = String(path);
-	if (!sabotaged && pathString === process.env.TLH_TEST_SWAP_OPEN_PATH) {
-		sabotaged = true;
-		const parent = dirname(pathString);
-		fs.rmSync(parent, { recursive: true, force: true });
-		fs.symlinkSync(process.env.TLH_TEST_EXTERNAL, parent, "dir");
-		return originalOpenSync(path, flags, mode);
-	}
-	return originalOpenSync(path, flags, mode);
-};
-syncBuiltinESMExports();
-
-const archive = fs.readFileSync(process.env.TLH_TEST_ARCHIVE);
+const successfulFetchStub = `const archive = fs.readFileSync(process.env.TLH_TEST_ARCHIVE);
 const archiveBytes = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength);
 globalThis.fetch = async (url) => {
 	fs.writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
 	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
 };
-`,
-  );
-  return preload;
-}
+`;
 
-function writeSwapParentBeforeMkdirPreload(fixture) {
-  const preload = join(fixture.dir, "swap-parent-before-mkdir.mjs");
-  writeFileSync(
-    preload,
-    `import fs from "node:fs";
+const swapTargetParentBeforeOpenHook = `import fs from "node:fs";
+import { dirname } from "node:path";
+import { syncBuiltinESMExports } from "node:module";
+
+const originalOpenSync = fs.openSync;
+let sabotaged = false;
+fs.openSync = (path, flags, mode) => {
+	const pathString = String(path);
+	if (!sabotaged && pathString === process.env.TLH_TEST_SWAP_OPEN_PATH) {
+		sabotaged = true;
+		const parent = dirname(pathString);
+		fs.rmSync(parent, { recursive: true, force: true });
+		fs.symlinkSync(process.env.TLH_TEST_EXTERNAL, parent, "dir");
+		return originalOpenSync(path, flags, mode);
+	}
+	return originalOpenSync(path, flags, mode);
+};
+syncBuiltinESMExports();
+`;
+
+const swapParentBeforeMkdirHook = `import fs from "node:fs";
 import { dirname } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -261,8 +208,33 @@ fs.mkdirSync = (path, ...args) => {
 	return originalMkdirSync(path, ...args);
 };
 syncBuiltinESMExports();
-`,
+`;
+
+function writeFetchPreload(fixture) {
+  const preload = join(fixture.dir, "stub-ticket-fetch.mjs");
+  writeFileSync(
+    preload,
+    `import fs from "node:fs";
+${successfulFetchStub}`,
   );
+  return preload;
+}
+
+function writeSwapTargetParentBeforeOpenPreload(fixture) {
+  const preload = join(fixture.dir, "swap-target-parent-before-open.mjs");
+  writeFileSync(preload, swapTargetParentBeforeOpenHook);
+  return preload;
+}
+
+function writeFetchAndSwapTargetParentBeforeOpenPreload(fixture) {
+  const preload = join(fixture.dir, "fetch-and-swap-target-parent-before-open.mjs");
+  writeFileSync(preload, `${swapTargetParentBeforeOpenHook}\n${successfulFetchStub}`);
+  return preload;
+}
+
+function writeSwapParentBeforeMkdirPreload(fixture) {
+  const preload = join(fixture.dir, "swap-parent-before-mkdir.mjs");
+  writeFileSync(preload, swapParentBeforeMkdirHook);
   return preload;
 }
 
@@ -295,34 +267,7 @@ syncBuiltinESMExports();
 
 function writeFetchAndSwapParentBeforeMkdirPreload(fixture) {
   const preload = join(fixture.dir, "fetch-and-swap-parent-before-mkdir.mjs");
-  writeFileSync(
-    preload,
-    `import fs from "node:fs";
-import { dirname } from "node:path";
-import { syncBuiltinESMExports } from "node:module";
-
-const originalMkdirSync = fs.mkdirSync;
-let sabotaged = false;
-fs.mkdirSync = (path, ...args) => {
-	const pathString = String(path);
-	if (!sabotaged && pathString === process.env.TLH_TEST_SWAP_MKDIR_PATH) {
-		sabotaged = true;
-		const parent = dirname(pathString);
-		fs.rmSync(parent, { recursive: true, force: true });
-		fs.symlinkSync(process.env.TLH_TEST_EXTERNAL, parent, "dir");
-	}
-	return originalMkdirSync(path, ...args);
-};
-syncBuiltinESMExports();
-
-const archive = fs.readFileSync(process.env.TLH_TEST_ARCHIVE);
-const archiveBytes = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength);
-globalThis.fetch = async (url) => {
-	fs.writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
-	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
-};
-`,
-  );
+  writeFileSync(preload, `${swapParentBeforeMkdirHook}\n${successfulFetchStub}`);
   return preload;
 }
 
@@ -415,13 +360,7 @@ fs.realpathSync = (path, ...args) => {
 };
 syncBuiltinESMExports();
 
-const archive = fs.readFileSync(process.env.TLH_TEST_ARCHIVE);
-const archiveBytes = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength);
-globalThis.fetch = async (url) => {
-	fs.writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
-	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
-};
-`,
+${successfulFetchStub}`,
   );
   return preload;
 }
