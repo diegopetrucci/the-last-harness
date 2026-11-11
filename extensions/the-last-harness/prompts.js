@@ -472,20 +472,5 @@ export function buildChildSubagentSystemPrompt() {
     return prompts.filter(Boolean).join("\n\n");
 }
 export function parseFrontmatterValue(content, key) {
-    if (!content?.startsWith("---")) {
-        return undefined;
-    }
-    const end = content.indexOf("\n---", 3);
-    if (end === -1) {
-        return undefined;
-    }
-    const frontmatter = content.slice(3, end).split(/\r?\n/);
-    for (const line of frontmatter) {
-        const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-        if (!match || match[1] !== key) {
-            continue;
-        }
-        return match[2].trim().replace(/^["']|["']$/g, "") || undefined;
-    }
-    return undefined;
+    return content ? parseFrontmatter(content).frontmatter[key] || undefined : undefined;
 }

@@ -54,6 +54,14 @@ export function parseTlhSettingsContent(content) {
     }
     return parsed;
 }
+export function assertTlhSettingsObject(settings) {
+    if (!isRecord(settings)) {
+        throw new Error("settings.json must contain a JSON object");
+    }
+    if (settings.tlh !== undefined && !isRecord(settings.tlh)) {
+        throw new Error("settings field 'tlh' must be an object if present");
+    }
+}
 function prepareTlhPrimaryAgentSettings(content, invalidTlhMessage, invalidPrimaryAgentMessage) {
     const settings = parseTlhSettingsContent(content);
     const rawTlh = settings.tlh;
@@ -189,7 +197,7 @@ export function writeTlhPrimaryAgentDefault(cwd, selection) {
         };
     });
 }
-export function writeTlhPrimaryAgentOverridesCleared(cwd, primary) {
+function writeTlhPrimaryAgentOverridesCleared(cwd, primary) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write primary-override settings outside the isolated TLH profile.", (current) => {
         const { settings, primaryAgent } = prepareTlhPrimaryAgentSettings(current, "settings.tlh must be an object to update primary-override settings.", "settings.tlh.primaryAgent must be an object to update primary-override settings.");
         let changed = false;

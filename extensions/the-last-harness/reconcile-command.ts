@@ -114,19 +114,6 @@ function buildAcknowledgedSnapshot(
   );
 }
 
-function buildSingleAcknowledgedSnapshot(
-  entry: RoleDriftEntry,
-  provider: string,
-): Record<string, AcknowledgedRoleSnapshot> {
-  return {
-    [entry.name]: {
-      byProvider: {
-        [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking },
-      },
-    },
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Write helpers
 // ---------------------------------------------------------------------------
@@ -347,7 +334,7 @@ async function runReconcilePicker(
       );
       return;
     }
-    const snapshot = buildSingleAcknowledgedSnapshot(entry, provider);
+    const snapshot = buildAcknowledgedSnapshot([entry], provider);
     const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
     if (!acknowledged) {
       ctx.ui.notify(
@@ -374,7 +361,7 @@ async function runReconcilePicker(
     // Skip acknowledgment when provider is unknown.
     if (provider) {
       const acknowledged = updateReconcileAcknowledgedSnapshot(
-        buildSingleAcknowledgedSnapshot(entry, provider),
+        buildAcknowledgedSnapshot([entry], provider),
         new Date().toISOString(),
       );
       if (!acknowledged) {

@@ -80,6 +80,17 @@ export function parseTlhSettingsContent(content: string | undefined): Record<str
   return parsed;
 }
 
+export function assertTlhSettingsObject(
+  settings: unknown,
+): asserts settings is Record<string, unknown> & { tlh?: Record<string, unknown> } {
+  if (!isRecord(settings)) {
+    throw new Error("settings.json must contain a JSON object");
+  }
+  if (settings.tlh !== undefined && !isRecord(settings.tlh)) {
+    throw new Error("settings field 'tlh' must be an object if present");
+  }
+}
+
 function prepareTlhPrimaryAgentSettings(
   content: string | undefined,
   invalidTlhMessage: string,
@@ -268,7 +279,7 @@ export function writeTlhPrimaryAgentDefault(
  * settings write. Empty `modelOverrides`/`effortOverrides` containers are dropped.
  * Non-object containers are left untouched (they carry no override TLH reads).
  */
-export function writeTlhPrimaryAgentOverridesCleared(
+function writeTlhPrimaryAgentOverridesCleared(
   cwd: string,
   primary: TlhPrimaryAgentSelection,
 ): TlhPrimaryAgentWriteResult {

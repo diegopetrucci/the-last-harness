@@ -6,9 +6,9 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import type { TlhSettings } from "./types.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 
 /**
  * Return the resolved path to the user-root Claude skills directory.
@@ -71,7 +71,7 @@ function findGitRoot(startDir: string): string | null {
 
 function isClaudeSkillsDisabled(cwd: string): boolean {
   try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+    const settings = getTlhGlobalSettings(cwd);
     return settings.tlh?.claudeSkills?.disabled === true;
   } catch {
     return false;
