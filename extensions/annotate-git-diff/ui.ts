@@ -26,7 +26,7 @@ interface ReviewUiAssets {
   monacoEntryJs: string;
   monacoEditorCss: string;
   monacoWorkerJs: string;
-  monacoBasicLanguagesJs: string;
+  monacoRuntimeJs: string;
   // Absolute file:// URL for the Monaco min/ directory (parent of min/vs) with a
   // trailing slash. Required so that require.toUrl() returns absolute URLs:
   // on about:blank, new URL(require.toUrl("./assets/..."), document.baseURI) throws
@@ -114,7 +114,7 @@ function resolveReviewUiAssets(): ReviewUiAssets {
       monacoEntryJs,
       monacoEditorCss,
       monacoWorkerJs,
-      monacoBasicLanguagesJs: monacoRuntimeJs,
+      monacoRuntimeJs,
       monacoBaseUrl,
       bootstrapError: null,
     };
@@ -126,7 +126,7 @@ function resolveReviewUiAssets(): ReviewUiAssets {
       monacoEntryJs: "",
       monacoEditorCss: "",
       monacoWorkerJs: "",
-      monacoBasicLanguagesJs: "",
+      monacoRuntimeJs: "",
       monacoBaseUrl: "",
       bootstrapError: `Unable to load packaged review UI assets: ${message}`,
     };
@@ -192,8 +192,8 @@ export function buildReviewHtml(data: ReviewWindowData): string {
   );
   html = safeReplace(
     html,
-    "__INLINE_MONACO_BASIC_LANGUAGES_JS__",
-    escapeInlineScriptSource(assets.monacoBasicLanguagesJs),
+    "__INLINE_MONACO_RUNTIME_JS__",
+    escapeInlineScriptSource(assets.monacoRuntimeJs),
   );
   html = safeReplace(html, "__INLINE_REVIEW_STATE_JS__", reviewStateJs);
   html = safeReplace(html, "__INLINE_REVIEW_NAVIGATION_JS__", reviewNavigationJs);
