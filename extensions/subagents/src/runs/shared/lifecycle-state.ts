@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { waitSync, writeAtomicJson } from "../../shared/atomic-json.ts";
-import { invalidateStatusCache, readStatus } from "../../shared/utils.ts";
+import { invalidateStatusCache, readRawAttributionStatus, readStatus } from "../../shared/utils.ts";
 import type {
   AsyncCancellationMetadata,
   AsyncLifecycleContinuationMetadata,
@@ -343,14 +343,7 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
 }
 
 function readRawStatusJson(asyncDir: string): AnyRecord | undefined {
-  try {
-    const parsed: unknown = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    );
-    return isRecord(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+  return readRawAttributionStatus(path.join(asyncDir, "status.json")) ?? undefined;
 }
 
 export function writeNormalizedLifecycleStatus(

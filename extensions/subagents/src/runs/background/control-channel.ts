@@ -320,7 +320,7 @@ function parseChildMessageAcceptance(
   requestId: string,
 ): ChildMessageAcceptance | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const input = raw as Partial<ChildMessageAcceptance>;
+  const input = raw as Record<string, unknown>;
   if (input.requestId !== requestId || (input.type !== "steer" && input.type !== "resume"))
     return undefined;
   if (input.status !== "accepted" && input.status !== "rejected") return undefined;
@@ -331,7 +331,27 @@ function parseChildMessageAcceptance(
     !input.acceptedIndexes.every(Number.isInteger)
   )
     return undefined;
-  return input as ChildMessageAcceptance;
+  return {
+    requestId,
+    type: input.type,
+    status: input.status,
+    ts: input.ts,
+    acceptedIndexes: [...input.acceptedIndexes],
+    ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
+    ...(Array.isArray(input.rejected)
+      ? {
+          rejected: input.rejected.flatMap((entry: unknown) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+            const rejected = entry as Record<string, unknown>;
+            return typeof rejected.index === "number" &&
+              Number.isInteger(rejected.index) &&
+              typeof rejected.reason === "string"
+              ? [{ index: rejected.index, reason: rejected.reason }]
+              : [];
+          }),
+        }
+      : {}),
+  };
 }
 
 export function consumeChildMessageAcceptance(
