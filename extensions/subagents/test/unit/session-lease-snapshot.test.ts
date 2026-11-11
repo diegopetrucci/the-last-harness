@@ -2,13 +2,13 @@
  * Dispatcher admission is only a snapshot: a runner that takes the lease after
  * an earlier runner finished must rebase onto the record and re-apply the gates.
  */
+import { DISABLED_COMPACT_ARTIFACT_CONFIG as artifactConfig } from "../support/artifact-config-fixtures.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { runSingleStep } from "../../src/runs/background/single-step-execution.ts";
 import { readSessionRecord, type SessionRecord } from "../../src/runs/shared/session-record.ts";
-import type { ResolvedArtifactConfig } from "../../src/shared/types.ts";
 import { startedMockPiPids } from "../support/async-execution-helpers.ts";
 import {
   createMockPi,
@@ -18,18 +18,6 @@ import {
   type MockPi,
 } from "../support/helpers.ts";
 import { seedSessionRecord } from "../support/session-record-fixture.ts";
-
-const artifactConfig: ResolvedArtifactConfig = {
-  mode: "compact",
-  enabled: false,
-  includeInput: false,
-  includeOutput: false,
-  includeJsonl: false,
-  includeTranscript: false,
-  includeMetadata: false,
-  includeChildEventProjections: false,
-  cleanupDays: 7,
-};
 
 const BUDGET_MS = 3000;
 
