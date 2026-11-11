@@ -1,4 +1,5 @@
 /** Parent abort must SIGKILL a child that ignores SIGINT and SIGTERM (#809 intent). */
+import { DISABLED_COMPACT_ARTIFACT_CONFIG as artifactConfig } from "../support/artifact-config-fixtures.ts";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -19,18 +20,6 @@ import {
 } from "../support/async-execution-helpers.ts";
 import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import { PROCESS_GROUP_CLEANUP_MAX_WAIT_MS } from "../../src/runs/shared/process-group-cleanup.ts";
-
-const artifactConfig = {
-  mode: "compact",
-  enabled: false,
-  includeInput: false,
-  includeOutput: false,
-  includeJsonl: false,
-  includeTranscript: false,
-  includeMetadata: false,
-  includeChildEventProjections: false,
-  cleanupDays: 7,
-} as const;
 
 function singleParams(
   bus: ReturnType<typeof createEventBus>,

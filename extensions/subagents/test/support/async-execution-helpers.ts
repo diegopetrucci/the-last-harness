@@ -378,7 +378,7 @@ export async function waitForPidsToExit(
 // Lifecycle lock helpers
 // ---------------------------------------------------------------------------
 
-export function lifecycleLockDir(asyncDir: string): string {
+function lifecycleLockDir(asyncDir: string): string {
   return path.join(asyncDir, ".lifecycle-transition.lock");
 }
 

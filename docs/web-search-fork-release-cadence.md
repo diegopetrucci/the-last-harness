@@ -15,10 +15,7 @@ TLH no longer installs `pi-web-access` from a git dependency. The current bundle
 - Source repository: <https://github.com/diegopetrucci/pi-web-access>
 - Previous git-based TLH source retained for migration coverage: `git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1`
 
-The current package is a selective TLH fork, not upstream feature parity. It registers exactly `web_search`, `fetch_content`, and `get_search_content`, and requires an absolute `PI_CODING_AGENT_DIR`. It intentionally excludes alternate providers and fallbacks, curator/search commands, the bundled research skill, GitHub cloning, PDF/video/browser-cookie workflows, hosted extraction, and local Exa usage accounting. Its settings and fetched-content cache stay under the isolated profile:
-
-- `$PI_CODING_AGENT_DIR/extensions/pi-web-access/settings.json`
-- `$PI_CODING_AGENT_DIR/cache/pi-web-access/`
+The supported web-search capabilities and profile requirements are documented in [web-search.md](web-search.md#current-surface).
 
 The current package does not read a legacy `<agent>/web-search.json`; TLH must not add automatic migration or key persistence. User-facing migration guidance belongs in [`docs/web-search.md`](web-search.md).
 

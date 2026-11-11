@@ -164,7 +164,28 @@ function parseChildMessageAcceptance(raw, requestId) {
         !Array.isArray(input.acceptedIndexes) ||
         !input.acceptedIndexes.every(Number.isInteger))
         return undefined;
-    return input;
+    return {
+        requestId,
+        type: input.type,
+        status: input.status,
+        ts: input.ts,
+        acceptedIndexes: [...input.acceptedIndexes],
+        ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
+        ...(Array.isArray(input.rejected)
+            ? {
+                rejected: input.rejected.flatMap((entry) => {
+                    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+                        return [];
+                    const rejected = entry;
+                    return typeof rejected.index === "number" &&
+                        Number.isInteger(rejected.index) &&
+                        typeof rejected.reason === "string"
+                        ? [{ index: rejected.index, reason: rejected.reason }]
+                        : [];
+                }),
+            }
+            : {}),
+    };
 }
 export function consumeChildMessageAcceptance(asyncDir, requestId) {
     const acceptancePath = childMessageAckPath(asyncDir, requestId);

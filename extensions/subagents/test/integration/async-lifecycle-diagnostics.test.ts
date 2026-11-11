@@ -5,6 +5,7 @@
  * no production fault-injection hooks are involved.
  */
 
+import { DISABLED_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -322,14 +323,7 @@ async function runParallelLifecycleFaultCase(
       concurrency: 3,
       agents: [makeAgent("settled"), makeAgent("requester"), makeAgent("cohort")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       sessionRoot: path.join(tempDir, "sessions"),
     });
     assert.equal(started.isError, undefined);

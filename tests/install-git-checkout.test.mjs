@@ -16,6 +16,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { gitCheckoutIo, listBackupRefs, runCommand } from "./install-git-test-helpers.mjs";
 
 import {
   cleanupGitCheckoutPreparation,
@@ -30,15 +31,6 @@ function tempFixture(t, prefix = "tlh-install-git-test-") {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
-}
-
-function runCommand(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    ...options,
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout || String(result.error));
-  return result.stdout.trim();
 }
 
 function runGit(args, options = {}) {
@@ -99,39 +91,14 @@ test("verified checkout metadata includes the full normalized HEAD SHA", (t) => 
 });
 
 function recordingCheckoutIo(warnings = [], commands = []) {
+  const io = gitCheckoutIo(warnings);
   return {
-    runCommand(_config, commandArgs, options = {}) {
+    ...io,
+    runCommand(config, commandArgs, options = {}) {
       commands.push({ args: [...commandArgs], options: { ...options } });
-      const [command, ...args] = commandArgs;
-      runCommand(command, args, {
-        cwd: options.cwd,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
-      });
-    },
-    warn(message) {
-      warnings.push(message);
+      io.runCommand(config, commandArgs, options);
     },
   };
-}
-
-function gitCheckoutIo(warnings) {
-  return {
-    runCommand(_config, commandArgs, options = {}) {
-      const [command, ...args] = commandArgs;
-      runCommand(command, args, {
-        cwd: options.cwd,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
-      });
-    },
-    warn(message) {
-      warnings.push(message);
-    },
-  };
-}
-
-function listBackupRefs(targetDir) {
-  const refs = runGit(["-C", targetDir, "for-each-ref", "refs/tlh-backup", "--format=%(refname)"]);
-  return refs === "" ? [] : refs.split("\n");
 }
 
 function realGitPath(targetDir, gitPath) {

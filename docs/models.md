@@ -33,7 +33,7 @@ TLH treats xAI as a first-class direct provider and uses provider ID `xai` for i
 
 OpenAI defaults intentionally use `openai-codex` for the Codex subscription provider. Anthropic and xAI subscription and API-key authentication share the provider IDs `anthropic` and `xai`, so Pi's stored `/login` credential takes precedence over the corresponding environment key (`ANTHROPIC_API_KEY` or `XAI_API_KEY`). TLH cannot select among multiple simultaneous credentials, does not implement new auth storage, and does not mutate user credentials.
 
-Pi owns prompt-cache warming (`off`, `streaming`, or `idle`; warm refreshes are real provider requests whose usage is reported separately from assistant turns). TLH's default value, notices, and the shared parent/child profile scope are documented in [the installer reference](install.md#pi-native-prompt-cache-warming). Pi also preserves the prompt cache when changing the thinking level mid-session for OpenAI GPT-6 models authenticated with an API key; that cache benefit does not apply to the OpenAI Codex subscription provider.
+Pi owns prompt-cache warming (warm refreshes are real provider requests whose usage is reported separately from assistant turns). TLH's default value, notices, and the shared parent/child profile scope are documented in [prompt-cache warming](subagents.md#prompt-cache-warming). Pi also preserves the prompt cache when changing the thinking level mid-session for OpenAI GPT-6 models authenticated with an API key; that cache benefit does not apply to the OpenAI Codex subscription provider.
 
 ### OpenRouter sessions
 

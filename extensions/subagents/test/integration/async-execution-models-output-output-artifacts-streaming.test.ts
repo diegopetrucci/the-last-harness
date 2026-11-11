@@ -1,5 +1,6 @@
 /** Integration tests for async execution – output, metadata, skills, and event streaming. */
 
+import { DISABLED_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -98,14 +99,7 @@ describe("async execution output and event streaming", () => {
       task: "Return the final answer.",
       agentConfig: makeAgent("scout"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -183,14 +177,7 @@ describe("async execution output and event streaming", () => {
       concurrency: 1,
       agents: [makeAgent("first"), makeAgent("second"), makeAgent("third")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 
@@ -245,14 +232,7 @@ describe("async execution output and event streaming", () => {
       task: "This task must not start",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
     assert.equal(start.isError, undefined);
@@ -286,14 +266,7 @@ describe("async execution output and event streaming", () => {
       task: "Do work",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
@@ -323,14 +296,7 @@ describe("async execution output and event streaming", () => {
       matchArgIncludes: "empty max-output",
       output: oversizedOutput,
     });
-    const artifactConfig = {
-      enabled: false,
-      includeInput: false,
-      includeOutput: false,
-      includeJsonl: false,
-      includeMetadata: false,
-      cleanupDays: 7,
-    } as const;
+    const artifactConfig = DISABLED_ARTIFACT_CONFIG;
     const run = (id: string, task: string, maxOutput?: Record<string, number>) =>
       executeAsyncSingle(id, {
         agent: "worker",
@@ -369,14 +335,7 @@ describe("async execution output and event streaming", () => {
       task: "line-limited summary",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       maxOutput: { lines: 2, bytes: 1024 },
     });
@@ -456,14 +415,7 @@ describe("async execution output and event streaming", () => {
       task: "Write report",
       agentConfig: makeAgent("researcher", { output: "context.md" }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: "context.md",
@@ -498,14 +450,7 @@ describe("async execution output and event streaming", () => {
           "Output format (`default-report.md`):\n\nWrite the full report to default-report.md.",
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
@@ -540,14 +485,7 @@ describe("async execution output and event streaming", () => {
       task: "Do work",
       agentConfig: makeAgent("worker", { output: "default-report.md" }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: "false",
@@ -581,14 +519,7 @@ describe("async execution output and event streaming", () => {
       task: "Deploy app",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot,
     });
@@ -621,14 +552,7 @@ describe("async execution output and event streaming", () => {
         { provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
         { provider: "github-copilot", id: "gpt-5-mini", fullId: "github-copilot/gpt-5-mini" },
       ],
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot,
     });
@@ -655,14 +579,7 @@ describe("async execution output and event streaming", () => {
         currentSessionId: "session-1",
         currentModel: { provider: "deepseek", id: "deepseek-v4-flash" },
       },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -689,14 +606,7 @@ describe("async execution output and event streaming", () => {
         currentSessionId: "session-1",
         currentModel: { provider: "deepseek", id: "deepseek-v4-flash" },
       },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -738,14 +648,7 @@ describe("async execution output and event streaming", () => {
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         cwd: taskCwd,
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
       });
@@ -794,14 +697,7 @@ describe("async execution output and event streaming", () => {
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         cwd: taskCwd,
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
       });
@@ -857,14 +753,7 @@ process.stdout.write(ticket.body);
         ],
         agents: [makeAgent("worker"), makeAgent("reviewer")],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
       });
@@ -909,14 +798,7 @@ process.stdout.write(ticket.body);
         agentConfig: makeAgent("worker", { skills: ["async-task-cwd-skill"] }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         cwd: taskCwd,
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
       });
@@ -940,14 +822,7 @@ process.stdout.write(ticket.body);
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       cwd: tempDir,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       skills: ["pi-subagents"],
@@ -972,14 +847,7 @@ process.stdout.write(ticket.body);
         agents: [makeAgent("worker", { skills: ["async-task-cwd-skill"] })],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         cwd: taskCwd,
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
       });
@@ -1030,14 +898,7 @@ process.stdout.write(ticket.body);
       ],
       agents: [makeAgent("reader"), makeAgent("editor")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -1090,14 +951,7 @@ process.stdout.write(ticket.body);
       task: "Observe idle episode recovery",
       agentConfig: makeAgent("scout"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       controlConfig: {
@@ -1143,14 +997,7 @@ process.stdout.write(ticket.body);
       task: "Remain quiet while notification channels are disabled",
       agentConfig: makeAgent("scout"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       controlConfig: {
@@ -1193,14 +1040,7 @@ process.stdout.write(ticket.body);
       task: "Investigate behavior",
       agentConfig: makeAgent("scout"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       controlConfig: {
@@ -1250,14 +1090,7 @@ process.stdout.write(ticket.body);
       task: "Track compaction lifecycle",
       agentConfig: makeAgent("scout"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       controlConfig: {
@@ -1310,14 +1143,7 @@ process.stdout.write(ticket.body);
       task: "Investigate behavior",
       agentConfig: makeAgent("scout"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       controlConfig: {
@@ -1383,14 +1209,7 @@ process.stdout.write(ticket.body);
         task: "Stream noisy diagnostics",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot,
       });
@@ -1440,14 +1259,7 @@ process.stdout.write(ticket.body);
       task: "Stream detailed progress",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot,
     });

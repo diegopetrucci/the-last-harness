@@ -1,3 +1,4 @@
+import { DISABLED_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -98,14 +99,7 @@ describe("real child process protocol hardening", () => {
       task: "Capture the startup diagnostic",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -246,14 +240,7 @@ describe("real child process protocol hardening", () => {
       task: "Capture stderr",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -331,14 +318,7 @@ describe("real child process protocol hardening", () => {
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       // Use artifact config with JSONL disabled to confirm output retention is independent.
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
     assert.equal(start.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
@@ -414,14 +394,7 @@ describe("real child process protocol hardening", () => {
       task: "Wait for an interrupt",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
     assert.equal(start.isError, undefined);
     requestAsyncInterrupt(path.join(ASYNC_DIR, id), { source: "startup-interrupt-test" });

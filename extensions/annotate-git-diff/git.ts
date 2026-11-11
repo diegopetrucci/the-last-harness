@@ -24,10 +24,8 @@ interface ReviewBaseInfo {
 }
 
 interface WorkingTreeStatusInfo {
-  hasChanges: boolean;
   hasReviewableChanges: boolean;
   hasUntracked: boolean;
-  hasTrackedDeletions: boolean;
   hasRenames: boolean;
   untrackedPaths: string[];
 }
@@ -190,10 +188,8 @@ function parseNameStatus(output: string): ChangedPath[] {
 
 function parseStatusPorcelainZ(output: string): WorkingTreeStatusInfo {
   const info: WorkingTreeStatusInfo = {
-    hasChanges: false,
     hasReviewableChanges: false,
     hasUntracked: false,
-    hasTrackedDeletions: false,
     hasRenames: false,
     untrackedPaths: [],
   };
@@ -210,9 +206,6 @@ function parseStatusPorcelainZ(output: string): WorkingTreeStatusInfo {
     const path = token.slice(3);
     const isRenameOrCopy = code.includes("R") || code.includes("C");
     const isReviewablePath = code !== "!!" && path.length > 0;
-    if (code !== "!!") {
-      info.hasChanges = true;
-    }
     if (isReviewablePath) {
       info.hasReviewableChanges = true;
     }
@@ -222,7 +215,6 @@ function parseStatusPorcelainZ(output: string): WorkingTreeStatusInfo {
         info.untrackedPaths.push(path);
       }
     } else if (isReviewablePath) {
-      if (code.includes("D")) info.hasTrackedDeletions = true;
       if (isRenameOrCopy) info.hasRenames = true;
     }
 
@@ -613,12 +605,11 @@ function toSnapshotReviewFile(repoRoot: string, path: string): ReviewFile {
   };
 }
 
-async function getAllReviewFiles(
-  pi: ExtensionAPI,
+function getAllReviewFiles(
   repoRoot: string,
   branchChanges: ChangedPath[],
   repositoryPaths: string[],
-): Promise<{ allFiles: ReviewFile[]; branchFiles: ReviewFile[] }> {
+): { allFiles: ReviewFile[]; branchFiles: ReviewFile[] } {
   const branchFiles = branchChanges.map(toBranchReviewFile);
   const branchFilesByPath = new Map(branchFiles.map((file) => [file.path, file]));
   const seenPaths = new Set<string>();
@@ -687,8 +678,7 @@ export async function getReviewWindowData(
     const reviewableBranchChanges = branchChanges.filter(
       (change) => (change.newPath ?? change.oldPath ?? "").length > 0,
     );
-    const { allFiles, branchFiles } = await getAllReviewFiles(
-      pi,
+    const { allFiles, branchFiles } = getAllReviewFiles(
       repoRoot,
       reviewableBranchChanges,
       repositoryPaths,

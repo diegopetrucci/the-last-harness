@@ -1,8 +1,4 @@
-import {
-  SettingsManager,
-  getAgentDir,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   TLH_LATEST_RELEASE_API_URL,
   TLH_MAIN_COMPARE_API_URL,
@@ -25,12 +21,12 @@ import {
   updateTlhStartupState,
 } from "./profile-state.js";
 import { isRecord } from "./common.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import type {
   TlhHeaderUpdate,
   TlhInstallNotice,
   TlhInstallState,
   TlhLatestRelease,
-  TlhSettings,
   TlhStartupState,
   TlhUpdateCheckConfig,
 } from "./types.js";
@@ -520,7 +516,7 @@ export function __resetTlhUpdateCheckForTests(): void {
 
 function getTlhUpdateCheckConfig(cwd: string): TlhUpdateCheckConfig | undefined {
   try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+    const settings = getTlhGlobalSettings(cwd);
     return settings.tlh?.updateCheck;
   } catch {
     return undefined;
