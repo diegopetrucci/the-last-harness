@@ -1,7 +1,7 @@
 // Generated from extensions/the-last-harness/session-mirror/session-mirror-reply-producer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createSessionMirrorReplyChannel, } from "./local-bridge-reply-channel.js";
 import { parseReplyRequest, sourceInstanceId, validIdentity, } from "./local-bridge-boundary.js";
-export const SESSION_MIRROR_REPLY_PRODUCER_MAX_REQUESTS = 64;
+const SESSION_MIRROR_REPLY_PRODUCER_MAX_REQUESTS = 64;
 export const SESSION_MIRROR_REPLY_PRODUCER_MAX_CONFIRMATION_MS = 5_000;
 const MAX_COUNTER = 2_000_000_000;
 const MAX_CONFIRMATION_DELAY_MS = SESSION_MIRROR_REPLY_PRODUCER_MAX_CONFIRMATION_MS;

@@ -2,7 +2,7 @@
 import { createConnection } from "node:net";
 import { frame, json, MAX_CONTROL_BYTES, option, parseReadyResult, parseReplyRequest, readRendezvous, replyCloseFrame, replyReceiptFrame, REPLY_TEXT_CAPABILITY, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
 import { bestEffort, FAILURE_EVENTS, hasMethod, isBridgeSocket, remove, waitConnect, writeFrame, } from "./local-bridge-socket.js";
-export const SESSION_MIRROR_REPLY_CHANNEL_DEADLINE_MS = 5_000;
+const SESSION_MIRROR_REPLY_CHANNEL_DEADLINE_MS = 5_000;
 const FAILURE = "local bridge reply channel failed";
 const DEFAULT_CLOSE_REASON = "producer-disconnect";
 const MAX_REPLY_GENERATION = 2_000_000_000;

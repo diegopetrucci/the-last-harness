@@ -6,11 +6,10 @@ import { getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { createRetryableLazyImport } from "./common.js";
 import { getTlhExperimentalConfig, isTlhExperimentalFeatureEnabled, SESSION_MIRROR_OBSERVER_FEATURE, } from "./experimental.js";
 import { attestSessionMirrorSession, SESSION_MIRROR_ATTESTATION_REASONS, } from "./session-mirror/profile-attestation.js";
-import { SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES, SESSION_MIRROR_PROJECTION_REASONS, } from "./session-mirror/status-allowlists.js";
-export const SESSION_MIRROR_OBSERVER_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";
-export const SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION = "pi-session-schema-v3";
+import { SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES, SESSION_MIRROR_OBSERVER_PROFILE, SESSION_MIRROR_PROJECTION_REASONS, } from "./session-mirror/status-allowlists.js";
+export const { runtimeVersion: SESSION_MIRROR_OBSERVER_RUNTIME_VERSION, sessionSchemaVersion: SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION, } = SESSION_MIRROR_OBSERVER_PROFILE;
 export const SESSION_MIRROR_OBSERVER_COMMAND = "session-mirror-observer";
-const DEFAULT_QUEUE_CAPACITY = 8;
+const { bounds: OBSERVER_BOUNDS, defaultQueueCapacity: DEFAULT_QUEUE_CAPACITY, maxQueueCapacity: MAX_OBSERVER_QUEUE_CAPACITY, } = SESSION_MIRROR_OBSERVER_PROFILE;
 const MAX_FACADE_GENERATION = 2_000_000_000;
 const ZERO_TIMING = "unknown";
 const SESSION_MIRROR_OBSERVER_ACTIVATION_SNAPSHOT_KEY = Symbol.for("the-last-harness.session-mirror-observer-activation-snapshot");
@@ -118,11 +117,11 @@ function safeNow(now) {
 function timingBucket(duration) {
     if (duration === undefined || !Number.isFinite(duration) || duration < 0)
         return ZERO_TIMING;
-    if (duration <= 1)
+    if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.fastTimingMs)
         return "fast";
-    if (duration <= 10)
+    if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.moderateTimingMs)
         return "moderate";
-    if (duration <= 100)
+    if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.slowTimingMs)
         return "slow";
     return "extended";
 }
@@ -208,7 +207,6 @@ const PROBE_ENVELOPE_CATEGORIES = [
 ];
 const TIMING_BUCKET_VALUES = ["unknown", "fast", "moderate", "slow", "extended"];
 const MAX_OBSERVER_COUNTER = 2_000_000_000;
-const MAX_OBSERVER_QUEUE_CAPACITY = 32;
 function boundedCounter(value, maximum = MAX_OBSERVER_COUNTER) {
     return Number.isSafeInteger(value) && typeof value === "number" && value >= 0
         ? Math.min(value, maximum)
@@ -277,10 +275,10 @@ function normalizeProbeState(value) {
             lastAttestationFailure: optionalEnumValue(source.lastAttestationFailure, SESSION_MIRROR_ATTESTATION_REASONS),
             lastProjectionFailure: optionalEnumValue(source.lastProjectionFailure, SESSION_MIRROR_PROJECTION_REASONS),
             envelopeCategory: enumValue(source.envelopeCategory, PROBE_ENVELOPE_CATEGORIES, "none"),
-            entryCount: boundedCounter(source.entryCount, 1024),
-            rootCount: boundedCounter(source.rootCount, 1024),
-            maxDepth: boundedCounter(source.maxDepth, 128),
-            envelopeBytes: boundedCounter(source.envelopeBytes, 256 * 1024),
+            entryCount: boundedCounter(source.entryCount, OBSERVER_BOUNDS.maxTreeEntries),
+            rootCount: boundedCounter(source.rootCount, OBSERVER_BOUNDS.maxTreeRoots),
+            maxDepth: boundedCounter(source.maxDepth, OBSERVER_BOUNDS.maxTreeDepth),
+            envelopeBytes: boundedCounter(source.envelopeBytes, OBSERVER_BOUNDS.maxEnvelopeBytes),
             timing: Object.freeze({
                 attestation: enumValue(timingRecord.attestation, TIMING_BUCKET_VALUES, "unknown"),
                 projection: enumValue(timingRecord.projection, TIMING_BUCKET_VALUES, "unknown"),
@@ -400,11 +398,11 @@ function formatDiagnostics(diagnostics) {
     const values = Object.entries(diagnostics).filter(([, value]) => value > 0);
     return values.length === 0 ? "none" : values.map(([name, value]) => `${name}=${value}`).join(",");
 }
-export function formatSessionMirrorObserverStatus(status) {
-    const entryPressure = pressure(status.entryCount, 1024);
-    const rootPressure = pressure(status.rootCount, 1024);
-    const depthPressure = pressure(status.maxDepth, 128);
-    const bytePressure = pressure(status.envelopeBytes, 256 * 1024);
+function formatSessionMirrorObserverStatus(status) {
+    const entryPressure = pressure(status.entryCount, OBSERVER_BOUNDS.maxTreeEntries);
+    const rootPressure = pressure(status.rootCount, OBSERVER_BOUNDS.maxTreeRoots);
+    const depthPressure = pressure(status.maxDepth, OBSERVER_BOUNDS.maxTreeDepth);
+    const bytePressure = pressure(status.envelopeBytes, OBSERVER_BOUNDS.maxEnvelopeBytes);
     return [
         `${SESSION_MIRROR_OBSERVER_COMMAND}:`,
         `configured=${formatValue(status.configured)}`,
@@ -418,10 +416,10 @@ export function formatSessionMirrorObserverStatus(status) {
         `sink=${status.sinkInFlight ? "in-flight" : "idle"}`,
         `snapshot-required=${status.snapshotRequired ? "yes" : "no"}`,
         `envelope=${status.envelopeCategory}`,
-        `entries=${status.entryCount}/1024(${entryPressure})`,
-        `roots=${status.rootCount}/1024(${rootPressure})`,
-        `depth=${status.maxDepth}/128(${depthPressure})`,
-        `envelope-bytes=${status.envelopeBytes}/262144(${bytePressure})`,
+        `entries=${status.entryCount}/${OBSERVER_BOUNDS.maxTreeEntries}(${entryPressure})`,
+        `roots=${status.rootCount}/${OBSERVER_BOUNDS.maxTreeRoots}(${rootPressure})`,
+        `depth=${status.maxDepth}/${OBSERVER_BOUNDS.maxTreeDepth}(${depthPressure})`,
+        `envelope-bytes=${status.envelopeBytes}/${OBSERVER_BOUNDS.maxEnvelopeBytes}(${bytePressure})`,
         `timing=load:${status.timing.load},attestation:${status.timing.attestation},projection:${status.timing.projection},sink:${status.timing.sink}`,
         `reply-channel=${status.reply?.channel ?? "none"}`,
         `reply-outcome=${status.reply?.lastOutcome ?? "none"}`,
