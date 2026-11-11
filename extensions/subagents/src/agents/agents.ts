@@ -497,6 +497,35 @@ function settingsDiagnostics(
   return settings.diagnostics.map((error) => ({ source, filePath, error }));
 }
 
+function buildDiscoveryDiagnostics(
+  userSettings: SubagentSettings,
+  projectSettings: SubagentSettings,
+  userSettingsPath: string,
+  projectSettingsPath: string | null,
+): AgentDiscoveryDiagnostic[] {
+  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [
+    ...settingsDiagnostics(userSettings, "user", userSettingsPath),
+    ...settingsDiagnostics(projectSettings, "project", projectSettingsPath),
+  ];
+  if (userSettings.obsoleteCompletionGuard) {
+    agentDiagnostics.push({
+      source: "user",
+      filePath: userSettingsPath,
+      error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
+      kind: "notice",
+    });
+  }
+  if (projectSettings.obsoleteCompletionGuard && projectSettingsPath) {
+    agentDiagnostics.push({
+      source: "project",
+      filePath: projectSettingsPath,
+      error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
+      kind: "notice",
+    });
+  }
+  return agentDiagnostics;
+}
+
 function resolveSubagentDefaultModel(
   userSettings: SubagentSettings,
   projectSettings: SubagentSettings,
@@ -906,26 +935,12 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     projectSettingsPath,
   );
   const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
-  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [
-    ...settingsDiagnostics(userSettings, "user", userSettingsPath),
-    ...settingsDiagnostics(projectSettings, "project", projectSettingsPath),
-  ];
-  if (userSettings.obsoleteCompletionGuard) {
-    agentDiagnostics.push({
-      source: "user",
-      filePath: userSettingsPath,
-      error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
-      kind: "notice",
-    });
-  }
-  if (projectSettings.obsoleteCompletionGuard && projectSettingsPath) {
-    agentDiagnostics.push({
-      source: "project",
-      filePath: projectSettingsPath,
-      error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
-      kind: "notice",
-    });
-  }
+  const agentDiagnostics = buildDiscoveryDiagnostics(
+    userSettings,
+    projectSettings,
+    userSettingsPath,
+    projectSettingsPath,
+  );
 
   const canonicalAgents = applyCustomAgentOverrides(
     applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel),
@@ -972,26 +987,12 @@ export function discoverAgentsAll(cwd: string): {
     projectSettingsPath,
   );
   const builtin: AgentConfig[] = [];
-  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [
-    ...settingsDiagnostics(userSettings, "user", userSettingsPath),
-    ...settingsDiagnostics(projectSettings, "project", projectSettingsPath),
-  ];
-  if (userSettings.obsoleteCompletionGuard) {
-    agentDiagnostics.push({
-      source: "user",
-      filePath: userSettingsPath,
-      error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
-      kind: "notice",
-    });
-  }
-  if (projectSettings.obsoleteCompletionGuard && projectSettingsPath) {
-    agentDiagnostics.push({
-      source: "project",
-      filePath: projectSettingsPath,
-      error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
-      kind: "notice",
-    });
-  }
+  const agentDiagnostics = buildDiscoveryDiagnostics(
+    userSettings,
+    projectSettings,
+    userSettingsPath,
+    projectSettingsPath,
+  );
   const user = applyCustomAgentOverrides(
     applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel),
     userSettings,

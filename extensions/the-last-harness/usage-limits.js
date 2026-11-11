@@ -1,5 +1,5 @@
 // Generated from extensions/the-last-harness/usage-limits.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 export const USAGE_COMMAND_HELP = "Usage: /usage [status|weekly on|weekly off|weekly toggle]. With no argument, /usage shows status.";
 const USAGE_COMMAND_COMPLETIONS = [
     { value: "status", description: "Show TLH usage-limit footer preferences" },
@@ -11,7 +11,7 @@ import { handleUsageCommand } from "./usage-limits-command.js";
 let cachedTlhUsageWeeklyVisibility;
 function getTlhUsageLimitsConfig(cwd) {
     try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
+        const settings = getTlhGlobalSettings(cwd);
         return settings.tlh?.usageLimits;
     }
     catch {

@@ -33,8 +33,6 @@ Buttons and keys in the window:
 | Click **Cancel**                                               | TLH discards the notes and closes the window.                                                                      |
 | Close the window with its close button                         | TLH discards unsent notes and sends nothing to the agent.                                                          |
 
-Use `/annotate-last-message` directly; this workflow does not require Plannotator.
-
 ## Appearance
 
 The annotation window follows the **active Pi theme** for **colours** only: markdown token colours (heading, link, code, blockquote, etc.) are harvested from the upstream TUI theme at window-open time and applied as CSS custom properties. Fonts and spacing are static. The static TLH palette (`themes/the-last-harness.json`) is used as a fallback for any token whose theme call is unavailable or returns an unresolvable value.

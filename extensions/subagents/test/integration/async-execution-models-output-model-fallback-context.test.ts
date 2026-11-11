@@ -1,5 +1,6 @@
 /** Integration tests for async execution – model restoration, fallback, and context diagnostics. */
 
+import { DISABLED_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -132,14 +133,7 @@ describe("async execution model restoration and fallback", () => {
           contextWindow: 2000,
         },
       ],
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot,
     });
@@ -233,14 +227,7 @@ describe("async execution model restoration and fallback", () => {
         fallbackModels: ["anthropic/backup-a", "google/backup-b"],
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-exhaustion" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 
@@ -290,14 +277,7 @@ describe("async execution model restoration and fallback", () => {
         { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 2000 },
       ],
       sessionFile: restoredSessionFile,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -357,14 +337,7 @@ describe("async execution model restoration and fallback", () => {
         availableModels: [
           { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
         ],
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
       });
@@ -419,14 +392,7 @@ describe("async execution model restoration and fallback", () => {
         availableModels: [
           { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
         ],
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
       });
@@ -484,14 +450,7 @@ describe("async execution model restoration and fallback", () => {
         { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 2000 },
       ],
       sessionFile,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -524,14 +483,7 @@ describe("async execution model restoration and fallback", () => {
         reason:
           "Caller explicitly overrode persisted selection anthropic/claude-sonnet-4:high with 'openai/gpt-5'.",
       },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -590,14 +542,7 @@ describe("async execution model restoration and fallback", () => {
         reason:
           "Restored persisted child selection anthropic/claude-sonnet-4:high instead of the current parent model.",
       },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -661,14 +606,7 @@ describe("async execution model restoration and fallback", () => {
         reason:
           "Restored persisted child selection anthropic/claude-sonnet-4:high instead of the current parent model.",
       },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -744,14 +682,7 @@ describe("async execution model restoration and fallback", () => {
         reason:
           "Restored persisted child selection anthropic/claude-sonnet-4:high instead of the current parent model.",
       },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -793,14 +724,7 @@ describe("async execution model restoration and fallback", () => {
       agentConfig: makeAgent("worker", { model, thinking: "max" }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       availableModels,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -842,14 +766,7 @@ describe("async execution model restoration and fallback", () => {
         thinking: "high",
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dedupe" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -897,14 +814,7 @@ describe("async execution model restoration and fallback", () => {
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       modelFallbackNotice: "Agent fallback engaged",
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -954,14 +864,7 @@ describe("async execution model restoration and fallback", () => {
         { provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
         { provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
       ],
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -1006,14 +909,7 @@ describe("async execution model restoration and fallback", () => {
         fallbackModels: ["anthropic/claude-sonnet-4"],
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 
@@ -1202,14 +1098,7 @@ describe("async execution model restoration and fallback", () => {
           contextWindow: 1000,
         },
       ],
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 
@@ -1257,14 +1146,7 @@ describe("async execution model restoration and fallback", () => {
       task: "Do work",
       agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 
@@ -1304,14 +1186,7 @@ describe("async execution model restoration and fallback", () => {
       task: "Do work",
       agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 
@@ -1357,14 +1232,7 @@ describe("async execution model restoration and fallback", () => {
       task: "Do work",
       agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 

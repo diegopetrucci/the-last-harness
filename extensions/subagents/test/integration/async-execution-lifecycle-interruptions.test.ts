@@ -4,6 +4,7 @@
  * Requires pi packages to be importable.
  */
 
+import { DISABLED_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import { spawn } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -282,14 +283,7 @@ describe("async execution lifecycle interruptions", () => {
           task: "Wait for the role ceiling before call publication completes.",
           agentConfig: makeAgent("role-bound", { maxExecutionTimeMs: roleTimeoutMs }),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_ARTIFACT_CONFIG,
         });
 
         // Startup may expire before the preload reaches readyPath; the terminal
@@ -351,14 +345,7 @@ describe("async execution lifecycle interruptions", () => {
         concurrency: 3,
         agents: [makeAgent("one"), makeAgent("two"), makeAgent("three")],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
       });
 
@@ -431,14 +418,7 @@ describe("async execution lifecycle interruptions", () => {
           concurrency: 2,
           agents: [makeAgent("alpha"), makeAgent("beta")],
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-f1f2" },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_ARTIFACT_CONFIG,
           shareEnabled: false,
           sessionRoot,
         });
@@ -529,14 +509,7 @@ describe("async execution lifecycle interruptions", () => {
           concurrency: 2,
           agents: [makeAgent("alpha"), makeAgent("beta")],
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-f3" },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_ARTIFACT_CONFIG,
           shareEnabled: false,
           sessionRoot,
         });
@@ -707,14 +680,7 @@ describe("async execution lifecycle interruptions", () => {
           makeAgent("long", { maxExecutionTimeMs: 2_147_483_648 }),
         ],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
         controlConfig: {
           enabled: true,
@@ -813,14 +779,7 @@ describe("async execution lifecycle interruptions", () => {
         maxExecutionTimeMs: roleTimeoutMs,
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
     });
 
@@ -894,14 +853,7 @@ describe("async execution lifecycle interruptions", () => {
         tasks: [{ agent: "worker", task: "Run until the step ceiling." }],
         agents: [makeAgent("worker", { maxExecutionTimeMs: stepCeilingMs })],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
       });
       await waitForMockPiCall(mockPi, 0);
@@ -947,14 +899,7 @@ describe("async execution lifecycle interruptions", () => {
           makeAgent("two", { maxExecutionTimeMs: timeoutMs }),
         ],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         shareEnabled: false,
       });
       assert.equal(launch.isError, undefined);
@@ -1035,14 +980,7 @@ describe("async execution lifecycle interruptions", () => {
             cwd: tempDir,
             currentSessionId: "session-synthesized",
           },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_ARTIFACT_CONFIG,
           shareEnabled: false,
           ...options,
         });
@@ -1137,14 +1075,7 @@ describe("async execution lifecycle interruptions", () => {
       task: "Do work",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot,
     });
@@ -1184,14 +1115,7 @@ describe("async execution lifecycle interruptions", () => {
       task: "Inspect something",
       agentConfig: makeAgent("scout"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -1238,14 +1162,7 @@ describe("async execution lifecycle interruptions", () => {
       task: "Do work",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });
@@ -1269,14 +1186,7 @@ describe("async execution lifecycle interruptions", () => {
       task: "Do work",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
     });

@@ -661,25 +661,7 @@ describe("lifecycle state helpers", () => {
     const root = tempRoot("pi-lifecycle-cohort-lock-exhausted-");
     try {
       const asyncDir = path.join(root, "run-cohort-lock-exhausted");
-      const completedTerminalResult = {
-        state: "completed" as const,
-        facts: {
-          attempts: [
-            {
-              attempt: 1,
-              exit: { code: 0, signal: null },
-              durationMs: 12,
-              providerTokens: { status: "unavailable" as const },
-              requestedToolCalls: { edit: 0, write: 0, bash: 0 },
-              workspace: {
-                baseline: { status: "unavailable" as const, reason: "not_git_repository" as const },
-                post: { status: "unavailable" as const, reason: "not_git_repository" as const },
-                attribution: "unknown" as const,
-              },
-            },
-          ],
-        },
-      };
+      const completedTerminalResult = validTerminalResult([1]);
       writeNormalizedLifecycleStatus(asyncDir, {
         runId: "run-cohort-lock-exhausted",
         mode: "parallel" as const,

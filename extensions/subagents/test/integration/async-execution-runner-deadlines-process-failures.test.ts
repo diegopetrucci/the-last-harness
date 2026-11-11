@@ -4,6 +4,10 @@
  * Requires pi packages to be importable.
  */
 
+import {
+  DISABLED_ARTIFACT_CONFIG,
+  DISABLED_COMPACT_ARTIFACT_CONFIG,
+} from "../support/artifact-config-fixtures.ts";
 import { spawnSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -66,14 +70,7 @@ describe("async execution runner deadlines and process failures", () => {
       task: "Say agent ceiling async done. Do not edit files.",
       agentConfig: makeAgent("worker", { maxExecutionTimeMs: 2_147_483_648 }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       sessionRoot: path.join(tempDir, "sessions"),
     });
 
@@ -100,14 +97,7 @@ describe("async execution runner deadlines and process failures", () => {
       task: "Say caller timeout async done. Do not edit files.",
       agentConfig: makeAgent("worker", { maxExecutionTimeMs: 500 }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       sessionRoot: path.join(tempDir, "sessions"),
     });
 
@@ -126,17 +116,7 @@ describe("async execution runner deadlines and process failures", () => {
 
   it("saturates max-safe run and role async deadlines", async () => {
     const maxSafeDuration = Number.MAX_SAFE_INTEGER;
-    const artifactConfig: SubagentRunConfig["artifactConfig"] = {
-      mode: "compact",
-      enabled: false,
-      includeInput: false,
-      includeOutput: false,
-      includeJsonl: false,
-      includeTranscript: false,
-      includeMetadata: false,
-      includeChildEventProjections: false,
-      cleanupDays: 7,
-    };
+    const artifactConfig: SubagentRunConfig["artifactConfig"] = DISABLED_COMPACT_ARTIFACT_CONFIG;
     const ctx = {
       pi: { events: { emit() {} } },
       cwd: tempDir,
@@ -264,17 +244,7 @@ describe("async execution runner deadlines and process failures", () => {
       "extensions/subagents/src/runs/background/subagent-runner.js",
     );
     const piArgv1 = path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs");
-    const artifactConfig: SubagentRunConfig["artifactConfig"] = {
-      mode: "compact",
-      enabled: false,
-      includeInput: false,
-      includeOutput: false,
-      includeJsonl: false,
-      includeTranscript: false,
-      includeMetadata: false,
-      includeChildEventProjections: false,
-      cleanupDays: 7,
-    };
+    const artifactConfig: SubagentRunConfig["artifactConfig"] = DISABLED_COMPACT_ARTIFACT_CONFIG;
     const validStep: RunnerSubagentStep = {
       agent: "worker",
       task: "Valid trusted execution-policy values should launch.",
@@ -444,14 +414,7 @@ describe("async execution runner deadlines and process failures", () => {
       task: "Use the fresh role deadline from this child spawn.",
       agentConfig: makeAgent("worker", { maxExecutionTimeMs: roleTimeoutMs }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       sessionRoot: path.join(tempDir, "sessions"),
     });
 
@@ -657,14 +620,7 @@ describe("async execution runner deadlines and process failures", () => {
       task: "Complete without writing cumulative runtime fields.",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
 
     const asyncDir = path.join(ASYNC_DIR, id);
@@ -698,14 +654,7 @@ describe("async execution runner deadlines and process failures", () => {
       task: "Wait for the role ceiling.",
       agentConfig: makeAgent("role-bound", { maxExecutionTimeMs: roleTimeoutMs }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
 
     // A role timeout may fire before the mock process publishes its call record
@@ -744,14 +693,7 @@ describe("async execution runner deadlines and process failures", () => {
         maxExecutionTimeMs: timeoutMs,
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
     });
 
     await waitForMockPiCall(mockPi, 0, scaleTestTimeout(10_000), {
@@ -790,14 +732,7 @@ describe("async execution runner deadlines and process failures", () => {
       task: "Do work",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       sessionRoot: path.join(tempDir, "sessions"),
     });
 
@@ -816,14 +751,7 @@ describe("async execution runner deadlines and process failures", () => {
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       cwd: missingCwd,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       sessionRoot: path.join(tempDir, "sessions"),
     });
 
@@ -837,14 +765,7 @@ describe("async execution runner deadlines and process failures", () => {
       agents: [makeAgent("worker")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       cwd: missingCwd,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig: DISABLED_ARTIFACT_CONFIG,
       sessionRoot: path.join(tempDir, "sessions"),
     });
 
@@ -866,14 +787,7 @@ describe("async execution runner deadlines and process failures", () => {
         task: "Do work",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
+        artifactConfig: DISABLED_ARTIFACT_CONFIG,
         sessionRoot: path.join(tempDir, "sessions"),
       });
 

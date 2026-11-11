@@ -484,14 +484,6 @@ describe("async runner execution", () => {
 });
 
 describe("async runner plan child-location persistence", () => {
-  // Use a stable parent cwd that is unlikely to be a git repo or inside the
-  // project; tmpdir works because the tests never shell out to git (no
-  // production git calls happen inside the plan-build path, which is
-  // synchronous and calls spawnSync internally via captureChildLocationSnapshot).
-  // We DO need a real directory for resolveChildCwd to resolve against, but
-  // the git runner is the production one — so in practice captureChildLocationSnapshot
-  // returns a snapshot with at least childCwd + displayPath set regardless of
-  // whether git succeeds, which is sufficient for these assertions.
   const parentCwd = os.tmpdir();
   const stepSubdir = path.join(os.tmpdir(), "tlh-unit-test-step-subdir");
   const stepCtx = makeAsyncCtx(parentCwd, { currentSessionId: "session-cl-1" });
@@ -578,9 +570,6 @@ describe("async runner plan child-location persistence", () => {
 
 describe("revival: priorTerminalResult propagation", () => {
   it("carries priorTerminalResult into the plan task as terminalResult", () => {
-    // Regression: the merged file dropped priorTerminalResult from AsyncSingleParams
-    // so revival/resume passes silently lost the prior attempts. Verify the field
-    // is restored and propagated into the runner plan step.
     const revivalAgent = agent("worker");
     const prior: SubagentTerminalResult = {
       state: "failed",

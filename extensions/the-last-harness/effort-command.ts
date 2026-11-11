@@ -13,6 +13,7 @@ import {
   getTlhGlobalSettings,
   getTlhPrimaryEffortOverride,
   isTlhPrimaryAgentSelection,
+  parseTlhSettingsContent,
   writeTlhPrimaryAgentEffortOverride,
 } from "./primary-agent-runtime-settings.js";
 import {
@@ -33,14 +34,6 @@ type ThinkingPickerResult = {
   persisted: boolean;
 };
 
-function parseSettingsObject(content: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(content.replace(/^\uFEFF/, ""));
-  if (!isRecord(parsed)) {
-    throw new Error("settings.json must contain a JSON object");
-  }
-  return parsed;
-}
-
 function readTlhThinkingDefault(primary?: string): ThinkingLevel | undefined {
   const settingsPath = safeTlhProfileFilePath("settings.json");
   const content = settingsPath ? readText(settingsPath) : undefined;
@@ -48,7 +41,7 @@ function readTlhThinkingDefault(primary?: string): ThinkingLevel | undefined {
     return undefined;
   }
   try {
-    const settings = parseSettingsObject(content);
+    const settings = parseTlhSettingsContent(content);
     if (primary !== undefined) {
       const tlh = settings.tlh;
       const primaryAgent = isRecord(tlh) ? tlh.primaryAgent : undefined;
@@ -81,7 +74,7 @@ function persistTlhThinkingDefault(
     cwd,
     "Refusing to write thinking defaults outside the isolated TLH profile.",
     (current) => {
-      const settings = current && current.trim() ? parseSettingsObject(current) : {};
+      const settings = current && current.trim() ? parseTlhSettingsContent(current) : {};
       if (settings.defaultThinkingLevel === level) {
         return { changed: false };
       }
