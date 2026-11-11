@@ -62,6 +62,7 @@ const PROCESS_GROUP_POLL_MS = 25;
  *   support files at runtime and stores the results in a directory named
  *   "jiti" directly inside TMPDIR.
  * - "node-compile-cache": Node's module compile cache directory.
+ * - "herdr-app-home": the HERDR_APP_HOME pinned by guardEnv for tests.
  */
 export const TMPDIR_ALLOWLIST = [
   "jiti", // jiti transform cache

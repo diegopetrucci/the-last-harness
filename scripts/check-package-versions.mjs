@@ -46,7 +46,7 @@ Options:
   --package <path>             package.json path (default: package.json)
   --lockfile <path>            package-lock.json path (default: package-lock.json)
   --default-extensions <path>  Bundled default-extension manifest (default: config/default-extensions.json)
-  --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
+  --install-sh <path>          install.sh path for Pi pin and Node requirement validation (default: install.sh)
   --model-selection-scope <path> Authoritative model-selection scope to validate PINNED_PI_VERSION in (default: extensions/the-last-harness/model-selection-scope.ts)
   --node-modules-dir <path>    node_modules directory to check installed versions against (default: derived from --package path)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
@@ -694,6 +694,69 @@ function validatePiTypeboxPin(args, packageJson, packageLock, problems) {
   }
 }
 
+function validateNodeRequirements(args, packageJson, problems) {
+  try {
+    const installSource = readTextFile(args.installShPath);
+    const shellBody = installSource.match(/^TLH_MIN_NODE_VERSIONS=\(([^)]*)\)$/m)?.[1];
+    if (!shellBody || !/^"\d+\.\d+\.\d+"(?:\s+"\d+\.\d+\.\d+")*$/.test(shellBody)) {
+      throw new Error(`Cannot read TLH_MIN_NODE_VERSIONS in ${args.installShPath}`);
+    }
+    const floors = [...shellBody.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    const majors = floors.map((floor) => Number(floor.split(".")[0]));
+    if (majors.some((major, index) => index > 0 && major <= majors[index - 1])) {
+      throw new Error(`${args.installShPath}: Node minimums must have increasing majors`);
+    }
+    const requirement = `Node.js ${floors
+      .map((floor, index) =>
+        index === floors.length - 1 ? `>=${floor}` : `>=${floor} <${majors[index] + 1}`,
+      )
+      .join(" or ")}`;
+    const engine = floors
+      .map((floor, index) => (index === floors.length - 1 ? `>=${floor}` : `^${floor}`))
+      .join(" || ");
+    if (packageJson.engines?.node !== engine) {
+      problems.push(
+        `${args.packagePath}#engines.node must match installer Node minimums: ${engine}`,
+      );
+    }
+    if (readShellStringVariable(args.installShPath, "TLH_NODE_REQUIREMENT_TEXT") !== requirement) {
+      problems.push(`${args.installShPath}#TLH_NODE_REQUIREMENT_TEXT must be ${requirement}`);
+    }
+
+    const rootDir = dirname(resolve(args.packagePath));
+    const utilsPath = join(rootDir, "scripts/lib/tlh-install-utils.mts");
+    const utilsSource = readTextFile(utilsPath);
+    const utilsBody = utilsSource.match(
+      /^export const MIN_NODE_VERSIONS = (\[[^\]]*\]) as const;/m,
+    )?.[1];
+    if (!utilsBody || JSON.stringify(JSON.parse(utilsBody)) !== JSON.stringify(floors)) {
+      problems.push(`${utilsPath}#MIN_NODE_VERSIONS must match TLH_MIN_NODE_VERSIONS`);
+    }
+    const utilsRequirement = utilsSource.match(
+      /^export const NODE_REQUIREMENT_TEXT = "([^"\n]+)";/m,
+    )?.[1];
+    if (utilsRequirement !== requirement) {
+      problems.push(`${utilsPath}#NODE_REQUIREMENT_TEXT must be ${requirement}`);
+    }
+
+    const minimum24 = floors.find((floor) => floor.startsWith("24."));
+    if (!minimum24) throw new Error(`${args.installShPath}: missing Node 24 minimum`);
+    for (const workflow of ["ci", "macos-ci-benchmark", "release", "startup-performance"]) {
+      const path = join(rootDir, `.github/workflows/${workflow}.yml`);
+      const pins = [
+        ...readTextFile(path).matchAll(
+          /^\s*node-version:\s*['"]?(24\.[^\s'"#]+)['"]?\s*(?:#.*)?$/gm,
+        ),
+      ];
+      if (pins.length === 0 || pins.some((match) => match[1] !== minimum24)) {
+        problems.push(`${path}: Node 24 pins must equal the installer minimum ${minimum24}`);
+      }
+    }
+  } catch (error) {
+    problems.push(error.message);
+  }
+}
+
 function validateManagedPiPins(args, packageJson, problems) {
   const versions = [];
 
@@ -997,6 +1060,7 @@ function collectProblems(args) {
   validateInstalledDependencies(args, packageJson, packageLock, problems);
   validatePinnedDependencies(packageJson, args.packagePath, problems);
   validateManagedPiPins(args, packageJson, problems);
+  validateNodeRequirements(args, packageJson, problems);
   validatePiTypeboxPin(args, packageJson, packageLock, problems);
   validateDefaultExtensionPins(args.defaultExtensionsPath, problems);
   validatePinnedManagedScriptDefaults(

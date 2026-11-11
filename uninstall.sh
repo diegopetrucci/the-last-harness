@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # uninstall.sh — Remove The Last Harness isolated profile and optional pi package.
-# Self-contained: no node, no support-file fetches.
+# No support-file fetches; Node is used only to edit Herdr programs.json.
 # See: https://github.com/diegopetrucci/the-last-harness
 set -euo pipefail
 

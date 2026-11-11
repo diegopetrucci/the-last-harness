@@ -578,11 +578,20 @@ make_fake_remote_stage1_support_root() {
     cp "${ROOT_DIR}/${relative_path}" "${root}/${relative_path}"
   done <"${manifest_file}"
 
-  local prompt
-  for prompt in developer.md test-runner.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md contrarian.md web-scout.md; do
-    mkdir -p "${root}/agents/subagents"
-    cp "${ROOT_DIR}/agents/subagents/${prompt}" "${root}/agents/subagents/${prompt}"
-  done
+  node - "${ROOT_DIR}/install.sh" "${root}" <<'NODE_SUBAGENT_PROMPTS'
+const fs = require('node:fs');
+const path = require('node:path');
+const [installer, root] = process.argv.slice(2);
+const body = fs.readFileSync(installer, 'utf8').match(/^TLH_SUBAGENT_PROMPTS=\(([^)]*)\)$/m)?.[1];
+if (!body || !/^\s*[A-Za-z0-9._-]+\.md(?:\s+[A-Za-z0-9._-]+\.md)*\s*$/.test(body)) {
+  throw new Error(`Cannot read TLH_SUBAGENT_PROMPTS from ${installer}`);
+}
+const destination = path.join(root, 'agents/subagents');
+fs.mkdirSync(destination, { recursive: true });
+for (const prompt of body.trim().split(/\s+/)) {
+  fs.copyFileSync(path.join(path.dirname(installer), 'agents/subagents', prompt), path.join(destination, prompt));
+}
+NODE_SUBAGENT_PROMPTS
 
   cat >"${root}/scripts/tlh-install.mjs" <<'EOF_FAKE_REMOTE_STAGE1'
 #!/usr/bin/env node

@@ -187,33 +187,13 @@ Running `tlh update --force` (or equivalently `bash install.sh --force`) passes 
 
 ## Pi-native prompt-cache warming
 
-Pi has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
-
-TLH ships `cacheWarming: "idle"` as a packaged default. Install and update apply this value using the same append-if-missing merge used for all packaged settings defaults: when `cacheWarming` is absent from the isolated `settings.json` it is written as `"idle"`; an existing user value is preserved untouched. To revert to Pi's native `streaming` mode (warm while a run is active), set `cacheWarming` to `streaming` in `/settings` or in `~/.the-last-harness/agent/settings.json`. To disable warming entirely, set it to `off`.
-
-This setting is user-owned and global to the isolated profile (`~/.the-last-harness/agent/settings.json`, or the active `PI_CODING_AGENT_DIR`), not project-scoped. Use Pi's `/settings` screen or edit that profile deliberately; back up before manual edits and preserve unknown keys. Canonical TLH parent and child processes share the isolated profile, so one global value governs both unless a separately configured profile is intentionally used. Pi exposes warm status and its economic decision through `/session`. TLH's packaged defaults set `showCacheMissNotices` to `true`, so successful native refreshes appear as `Cache warmed ...` transcript notices by default; set it to `false` to hide them.
-
-Pi-native warming is separate from the retired TLH async-parent prompt-cache heartbeat. The heartbeat code has been removed; a legacy `heartbeat` key is ignored at runtime and preserved for manual cleanup, while any historical `heartbeat.jsonl` is left in place. To stop Pi-native warming, set `cacheWarming` to `off`. See [subagents.md](subagents.md#prompt-cache-warming) for the native warming limits, legacy-key notice, and rollback steps.
+See [prompt-cache warming](subagents.md#prompt-cache-warming) for modes, install/update merge behavior, limits, and legacy cleanup; configure it in the isolated profile's `settings.json`.
 
 ## Compaction reserve default
 
-TLH ships `compaction.reserveTokens: 49152` as a packaged default, originally a mitigation for compaction summaries hitting a token cap on reasoning models ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785); upstream [earendil-works/pi#9075](https://github.com/earendil-works/pi/issues/9075), [#9512](https://github.com/earendil-works/pi/issues/9512)). Since Pi 1.4.0, summaries no longer have a fixed output cap derived from the reserve. `reserveTokens` now controls when auto-compaction starts (when the context window minus the reserve is reached) and, because Pi clamps summary output to the remaining context window, indirectly bounds the room for an auto-compaction summary. TLH intentionally keeps the packaged value pending live verification of long high/xhigh/max-effort sessions (tracked in #785).
+The packaged `compaction.reserveTokens` value lives in [settings.defaults.json](../config/settings.defaults.json); see [child context-window policy](subagents.md#child-context-window-policy) for effective context caps. The reserve controls when auto-compaction starts and indirectly bounds the space available for its summary. It applies globally to primary and child sessions, so small-window models may need a `compaction.modelOverrides` entry with a lower reserve.
 
-Trade-off: auto-compaction triggers about 32,768 tokens earlier than Pi's own default reserve of 16,384, in both primary and child sessions (effective context caps are described in [subagents.md](subagents.md#child-context-window-policy)). The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
-
-Small-window caveat: Pi does not scale the reserve to the model's window, so models with windows of 64k or less need their own override. The example below uses `16384`, which restores Pi's own default for that model:
-
-```json
-{
-  "compaction": {
-    "modelOverrides": {
-      "provider/modelId": { "reserveTokens": 16384 }
-    }
-  }
-}
-```
-
-Install and update use the usual append-if-missing merge: the value is written only when absent and an existing user value is preserved. When TLH writes it, it records `tlh.compactionReserveTokensManaged: true` in `settings.json` as provenance. Deleting the key does not opt out, because `tlh update` re-adds missing keys; set an explicit value such as `16384` instead. `tlh update --force` overwrites the value like other packaged defaults.
+Install and update use the usual append-if-missing merge: the value is written only when absent and an existing user value is preserved. When TLH writes it, it records `tlh.compactionReserveTokensManaged: true` in `settings.json` as provenance. Deleting the key does not opt out, because `tlh update` re-adds missing keys; set an explicit value instead. `tlh update --force` overwrites the value like other packaged defaults.
 
 Summaries still grow with the session, so very long sessions can leave little room for a summary, particularly in small windows.
 
