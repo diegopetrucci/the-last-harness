@@ -29,7 +29,7 @@ import {
 import type { SessionMirrorObserverSink } from "./observer.js";
 import type { SessionMirrorSnapshotProjectionEnvelope } from "./session-adapter.js";
 
-export const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
+const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
 
 const CAPABILITIES = ["snapshot-replace", "cursor-recovery"] as const;
 const FAILURE = "local bridge publication failed";

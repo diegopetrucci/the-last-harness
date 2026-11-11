@@ -2,7 +2,7 @@
 import { createConnection } from "node:net";
 import { frame, json, MAX_CONTROL_BYTES, option, parseReadyResult, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
 import { bestEffort, FAILURE_EVENTS, hasMethod, isBridgeSocket, remove, waitConnect, writeFrame, } from "./local-bridge-socket.js";
-export const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
+const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
 const CAPABILITIES = ["snapshot-replace", "cursor-recovery"];
 const FAILURE = "local bridge publication failed";
 function publishedSnapshotTarget(envelope) {

@@ -4,7 +4,10 @@ import type {
   SessionMirrorAttestationReason,
   SessionMirrorAttestationResult,
 } from "./profile-attestation.js";
-import type { SessionMirrorObserverDiagnosticCode } from "./status-allowlists.js";
+import {
+  SESSION_MIRROR_OBSERVER_PROFILE,
+  type SessionMirrorObserverDiagnosticCode,
+} from "./status-allowlists.js";
 import {
   projectSessionMirrorSnapshot,
   type SessionMirrorReadonlySessionManager,
@@ -14,12 +17,6 @@ import {
   type SessionMirrorSnapshotProjectionEnvelope,
   type SessionMirrorSnapshotProjectionStatus,
 } from "./session-adapter.js";
-
-/** The default number of deferred lifecycle markers retained by one generation. */
-export const SESSION_MIRROR_OBSERVER_DEFAULT_QUEUE_CAPACITY = 8;
-
-/** The largest queue accepted by the bounded observer seam. */
-export const SESSION_MIRROR_OBSERVER_MAX_QUEUE_CAPACITY = 32;
 
 /**
  * Marker scheduling is deliberately a one-way seam. Production schedulers
@@ -203,8 +200,6 @@ interface InternalState {
 
 const MAX_COUNTER = 2_000_000_000;
 const MAX_METADATA_CHARACTERS = 256;
-const DEFAULT_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";
-const DEFAULT_SESSION_SCHEMA_VERSION = "pi-session-schema-v3";
 
 function nextCounter(value: number): number {
   return value >= MAX_COUNTER ? 1 : value + 1;
@@ -212,9 +207,9 @@ function nextCounter(value: number): number {
 
 function boundedQueueCapacity(value: number | undefined): number {
   if (!Number.isSafeInteger(value) || value === undefined || value < 1) {
-    return SESSION_MIRROR_OBSERVER_DEFAULT_QUEUE_CAPACITY;
+    return SESSION_MIRROR_OBSERVER_PROFILE.defaultQueueCapacity;
   }
-  return Math.min(value, SESSION_MIRROR_OBSERVER_MAX_QUEUE_CAPACITY);
+  return Math.min(value, SESSION_MIRROR_OBSERVER_PROFILE.maxQueueCapacity);
 }
 
 function boundedMetadata(value: string | undefined, fallback: string): string {
@@ -353,10 +348,13 @@ export function createSessionMirrorObserverRuntime(
   const attest: SessionMirrorObserverAttestor =
     options.attest ?? (() => ({ ok: false as const, reason: "unsafe-profile-metadata" as const }));
   const project = options.project ?? projectSessionMirrorSnapshot;
-  const runtimeVersion = boundedMetadata(options.runtimeVersion, DEFAULT_RUNTIME_VERSION);
+  const runtimeVersion = boundedMetadata(
+    options.runtimeVersion,
+    SESSION_MIRROR_OBSERVER_PROFILE.runtimeVersion,
+  );
   const sessionSchemaVersion = boundedMetadata(
     options.sessionSchemaVersion,
-    DEFAULT_SESSION_SCHEMA_VERSION,
+    SESSION_MIRROR_OBSERVER_PROFILE.sessionSchemaVersion,
   );
   const getSessionManager = options.getSessionManager ?? (() => options.sessionManager);
 

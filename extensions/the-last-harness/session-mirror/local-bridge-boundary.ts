@@ -5,7 +5,7 @@ import { hasDuplicateJsonKeys } from "./json-boundary.js";
 
 export const MAX_FRAME_BYTES = 256 * 1024;
 export const MAX_CONTROL_BYTES = 4 * 1024;
-export const MAX_PATH_BYTES = 103;
+const MAX_PATH_BYTES = 103;
 const MAX_RENDEZVOUS_BYTES = 4 * 1024;
 const TOKEN_RE = /^[a-f0-9]{32}$/;
 const SOURCE_RE = TOKEN_RE;
