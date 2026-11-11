@@ -6,7 +6,7 @@ import test from "node:test";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
-import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+import { createDeferred, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { registerContextCap } = await jiti.import("../extensions/the-last-harness/context-cap.ts");
@@ -119,16 +119,6 @@ function writeConfiguredContextWindow(modelsPath, contextWindow) {
   const models = JSON.parse(readFileSync(modelsPath, "utf8"));
   models.providers["refresh-provider"].models[0].contextWindow = contextWindow;
   writeFileSync(modelsPath, `${JSON.stringify(models, null, 2)}\n`);
-}
-
-function createDeferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((resolver, rejecter) => {
-    resolve = resolver;
-    reject = rejecter;
-  });
-  return { promise, resolve, reject };
 }
 
 // ─── command registration ─────────────────────────────────────────────────────

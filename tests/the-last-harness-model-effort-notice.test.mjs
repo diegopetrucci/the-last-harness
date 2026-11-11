@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
+import { developerSubagent } from "./the-last-harness-model-effort-test-helpers.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
@@ -44,26 +45,6 @@ const architectAgent = {
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/architect.md",
-};
-
-/** @type {import("../extensions/the-last-harness/types.ts").SubagentMetadata} */
-const developerSubagent = {
-  name: "developer",
-  description: "Developer subagent",
-  tlhModelDefaultsSource: "frontmatter",
-  tlhModelDefaults: [
-    {
-      provider: "openai-codex",
-      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
-      effort: "max",
-    },
-    {
-      provider: "anthropic",
-      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-      effort: "medium",
-    },
-    { provider: "openrouter", effort: "medium" },
-  ],
 };
 
 const primaryAgentsMap = new Map([["architect", architectAgent]]);
@@ -693,9 +674,6 @@ test("notice suppressed after /reconcile decision updates acknowledged snapshot"
 });
 
 test("no provider → notice is deferred even when override and stale snapshot exist", async (t) => {
-  // Regression guard for ts-7w6o defer semantics: maybeNotifyModelEffortDrift must
-  // return immediately when ctx.model?.provider is undefined, performing no comparison
-  // and emitting no notification.
   const fixture = createIsolatedProfileFixture("tlh-model-effort-notice-test-", {
     cwd: true,
     test: t,
@@ -774,7 +752,7 @@ test("shouldSkip hook suppresses notification completely", async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// Backfill tests (ts-8kfb): pre-existing overrides with no baseline
+// Backfill tests: pre-existing overrides with no baseline
 // ---------------------------------------------------------------------------
 
 // Re-import readReconcileState for state-verification tests.
@@ -993,8 +971,6 @@ test("backfill: merges rather than replaces other roles and providers in existin
 });
 
 test("backfill: unknown provider does not write state or produce notice", async (t) => {
-  // Verifies the ts-7w6o defer rule: with no known provider, backfill must not
-  // write anything and must not produce a notice.
   const fixture = createIsolatedProfileFixture("tlh-model-effort-notice-backfill-", {
     cwd: true,
     test: t,
@@ -1036,14 +1012,7 @@ test("backfill: unknown provider does not write state or produce notice", async 
   );
 });
 
-// ---------------------------------------------------------------------------
-// Gap 1: Empty-string provider treated as unknown (ts-8k8z regression)
-// ---------------------------------------------------------------------------
-
 test("empty-string provider is treated as unknown: no notice, no loader calls, no baseline write", async (t) => {
-  // Regression guard: provider="" must behave exactly like provider=undefined (ts-7w6o
-  // applied consistently). Before the fix, the startup guard only deferred on === undefined,
-  // so an empty-string provider would proceed, compare, and potentially fire a notice.
   const fixture = createIsolatedProfileFixture("tlh-model-effort-notice-test-", {
     cwd: true,
     test: t,

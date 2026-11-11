@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createClock } from "./the-last-harness-provider-auth-health-test-helpers.mjs";
 import {
   adapterGetProviderAuth,
   adapterIsConfigured,
@@ -11,16 +12,6 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function createNow(start = 1000) {
-  let current = start;
-  return {
-    now: () => current,
-    advance: (ms) => {
-      current += ms;
-    },
-  };
-}
 
 function makeRegistry({ getProviderAuth, getProviderAuthStatus } = {}) {
   const registry = {};
@@ -262,7 +253,7 @@ test("adapterGetProviderAuth: returns { ok: false } with unsupported marker when
 // ---------------------------------------------------------------------------
 
 test("probeProvider: returns healthy when getProviderAuth resolves", async () => {
-  const clock = createNow();
+  const clock = createClock(1000);
   const store = createProviderAuthHealthStore({ now: clock.now });
   const registry = makeRegistry({ getProviderAuth: async () => ({ accessToken: "x" }) });
 
@@ -276,7 +267,7 @@ test("probeProvider: returns healthy when getProviderAuth resolves", async () =>
 // ---------------------------------------------------------------------------
 
 test("probeProvider: records reauth-required on invalid_grant", async () => {
-  const clock = createNow();
+  const clock = createClock(1000);
   const store = createProviderAuthHealthStore({ now: clock.now });
   const registry = makeRegistry({
     getProviderAuth: async () => {
@@ -389,7 +380,7 @@ test("probeProvider: a second probe starts fresh after the first completes", asy
 // ---------------------------------------------------------------------------
 
 test("clearProvider: records healthy entry and removes any in-flight probe", async () => {
-  const clock = createNow(5000);
+  const clock = createClock(5000);
   const store = createProviderAuthHealthStore({ now: clock.now });
   const registry = makeRegistry({
     getProviderAuth: async () => {
@@ -568,7 +559,7 @@ test("isConfigured: returns undefined when method is absent", () => {
 // ---------------------------------------------------------------------------
 
 test("getEntry: checkedAt reflects the clock at probe time", async () => {
-  const clock = createNow(2000);
+  const clock = createClock(2000);
   const store = createProviderAuthHealthStore({ now: clock.now });
   const registry = makeRegistry({ getProviderAuth: async () => {} });
 
@@ -830,7 +821,7 @@ test("pinned-runtime API contract: getProviderAuthStatus exists on ModelRegistry
 });
 
 test("run-level observation recorded while a probe is in flight is not overwritten by the older probe", async () => {
-  const clock = createNow();
+  const clock = createClock(1000);
   const store = createProviderAuthHealthStore({ now: clock.now });
   let release;
   const registry = makeRegistry({

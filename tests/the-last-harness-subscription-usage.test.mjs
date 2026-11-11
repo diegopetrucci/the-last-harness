@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 
+import { createDeferred } from "./test-fixture-helpers.mjs";
 import {
   TLH_SUBSCRIPTION_USAGE_ANTHROPIC_BETA,
   TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL,
@@ -42,16 +43,6 @@ function assertNoCredentialMaterial(value) {
 
 function tokenFingerprint(accessToken) {
   return createHash("sha256").update(accessToken).digest("hex");
-}
-
-function createDeferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 test("normalizes OpenAI/Codex wham usage top-level primary and secondary windows", () => {
@@ -1576,13 +1567,7 @@ test("generation guard: older concurrent refresh for different account does not 
 });
 
 test("generation guard: older eligible refresh superseded by newer ineligible refresh does not reactivate cleared credential", async () => {
-  // Regression for Codex P2 (second finding on PR #372):
-  // An older eligible refresh is suspended inside getApiKeyForProvider.
-  // A newer refresh() observes the provider is now ineligible (isUsingOAuth
-  // returns false), calls clearProvider(), and returns.
-  // When the older lookup eventually resolves, the generation mismatch guard
-  // must bail immediately — zero state mutations and no fetch — because the
-  // same-account fall-through carve-out has been removed.
+  // An ineligible refresh must invalidate an older pending credential lookup.
   const accessToken = randomUUID();
   const deferredKey = createDeferred(); // gates the older refresh's getApiKeyForProvider
 

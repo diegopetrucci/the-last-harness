@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { createJiti } from "jiti";
 
+import { createCommandContext } from "./command-context-test-helpers.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
@@ -24,21 +25,6 @@ function createPiHarness() {
     commands,
     registerCommand(name, options) {
       commands.set(name, options);
-    },
-  };
-}
-
-function createCommandContext(cwd) {
-  const notifications = [];
-  return {
-    notifications,
-    ctx: {
-      cwd,
-      ui: {
-        notify(message, type = "info") {
-          notifications.push({ message, type });
-        },
-      },
     },
   };
 }

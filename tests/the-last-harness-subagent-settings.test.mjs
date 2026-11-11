@@ -956,10 +956,6 @@ test("subagent-settings headless mode refuses fixed-model pins for independence-
   });
 });
 
-// ---------------------------------------------------------------------------
-// Override baseline recording (ts-sjlt)
-// ---------------------------------------------------------------------------
-
 test("subagent-settings set records override baseline on first creation", async (t) => {
   // Verifies that the CLI `set` path records a baseline when creating a first override.
   const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
@@ -1112,13 +1108,9 @@ test("subagent-settings set records baseline for remove-then-recreate", async (t
   });
 });
 
-// ---------------------------------------------------------------------------
-// Pure end-to-end journey (ts-sjlt acceptance criterion), subagent variant
-//
 // As with the primary journey test, this deliberately hand-writes no reconcile
 // state and asserts only the user-visible outcome, so that breaking baseline
 // recording fails on the notice assertion rather than on a state assertion.
-// ---------------------------------------------------------------------------
 
 test("journey: subagent override created under packaged X fires the startup notice once packaged default is Y", async (t) => {
   // The command registers against the real bundled catalog, so the baseline is
@@ -1199,10 +1191,6 @@ test("journey: subagent override created under packaged X fires the startup noti
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// Gap 2: Override-creation detection with invalid stored subagent values (ts-8k8z)
-// ---------------------------------------------------------------------------
 
 test("journey: {model: null} stored subagent override is treated as absent, baseline created, notice fires on packaged change", async (t) => {
   // Regression guard: a {model: null} override in settings.json (user-editable) must

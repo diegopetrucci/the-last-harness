@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { createJiti } from "jiti";
 
+import { createCommandContext } from "./command-context-test-helpers.mjs";
 import {
   createRedirectedTempProfileFixture,
   createIsolatedProfileFixture,
@@ -29,21 +30,6 @@ function createPiHarness() {
     },
     registerCommand(name, options) {
       commands.set(name, options);
-    },
-  };
-}
-
-function createCommandContext(cwd) {
-  const notifications = [];
-  return {
-    notifications,
-    ctx: {
-      cwd,
-      ui: {
-        notify(message, type = "info") {
-          notifications.push({ message, type });
-        },
-      },
     },
   };
 }

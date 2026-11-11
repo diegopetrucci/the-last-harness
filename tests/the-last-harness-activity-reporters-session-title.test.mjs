@@ -11,6 +11,8 @@ import { test } from "node:test";
 import { createJiti } from "jiti";
 import { createFakeTimers } from "./support/fake-timers.mjs";
 
+import { createDeferred } from "./test-fixture-helpers.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { createHerdrActivityReporter, registerTlhActivityReporters } = await jiti.import(
   "../extensions/the-last-harness/activity-reporters.ts",
@@ -18,16 +20,6 @@ const { createHerdrActivityReporter, registerTlhActivityReporters } = await jiti
 
 async function flushAsyncWork() {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
-}
-
-function createDeferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 function baseEnv() {
