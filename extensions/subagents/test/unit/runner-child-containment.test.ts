@@ -1,10 +1,10 @@
+import { DISABLED_COMPACT_ARTIFACT_CONFIG as artifactConfig } from "../support/artifact-config-fixtures.ts";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { runSingleStep } from "../../src/runs/background/single-step-execution.ts";
-import type { ResolvedArtifactConfig } from "../../src/shared/types.ts";
 import { startedMockPiPids, waitForMockPiCall } from "../support/async-execution-helpers.ts";
 import {
   createMockPi,
@@ -16,18 +16,6 @@ import {
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../support/live-child-crash-runner.ts");
-
-const artifactConfig: ResolvedArtifactConfig = {
-  mode: "compact",
-  enabled: false,
-  includeInput: false,
-  includeOutput: false,
-  includeJsonl: false,
-  includeTranscript: false,
-  includeMetadata: false,
-  includeChildEventProjections: false,
-  cleanupDays: 7,
-};
 
 function groupAlive(groupId: number): boolean {
   try {

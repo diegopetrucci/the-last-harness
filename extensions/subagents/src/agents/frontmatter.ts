@@ -35,29 +35,27 @@ export function parseFrontmatter(content: string): {
   let currentBlockLines: string[] | null = null;
   let currentIndent: number | null = null;
 
+  function flushBlockValue(): void {
+    if (currentKey === null || currentBlockLines === null) return;
+    const rawBlock = currentBlockLines.join("\n");
+    const leadingSpaces = rawBlock.match(/^([ \t]+)/m);
+    const prefix = leadingSpaces?.[1] ?? "";
+    frontmatter[currentKey] = prefix
+      ? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
+      : rawBlock;
+    currentKey = null;
+    currentBlockLines = null;
+    currentIndent = null;
+  }
+
   for (const line of lines) {
     const indent = line.search(/\S|$/); // position of first non-whitespace char
     if (currentKey !== null && currentBlockLines !== null && indent > (currentIndent ?? 0)) {
-      // This line is part of the current block value
       currentBlockLines.push(line);
       continue;
     }
 
-    // Flush any pending block value
-    if (currentKey !== null && currentBlockLines !== null) {
-      // Strip the common leading whitespace from the block so the
-      // serializer can add its own indentation level.
-      const rawBlock = currentBlockLines.join("\n");
-      const leadingSpaces = rawBlock.match(/^([ \t]+)/m);
-      const prefix = leadingSpaces?.[1] ?? "";
-      const stripped = prefix
-        ? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
-        : rawBlock;
-      frontmatter[currentKey] = stripped;
-      currentKey = null;
-      currentBlockLines = null;
-      currentIndent = null;
-    }
+    flushBlockValue();
 
     const match = line.match(/^([\w-]+):\s*(.*)$/);
     if (match) {
@@ -70,28 +68,16 @@ export function parseFrontmatter(content: string): {
       }
 
       if (value === "") {
-        // Key with empty value — might start a block; defer storing until we see indent
         currentKey = match[1];
         currentBlockLines = [];
         currentIndent = indent;
       } else {
-        // Simple key: value
         frontmatter[match[1]] = value;
       }
     }
-    // Lines that don't match a key pattern (e.g., comments, empty lines) are ignored
   }
 
-  // Flush final block value
-  if (currentKey !== null && currentBlockLines !== null) {
-    const rawBlock = currentBlockLines.join("\n");
-    const leadingSpaces = rawBlock.match(/^([ \t]+)/m);
-    const prefix = leadingSpaces?.[1] ?? "";
-    const stripped = prefix
-      ? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
-      : rawBlock;
-    frontmatter[currentKey] = stripped;
-  }
+  flushBlockValue();
 
   return { frontmatter, body };
 }

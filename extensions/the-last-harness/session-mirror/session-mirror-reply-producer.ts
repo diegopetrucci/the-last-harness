@@ -15,7 +15,7 @@ import type { SessionMirrorObserverState } from "./observer.js";
 import type { SessionMirrorObserverPublicationReady } from "./local-bridge-sink.js";
 import type { SessionMirrorReadonlySessionManager } from "./session-adapter.js";
 
-export const SESSION_MIRROR_REPLY_PRODUCER_MAX_REQUESTS = 64;
+const SESSION_MIRROR_REPLY_PRODUCER_MAX_REQUESTS = 64;
 export const SESSION_MIRROR_REPLY_PRODUCER_MAX_CONFIRMATION_MS = 5_000;
 
 export type SessionMirrorReplyProducerOutcome = LocalBridgeReplyReceiptCode;

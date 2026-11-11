@@ -61,15 +61,6 @@ function buildAcknowledgedSnapshot(entries, provider) {
         },
     ]));
 }
-function buildSingleAcknowledgedSnapshot(entry, provider) {
-    return {
-        [entry.name]: {
-            byProvider: {
-                [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking },
-            },
-        },
-    };
-}
 function notifyResetResult(ctx, result, agentName) {
     const label = result.changed ? "Reset override for" : "No change for";
     const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
@@ -200,7 +191,7 @@ async function runReconcilePicker(ctx, provider, runtime) {
             ctx.ui.notify(`TLH reconcile: Cannot acknowledge ${entry.name} — no provider is known for this session. Run /reconcile when a provider is active.`, "warning");
             return;
         }
-        const snapshot = buildSingleAcknowledgedSnapshot(entry, provider);
+        const snapshot = buildAcknowledgedSnapshot([entry], provider);
         const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
         if (!acknowledged) {
             ctx.ui.notify(`TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`, "error");
@@ -217,7 +208,7 @@ async function runReconcilePicker(ctx, provider, runtime) {
         }
         notifyResetResult(ctx, outcome.result, entry.name);
         if (provider) {
-            const acknowledged = updateReconcileAcknowledgedSnapshot(buildSingleAcknowledgedSnapshot(entry, provider), new Date().toISOString());
+            const acknowledged = updateReconcileAcknowledgedSnapshot(buildAcknowledgedSnapshot([entry], provider), new Date().toISOString());
             if (!acknowledged) {
                 ctx.ui.notify(`TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`, "error");
             }

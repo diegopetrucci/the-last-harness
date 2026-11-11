@@ -77,7 +77,7 @@ function resolveReviewUiAssets() {
             monacoEntryJs,
             monacoEditorCss,
             monacoWorkerJs,
-            monacoBasicLanguagesJs: monacoRuntimeJs,
+            monacoRuntimeJs,
             monacoBaseUrl,
             bootstrapError: null,
         };
@@ -90,7 +90,7 @@ function resolveReviewUiAssets() {
             monacoEntryJs: "",
             monacoEditorCss: "",
             monacoWorkerJs: "",
-            monacoBasicLanguagesJs: "",
+            monacoRuntimeJs: "",
             monacoBaseUrl: "",
             bootstrapError: `Unable to load packaged review UI assets: ${message}`,
         };
@@ -118,7 +118,7 @@ export function buildReviewHtml(data) {
         ? `require.config({baseUrl:${escapeForInlineScript(JSON.stringify(assets.monacoBaseUrl))}});\n`
         : "";
     html = safeReplace(html, "__INLINE_MONACO_ENTRY_JS__", monacoBaseUrlConfig + escapeInlineScriptSource(assets.monacoEntryJs));
-    html = safeReplace(html, "__INLINE_MONACO_BASIC_LANGUAGES_JS__", escapeInlineScriptSource(assets.monacoBasicLanguagesJs));
+    html = safeReplace(html, "__INLINE_MONACO_RUNTIME_JS__", escapeInlineScriptSource(assets.monacoRuntimeJs));
     html = safeReplace(html, "__INLINE_REVIEW_STATE_JS__", reviewStateJs);
     html = safeReplace(html, "__INLINE_REVIEW_NAVIGATION_JS__", reviewNavigationJs);
     html = safeReplace(html, "__INLINE_JS__", appJs);

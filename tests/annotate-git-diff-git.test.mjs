@@ -92,10 +92,8 @@ test("parseStatusPorcelainZ tracks reviewable changes and ignores ignored files"
       ].join("\0"),
     ),
     {
-      hasChanges: true,
       hasReviewableChanges: true,
       hasUntracked: true,
-      hasTrackedDeletions: true,
       hasRenames: true,
       untrackedPaths: ["scratch/new-file.txt"],
     },
@@ -108,10 +106,8 @@ test("shouldNormalizeBranchChanges only enables snapshot normalization when need
 
   assert.equal(
     shouldNormalizeBranchChanges(modifiedChange, {
-      hasChanges: true,
       hasReviewableChanges: true,
       hasUntracked: false,
-      hasTrackedDeletions: false,
       hasRenames: true,
       untrackedPaths: [],
     }),
@@ -119,10 +115,8 @@ test("shouldNormalizeBranchChanges only enables snapshot normalization when need
   );
   assert.equal(
     shouldNormalizeBranchChanges(deletedChange, {
-      hasChanges: true,
       hasReviewableChanges: true,
       hasUntracked: true,
-      hasTrackedDeletions: true,
       hasRenames: false,
       untrackedPaths: ["scratch/new-file.txt"],
     }),
@@ -130,10 +124,8 @@ test("shouldNormalizeBranchChanges only enables snapshot normalization when need
   );
   assert.equal(
     shouldNormalizeBranchChanges(modifiedChange, {
-      hasChanges: true,
       hasReviewableChanges: true,
       hasUntracked: true,
-      hasTrackedDeletions: false,
       hasRenames: false,
       untrackedPaths: ["scratch/new-file.txt"],
     }),

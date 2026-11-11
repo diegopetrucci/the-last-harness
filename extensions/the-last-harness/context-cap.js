@@ -1,6 +1,6 @@
 // Generated from extensions/the-last-harness/context-cap.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isPlainObject } from "./common.js";
+import { assertTlhSettingsObject, getTlhGlobalSettings, parseTlhSettingsContent, } from "./primary-agent-runtime-settings.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 const DEFAULT_CONTEXT_CAP_TOKENS = 350_000;
 const CANONICAL_DEVELOPER_CONTEXT_CAP_TOKENS = 272_000;
@@ -625,7 +625,7 @@ function restoreOwnedModelWindows(policyState, ownerToken = policyState.lifecycl
 }
 function isContextCapDisabled(cwd) {
     try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
+        const settings = getTlhGlobalSettings(cwd);
         return settings.tlh?.contextCap?.disabled === true;
     }
     catch {
@@ -633,21 +633,15 @@ function isContextCapDisabled(cwd) {
     }
 }
 function assertContextCapSettings(settings) {
-    if (!isPlainObject(settings)) {
-        throw new Error("settings.json must contain a JSON object");
-    }
-    const tlh = settings.tlh;
-    if (tlh !== undefined && !isPlainObject(tlh)) {
-        throw new Error("settings field 'tlh' must be an object if present");
-    }
-    const contextCap = isPlainObject(tlh) ? tlh.contextCap : undefined;
+    assertTlhSettingsObject(settings);
+    const contextCap = settings.tlh?.contextCap;
     if (contextCap !== undefined && !isPlainObject(contextCap)) {
         throw new Error("settings field 'tlh.contextCap' must be an object if present");
     }
 }
 function toggleContextCapSetting(cwd) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write context-cap settings outside the isolated TLH profile.", (current) => {
-        const settings = current ? JSON.parse(current.replace(/^\uFEFF/, "")) : {};
+        const settings = parseTlhSettingsContent(current);
         assertContextCapSettings(settings);
         const currentlyDisabled = settings.tlh?.contextCap?.disabled === true;
         const nowDisabled = !currentlyDisabled;
