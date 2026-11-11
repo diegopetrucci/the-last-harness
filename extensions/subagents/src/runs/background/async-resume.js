@@ -11,7 +11,7 @@ import { isSubagentPromptVariant, normalizeSubagentPromptVariant, } from "../../
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { authorizeAsyncRunOwner } from "./async-owner-authorization.js";
-import { readStatus } from "../../shared/utils.js";
+import { readRawAttributionStatus, readStatus } from "../../shared/utils.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.js";
 import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.js";
@@ -894,15 +894,7 @@ function assertAccountingTrustworthy(input) {
 function readRawStatusRecord(asyncDir) {
     if (!asyncDir)
         return undefined;
-    try {
-        const parsed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-            ? parsed
-            : undefined;
-    }
-    catch {
-        return undefined;
-    }
+    return readRawAttributionStatus(path.join(asyncDir, "status.json")) ?? undefined;
 }
 export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;

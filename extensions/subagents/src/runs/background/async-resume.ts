@@ -40,7 +40,7 @@ import {
 } from "../../shared/context-diagnostics.ts";
 import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { authorizeAsyncRunOwner } from "./async-owner-authorization.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { readRawAttributionStatus, readStatus } from "../../shared/utils.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.ts";
 import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.ts";
@@ -1463,17 +1463,7 @@ function readRawStatusRecord(
   asyncDir: string | null | undefined,
 ): Record<string, unknown> | undefined {
   if (!asyncDir) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    );
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
-    // The validated status read has already accepted or rejected this file.
-    return undefined;
-  }
+  return readRawAttributionStatus(path.join(asyncDir, "status.json")) ?? undefined;
 }
 
 export function resolveAsyncResumeTarget(

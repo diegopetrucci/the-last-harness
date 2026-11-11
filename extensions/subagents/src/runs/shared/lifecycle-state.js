@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { waitSync, writeAtomicJson } from "../../shared/atomic-json.js";
-import { invalidateStatusCache, readStatus } from "../../shared/utils.js";
+import { invalidateStatusCache, readRawAttributionStatus, readStatus } from "../../shared/utils.js";
 import { boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
 import { canonicalLifecycleState, canonicalLifecycleStepState, } from "../background/async-status-boundary.js";
 import { carryMalformedAccounting, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "./active-runtime.js";
@@ -247,13 +247,7 @@ export function normalizeAsyncLifecycleStatus(status) {
     return result;
 }
 function readRawStatusJson(asyncDir) {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-        return isRecord(parsed) ? parsed : undefined;
-    }
-    catch {
-        return undefined;
-    }
+    return readRawAttributionStatus(path.join(asyncDir, "status.json")) ?? undefined;
 }
 export function writeNormalizedLifecycleStatus(asyncDir, status, rawEvidence) {
     const normalized = normalizeAsyncLifecycleStatus(status);
