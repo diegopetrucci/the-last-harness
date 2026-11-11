@@ -189,9 +189,6 @@ function renderInlineTokens(parent, tokens) {
  */
 function renderClassifiedLine(container, classification) {
   switch (classification.type) {
-    case "blank":
-      container.textContent = " ";
-      break;
     case "heading": {
       const h = document.createElement(`h${classification.level}`);
       renderInlineTokens(h, globalThis.__tlhMdRenderer.tokenizeLine(classification.text));

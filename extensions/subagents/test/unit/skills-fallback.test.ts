@@ -68,6 +68,33 @@ async function importSkillsFresh() {
   )) as typeof import("../../src/agents/skills.ts");
 }
 
+async function withSkillsEnv(
+  fn: (loadSkills: typeof importSkillsFresh) => Promise<void>,
+): Promise<void> {
+  const keys = [
+    "HOME",
+    "USERPROFILE",
+    "PI_CODING_AGENT_DIR",
+    "PI_SUBAGENT_EXTRA_AGENT_DIRS",
+  ] as const;
+  const previous = keys.map((key) => process.env[key]);
+  try {
+    delete process.env.PI_CODING_AGENT_DIR;
+    delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+    await fn(async () => {
+      const fresh = await importSkillsFresh();
+      fresh.clearSkillCache();
+      return fresh;
+    });
+  } finally {
+    keys.forEach((key, index) => {
+      const value = previous[index];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    });
+  }
+}
+
 describe("skills filesystem fallback", () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-skills-fallback-"));
@@ -403,16 +430,10 @@ describe("skills filesystem fallback", () => {
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
     const userPackageRoot = path.join(userAgentDir, "user-pkg");
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-    try {
+    await withSkillsEnv(async (loadSkills) => {
       process.env.HOME = fakeHome;
       process.env.USERPROFILE = fakeHome;
-      delete process.env.PI_CODING_AGENT_DIR;
-      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
       makePackageSkill(
         userPackageRoot,
         "user-settings-package-skill",
@@ -425,38 +446,22 @@ describe("skills filesystem fallback", () => {
         "utf-8",
       );
 
-      const fresh = await importSkillsFresh();
-      fresh.clearSkillCache();
+      const fresh = await loadSkills();
       const discovered = fresh.discoverAvailableSkills(tempDir);
       const skill = discovered.find((entry) => entry.name === "user-settings-package-skill");
       assert.ok(skill);
       assert.equal(skill?.source, "user-package");
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
-      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-    }
+    });
   });
 
   it("discovers skills from user settings git package sources", async () => {
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
     const packageRoot = path.join(userAgentDir, "git", "github.com", "user", "repo");
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-    try {
+    await withSkillsEnv(async (loadSkills) => {
       process.env.HOME = fakeHome;
       process.env.USERPROFILE = fakeHome;
-      delete process.env.PI_CODING_AGENT_DIR;
-      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
       makePackageSkill(
         packageRoot,
         "user-settings-git-package-skill",
@@ -469,38 +474,22 @@ describe("skills filesystem fallback", () => {
         "utf-8",
       );
 
-      const fresh = await importSkillsFresh();
-      fresh.clearSkillCache();
+      const fresh = await loadSkills();
       const discovered = fresh.discoverAvailableSkills(tempDir);
       const skill = discovered.find((entry) => entry.name === "user-settings-git-package-skill");
       assert.ok(skill);
       assert.equal(skill?.source, "user-package");
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
-      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-    }
+    });
   });
 
   it("discovers skills from user settings scoped npm package sources", async () => {
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
     const packageRoot = path.join(userAgentDir, "npm", "node_modules", "@scope", "skill-package");
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-    try {
+    await withSkillsEnv(async (loadSkills) => {
       process.env.HOME = fakeHome;
       process.env.USERPROFILE = fakeHome;
-      delete process.env.PI_CODING_AGENT_DIR;
-      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
       makePackageSkill(
         packageRoot,
         "user-settings-scoped-npm-package-skill",
@@ -514,24 +503,14 @@ describe("skills filesystem fallback", () => {
         "utf-8",
       );
 
-      const fresh = await importSkillsFresh();
-      fresh.clearSkillCache();
+      const fresh = await loadSkills();
       const discovered = fresh.discoverAvailableSkills(tempDir);
       const skill = discovered.find(
         (entry) => entry.name === "user-settings-scoped-npm-package-skill",
       );
       assert.ok(skill);
       assert.equal(skill?.source, "user-package");
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
-      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-    }
+    });
   });
 
   it("surfaces malformed project settings files instead of silently ignoring them", () => {
@@ -655,16 +634,9 @@ describe("skills filesystem fallback", () => {
   it("suppresses .claude/skills when tlh.claudeSkills.disabled is true in user settings", async () => {
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-    try {
+    await withSkillsEnv(async (loadSkills) => {
       process.env.HOME = fakeHome;
       process.env.USERPROFILE = fakeHome;
-      delete process.env.PI_CODING_AGENT_DIR;
-      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
 
       // Place a skill in the project .claude/skills directory.
       writeSkillFile(
@@ -686,8 +658,7 @@ describe("skills filesystem fallback", () => {
         "utf-8",
       );
 
-      const fresh = await importSkillsFresh();
-      fresh.clearSkillCache();
+      const fresh = await loadSkills();
       const discovered = fresh.discoverAvailableSkills(tempDir);
       const names = discovered.map((s) => s.name);
       assert.equal(
@@ -700,16 +671,7 @@ describe("skills filesystem fallback", () => {
         false,
         "user .claude/skills must be suppressed when claudeSkills.disabled is true",
       );
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
-      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-    }
+    });
   });
 
   it("<agentDir>/skills beats <cwd>/.claude/skills for the same skill name (cross-scope)", async () => {
@@ -718,16 +680,10 @@ describe("skills filesystem fallback", () => {
     // same-named skill in a project's .claude/skills directory.
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-    try {
+    await withSkillsEnv(async (loadSkills) => {
       process.env.HOME = fakeHome;
       process.env.USERPROFILE = fakeHome;
       process.env.PI_CODING_AGENT_DIR = userAgentDir;
-      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
 
       // user skill in <agentDir>/skills (source: user, priority 300)
       writeSkillFile(
@@ -742,8 +698,7 @@ describe("skills filesystem fallback", () => {
         "Project claude skill",
       );
 
-      const fresh = await importSkillsFresh();
-      fresh.clearSkillCache();
+      const fresh = await loadSkills();
       const { resolved, missing } = fresh.resolveSkills(["cross-scope-skill"], tempDir);
       assert.deepEqual(missing, []);
       assert.equal(resolved.length, 1);
@@ -756,16 +711,7 @@ describe("skills filesystem fallback", () => {
         resolved[0]?.path,
         path.join(userAgentDir, "skills", "cross-scope-skill", "SKILL.md"),
       );
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
-      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-    }
+    });
   });
 
   it("user-package skill beats user-claude skill for the same skill name (cross-scope)", async () => {
@@ -774,16 +720,9 @@ describe("skills filesystem fallback", () => {
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
     const userPackageRoot = path.join(userAgentDir, "user-pkg");
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-    try {
+    await withSkillsEnv(async (loadSkills) => {
       process.env.HOME = fakeHome;
       process.env.USERPROFILE = fakeHome;
-      delete process.env.PI_CODING_AGENT_DIR;
-      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
 
       // user-package skill (source: user-package, priority 200)
       makePackageSkill(userPackageRoot, "pkg-vs-claude-skill", "Package copy — should win.");
@@ -800,8 +739,7 @@ describe("skills filesystem fallback", () => {
         "User .claude copy — should lose.",
       );
 
-      const fresh = await importSkillsFresh();
-      fresh.clearSkillCache();
+      const fresh = await loadSkills();
       const { resolved, missing } = fresh.resolveSkills(["pkg-vs-claude-skill"], tempDir);
       assert.deepEqual(missing, []);
       assert.equal(resolved.length, 1);
@@ -810,31 +748,15 @@ describe("skills filesystem fallback", () => {
         resolved[0]?.path,
         path.join(userPackageRoot, "skills", "pkg-vs-claude-skill", "SKILL.md"),
       );
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
-      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-    }
+    });
   });
 
   it("discovers a skill from <home>/.claude/skills", async () => {
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
-    const previousHome = process.env.HOME;
-    const previousUserProfile = process.env.USERPROFILE;
-    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-    try {
+    await withSkillsEnv(async (loadSkills) => {
       process.env.HOME = fakeHome;
       process.env.USERPROFILE = fakeHome;
-      delete process.env.PI_CODING_AGENT_DIR;
-      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
 
       writeSkillFile(
         path.join(fakeHome, ".claude", "skills", "user-claude-skill"),
@@ -843,21 +765,11 @@ describe("skills filesystem fallback", () => {
       );
       fs.mkdirSync(userAgentDir, { recursive: true });
 
-      const fresh = await importSkillsFresh();
-      fresh.clearSkillCache();
+      const fresh = await loadSkills();
       const discovered = fresh.discoverAvailableSkills(tempDir);
       const skill = discovered.find((s) => s.name === "user-claude-skill");
       assert.ok(skill, "expected user-claude-skill to be discovered from <home>/.claude/skills");
       assert.equal(skill?.source, "user-claude");
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = previousUserProfile;
-      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-    }
+    });
   });
 });

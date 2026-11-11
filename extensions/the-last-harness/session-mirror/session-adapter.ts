@@ -684,28 +684,14 @@ function envelopeByteLength(envelope: SessionMirrorSnapshotProjectionEnvelope): 
   return Buffer.byteLength(JSON.stringify(envelope), "utf8");
 }
 
-/**
- * Project one persisted session through the narrow upstream read-only surface
- * into an authoritative session-mirror v1 snapshot.
- *
- * Only completed, text-only user turns and settled final assistant text are
- * rendered. All other message payloads are represented by closed, coarse
- * placeholders. The returned envelope and result are deeply frozen, and no
- * source object is retained or mutated.
- */
-export function projectSessionMirrorSnapshot(
-  sessionManager: SessionMirrorReadonlySessionManager,
-  metadata: SessionMirrorSnapshotProjectionMetadata,
-): SessionMirrorSnapshotProjectionResult {
-  let validatedMetadata: SessionMirrorSnapshotProjectionMetadata;
-  try {
-    const metadataResult = validateMetadata(metadata);
-    if (!metadataResult.ok) return failure(metadataResult.reason);
-    validatedMetadata = metadataResult.value;
-  } catch {
-    return failure("invalid-metadata");
-  }
-
+function readSessionMirrorSource(sessionManager: SessionMirrorReadonlySessionManager):
+  | {
+      readonly ok: true;
+      readonly sessionId: string;
+      readonly activeLeafId: string | null;
+      readonly sourceEntries: readonly unknown[];
+    }
+  | SessionMirrorSnapshotProjectionFailure {
   if (sessionManager === null || typeof sessionManager !== "object") {
     return failure("session-unavailable");
   }
@@ -754,10 +740,43 @@ export function projectSessionMirrorSnapshot(
     if (activeLeafFailure) return failure(activeLeafFailure);
   }
 
+  return {
+    ok: true,
+    sessionId,
+    activeLeafId,
+    sourceEntries: sourceEntries as readonly unknown[],
+  };
+}
+
+/**
+ * Project one persisted session through the narrow upstream read-only surface
+ * into an authoritative session-mirror v1 snapshot.
+ *
+ * Only completed, text-only user turns and settled final assistant text are
+ * rendered. All other message payloads are represented by closed, coarse
+ * placeholders. The returned envelope and result are deeply frozen, and no
+ * source object is retained or mutated.
+ */
+export function projectSessionMirrorSnapshot(
+  sessionManager: SessionMirrorReadonlySessionManager,
+  metadata: SessionMirrorSnapshotProjectionMetadata,
+): SessionMirrorSnapshotProjectionResult {
+  let validatedMetadata: SessionMirrorSnapshotProjectionMetadata;
+  try {
+    const metadataResult = validateMetadata(metadata);
+    if (!metadataResult.ok) return failure(metadataResult.reason);
+    validatedMetadata = metadataResult.value;
+  } catch {
+    return failure("invalid-metadata");
+  }
+
+  const source = readSessionMirrorSource(sessionManager);
+  if (!source.ok) return source;
+  const { sessionId, activeLeafId, sourceEntries } = source;
+
   let sourceEntryValues: readonly unknown[];
   try {
-    const sourceEntriesArray = sourceEntries as readonly unknown[];
-    const lengthDescriptor = Object.getOwnPropertyDescriptor(sourceEntriesArray, "length");
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(sourceEntries, "length");
     if (
       !lengthDescriptor ||
       !("value" in lengthDescriptor) ||
@@ -769,7 +788,7 @@ export function projectSessionMirrorSnapshot(
     if (sourceEntryCount > MAX_TREE_ENTRIES) return failure("bounds-exceeded");
     const values: unknown[] = [];
     for (let index = 0; index < sourceEntryCount; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(sourceEntriesArray, String(index));
+      const descriptor = Object.getOwnPropertyDescriptor(sourceEntries, String(index));
       if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
         return failure("unsafe-session-data");
       }
@@ -867,47 +886,9 @@ export function projectRecentSessionMirrorSnapshot(
   const metadataResult = validateMetadata(metadata);
   if (!metadataResult.ok) return failure(metadataResult.reason);
   const validatedMetadata = metadataResult.value;
-  if (sessionManager === null || typeof sessionManager !== "object") {
-    return failure("session-unavailable");
-  }
-
-  let sessionFile: unknown;
-  let sessionId: unknown;
-  let activeLeafId: unknown;
-  let sourceEntries: unknown;
-  try {
-    const getSessionFile = readSessionManagerMethod<string>(sessionManager, "getSessionFile");
-    const getSessionId = readSessionManagerMethod<string>(sessionManager, "getSessionId");
-    const getLeafId = readSessionManagerMethod<string | null>(sessionManager, "getLeafId");
-    const getEntries = readSessionManagerMethod<readonly SourceFieldValue[]>(
-      sessionManager,
-      "getEntries",
-    );
-    if (!getSessionFile || !getSessionId || !getLeafId || !getEntries) {
-      return failure("session-unavailable");
-    }
-    sessionFile = getSessionFile.call(sessionManager);
-    sessionId = getSessionId.call(sessionManager);
-    activeLeafId = getLeafId.call(sessionManager);
-    sourceEntries = getEntries.call(sessionManager);
-  } catch {
-    return failure("session-unavailable");
-  }
-
-  if (typeof sessionFile !== "string" || sessionFile.length === 0) {
-    return failure("session-unavailable");
-  }
-  if (!isNonEmptyString(sessionId)) return failure("unsafe-session-data");
-  const sessionIdFailure = sourceIdentityFailure(sessionId);
-  if (sessionIdFailure) return failure(sessionIdFailure);
-  if (!(activeLeafId === null || typeof activeLeafId === "string")) {
-    return failure("unsafe-session-data");
-  }
-  if (typeof activeLeafId === "string") {
-    const activeLeafFailure = sourceIdentityFailure(activeLeafId);
-    if (activeLeafFailure) return failure(activeLeafFailure);
-  }
-  if (!Array.isArray(sourceEntries)) return failure("unsafe-session-data");
+  const source = readSessionMirrorSource(sessionManager);
+  if (!source.ok) return source;
+  const { sessionId, activeLeafId, sourceEntries } = source;
 
   const lengthDescriptor = Object.getOwnPropertyDescriptor(sourceEntries, "length");
   if (

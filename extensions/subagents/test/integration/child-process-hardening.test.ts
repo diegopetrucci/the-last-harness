@@ -30,9 +30,6 @@ import {
 import { resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import type { AsyncResultArtifact } from "../../src/shared/types.ts";
 
-// Note: the foreground runner (execution.ts) was removed from this branch.
-// All foreground-specific tests from upstream have been dropped from this merge.
-
 function readAsyncEventTypes(asyncDir: string): string[] {
   const eventPath = path.join(asyncDir, "events.jsonl");
   const text = fs.readFileSync(eventPath, "utf8").trim();

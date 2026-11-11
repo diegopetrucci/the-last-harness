@@ -1,6 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import {} from "../the-last-harness-primary-agent.mjs";
 import {
   rushResumeDelegationReason,
   rushSteerDelegationReason,

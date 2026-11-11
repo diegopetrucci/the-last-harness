@@ -10,11 +10,15 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Removed the startup tip for the retired disabled mode ([#895](https://github.com/diegopetrucci/the-last-harness/pull/895)).
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
 ### Internal
 
 - Check Node requirement copies for drift, derive smoke-test prompts from the installer, and tidy install documentation ([#898](https://github.com/diegopetrucci/the-last-harness/pull/898)).
+- Simplify annotate-git-diff content loading and remove unreachable image-extension checks ([#897](https://github.com/diegopetrucci/the-last-harness/pull/897)).
+- Share the packaged agent roster across guidance, execution budgets, and launch telemetry, and simplify guidance directory checks ([#896](https://github.com/diegopetrucci/the-last-harness/pull/896)).
+- Share subagent test fixtures, validate async artifact reads, and remove stale test narration ([#894](https://github.com/diegopetrucci/the-last-harness/pull/894)).
 
 ## [0.47.0] - 2026-11-08
 

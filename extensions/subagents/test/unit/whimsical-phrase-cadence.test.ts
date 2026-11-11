@@ -1,5 +1,5 @@
 /**
- * Unit tests for the time-cadence phrase selection introduced in tmp-wkpw.
+ * Unit tests for the time-cadence phrase selection.
  *
  * Verifies:
  * - Stable within an 8 s window regardless of turnCount changes.

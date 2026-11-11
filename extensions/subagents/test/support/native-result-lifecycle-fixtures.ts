@@ -8,7 +8,13 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type ArtifactPaths } from "../../src/shared/types.ts";
+import {
+  ASYNC_DIR,
+  RESULTS_DIR,
+  type ArtifactPaths,
+  type AsyncStatus,
+} from "../../src/shared/types.ts";
+import { parsePersistedAsyncStatus } from "../../src/runs/background/async-status-boundary.ts";
 import type { MockPi } from "./helpers.ts";
 import { makeAgent, makeMinimalCtx, tryImport } from "./helpers.ts";
 import { type ScaledMs, scaleTestTimeout } from "./scale-timeout.ts";
@@ -152,8 +158,16 @@ export async function waitForAsyncStatusPredicate(
   );
 }
 
-export function readAsyncStatusJson<T>(runId: string): T {
-  return JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, runId, "status.json"), "utf-8")) as T;
+export function readAsyncStatusJson<T extends Partial<Record<keyof AsyncStatus, unknown>>>(
+  runId: string,
+): Pick<AsyncStatus, keyof T & keyof AsyncStatus> {
+  const asyncDir = path.join(ASYNC_DIR, runId);
+  const statusPath = path.join(asyncDir, "status.json");
+  const status: unknown = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+  assert.ok(typeof status === "object" && status !== null && !Array.isArray(status));
+  // Validate a copy so raw field-presence assertions remain observable.
+  parsePersistedAsyncStatus(structuredClone(status), asyncDir, statusPath);
+  return status as Pick<AsyncStatus, keyof T & keyof AsyncStatus>;
 }
 
 export async function waitForMockPiCall(

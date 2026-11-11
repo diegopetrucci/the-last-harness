@@ -303,20 +303,14 @@ const binaryExtensions = new Set([
     ".7z",
     ".a",
     ".avi",
-    ".avif",
     ".bin",
-    ".bmp",
     ".class",
     ".dll",
     ".dylib",
     ".eot",
     ".exe",
-    ".gif",
     ".gz",
-    ".ico",
     ".jar",
-    ".jpeg",
-    ".jpg",
     ".lockb",
     ".map",
     ".mov",
@@ -325,7 +319,6 @@ const binaryExtensions = new Set([
     ".o",
     ".otf",
     ".pdf",
-    ".png",
     ".pyc",
     ".so",
     ".svgz",
@@ -333,7 +326,6 @@ const binaryExtensions = new Set([
     ".ttf",
     ".wasm",
     ".webm",
-    ".webp",
     ".woff",
     ".woff2",
     ".zip",
@@ -643,7 +635,7 @@ export async function getCommitFiles(pi, repoRoot, sha) {
         .sort(compareReviewFiles);
 }
 export async function loadReviewFileContents(pi, repoRoot, file, scope, commitSha = null, branchMergeBaseSha = null) {
-    const emptyBinaryContents = {
+    const emptyContents = {
         originalContent: "",
         modifiedContent: "",
         kind: file.kind,
@@ -653,197 +645,76 @@ export async function loadReviewFileContents(pi, repoRoot, file, scope, commitSh
         originalPreviewUrl: null,
         modifiedPreviewUrl: null,
     };
-    if (file.kind !== "text") {
-        if (scope === "all") {
-            const path = file.path;
-            const modifiedSide = file.hasWorkingTreeFile
-                ? await loadBinarySideFromWorkingTree(repoRoot, path, file.mimeType)
-                : await loadBinarySideFromRevision(pi, repoRoot, "HEAD", path, file.mimeType);
-            return {
-                ...emptyBinaryContents,
-                modifiedExists: modifiedSide.exists,
-                modifiedPreviewUrl: modifiedSide.previewUrl,
-            };
-        }
+    let originalRevision = null;
+    let originalPath = null;
+    let modifiedRevision = file.hasWorkingTreeFile ? null : "HEAD";
+    let modifiedPath = file.path;
+    if (scope !== "all") {
         const comparison = file.gitDiff;
         if (comparison == null)
-            return emptyBinaryContents;
+            return emptyContents;
+        originalPath = comparison.oldPath;
+        modifiedPath = comparison.newPath;
         if (scope === "commits") {
             if (!commitSha)
-                return emptyBinaryContents;
+                return emptyContents;
             if (isWorkingTreeCommitSha(commitSha)) {
-                const [originalSide, modifiedSide] = await Promise.all([
-                    (async () => (await hasHead(pi, repoRoot))
-                        ? await loadBinarySideFromRevision(pi, repoRoot, "HEAD", comparison.oldPath, file.mimeType)
-                        : { exists: false, previewUrl: null })(),
-                    file.hasWorkingTreeFile
-                        ? loadBinarySideFromWorkingTree(repoRoot, comparison.newPath, file.mimeType)
-                        : Promise.resolve({ exists: false, previewUrl: null }),
-                ]);
-                return {
-                    ...emptyBinaryContents,
-                    originalExists: originalSide.exists,
-                    modifiedExists: modifiedSide.exists,
-                    originalPreviewUrl: originalSide.previewUrl,
-                    modifiedPreviewUrl: modifiedSide.previewUrl,
-                };
+                originalRevision = (await hasHead(pi, repoRoot)) ? "HEAD" : null;
+                modifiedRevision = null;
+                if (!file.hasWorkingTreeFile)
+                    modifiedPath = null;
             }
-            const [originalSide, modifiedSide] = await Promise.all([
-                loadBinarySideFromRevision(pi, repoRoot, `${commitSha}^`, comparison.oldPath, file.mimeType),
-                loadBinarySideFromRevision(pi, repoRoot, commitSha, comparison.newPath, file.mimeType),
-            ]);
-            return {
-                ...emptyBinaryContents,
-                originalExists: originalSide.exists,
-                modifiedExists: modifiedSide.exists,
-                originalPreviewUrl: originalSide.previewUrl,
-                modifiedPreviewUrl: modifiedSide.previewUrl,
-            };
+            else {
+                originalRevision = `${commitSha}^`;
+                modifiedRevision = commitSha;
+            }
         }
-        if (!branchMergeBaseSha)
-            return emptyBinaryContents;
+        else {
+            if (!branchMergeBaseSha)
+                return emptyContents;
+            originalRevision = branchMergeBaseSha;
+        }
+    }
+    if (file.kind !== "text") {
         const [originalSide, modifiedSide] = await Promise.all([
-            loadBinarySideFromRevision(pi, repoRoot, branchMergeBaseSha, comparison.oldPath, file.mimeType),
-            file.hasWorkingTreeFile
-                ? loadBinarySideFromWorkingTree(repoRoot, comparison.newPath, file.mimeType)
-                : loadBinarySideFromRevision(pi, repoRoot, "HEAD", comparison.newPath, file.mimeType),
+            originalRevision == null
+                ? Promise.resolve({ exists: false, previewUrl: null })
+                : loadBinarySideFromRevision(pi, repoRoot, originalRevision, originalPath, file.mimeType),
+            modifiedRevision == null
+                ? loadBinarySideFromWorkingTree(repoRoot, modifiedPath, file.mimeType)
+                : loadBinarySideFromRevision(pi, repoRoot, modifiedRevision, modifiedPath, file.mimeType),
         ]);
         return {
-            ...emptyBinaryContents,
+            ...emptyContents,
             originalExists: originalSide.exists,
             modifiedExists: modifiedSide.exists,
             originalPreviewUrl: originalSide.previewUrl,
             modifiedPreviewUrl: modifiedSide.previewUrl,
         };
     }
-    if (scope === "all") {
-        const path = file.path;
-        const workingTreeExists = file.hasWorkingTreeFile ? hasWorkingTreeFile(repoRoot, path) : false;
-        const content = file.hasWorkingTreeFile
-            ? await getWorkingTreeContent(repoRoot, path)
-            : await getRevisionContent(pi, repoRoot, "HEAD", path);
-        const exists = file.hasWorkingTreeFile
-            ? workingTreeExists
-            : content.length > 0 || path.length > 0;
-        return {
-            originalContent: content,
-            modifiedContent: content,
-            kind: file.kind,
-            mimeType: file.mimeType,
-            originalExists: exists,
-            modifiedExists: exists,
-            originalPreviewUrl: null,
-            modifiedPreviewUrl: null,
-        };
-    }
-    const comparison = file.gitDiff;
-    if (comparison == null) {
-        return {
-            originalContent: "",
-            modifiedContent: "",
-            kind: file.kind,
-            mimeType: file.mimeType,
-            originalExists: false,
-            modifiedExists: false,
-            originalPreviewUrl: null,
-            modifiedPreviewUrl: null,
-        };
-    }
-    if (scope === "commits") {
-        if (!commitSha) {
-            return {
-                originalContent: "",
-                modifiedContent: "",
-                kind: file.kind,
-                mimeType: file.mimeType,
-                originalExists: false,
-                modifiedExists: false,
-                originalPreviewUrl: null,
-                modifiedPreviewUrl: null,
-            };
-        }
-        if (isWorkingTreeCommitSha(commitSha)) {
-            const oldPath = comparison.oldPath;
-            const newPath = comparison.newPath;
-            const [{ repositoryHasHead, originalContent }, modifiedContent] = await Promise.all([
-                (async () => {
-                    const repositoryHasHead = await hasHead(pi, repoRoot);
-                    const originalContent = repositoryHasHead && oldPath != null
-                        ? await getRevisionContent(pi, repoRoot, "HEAD", oldPath)
-                        : "";
-                    return { repositoryHasHead, originalContent };
-                })(),
-                newPath == null || !file.hasWorkingTreeFile
-                    ? Promise.resolve("")
-                    : getWorkingTreeContent(repoRoot, newPath),
-            ]);
-            const modifiedExists = comparison.newPath != null && file.hasWorkingTreeFile
-                ? hasWorkingTreeFile(repoRoot, comparison.newPath)
-                : false;
-            return {
-                originalContent,
-                modifiedContent,
-                kind: file.kind,
-                mimeType: file.mimeType,
-                originalExists: repositoryHasHead && comparison.oldPath != null,
-                modifiedExists,
-                originalPreviewUrl: null,
-                modifiedPreviewUrl: null,
-            };
-        }
-        const [originalContent, modifiedContent] = await Promise.all([
-            comparison.oldPath == null
-                ? Promise.resolve("")
-                : getRevisionContent(pi, repoRoot, `${commitSha}^`, comparison.oldPath),
-            comparison.newPath == null
-                ? Promise.resolve("")
-                : getRevisionContent(pi, repoRoot, commitSha, comparison.newPath),
-        ]);
-        return {
-            originalContent,
-            modifiedContent,
-            kind: file.kind,
-            mimeType: file.mimeType,
-            originalExists: comparison.oldPath != null,
-            modifiedExists: comparison.newPath != null,
-            originalPreviewUrl: null,
-            modifiedPreviewUrl: null,
-        };
-    }
-    if (!branchMergeBaseSha) {
-        return {
-            originalContent: "",
-            modifiedContent: "",
-            kind: file.kind,
-            mimeType: file.mimeType,
-            originalExists: false,
-            modifiedExists: false,
-            originalPreviewUrl: null,
-            modifiedPreviewUrl: null,
-        };
-    }
-    const modifiedExists = comparison.newPath != null && file.hasWorkingTreeFile
-        ? hasWorkingTreeFile(repoRoot, comparison.newPath)
+    const modifiedWorkingTreeExists = modifiedRevision == null && modifiedPath != null
+        ? hasWorkingTreeFile(repoRoot, modifiedPath)
         : false;
     const [originalContent, modifiedContent] = await Promise.all([
-        comparison.oldPath == null
+        originalRevision == null || originalPath == null
             ? Promise.resolve("")
-            : getRevisionContent(pi, repoRoot, branchMergeBaseSha, comparison.oldPath),
-        comparison.newPath == null
+            : getRevisionContent(pi, repoRoot, originalRevision, originalPath),
+        modifiedPath == null
             ? Promise.resolve("")
-            : file.hasWorkingTreeFile
-                ? getWorkingTreeContent(repoRoot, comparison.newPath)
-                : getRevisionContent(pi, repoRoot, "HEAD", comparison.newPath),
+            : modifiedRevision == null
+                ? getWorkingTreeContent(repoRoot, modifiedPath)
+                : getRevisionContent(pi, repoRoot, modifiedRevision, modifiedPath),
     ]);
+    const modifiedExists = modifiedRevision == null || scope === "branch"
+        ? modifiedWorkingTreeExists
+        : modifiedPath != null &&
+            (scope !== "all" || modifiedContent.length > 0 || modifiedPath.length > 0);
     return {
-        originalContent,
+        ...emptyContents,
+        originalContent: scope === "all" ? modifiedContent : originalContent,
         modifiedContent,
-        kind: file.kind,
-        mimeType: file.mimeType,
-        originalExists: comparison.oldPath != null,
+        originalExists: scope === "all" ? modifiedExists : originalRevision != null && originalPath != null,
         modifiedExists,
-        originalPreviewUrl: null,
-        modifiedPreviewUrl: null,
     };
 }
 export const __testing = {
