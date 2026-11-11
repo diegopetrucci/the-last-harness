@@ -72,7 +72,7 @@ export interface NativeExecutorOptions {
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
-export interface NativeExecutorState {
+interface NativeExecutorState {
   baseCwd: string;
   currentSessionId: null;
   asyncJobs: Map<unknown, unknown>;
@@ -94,7 +94,7 @@ export function normalizePathForComparison(targetPath: string): string {
   }
 }
 
-export function createRecordingEventBus() {
+function createRecordingEventBus() {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const emitted: Array<{ channel: string; payload: unknown }> = [];
   const bus = {
@@ -137,7 +137,7 @@ export function waitForAsyncState(
   return waitForAsyncDirState(path.join(ASYNC_DIR, runId), expected, timeoutMs);
 }
 
-export interface AsyncStatusProbe {
+interface AsyncStatusProbe {
   state?: string;
   currentStep?: number;
   sessionFile?: string;

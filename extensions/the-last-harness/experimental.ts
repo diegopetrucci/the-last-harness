@@ -1,15 +1,11 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   normalizeEnabledExperimentalFeatures,
   normalizeExperimentalFeatureId,
   readEnabledExperimentalFeatures,
 } from "../the-last-harness-subagent-safety.mjs";
-import type {
-  AgentPrompt,
-  TlhExperimentalConfig,
-  TlhExperimentalFeatureId,
-  TlhSettings,
-} from "./types.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
+import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId } from "./types.js";
 
 export const SESSION_MIRROR_OBSERVER_FEATURE: TlhExperimentalFeatureId = "session-mirror-observer";
 export const NO_DEVELOPER_FEATURE: TlhExperimentalFeatureId = "no-developer";
@@ -132,7 +128,7 @@ function enabledPrimaryExperimentalPrompts(
 
 export function getTlhExperimentalConfig(cwd: string): TlhExperimentalConfig | undefined {
   try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+    const settings = getTlhGlobalSettings(cwd);
     return settings.tlh?.experimental;
   } catch {
     return undefined;

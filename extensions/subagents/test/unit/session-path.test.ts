@@ -1,3 +1,4 @@
+import { DISABLED_COMPACT_ARTIFACT_CONFIG } from "../support/artifact-config-fixtures.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -86,17 +87,7 @@ describe("fresh child attempts", () => {
           cwd: root,
           sessionEnabled: true,
           sessionDir,
-          artifactConfig: {
-            mode: "compact",
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeTranscript: false,
-            includeMetadata: false,
-            includeChildEventProjections: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: DISABLED_COMPACT_ARTIFACT_CONFIG,
           id: "session-path-run",
           flatIndex: 0,
           flatStepCount: 1,

@@ -3,12 +3,12 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { formatHomePath, isRecord } from "./common.js";
 import { THINKING_LEVELS } from "./constants.js";
 import {
+  applyThinkingSuffix,
   findAvailableProviderModel,
   formatProviderModelReference,
   formatResolvedProviderModelReference,
   formatUnavailableStoredModelWarning,
   parseProviderModelReference,
-  splitKnownThinkingSuffix,
   resolveProviderAwareSubagentResolution,
   type ProviderModelReference,
 } from "./model-defaults.js";
@@ -284,10 +284,7 @@ function formatEffectiveModelAndThinking(
     return thinking ? `no model (effort ${thinking})` : "no model";
   }
   if (typeof model === "string") {
-    const { baseModel, thinkingSuffix } = splitKnownThinkingSuffix(model);
-    return thinking
-      ? `${baseModel ?? model}:${thinking}`
-      : `${baseModel ?? model}${thinkingSuffix}`;
+    return applyThinkingSuffix(model, thinking);
   }
   return formatResolvedProviderModelReference(model, thinking);
 }

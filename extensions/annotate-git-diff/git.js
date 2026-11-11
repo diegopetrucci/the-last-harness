@@ -134,10 +134,8 @@ function parseNameStatus(output) {
 }
 function parseStatusPorcelainZ(output) {
     const info = {
-        hasChanges: false,
         hasReviewableChanges: false,
         hasUntracked: false,
-        hasTrackedDeletions: false,
         hasRenames: false,
         untrackedPaths: [],
     };
@@ -152,9 +150,6 @@ function parseStatusPorcelainZ(output) {
         const path = token.slice(3);
         const isRenameOrCopy = code.includes("R") || code.includes("C");
         const isReviewablePath = code !== "!!" && path.length > 0;
-        if (code !== "!!") {
-            info.hasChanges = true;
-        }
         if (isReviewablePath) {
             info.hasReviewableChanges = true;
         }
@@ -165,8 +160,6 @@ function parseStatusPorcelainZ(output) {
             }
         }
         else if (isReviewablePath) {
-            if (code.includes("D"))
-                info.hasTrackedDeletions = true;
             if (isRenameOrCopy)
                 info.hasRenames = true;
         }
@@ -480,7 +473,7 @@ function toSnapshotReviewFile(repoRoot, path) {
         mimeType: meta.mimeType,
     };
 }
-async function getAllReviewFiles(pi, repoRoot, branchChanges, repositoryPaths) {
+function getAllReviewFiles(repoRoot, branchChanges, repositoryPaths) {
     const branchFiles = branchChanges.map(toBranchReviewFile);
     const branchFilesByPath = new Map(branchFiles.map((file) => [file.path, file]));
     const seenPaths = new Set();
@@ -527,7 +520,7 @@ export async function getReviewWindowData(pi, cwd) {
             ? await getBranchReviewChanges(pi, repoRoot, branchComparisonBase, workingTreeStatus)
             : await getWorkingTreeReviewChanges(pi, repoRoot, false);
         const reviewableBranchChanges = branchChanges.filter((change) => (change.newPath ?? change.oldPath ?? "").length > 0);
-        const { allFiles, branchFiles } = await getAllReviewFiles(pi, repoRoot, reviewableBranchChanges, repositoryPaths);
+        const { allFiles, branchFiles } = getAllReviewFiles(repoRoot, reviewableBranchChanges, repositoryPaths);
         return {
             repositoryHasHead,
             reviewBase,

@@ -25,15 +25,7 @@ Custom dimensions sent on this event:
 - `Tlh.Device.osName`
 - `Tlh.Device.osVersion`
 - `Tlh.Device.osArch`
-- `Tlh.Subagent.code-reviewer.modelEffort`
-- `Tlh.Subagent.contrarian.modelEffort`
-- `Tlh.Subagent.developer.modelEffort`
-- `Tlh.Subagent.diff-summarizer.modelEffort`
-- `Tlh.Subagent.librarian.modelEffort`
-- `Tlh.Subagent.oracle.modelEffort`
-- `Tlh.Subagent.repo-scout.modelEffort`
-- `Tlh.Subagent.test-runner.modelEffort`
-- `Tlh.Subagent.web-scout.modelEffort`
+- `Tlh.Subagent.<name>.modelEffort` for each role in `PACKAGED_MINOR_AGENT_ROLES`, exported by [`extensions/shared/project-agent-provenance.ts`](../extensions/shared/project-agent-provenance.ts)
 
 Telemetry-enabled experimental feature dimensions are reported for registered TLH features as `on` or `off`. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values are ignored and never sent.
 
@@ -48,7 +40,7 @@ Privacy filtering is conservative:
   - The model side sends only the final model segment and only when it matches a public-looking model family pattern such as `gpt-*`, `o*`, `chatgpt-*`, `claude-*`, `gemini-*`, `grok-*`, `deepseek-*`, `qwen*`, `kimi-*`, `mistral-*`, `codestral-*`, `devstral-*`, `llama-*`, `command-*`, `nova-*`, or `mimo-*`; otherwise it becomes `custom`, and missing values become `unknown`.
   - The effort side sends one of the seven canonical thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Any other non-empty string becomes `custom`; missing or empty values become `unknown`. The match is **case-sensitive** — a value like `High` does not match `high` and is reported as `custom`, reflecting that the upstream runtime would not honour it either.
   - Both sides default independently: `unknown:unknown`, `custom:high`, `claude-opus-4-5:unknown`.
-- `Tlh.PrimaryAgent.name` sends `architect`, `bug-hunter`, `product`, or `rush`; other values become `custom`, and missing values become `unknown`.
+- `Tlh.PrimaryAgent.name` sends roles from `PACKAGED_PRIMARY_AGENT_ROLES`, exported by [`extensions/shared/project-agent-provenance.ts`](../extensions/shared/project-agent-provenance.ts); other values become `custom`, and missing values become `unknown`.
 - Each `Tlh.Subagent.<name>.modelEffort` key follows the same colon-joined `<model>:<effort>` format as `Tlh.Runtime.modelEffort`. The effort side follows the same seven-level vocabulary and the same case-sensitive rule when the value comes from a `subagents.agentOverrides` settings string. However, when the value comes from subagent frontmatter, the frontmatter reader applies an `isThinkingLevel` guard that drops any unrecognised value to `undefined` before the privacy filter is reached — so an invalid frontmatter effort value surfaces as `unknown`, not `custom`. This also means the case-sensitivity note above applies: a frontmatter value like `High` is unrecognised and becomes `unknown`, not `custom`.
   - Subagent model resolution uses the real available-models registry captured at launch time — the same registry the runtime uses — rather than a synthetic list built from frontmatter. Two behaviours follow from this:
     - A provider-qualified frontmatter model (e.g. `anthropic/claude-opus-5`) is reported only if that exact entry is present in the available-models list. If it is not, both the `selectProviderAwareAgentDefaults` lookup and the fallback guard in `readSubagentFrontmatterConfig` return `undefined`, and the model side is reported as `unknown`. This is deliberate: a plausible-but-wrong model name is worse than `unknown` as a telemetry signal.

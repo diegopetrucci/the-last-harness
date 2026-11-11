@@ -3,9 +3,9 @@
 // The mock Pi CLI script comes from TLH_TEST_PI_ARGV1 (the test's patched argv[1]);
 // see mock-pi-guard.ts for the fail-closed checks.
 // Usage: <sessionDir> <outputFile>
+import { DISABLED_COMPACT_ARTIFACT_CONFIG as artifactConfig } from "./artifact-config-fixtures.ts";
 import { runSingleStep } from "../../src/runs/background/single-step-execution.ts";
 import { requireMockPi } from "./mock-pi-guard.ts";
-import type { ResolvedArtifactConfig } from "../../src/shared/types.ts";
 
 // Fail closed before anything can spawn: only the proven mock Pi may be launched.
 let mockPi: ReturnType<typeof requireMockPi>;
@@ -17,18 +17,6 @@ try {
 }
 
 const [sessionDir, outputFile] = process.argv.slice(2) as [string, string];
-const artifactConfig: ResolvedArtifactConfig = {
-  mode: "compact",
-  enabled: false,
-  includeInput: false,
-  includeOutput: false,
-  includeJsonl: false,
-  includeTranscript: false,
-  includeMetadata: false,
-  includeChildEventProjections: false,
-  cleanupDays: 7,
-};
-
 await runSingleStep(
   {
     agent: "worker",

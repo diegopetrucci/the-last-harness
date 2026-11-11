@@ -350,6 +350,48 @@ describe("control channel: request file", () => {
 });
 
 describe("control channel: native child-message acceptance", () => {
+  it("copies only typed acknowledgement fields and rejection reasons", () => {
+    const asyncDir = tmpAsyncDir("pi-control-ack-fields-");
+    try {
+      const acceptancePath = childMessageAckPath(asyncDir, "resume-1");
+      fs.mkdirSync(path.dirname(acceptancePath), { recursive: true });
+      for (const reason of ["unavailable", 123, {}, null]) {
+        fs.writeFileSync(
+          acceptancePath,
+          JSON.stringify({
+            requestId: "resume-1",
+            type: "resume",
+            status: "rejected",
+            ts: 10,
+            acceptedIndexes: [],
+            reason,
+            rejected: [
+              { index: 0, reason: "child is complete", extra: true },
+              { index: 1, reason },
+              { index: "2", reason: "invalid index" },
+              null,
+            ],
+            extra: true,
+          }),
+        );
+        assert.deepEqual(consumeChildMessageAcceptance(asyncDir, "resume-1"), {
+          requestId: "resume-1",
+          type: "resume",
+          status: "rejected",
+          ts: 10,
+          acceptedIndexes: [],
+          ...(typeof reason === "string" ? { reason } : {}),
+          rejected: [
+            { index: 0, reason: "child is complete" },
+            ...(typeof reason === "string" ? [{ index: 1, reason }] : []),
+          ],
+        });
+      }
+    } finally {
+      cleanup(asyncDir);
+    }
+  });
+
   it("atomically writes and consumes an acknowledgement keyed by request id", () => {
     const asyncDir = tmpAsyncDir("pi-control-ack-");
     try {

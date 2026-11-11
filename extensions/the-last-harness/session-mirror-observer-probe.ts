@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 
+import { SESSION_MIRROR_OBSERVER_PROFILE } from "./session-mirror/status-allowlists.js";
 import { createSessionMirrorObserverRuntime } from "./session-mirror/observer.js";
 import { createSessionMirrorObserverSocketSink } from "./session-mirror/local-bridge-sink.js";
 import {
@@ -28,13 +29,7 @@ import type {
   SessionMirrorObserverState,
 } from "./session-mirror/observer.js";
 
-/** Fixed bounds mirrored from the repository-only session-mirror v1 profile. */
-export const SESSION_MIRROR_OBSERVER_PROBE_BOUNDS = Object.freeze({
-  maxEnvelopeBytes: 256 * 1024,
-  maxTreeEntries: 1024,
-  maxTreeRoots: 1024,
-  maxTreeDepth: 128,
-});
+export const SESSION_MIRROR_OBSERVER_PROBE_BOUNDS = SESSION_MIRROR_OBSERVER_PROFILE.bounds;
 
 export const SESSION_MIRROR_OBSERVER_TIMING_BUCKETS = Object.freeze([
   "unknown",
@@ -156,9 +151,9 @@ function incrementCounter(value: number): number {
 
 function bucketDuration(duration: number | undefined): SessionMirrorObserverTimingBucket {
   if (duration === undefined || !Number.isFinite(duration) || duration < 0) return "unknown";
-  if (duration <= 1) return "fast";
-  if (duration <= 10) return "moderate";
-  if (duration <= 100) return "slow";
+  if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.fastTimingMs) return "fast";
+  if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.moderateTimingMs) return "moderate";
+  if (duration <= SESSION_MIRROR_OBSERVER_PROFILE.slowTimingMs) return "slow";
   return "extended";
 }
 

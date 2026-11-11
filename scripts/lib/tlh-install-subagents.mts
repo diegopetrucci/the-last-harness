@@ -223,7 +223,8 @@ function npmPackageStillDeclared(installRoot: string, packageName: string): bool
   const packageJsonPath = join(installRoot, "package.json");
   if (!existsSync(packageJsonPath)) return false;
   try {
-    const packageJson = readJsonFile<Record<string, unknown>>(packageJsonPath);
+    const packageJson = readJsonFile(packageJsonPath);
+    if (!isPlainObject(packageJson)) return true;
     return ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].some(
       (field) => {
         const dependencies = packageJson[field];
@@ -239,7 +240,9 @@ function npmPackageStillInstalled(installRoot: string, packageName: string): boo
   const packagePath = join(installRoot, "node_modules", packageName);
   if (!existsSync(packagePath)) return false;
   try {
-    return readJsonFile<{ name?: unknown }>(join(packagePath, "package.json")).name === packageName;
+    const packageJson = readJsonFile(join(packagePath, "package.json"));
+    if (!isPlainObject(packageJson)) return true;
+    return packageJson.name === packageName;
   } catch {
     return true;
   }

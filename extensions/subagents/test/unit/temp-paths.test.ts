@@ -52,10 +52,6 @@ describe("temp scope id (via resolveTempRootDir)", () => {
 });
 
 describe("resolveTempRootDir (PI_SUBAGENTS_TEMP_ROOT override)", () => {
-  // Fork delta for GitHub issue #45: integration tests previously shared the
-  // uid-scoped async runs dir with live sessions, causing ghost
-  // notifications. PI_SUBAGENTS_TEMP_ROOT lets callers (e.g. integration
-  // test setup) redirect the temp root away from that shared location.
   it("uses the override when PI_SUBAGENTS_TEMP_ROOT is set", () => {
     const root = resolveTempRootDir({
       env: { PI_SUBAGENTS_TEMP_ROOT: "/tmp/pi-subagents-test-override" },

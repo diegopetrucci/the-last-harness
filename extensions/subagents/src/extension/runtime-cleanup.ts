@@ -165,6 +165,7 @@ function inspectKnownLifecycleState(
 ): Pick<AsyncDirInspection, "keep" | "activeOrLive"> {
   switch (status.state) {
     case "complete":
+    case "completed":
     case "failed":
     case "cancelled":
     case "continued":

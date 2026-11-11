@@ -15,7 +15,7 @@ The release build fails closed if the stage-0 inventory is incomplete, duplicate
 
 ## Installer compatibility boundary
 
-Only the generated GitHub Release `install.sh` asset is pinned and integrity-verifiable for its tag: the release workflow bakes the matching tag and support-file SHA-256 inventory into that stage-0 asset, so later changes on `main` cannot silently change the verified bytes for that release. A matching generated asset is the canonical stage-0 handoff and verifies support files directly instead of self-refreshing; explicit matching `--ref`/`TLH_REF` values remain eligible for that direct path. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; raw, mutable, custom, and local paths are not release-verified. The v0.27 boundary otherwise means remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
+See the [installer compatibility boundary](install.md#installer-compatibility-boundary) for release-asset guarantees and supported installer paths.
 
 Saved pre-v0.27 raw source installers are outside the current support window. Download and run the current installer:
 

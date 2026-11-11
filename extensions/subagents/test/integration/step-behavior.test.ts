@@ -1,33 +1,23 @@
-/**
- * Tests for step behavior resolution and skill input normalization.
- *
- * Covers the pure logic of normalizeSkillInput, resolveStepBehavior, and
- * suppressProgressForReadOnlyTask / taskDisallowsFileUpdates.
- * Uses dynamic import since settings.ts transitively depends on pi packages.
- */
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeSkillInput } from "../../src/agents/skills.ts";
-import { tryImport } from "../support/helpers.ts";
-
-// Top-level await
-const settings = await tryImport<any>("./src/shared/settings.ts");
-
-const buildExecutionInstructions = settings?.buildExecutionInstructions;
-const resolveStepBehavior = settings?.resolveStepBehavior;
-const suppressProgressForReadOnlyTask = settings?.suppressProgressForReadOnlyTask;
-const taskDisallowsFileUpdates = settings?.taskDisallowsFileUpdates;
+import { makeAgent } from "../support/helpers.ts";
+import {
+  buildExecutionInstructions,
+  resolveStepBehavior,
+  suppressProgressForReadOnlyTask,
+  taskDisallowsFileUpdates,
+  type ResolvedStepBehavior,
+} from "../../src/shared/settings.ts";
 
 describe("resolveStepBehavior", () => {
   it("returns agent defaults when no overrides", () => {
     // Uses agentConfig.output, .defaultReads, .defaultProgress
-    const config = {
-      name: "test",
+    const config = makeAgent("test", {
       output: "report.md",
       defaultProgress: true,
       defaultReads: ["input.md"],
-    };
+    });
     const behavior = resolveStepBehavior(config, {});
     assert.equal(behavior.output, "report.md");
     assert.equal(behavior.progress, true);
@@ -35,36 +25,35 @@ describe("resolveStepBehavior", () => {
   });
 
   it("step overrides take precedence", () => {
-    const config = { name: "test", output: "report.md" };
+    const config = makeAgent("test", { output: "report.md" });
     const behavior = resolveStepBehavior(config, { output: "custom.md" });
     assert.equal(behavior.output, "custom.md");
   });
 
   it("defaults outputMode to inline unless a step overrides it", () => {
-    const inlineBehavior = resolveStepBehavior({ name: "test", output: "report.md" }, {});
+    const inlineBehavior = resolveStepBehavior(makeAgent("test", { output: "report.md" }), {});
     assert.equal(inlineBehavior.outputMode, "inline");
 
-    const stepOverrideBehavior = resolveStepBehavior(
-      { name: "test", output: "report.md" },
-      { outputMode: "file-only" },
-    );
+    const stepOverrideBehavior = resolveStepBehavior(makeAgent("test", { output: "report.md" }), {
+      outputMode: "file-only",
+    });
     assert.equal(stepOverrideBehavior.outputMode, "file-only");
   });
 
   it("false disables output", () => {
-    const config = { name: "test", output: "report.md" };
+    const config = makeAgent("test", { output: "report.md" });
     const behavior = resolveStepBehavior(config, { output: false });
     assert.equal(behavior.output, false);
   });
 
   it("string false disables output defensively", () => {
-    const config = { name: "test", output: "report.md" };
+    const config = makeAgent("test", { output: "report.md" });
     const behavior = resolveStepBehavior(config, { output: "false" });
     assert.equal(behavior.output, false);
   });
 
   it("defaults to false when agent has no config", () => {
-    const config = { name: "test" };
+    const config = makeAgent("test");
     const behavior = resolveStepBehavior(config, {});
     assert.equal(behavior.output, false);
     assert.equal(behavior.reads, false);
@@ -82,7 +71,7 @@ describe("buildExecutionInstructions", () => {
         output: false,
         outputMode: "inline",
         progress: false,
-        skills: undefined,
+        skills: false,
       },
       baseDir,
       false,
@@ -94,11 +83,11 @@ describe("buildExecutionInstructions", () => {
   it("adds write headers to the task prefix", () => {
     const instructions = buildExecutionInstructions(
       {
-        reads: undefined,
+        reads: false,
         output: "output.md",
         outputMode: "inline",
         progress: false,
-        skills: undefined,
+        skills: false,
       },
       baseDir,
       false,
@@ -110,11 +99,11 @@ describe("buildExecutionInstructions", () => {
   it("adds create-progress instructions for the first progress task", () => {
     const instructions = buildExecutionInstructions(
       {
-        reads: undefined,
+        reads: false,
         output: false,
         outputMode: "inline",
         progress: true,
-        skills: undefined,
+        skills: false,
       },
       baseDir,
       true,
@@ -128,11 +117,11 @@ describe("buildExecutionInstructions", () => {
   it("adds update-progress instructions for later progress tasks", () => {
     const instructions = buildExecutionInstructions(
       {
-        reads: undefined,
+        reads: false,
         output: false,
         outputMode: "inline",
         progress: true,
-        skills: undefined,
+        skills: false,
       },
       baseDir,
       false,
@@ -146,11 +135,11 @@ describe("buildExecutionInstructions", () => {
   it("returns empty instructions when no behavior is configured", () => {
     const instructions = buildExecutionInstructions(
       {
-        reads: undefined,
+        reads: false,
         output: false,
         outputMode: "inline",
         progress: false,
-        skills: undefined,
+        skills: false,
       },
       baseDir,
       false,
@@ -161,12 +150,12 @@ describe("buildExecutionInstructions", () => {
 
 describe("read-only progress suppression", () => {
   it("suppresses progress for review-only or no-edit tasks", () => {
-    const behavior = {
-      reads: undefined,
+    const behavior: ResolvedStepBehavior = {
+      reads: false,
       output: false,
       outputMode: "inline",
       progress: true,
-      skills: undefined,
+      skills: false,
     };
 
     assert.equal(taskDisallowsFileUpdates("Review-only. Do not edit files."), true);

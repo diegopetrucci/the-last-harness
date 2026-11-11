@@ -1,17 +1,11 @@
 // Generated from extensions/the-last-harness/usage-limits-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { parseTlhSettingsContent } from "./primary-agent-runtime-settings.js";
+import { assertTlhSettingsObject, parseTlhSettingsContent, } from "./primary-agent-runtime-settings.js";
 import { getCachedTlhUsageWeeklyVisibility, getPersistedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, setCachedTlhUsageWeeklyVisibility, USAGE_COMMAND_HELP, } from "./usage-limits.js";
 function validateTlhUsageLimitsSettings(settings) {
-    if (!isRecord(settings)) {
-        throw new Error("settings.json must contain a JSON object");
-    }
-    const tlh = settings.tlh;
-    if (tlh !== undefined && !isRecord(tlh)) {
-        throw new Error("settings field 'tlh' must be an object if present");
-    }
-    const usageLimits = isRecord(tlh) ? tlh.usageLimits : undefined;
+    assertTlhSettingsObject(settings);
+    const usageLimits = settings.tlh?.usageLimits;
     if (usageLimits !== undefined && !isRecord(usageLimits)) {
         throw new Error("settings field 'tlh.usageLimits' must be an object if present");
     }
