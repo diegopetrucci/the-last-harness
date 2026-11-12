@@ -107,7 +107,7 @@ test("custom-track notifications no longer imply that plain update reaches the l
   );
 });
 
-test("update checks honor every documented skip control without fetching or notifying", async (t) => {
+test("update checks skip only outside the isolated profile or under PI_OFFLINE", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
   writeSettings(fixture.agent, {});
   writeStartupState(fixture.agent, {});
@@ -122,23 +122,9 @@ test("update checks honor every documented skip control without fetching or noti
       name: "PI_OFFLINE",
       env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, PI_OFFLINE: "1" },
     },
-    {
-      name: "PI_SKIP_VERSION_CHECK",
-      env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, PI_SKIP_VERSION_CHECK: "1" },
-    },
-    {
-      name: "TLH_SKIP_UPDATE_CHECK",
-      env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TLH_SKIP_UPDATE_CHECK: "1" },
-    },
-    {
-      name: "settings opt-out",
-      env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent },
-      settings: { enabled: false },
-    },
   ]) {
     const notifications = [];
     let fetchCalls = 0;
-    writeSettings(fixture.agent, skipCase.settings ?? {});
     installUpdateCheckHooks(t, {
       fetchLatestRelease: async () => {
         fetchCalls += 1;
@@ -163,6 +149,43 @@ test("update checks honor every documented skip control without fetching or noti
         "normal Pi config must not gain TLH startup state",
       );
     }
+  }
+});
+
+test("retired opt-outs no longer suppress the update check", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
+  writeStartupState(fixture.agent, {});
+  writeInstallState(fixture.agent, MAIN_TRACK_INSTALL_STATE);
+
+  for (const legacy of [
+    { name: "PI_SKIP_VERSION_CHECK", env: { PI_SKIP_VERSION_CHECK: "1" } },
+    { name: "TLH_SKIP_UPDATE_CHECK", env: { TLH_SKIP_UPDATE_CHECK: "1" } },
+    { name: "tlh.updateCheck.enabled=false", env: {}, settings: { enabled: false } },
+  ]) {
+    let fetchCalls = 0;
+    writeSettings(fixture.agent, legacy.settings ?? {});
+    installUpdateCheckHooks(t, {
+      fetchLatestRelease: async () => {
+        fetchCalls += 1;
+        return LATEST_RELEASE;
+      },
+      fetchMainTrackComparison: async () => ({ status: "behind", behindBy: 1 }),
+    });
+
+    await withEnv(
+      {
+        HOME: fixture.home,
+        PI_CODING_AGENT_DIR: fixture.agent,
+        PI_OFFLINE: undefined,
+        ...legacy.env,
+      },
+      async () => {
+        await maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, []));
+      },
+    );
+
+    assert.equal(fetchCalls, 1, `${legacy.name} must not suppress the TLH update fetch`);
+    writeStartupState(fixture.agent, {});
   }
 });
 

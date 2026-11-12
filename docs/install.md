@@ -133,7 +133,7 @@ There is no `tlh defaults disable subagents` path; see [subagents.md](subagents.
 
 ## Update checks and opt-outs
 
-At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. Official `main` ref installs use that same non-blocking daily check to compare the persisted checkout commit with GitHub `main`; only an ancestor that is behind gets the footer count. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable both checks. `PI_OFFLINE=1` also makes `tlh update` refuse to run network work.
+At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. Official `main` ref installs use that same non-blocking daily check to compare the persisted checkout commit with GitHub `main`; only an ancestor that is behind gets the footer count. It never auto-updates. Set `PI_OFFLINE=1` to disable both checks; it is the only opt-out. `PI_OFFLINE=1` also makes `tlh update` refuse to run network work.
 
 Release builds send pseudonymous telemetry from interactive runs; signals, filters, and every opt-out are owned by [telemetry.md](telemetry.md#opting-out).
 
@@ -159,7 +159,7 @@ TLH does not set a `tuiMode` override in its packaged defaults (`config/settings
 
 Edit `~/.the-last-harness/agent/settings.json` directly, or open `/settings` and set **TUI mode** to `regular`. You can also pass `--tui-mode regular` as a per-run flag. To revert to fullscreen, set the value back to `"fullscreen"` or remove the key.
 
-The setting is user-owned and survives `tlh update` and installer reruns. `tlh doctor --repair` does not modify `tuiMode`; it only fills missing keys that TLH actively manages.
+The setting is user-owned and survives `tlh update` and installer reruns. `tlh doctor --repair` does not modify `tuiMode`; it only fills missing keys that TLH actively manages (the one exception is the installer-owned `compaction.reserveTokens`, below).
 
 ## Default theme
 
@@ -183,7 +183,7 @@ If an existing isolated profile still selects `the-last-harness`, an interactive
 
 The notice never changes the selected theme. After the notice is displayed, TLH records `legacyThemeNoticeDisplayed: true` in the profile-scoped `~/.the-last-harness/agent/tlh/startup-state.json` marker file. To show it again, remove only that property from the active profile's `tlh/startup-state.json` (preserving the other startup state) and launch TLH interactively; resetting the marker does not change the theme.
 
-Running `tlh update --force` (or equivalently `bash install.sh --force`) passes `--force` to the settings merger, which overwrites existing scalar values—including `theme`—with the current packaged defaults. `tlh doctor --repair` does not accept a `--force` option and never overwrites an existing theme value; it only fills in missing keys. Use `/settings` or manual edits to re-set your preferred theme after a forced update if needed.
+Running `tlh update --force` (or equivalently `bash install.sh --force`) passes `--force` to the settings merger, which overwrites existing scalar values—including `theme`—with the current packaged defaults. `tlh doctor --repair` does not accept a `--force` option and never overwrites an existing theme value; it only fills in missing keys, apart from the enforced `compaction.reserveTokens` (see below). Use `/settings` or manual edits to re-set your preferred theme after a forced update if needed.
 
 ## Pi-native prompt-cache warming
 
@@ -191,15 +191,17 @@ See [prompt-cache warming](subagents.md#prompt-cache-warming) for modes, install
 
 ## Compaction reserve default
 
-The packaged `compaction.reserveTokens` value lives in [settings.defaults.json](../config/settings.defaults.json); see [child context-window policy](subagents.md#child-context-window-policy) for effective context caps. The reserve controls when auto-compaction starts and indirectly bounds the space available for its summary. It applies globally to primary and child sessions, so small-window models may need a `compaction.modelOverrides` entry with a lower reserve.
+The packaged `compaction.reserveTokens` value lives in [settings.defaults.json](../config/settings.defaults.json); see [child context-window policy](subagents.md#child-context-window-policy) for effective context caps. The reserve controls when auto-compaction starts and indirectly bounds the space available for its summary. It applies globally to primary and child sessions, so small-window models should use a `compaction.modelOverrides` entry with a lower reserve; overrides are never touched by install or update.
 
-Install and update use the usual append-if-missing merge: the value is written only when absent and an existing user value is preserved. When TLH writes it, it records `tlh.compactionReserveTokensManaged: true` in `settings.json` as provenance. Deleting the key does not opt out, because `tlh update` re-adds missing keys; set an explicit value instead. `tlh update --force` overwrites the value like other packaged defaults.
+Every install and update (not only `--force`) writes the packaged value, overwriting any existing `compaction.reserveTokens`, and records `tlh.compactionReserveTokensManaged: true` in `settings.json` as provenance. A value that already matches is left untouched. `tlh doctor --repair` likewise restores the packaged `compaction.reserveTokens` over a custom value, so it is the one existing scalar that repair overwrites. `--no-settings` skips the settings merge entirely.
 
 Summaries still grow with the session, so very long sessions can leave little room for a summary, particularly in small windows.
 
 ## Herdr.app integration
 
 Install and `tlh update` register TLH in the [Herdr](https://herdr.dev) desktop app so it shows TLH's own name, icon, and launcher. This is the only installer write outside the isolated TLH profile.
+
+Herdr.app v0.1.15+ ships its own built-in TLH entry ([herdrdev/herdr-app#676](https://github.com/herdrdev/herdr-app/pull/676)), and Herdr layers `programs.tlh` over it field by field. On those versions the installer entry mainly points `run` at the actual wrapper (a non-default one like `tlh-main`, or one not on the app's `PATH`); on older Herdr.app it also supplies the name and icon.
 
 What is written, in the Herdr.app home (`$HERDR_APP_HOME` when set, otherwise `~/.config/herdr-app`):
 
@@ -221,11 +223,11 @@ Opt out by setting this in `~/.the-last-harness/agent/settings.json`:
 { "tlh": { "herdrApp": { "enabled": false } } }
 ```
 
-The opt-out is persistent, so it applies to later `tlh update` runs too. It skips install/update writes only: it does not remove an existing entry, and it does not stop [uninstall](#uninstall) cleanup.
+The opt-out is persistent, so it applies to later `tlh update` runs too. It skips install/update writes only: it does not remove an existing entry, and it does not stop [uninstall](#uninstall) cleanup. On Herdr.app v0.1.15+, Herdr's built-in TLH entry still applies when TLH writes no entry.
 
 Herdr has a single `programs.tlh` key. Multiple TLH installs on one machine (for example a `tlh-main` dev install alongside a release install, or a fork) overwrite each other's `run`. Uninstall only removes the entry (and then `tlh/tlh.svg`) when this install owns it: `run` is absent or points to this install's wrapper (both compared as physical paths). If `run` points elsewhere, it leaves both untouched and prints a note naming the other run path. Set the opt-out in installs that should not own it.
 
-To undo manually, delete the `tlh` key from `programs` in `programs.json` (back it up first) and remove the `tlh/` folder from the app home.
+To undo manually, delete the `tlh` key from `programs` in `programs.json` (back it up first) and remove the `tlh/` folder from the app home. On v0.1.15+, Herdr then falls back to its built-in TLH entry.
 
 ## Doctor
 

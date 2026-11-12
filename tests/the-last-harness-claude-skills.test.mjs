@@ -267,44 +267,23 @@ test("does not throw and omits project roots when ctx has no isProjectTrusted me
   });
 });
 
-// ─── disabled flag short-circuits ────────────────────────────────────────────
+// ─── legacy disabled flag is inert ───────────────────────────────────────────
 
-test("returns undefined when tlh.claudeSkills.disabled is true", async (t) => {
+test("tlh.claudeSkills.disabled=true no longer disables discovery", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-cs-disabled-", { cwd: true, test: t });
   const userSkills = join(fixture.home, ".claude", "skills");
   mkdirSync(userSkills, { recursive: true });
 
-  // Write settings with the disabled flag.
-  const settingsPath = join(fixture.agent, "settings.json");
   writeFileSync(
-    settingsPath,
+    join(fixture.agent, "settings.json"),
     `${JSON.stringify({ tlh: { claudeSkills: { disabled: true } } }, null, 2)}\n`,
   );
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
     registerClaudeSkillsDiscovery(pi);
-    const result = await runDiscovery(pi, fixture.cwd);
-    assert.equal(result, undefined, "handler should be suppressed when disabled");
-  });
-});
-
-test("is active when tlh.claudeSkills.disabled is false", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-cs-enabled-", { cwd: true, test: t });
-  const userSkills = join(fixture.home, ".claude", "skills");
-  mkdirSync(userSkills, { recursive: true });
-
-  const settingsPath = join(fixture.agent, "settings.json");
-  writeFileSync(
-    settingsPath,
-    `${JSON.stringify({ tlh: { claudeSkills: { disabled: false } } }, null, 2)}\n`,
-  );
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const pi = createPiHarness();
-    registerClaudeSkillsDiscovery(pi);
     const result = await runDiscovery(pi, fixture.cwd, { isProjectTrusted: false });
-    assert.ok(result, "result should not be undefined when disabled=false");
+    assert.ok(result, "legacy disabled flag must be ignored");
     assert.ok(result.skillPaths.includes(userSkills));
   });
 });

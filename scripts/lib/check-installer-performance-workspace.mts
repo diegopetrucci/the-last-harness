@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
@@ -159,11 +167,9 @@ export function buildChildEnvironment(
   environment.TLH_WRAPPER_NAME = workspace.wrapperName;
   environment.TLH_REPO = REPOSITORY;
   environment.TLH_REF = ref;
-  environment.TLH_SKIP_UPDATE_CHECK = "1";
   environment.TLH_SKIP_TELEMETRY = "1";
   environment.TLH_TELEMETRY_DISABLED = "1";
   environment.TLH_INSTALL_RECONCILIATION_TRACE = "1";
-  environment.PI_SKIP_VERSION_CHECK = "1";
   environment.PI_TELEMETRY = "0";
   environment.NO_COLOR = "1";
   environment.GIT_CONFIG_GLOBAL = workspace.gitConfig;
@@ -208,4 +214,34 @@ export function writeCredentialFreeTrustMetadata(workspace: BenchmarkWorkspace):
     mode: 0o600,
   });
   return trustPath;
+}
+
+/**
+ * Marks the daily update check as already done so measured launches skip the
+ * background GitHub fetch without setting PI_OFFLINE or any user-facing opt-out.
+ */
+export function seedUpdateCheckStartupState(workspace: BenchmarkWorkspace): string {
+  const statePath = join(workspace.agentDir, "tlh", "startup-state.json");
+  assertOwnedWorkspacePath(workspace.root, statePath);
+  let state: Record<string, unknown> = {};
+  if (existsSync(statePath)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(statePath, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        state = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Replace unreadable benchmark-owned state.
+    }
+  }
+  const previous = state.updateCheck;
+  const updateCheck =
+    previous && typeof previous === "object" && !Array.isArray(previous) ? previous : {};
+  mkdirSync(dirname(statePath), { recursive: true });
+  writeFileSync(
+    statePath,
+    `${JSON.stringify({ ...state, updateCheck: { ...updateCheck, checkedAt: new Date().toISOString() } }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return statePath;
 }

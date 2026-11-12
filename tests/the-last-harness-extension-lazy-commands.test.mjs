@@ -84,18 +84,18 @@ test("Jiti command facades resolve tokens, annotate-last-message, and tlh-change
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     delete process.env.PI_SUBAGENT_CHILD_AGENT;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: "architect" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: "architect" } } }, null, 2)}\n`,
     );
 
     const jiti = createJiti(import.meta.url, { moduleCache: false });

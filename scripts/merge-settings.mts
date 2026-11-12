@@ -988,8 +988,8 @@ function compactionReserveTokensOf(settings: unknown): number | undefined {
 
 /**
  * Record that TLH wrote the packaged compaction.reserveTokens value (#785). The
- * marker is only set when this merge inserted or force-overwrote the value; a
- * preserved user value never gets it, and it is never cleared here.
+ * marker is only set when this merge inserted or overwrote the value; a value
+ * that already matched is left alone, and the marker is never cleared here.
  */
 function applyCompactionReserveTokensProvenance(
   settings: JsonObject,
@@ -1046,7 +1046,7 @@ function isPersistentTelemetryOptOut(
 
 function isInstallerOwnedSetting(path: readonly string[]): boolean {
   const joinedPath = path.join(".");
-  return joinedPath === "lastChangelogVersion";
+  return joinedPath === "lastChangelogVersion" || joinedPath === "compaction.reserveTokens";
 }
 
 function isInstallerOwnedObjectContainer(path: readonly string[]): boolean {

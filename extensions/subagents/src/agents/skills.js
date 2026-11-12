@@ -296,28 +296,10 @@ function collectSettingsPackageSkillPaths(cwd, agentDir) {
     }
     return results;
 }
-function isClaudeSkillsDisabled(agentDir) {
-    try {
-        const settings = readOptionalJsonFile(path.join(agentDir, "settings.json"), "user settings");
-        if (!settings || typeof settings !== "object" || Array.isArray(settings))
-            return false;
-        const tlh = settings.tlh;
-        if (!tlh || typeof tlh !== "object" || Array.isArray(tlh))
-            return false;
-        const claudeSkills = tlh.claudeSkills;
-        if (!claudeSkills || typeof claudeSkills !== "object" || Array.isArray(claudeSkills))
-            return false;
-        return claudeSkills.disabled === true;
-    }
-    catch {
-        return false;
-    }
-}
 function buildSkillPaths(cwd, agentDir) {
     const projectConfigDir = getProjectConfigDir(cwd);
     const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
     const projectLegacyAgentsDir = path.join(cwd, ".agents");
-    const claudeDisabled = isClaudeSkillsDisabled(agentDir);
     const skillPaths = [
         { path: path.join(projectConfigDir, "skills"), source: "project" },
         ...(hasCustomPiAgentDir() && isGlobalAgentsDir(projectLegacyAgentsDir)
@@ -331,12 +313,8 @@ function buildSkillPaths(cwd, agentDir) {
         ...collectSettingsPackageSkillPaths(cwd, agentDir),
         ...extractSkillPathsFromPackageRoot(cwd, "project-package"),
         ...collectSettingsSkillPaths(cwd, agentDir),
-        ...(claudeDisabled
-            ? []
-            : [
-                { path: path.join(cwd, ".claude", "skills"), source: "project-claude" },
-                { path: path.join(os.homedir(), ".claude", "skills"), source: "user-claude" },
-            ]),
+        { path: path.join(cwd, ".claude", "skills"), source: "project-claude" },
+        { path: path.join(os.homedir(), ".claude", "skills"), source: "user-claude" },
     ];
     const deduped = new Map();
     for (const entry of skillPaths) {

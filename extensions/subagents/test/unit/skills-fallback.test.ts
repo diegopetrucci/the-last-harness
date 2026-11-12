@@ -631,7 +631,7 @@ describe("skills filesystem fallback", () => {
     );
   });
 
-  it("suppresses .claude/skills when tlh.claudeSkills.disabled is true in user settings", async () => {
+  it("ignores legacy tlh.claudeSkills.disabled and still discovers .claude/skills", async () => {
     const fakeHome = path.join(tempDir, "fake-home");
     const userAgentDir = path.join(fakeHome, ".pi", "agent");
     await withSkillsEnv(async (loadSkills) => {
@@ -641,16 +641,16 @@ describe("skills filesystem fallback", () => {
       // Place a skill in the project .claude/skills directory.
       writeSkillFile(
         path.join(tempDir, ".claude", "skills", "disabled-claude-skill"),
-        "Should not appear.",
+        "Still appears.",
       );
 
       // Place a skill in the user .claude/skills directory.
       writeSkillFile(
         path.join(fakeHome, ".claude", "skills", "disabled-user-claude-skill"),
-        "Should not appear either.",
+        "Still appears too.",
       );
 
-      // Set tlh.claudeSkills.disabled in the user agent settings.
+      // Legacy tlh.claudeSkills.disabled in the user agent settings.
       fs.mkdirSync(userAgentDir, { recursive: true });
       fs.writeFileSync(
         path.join(userAgentDir, "settings.json"),
@@ -661,16 +661,8 @@ describe("skills filesystem fallback", () => {
       const fresh = await loadSkills();
       const discovered = fresh.discoverAvailableSkills(tempDir);
       const names = discovered.map((s) => s.name);
-      assert.equal(
-        names.includes("disabled-claude-skill"),
-        false,
-        "project .claude/skills must be suppressed when claudeSkills.disabled is true",
-      );
-      assert.equal(
-        names.includes("disabled-user-claude-skill"),
-        false,
-        "user .claude/skills must be suppressed when claudeSkills.disabled is true",
-      );
+      assert.equal(names.includes("disabled-claude-skill"), true);
+      assert.equal(names.includes("disabled-user-claude-skill"), true);
     });
   });
 

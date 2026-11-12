@@ -44,7 +44,6 @@ function isolatedEnv(root, agentDir) {
     TLH_AGENT_DIR: agentDir,
     PI_OFFLINE: "1",
     TLH_SKIP_TELEMETRY: "1",
-    TLH_SKIP_UPDATE_CHECK: "1",
     TMPDIR: join(root, "tmp"),
     npm_config_userconfig: join(root, "npmrc"),
     npm_config_cache: join(root, "npm-cache"),
@@ -241,7 +240,6 @@ test(
             tlh: {
               primaryAgent: { applyModel: false, applyThinking: false },
               telemetry: { enabled: false },
-              updateCheck: { enabled: false },
             },
           },
           null,

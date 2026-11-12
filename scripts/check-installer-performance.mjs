@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildPtyCommand, runProcess, } from "./lib/check-installer-performance-process.mjs";
-import { assertOwnedWorkspacePath, buildChildEnvironment, createBenchmarkWorkspace, removeOwnedWorkspace, writeCredentialFreeTrustMetadata, BENCHMARK_ROOT_PREFIX, REPOSITORY, } from "./lib/check-installer-performance-workspace.mjs";
+import { assertOwnedWorkspacePath, buildChildEnvironment, createBenchmarkWorkspace, removeOwnedWorkspace, seedUpdateCheckStartupState, writeCredentialFreeTrustMetadata, BENCHMARK_ROOT_PREFIX, REPOSITORY, } from "./lib/check-installer-performance-workspace.mjs";
 import { createReadinessObserver, observeReadinessChunk, stripTerminalNoise, } from "./lib/tlh-startup-readiness.mjs";
 const DEFAULT_MODE = "remote";
 const DEFAULT_REF = "main";
@@ -510,6 +510,7 @@ async function prepareFullyLaunchedSeed(sourcePath, packageRef, workspace, sourc
         };
     }
     writeCredentialFreeTrustMetadata(workspace);
+    seedUpdateCheckStartupState(workspace);
     const launch = await measureLaunch(workspace, buildChildEnvironment(workspace, sourceEnv, { ref: packageRef }), cleanup);
     return {
         kind: "fully-launched-seed",
@@ -877,6 +878,7 @@ async function runScenarioSample(sourcePath, options, scenario, runNumber, root,
             };
         }
         writeCredentialFreeTrustMetadata(workspace);
+        seedUpdateCheckStartupState(workspace);
         const launch = await measureLaunch(workspace, buildChildEnvironment(workspace, sourceEnv, { ref: selectedRevision }), cleanup);
         if (!launch.ready)
             failureDiagnostics.push(...launch.diagnostics);
