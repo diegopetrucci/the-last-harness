@@ -32,7 +32,6 @@ function isolatedEnv(root, agentDir) {
     TLH_AGENT_DIR: agentDir,
     PI_OFFLINE: "1",
     TLH_SKIP_TELEMETRY: "1",
-    TLH_SKIP_UPDATE_CHECK: "1",
     TMPDIR: join(root, "tmp"),
   };
 }
@@ -108,7 +107,6 @@ Return the deterministic faux child marker exactly.
         tlh: {
           primaryAgent: { applyModel: false, applyThinking: false },
           telemetry: { enabled: false },
-          updateCheck: { enabled: false },
         },
       },
       null,

@@ -23,7 +23,7 @@ const footerData = {
 function writeUsageRefreshProfile(agentDir) {
   writeFileSync(
     join(agentDir, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
   );
   writeFileSync(
     join(agentDir, "tlh", "install-state.json"),
@@ -196,7 +196,7 @@ test("git cache refresh requests a footer render without unrelated UI activity",
     PATH: process.env.PATH,
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
 
   let renderRequests = 0;
@@ -209,13 +209,13 @@ test("git cache refresh requests a footer render without unrelated UI activity",
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     process.env.PATH = `${fakebin}:${previousEnv.PATH ?? ""}`;
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
     );
     writeFakeCommand(
       fakebin,
@@ -267,7 +267,7 @@ test("session start refreshes weekly visibility once and repeated footer renders
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const originalCreate = SettingsManager.create;
   const session = createTestSession();
@@ -278,12 +278,12 @@ test("session start refreshes weekly visibility once and repeated footer renders
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true }, primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true }, primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
     );
 
     SettingsManager.create = (...args) => {
@@ -331,7 +331,7 @@ test("subscription usage footer first render stays synchronous before the lazy s
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
 
@@ -348,7 +348,7 @@ test("subscription usage footer first render stays synchronous before the lazy s
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
@@ -417,7 +417,7 @@ test("subscription usage refresh requests a footer render when a runtime overrid
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
 
@@ -434,7 +434,7 @@ test("subscription usage refresh requests a footer render when a runtime overrid
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
@@ -501,7 +501,7 @@ test("subscription usage refresh redraws the footer when the event context diffe
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
 
@@ -518,7 +518,7 @@ test("subscription usage refresh redraws the footer when the event context diffe
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
@@ -600,7 +600,7 @@ test("turn_end refresh with a context distinct from registration redraws the foo
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
 
@@ -617,7 +617,7 @@ test("turn_end refresh with a context distinct from registration redraws the foo
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
@@ -697,7 +697,7 @@ test("pending refresh before session_shutdown does not redraw the old footer", a
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
 
@@ -713,7 +713,7 @@ test("pending refresh before session_shutdown does not redraw the old footer", a
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
@@ -797,7 +797,7 @@ test("pending refresh before session switch redraws the new session's footer whe
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
 
@@ -814,7 +814,7 @@ test("pending refresh before session switch redraws the new session's footer whe
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
@@ -914,7 +914,7 @@ test("rapid turn_end burst collapses to a single fetch and no extra renders when
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
 
@@ -930,12 +930,12 @@ test("rapid turn_end burst collapses to a single fetch and no extra renders when
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false } } }, null, 2)}\n`,
     );
 
     globalThis.fetch = async () => {
@@ -1017,14 +1017,14 @@ async function withUsageEnv(run) {
   const previousEnv = {
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
   };
   const previousFetch = globalThis.fetch;
   const session = createTestSession();
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
     writeUsageRefreshProfile(agentDir);

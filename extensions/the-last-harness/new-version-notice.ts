@@ -7,9 +7,6 @@
  *
  * HOW TO UNDO: remove the `installTlhNewVersionNotificationOverride()` call from
  * `extensions/the-last-harness.ts`.
- *
- * PI_SKIP_VERSION_CHECK semantics are intentionally unchanged: it remains a TLH
- * update-check opt-out; the upstream Pi version fetch still runs harmlessly.
  */
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 

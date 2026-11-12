@@ -36,11 +36,25 @@ test("compaction with only modelOverrides keeps them and gains reserveTokens + m
   assert.equal(result.tlh.compactionReserveTokensManaged, true);
 });
 
-test("user reserveTokens is preserved without --force and no marker is set", () => {
+test("different user reserveTokens is overwritten without --force and the marker is set", () => {
   const { result, output } = merged({ compaction: { reserveTokens: 16384 } });
-  assert.equal(result.compaction.reserveTokens, 16384);
-  assert.equal(result.tlh?.compactionReserveTokensManaged, undefined);
-  assert.doesNotMatch(output, /compaction\.reserveTokens/);
+  assert.equal(result.compaction.reserveTokens, 49152);
+  assert.equal(result.tlh.compactionReserveTokensManaged, true);
+  assert.match(output, /overwrite compaction\.reserveTokens/);
+});
+
+test("overwrite preserves compaction.modelOverrides", () => {
+  const modelOverrides = { "p/m": { reserveTokens: 8000 } };
+  const { result } = merged({ compaction: { reserveTokens: 16384, modelOverrides } });
+  assert.deepEqual(result.compaction, { reserveTokens: 49152, modelOverrides });
+});
+
+test("dry-run reports overwriting a different user value without writing", () => {
+  const settings = { ...base, compaction: { reserveTokens: 16384 } };
+  const fixture = tempFixture(defaults, settings);
+  const output = runMerge(fixture, { dryRun: true, quiet: false });
+  assert.match(output, /Would overwrite compaction\.reserveTokens/);
+  assert.deepEqual(readJson(fixture.settings), settings);
 });
 
 for (const value of [null, "custom"]) {
@@ -50,12 +64,6 @@ for (const value of [null, "custom"]) {
     assert.equal(result.tlh?.compactionReserveTokensManaged, undefined);
   });
 }
-
-test("--force overwrites a different user value and sets the marker", () => {
-  const { result } = merged({ compaction: { reserveTokens: 16384 } }, { force: true });
-  assert.equal(result.compaction.reserveTokens, 49152);
-  assert.equal(result.tlh.compactionReserveTokensManaged, true);
-});
 
 test("marker is skipped when tlh is not a plain object", () => {
   const { result } = merged({ tlh: "x" });
@@ -95,11 +103,11 @@ for (const force of [false, true]) {
   });
 }
 
-test("existing marker alongside a preserved custom value keeps both", () => {
+test("existing marker with a different value is overwritten and stays set", () => {
   const { result } = merged({
     compaction: { reserveTokens: 16384 },
     tlh: { compactionReserveTokensManaged: true },
   });
-  assert.equal(result.compaction.reserveTokens, 16384);
+  assert.equal(result.compaction.reserveTokens, 49152);
   assert.equal(result.tlh.compactionReserveTokensManaged, true);
 });

@@ -47,6 +47,7 @@ import {
   summarizeSamples,
   writeCredentialFreeTrustMetadata,
 } from "../scripts/check-installer-performance.mjs";
+import { seedUpdateCheckStartupState } from "../scripts/lib/check-installer-performance-workspace.mjs";
 import { hasFooterMarker, hasHeaderMarker } from "../scripts/lib/tlh-startup-readiness.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -190,13 +191,20 @@ test("child environment removes poisoned credentials and keeps measured launch o
       assert.equal(existsSync(configPath), true);
     }
     assert.equal(environment.npm_config_cache, workspace.npmCache);
-    assert.equal(environment.TLH_SKIP_UPDATE_CHECK, "1");
+    assert.equal(environment.TLH_SKIP_UPDATE_CHECK, undefined);
+    assert.equal(environment.PI_SKIP_VERSION_CHECK, undefined);
     assert.equal(environment.TLH_SKIP_TELEMETRY, "1");
     assert.equal(environment.TLH_INSTALL_RECONCILIATION_TRACE, "1");
 
     const trustPath = writeCredentialFreeTrustMetadata(workspace);
     const trust = JSON.parse(readFileSync(trustPath, "utf8"));
     assert.deepEqual(trust, { [realpathSync(workspace.cwd)]: true });
+    const statePath = seedUpdateCheckStartupState(workspace);
+    const before = Date.now();
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    assert.equal(statePath, join(workspace.agentDir, "tlh", "startup-state.json"));
+    assert.ok(Date.now() - Date.parse(state.updateCheck.checkedAt) < 60_000);
+    assert.ok(Date.parse(state.updateCheck.checkedAt) <= before);
     assert.throws(
       () => assertOwnedWorkspacePath(workspace.root, repoRoot),
       /outside benchmark workspace/,

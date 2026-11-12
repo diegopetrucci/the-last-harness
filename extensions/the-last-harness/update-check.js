@@ -4,7 +4,6 @@ import { compareTlhVersions, getTlhVersion, isNewerTlhVersion, normalizeTlhVersi
 import { readTlhInstallNotice } from "./install-state.js";
 import { readTlhInstallState, readTlhStartupState, tlhStartupStatePath, updateTlhStartupState, } from "./profile-state.js";
 import { isRecord } from "./common.js";
-import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAIN_TRACK_COMPARISON_STATUSES = new Set([
     "behind",
@@ -134,14 +133,8 @@ function shouldRefreshTlhLatestRelease(state) {
         checkedAtMs > now ||
         now - checkedAtMs >= TLH_UPDATE_CHECK_INTERVAL_MS);
 }
-function shouldSkipTlhUpdateCheck(cwd) {
-    if (!tlhStartupStatePath() ||
-        process.env.PI_OFFLINE ||
-        process.env.PI_SKIP_VERSION_CHECK ||
-        process.env.TLH_SKIP_UPDATE_CHECK) {
-        return true;
-    }
-    return getTlhUpdateCheckConfig(cwd)?.enabled === false;
+function shouldSkipTlhUpdateCheck() {
+    return !tlhStartupStatePath() || Boolean(process.env.PI_OFFLINE);
 }
 async function fetchLatestTlhRelease(currentVersion) {
     const response = await fetch(TLH_LATEST_RELEASE_API_URL, {
@@ -198,7 +191,7 @@ async function fetchMainTrackComparison(commitSha) {
     return { status, behindBy };
 }
 export function getTlhMainTrackBehindCount(cwd, installNotice = readTlhInstallNotice()) {
-    if (shouldSkipTlhUpdateCheck(cwd)) {
+    if (shouldSkipTlhUpdateCheck()) {
         return undefined;
     }
     const commitSha = getMainTrackCommitSha(installNotice);
@@ -341,7 +334,7 @@ export function persistTlhLastSeenVersion() {
     }
 }
 export async function maybeNotifyAvailableTlhUpdate(ctx, options = {}) {
-    if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
+    if (shouldSkipTlhUpdateCheck()) {
         return;
     }
     const installNotice = options.installNotice ?? readTlhInstallNotice();
@@ -371,13 +364,4 @@ export function __resetTlhUpdateCheckForTests() {
     notifiedTlhUpdateVersions.clear();
     checkedTlhHeaderUpdate = false;
     cachedTlhHeaderUpdate = undefined;
-}
-function getTlhUpdateCheckConfig(cwd) {
-    try {
-        const settings = getTlhGlobalSettings(cwd);
-        return settings.tlh?.updateCheck;
-    }
-    catch {
-        return undefined;
-    }
 }

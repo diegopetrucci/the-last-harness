@@ -2,7 +2,6 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 function getUserClaudeSkills() {
     return join(homedir(), ".claude", "skills");
 }
@@ -36,15 +35,6 @@ function findGitRoot(startDir) {
         dir = parent;
     }
 }
-function isClaudeSkillsDisabled(cwd) {
-    try {
-        const settings = getTlhGlobalSettings(cwd);
-        return settings.tlh?.claudeSkills?.disabled === true;
-    }
-    catch {
-        return false;
-    }
-}
 function tryRealpath(p) {
     try {
         return realpathSync(p);
@@ -73,9 +63,6 @@ function appendIfNew(candidate, seen, skillPaths) {
 }
 export function registerClaudeSkillsDiscovery(pi) {
     pi.on("resources_discover", async (event, ctx) => {
-        if (isClaudeSkillsDisabled(event.cwd)) {
-            return undefined;
-        }
         const seen = new Set();
         const skillPaths = [];
         const userClaudeSkills = getUserClaudeSkills();

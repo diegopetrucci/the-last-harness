@@ -38,7 +38,6 @@ const BRIDGE_CLEANUP_GRACE_MS = 2500;
 const DEFAULT_COMMAND = "tlh";
 const CONTROLLED_ENV = {
   PI_OFFLINE: "1",
-  TLH_SKIP_UPDATE_CHECK: "1",
   TLH_SKIP_TELEMETRY: "1",
 };
 const BSD_SCRIPT_PLATFORMS = new Set(["darwin", "freebsd", "openbsd", "netbsd"]);
@@ -355,8 +354,7 @@ Options:
 
 Notes:
   - Everything after -- is appended as command arguments.
-  - The checker always sets PI_OFFLINE=1, TLH_SKIP_UPDATE_CHECK=1,
-    and TLH_SKIP_TELEMETRY=1.
+  - The checker always sets PI_OFFLINE=1 and TLH_SKIP_TELEMETRY=1.
   - By default, the checker auto-detects the installed isolated profile. If no
     profile exists, it falls back to an empty temporary profile.
   - Each invocation creates a fresh temporary profile. All measured runs in

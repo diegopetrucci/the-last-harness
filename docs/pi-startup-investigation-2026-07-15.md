@@ -192,7 +192,6 @@ Where `<profile-source>` is a disposable copy or clone source for an existing is
 
 ```text
 PI_OFFLINE=1
-TLH_SKIP_UPDATE_CHECK=1
 TLH_SKIP_TELEMETRY=1
 ```
 
@@ -203,7 +202,6 @@ workdir="$(mktemp -d)"
 cp -R "<profile-source>" "$workdir/agent"
 PI_CODING_AGENT_DIR="$workdir/agent" \
 PI_OFFLINE=1 \
-TLH_SKIP_UPDATE_CHECK=1 \
 TLH_SKIP_TELEMETRY=1 \
 PI_TIMING=1 \
 PI_STARTUP_BENCHMARK=1 \

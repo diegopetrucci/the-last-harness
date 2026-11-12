@@ -92,10 +92,6 @@ export type TlhAttributionWriteResult = {
   state: TlhCommitAttributionState;
 };
 
-export type TlhUpdateCheckConfig = {
-  enabled?: boolean;
-};
-
 export type TlhTelemetryConfig = {
   enabled?: boolean;
 };
@@ -139,10 +135,6 @@ type TlhContextCapConfig = {
   disabled?: boolean;
 };
 
-type TlhClaudeSkillsConfig = {
-  disabled?: boolean;
-};
-
 type TlhModelVisibilityConfig = {
   disabled?: boolean;
   hidden?: string[];
@@ -166,13 +158,11 @@ export type TlhSettings = {
   tlh?: {
     usageLimits?: TlhUsageLimitsConfig;
     attribution?: TlhAttributionConfig;
-    updateCheck?: TlhUpdateCheckConfig;
     telemetry?: TlhTelemetryConfig;
     tickets?: TlhTicketsConfig;
     primaryAgent?: TlhPrimaryAgentConfig;
     experimental?: TlhExperimentalConfig;
     contextCap?: TlhContextCapConfig;
-    claudeSkills?: TlhClaudeSkillsConfig;
     modelVisibility?: TlhModelVisibilityConfig;
   };
 };

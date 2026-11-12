@@ -377,33 +377,10 @@ function collectSettingsPackageSkillPaths(cwd: string, agentDir: string): SkillS
   return results;
 }
 
-/**
- * Check whether the user has disabled .claude/skills discovery via
- * `tlh.claudeSkills.disabled` in their global agent settings.
- * Mirrors the opt-out check in the primary-agent claude-skills extension,
- * reading directly from the JSON settings file that already exists in this
- * runtime (no SettingsManager import required).
- */
-function isClaudeSkillsDisabled(agentDir: string): boolean {
-  try {
-    const settings = readOptionalJsonFile(path.join(agentDir, "settings.json"), "user settings");
-    if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
-    const tlh = (settings as { tlh?: unknown }).tlh;
-    if (!tlh || typeof tlh !== "object" || Array.isArray(tlh)) return false;
-    const claudeSkills = (tlh as { claudeSkills?: unknown }).claudeSkills;
-    if (!claudeSkills || typeof claudeSkills !== "object" || Array.isArray(claudeSkills))
-      return false;
-    return (claudeSkills as { disabled?: unknown }).disabled === true;
-  } catch {
-    return false;
-  }
-}
-
 function buildSkillPaths(cwd: string, agentDir: string): SkillSearchPath[] {
   const projectConfigDir = getProjectConfigDir(cwd);
   const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
   const projectLegacyAgentsDir = path.join(cwd, ".agents");
-  const claudeDisabled = isClaudeSkillsDisabled(agentDir);
   const skillPaths: SkillSearchPath[] = [
     { path: path.join(projectConfigDir, "skills"), source: "project" },
     ...(hasCustomPiAgentDir() && isGlobalAgentsDir(projectLegacyAgentsDir)
@@ -419,12 +396,8 @@ function buildSkillPaths(cwd: string, agentDir: string): SkillSearchPath[] {
     ...collectSettingsSkillPaths(cwd, agentDir),
     // .claude/skills roots — ranked below their non-Claude equivalents so that a
     // same-named skill in .pi/skills or .agents/skills always wins.
-    ...(claudeDisabled
-      ? []
-      : [
-          { path: path.join(cwd, ".claude", "skills"), source: "project-claude" as const },
-          { path: path.join(os.homedir(), ".claude", "skills"), source: "user-claude" as const },
-        ]),
+    { path: path.join(cwd, ".claude", "skills"), source: "project-claude" },
+    { path: path.join(os.homedir(), ".claude", "skills"), source: "user-claude" },
   ];
 
   const deduped = new Map<string, SkillSearchPath>();
