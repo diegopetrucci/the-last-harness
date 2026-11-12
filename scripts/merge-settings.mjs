@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageFilterDisables, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { ANTHROPIC_AUTH_EXTENSION_ID, criticalDefaultExtensionOptOutIds, defaultExtensionPackageFilterDisables, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, MCPORTER_EXTENSION_ID, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { cloneMcpAdapterEntries, evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterLegacyFloorSource, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, mcpAdapterPackageIdentities, sameMcpAdapterEntries, } from "./lib/mcp-adapter-cutover.mjs";
 import { isLocalPackageSource, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
@@ -16,7 +16,6 @@ const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
 const TLH_CHANGELOG_SENTINEL = "9999.0.0";
 const HARNESS_PACKAGE_IDENTITY = packageIdentity(DEFAULT_PACKAGE_SOURCE);
 const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
-const MCPORTER_EXTENSION_ID = "mcporter";
 function usage() {
     return `Usage: node scripts/merge-settings.mjs [defaults.json] [options]
 
@@ -184,7 +183,7 @@ function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds
     // Strip the anthropic-auth warning suppression from the defaults clone when
     // that extension is disabled, so the merge engine cannot re-introduce
     // warnings.anthropicExtraUsage into an opted-out user's settings on update.
-    if (disabledIds.has("anthropic-auth")) {
+    if (disabledIds.has(ANTHROPIC_AUTH_EXTENSION_ID)) {
         const warnings = isPlainObject(next.warnings) ? next.warnings : undefined;
         if (warnings?.anthropicExtraUsage !== undefined) {
             delete warnings.anthropicExtraUsage;

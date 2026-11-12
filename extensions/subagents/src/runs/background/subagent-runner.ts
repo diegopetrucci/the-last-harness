@@ -17,11 +17,11 @@ import {
 } from "../../shared/types.ts";
 import { DEFAULT_CONTROL_CONFIG } from "../shared/subagent-control.ts";
 import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
+import { MAX_PARALLEL_CONCURRENCY } from "../../shared/parallel-limits.ts";
 import {
   type RunnerSubagentStep as SubagentStep,
   type SubagentRunPlan,
   mapConcurrent,
-  MAX_PARALLEL_CONCURRENCY,
   DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
   Semaphore,
 } from "../shared/parallel-utils.ts";

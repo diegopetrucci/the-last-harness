@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
+import { disabledDefaultExtensionIds, MCPORTER_EXTENSION_ID, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
 import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare } from "./lib/tlh-install-paths.mjs";
 import { evaluateMcpAdapterCutover } from "./lib/mcp-adapter-cutover.mjs";
@@ -527,9 +527,9 @@ function addMcpAndWebSearchCheck(results, packageRoot, agentDir, settings) {
     const defaultExtensions = readDefaultExtensions(defaultExtensionsPath(packageRoot), {
         allowMissing: false,
     });
-    const mcporter = extensionById(defaultExtensions, "mcporter");
+    const mcporter = extensionById(defaultExtensions, MCPORTER_EXTENSION_ID);
     const webAccess = extensionById(defaultExtensions, "pi-web-access");
-    const mcpEnabled = extensionEnabled(settings, defaultExtensions, "mcporter");
+    const mcpEnabled = extensionEnabled(settings, defaultExtensions, MCPORTER_EXTENSION_ID);
     const webEnabled = extensionEnabled(settings, defaultExtensions, "pi-web-access");
     const mcpPresent = extensionPresent(settings, mcporter);
     const webPresent = extensionPresent(settings, webAccess);

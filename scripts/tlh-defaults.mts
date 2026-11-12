@@ -6,6 +6,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import {
+  ANTHROPIC_AUTH_EXTENSION_ID,
+  MCPORTER_EXTENSION_ID,
   RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
   defaultExtensionPackageFilterDisables,
   disabledDefaultExtensionIds as disabledIdsFromSettings,
@@ -56,7 +58,6 @@ type Settings = JsonObject & {
 };
 
 const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
-const MCPORTER_EXTENSION_ID = "mcporter";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -601,7 +602,7 @@ function commandDisable(
   if (extension.id === MCPORTER_EXTENSION_ID) {
     applyBuiltinMcpExclusionOnDisable(settings);
   }
-  if (extension.id === "anthropic-auth") {
+  if (extension.id === ANTHROPIC_AUTH_EXTENSION_ID) {
     return applyAnthropicWarningOnDisable(settings);
   }
   return false;
@@ -626,7 +627,7 @@ function commandEnable(
   ) {
     applyBuiltinMcpExclusionOnEnable(settings);
   }
-  if (extension.id === "anthropic-auth") {
+  if (extension.id === ANTHROPIC_AUTH_EXTENSION_ID) {
     return applyAnthropicWarningOnEnable(settings);
   }
   return false;

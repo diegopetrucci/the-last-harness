@@ -35,21 +35,9 @@ export type ProjectAgentGuidanceTrustState =
   | "not-evaluated"
   | "unavailable";
 
-const ROLE_FILENAMES: Readonly<Record<ProjectAgentGuidanceRole, string>> = {
-  architect: "ARCHITECT_PROMPT_APPEND.md",
-  rush: "RUSH_PROMPT_APPEND.md",
-  product: "PRODUCT_PROMPT_APPEND.md",
-  "bug-hunter": "BUG-HUNTER_PROMPT_APPEND.md",
-  developer: "DEVELOPER_PROMPT_APPEND.md",
-  "test-runner": "TEST-RUNNER_PROMPT_APPEND.md",
-  "code-reviewer": "CODE-REVIEWER_PROMPT_APPEND.md",
-  "repo-scout": "REPO-SCOUT_PROMPT_APPEND.md",
-  "diff-summarizer": "DIFF-SUMMARIZER_PROMPT_APPEND.md",
-  librarian: "LIBRARIAN_PROMPT_APPEND.md",
-  "web-scout": "WEB-SCOUT_PROMPT_APPEND.md",
-  oracle: "ORACLE_PROMPT_APPEND.md",
-  contrarian: "CONTRARIAN_PROMPT_APPEND.md",
-};
+const ROLE_FILENAMES: Readonly<Record<ProjectAgentGuidanceRole, string>> = Object.fromEntries(
+  PROJECT_AGENT_GUIDANCE_ROLES.map((role) => [role, `${role.toUpperCase()}_PROMPT_APPEND.md`]),
+) as Record<ProjectAgentGuidanceRole, string>;
 
 export type ProjectAgentGuidanceDiagnosticCode =
   | "invalid-cwd"

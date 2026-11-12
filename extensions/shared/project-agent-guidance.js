@@ -13,21 +13,7 @@ export const PROJECT_AGENT_GUIDANCE_ROLES = [
     ...PACKAGED_PRIMARY_AGENT_ROLES,
     ...PACKAGED_MINOR_AGENT_ROLES,
 ];
-const ROLE_FILENAMES = {
-    architect: "ARCHITECT_PROMPT_APPEND.md",
-    rush: "RUSH_PROMPT_APPEND.md",
-    product: "PRODUCT_PROMPT_APPEND.md",
-    "bug-hunter": "BUG-HUNTER_PROMPT_APPEND.md",
-    developer: "DEVELOPER_PROMPT_APPEND.md",
-    "test-runner": "TEST-RUNNER_PROMPT_APPEND.md",
-    "code-reviewer": "CODE-REVIEWER_PROMPT_APPEND.md",
-    "repo-scout": "REPO-SCOUT_PROMPT_APPEND.md",
-    "diff-summarizer": "DIFF-SUMMARIZER_PROMPT_APPEND.md",
-    librarian: "LIBRARIAN_PROMPT_APPEND.md",
-    "web-scout": "WEB-SCOUT_PROMPT_APPEND.md",
-    oracle: "ORACLE_PROMPT_APPEND.md",
-    contrarian: "CONTRARIAN_PROMPT_APPEND.md",
-};
+const ROLE_FILENAMES = Object.fromEntries(PROJECT_AGENT_GUIDANCE_ROLES.map((role) => [role, `${role.toUpperCase()}_PROMPT_APPEND.md`]));
 const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
 const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
 function errorCode(error) {

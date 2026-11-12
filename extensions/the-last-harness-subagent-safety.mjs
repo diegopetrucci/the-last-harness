@@ -1,5 +1,6 @@
 /** @typedef {import("@earendil-works/pi-coding-agent").ExtensionAPI} ExtensionAPI */
 
+import { PACKAGED_MINOR_AGENT_ROLES } from "./shared/project-agent-provenance.js";
 import {
   blockForcedSystemPrompt,
   CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION,
@@ -15,17 +16,9 @@ import { isTlhNoDeveloperSessionActive } from "./the-last-harness/project-agent-
  * @property {(() => void)=} registerParent
  */
 
-const ALLOWED_SUBAGENTS = Object.freeze([
-  "developer",
-  "test-runner",
-  "code-reviewer",
-  "repo-scout",
-  "diff-summarizer",
-  "librarian",
-  "web-scout",
-  "oracle",
-  "contrarian",
-]);
+// Derived from the shared packaged roster (lightweight module: only node:os/path).
+/** @type {readonly string[]} */
+const ALLOWED_SUBAGENTS = Object.freeze([...PACKAGED_MINOR_AGENT_ROLES]);
 export const SAFE_SUBAGENT_ACTIONS = Object.freeze([
   "list",
   "get",
