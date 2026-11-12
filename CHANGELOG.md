@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Documented that Herdr.app v0.1.15+ ships a built-in TLH entry that the installer's `programs.tlh` entry is layered over ([#909](https://github.com/diegopetrucci/the-last-harness/pull/909)).
 - Removed the startup tip for the retired disabled mode ([#895](https://github.com/diegopetrucci/the-last-harness/pull/895)).
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
