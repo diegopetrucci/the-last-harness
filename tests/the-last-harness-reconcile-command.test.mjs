@@ -83,10 +83,6 @@ test("/reconcile registers as a command", () => {
   assert.ok(command.description?.length > 0, "command should have a description");
 });
 
-// ---------------------------------------------------------------------------
-// Unknown-provider defer semantics (ts-7w6o)
-// ---------------------------------------------------------------------------
-
 test("/reconcile non-TUI: no provider → defer message, no drift computed, no state written", async (t) => {
   // When ctx.model is undefined (no provider), non-TUI must emit a single defer
   // message and return without touching settings or reconcile state.
@@ -1205,9 +1201,7 @@ test("/reconcile TUI: Reset all reports acknowledgment persistence failure in su
 // ---------------------------------------------------------------------------
 
 test("/reconcile TUI: Reset all isolates a mid-batch write failure and reports it without aborting the batch", async (t) => {
-  // Regression guard for ts-4um8: a throw mid-loop must not abort the batch.
-  // Remaining roles must still be attempted; earlier successes must be acknowledged;
-  // failed roles must not be acknowledged; the summary must call out the failure.
+  // A failed role must not prevent remaining roles from being attempted.
   //
   // Drift order: primary agents first (architect → bug-hunter), subagents after (developer).
   // Mock runtime: delegates for architect (success before failure), throws for bug-hunter

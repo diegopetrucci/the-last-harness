@@ -175,10 +175,7 @@ export function splitKnownThinkingSuffix(model: string | undefined): {
   return { baseModel: model.slice(0, colon), thinkingSuffix: `:${suffix}` };
 }
 
-function applyThinkingSuffix(
-  model: string | undefined,
-  thinking: ThinkingLevel | undefined,
-): string | undefined {
+export function applyThinkingSuffix(model: string, thinking: ThinkingLevel | undefined): string {
   if (!model || !thinking) {
     return model;
   }

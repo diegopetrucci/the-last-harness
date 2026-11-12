@@ -11,10 +11,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createProviderAuthHealthStore } from "../extensions/the-last-harness/provider-auth-health.ts";
-import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
 import {
   ARCHITECT_BRANCH,
   createClock,
+  subagentEvent,
 } from "./the-last-harness-provider-auth-health-test-helpers.mjs";
 import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 import {
@@ -58,18 +58,6 @@ function createNotifyCtx({
  */
 function countReauthWarnings(notifyCalls) {
   return notifyCalls.filter((c) => c.level === "warning" && c.message.includes("/login")).length;
-}
-
-/** Build a subagent tool-call event for a given model string. */
-function subagentEvent(model) {
-  return {
-    toolName: "subagent",
-    input: {
-      agent: "contrarian",
-      task: "Stress-test the plan",
-      model,
-    },
-  };
 }
 
 /**
@@ -867,13 +855,7 @@ test("provider can be notified on retry when ctx.ui.notify threw on a previous c
     const ctxWithThrowingUi = {
       cwd: process.cwd(),
       sessionManager: {
-        getBranch: () => [
-          {
-            type: "custom",
-            customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-            data: { selected: "architect" },
-          },
-        ],
+        getBranch: () => ARCHITECT_BRANCH,
       },
       ui: {
         notify() {
@@ -902,13 +884,7 @@ test("provider can be notified on retry when ctx.ui.notify threw on a previous c
 
     const { ctx: workingCtx, notifyCalls } = createNotifyCtx({ getProviderAuth });
     workingCtx.sessionManager = {
-      getBranch: () => [
-        {
-          type: "custom",
-          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-          data: { selected: "architect" },
-        },
-      ],
+      getBranch: () => ARCHITECT_BRANCH,
     };
 
     await toolCall(subagentEvent("anthropic/claude-opus-4"), workingCtx);

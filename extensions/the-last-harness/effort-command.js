@@ -3,15 +3,8 @@ import { ThinkingSelectorComponent, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord, readText } from "./common.js";
 import { safeTlhProfileFilePath, withLockedTlhSettingsWrite } from "./profile-state.js";
 import { readPrimaryOverride } from "./model-effort-reconcile.js";
-import { getTlhDurableThinkingLevel, getTlhGlobalSettings, getTlhPrimaryEffortOverride, isTlhPrimaryAgentSelection, writeTlhPrimaryAgentEffortOverride, } from "./primary-agent-runtime-settings.js";
+import { getTlhDurableThinkingLevel, getTlhGlobalSettings, getTlhPrimaryEffortOverride, isTlhPrimaryAgentSelection, parseTlhSettingsContent, writeTlhPrimaryAgentEffortOverride, } from "./primary-agent-runtime-settings.js";
 import { getAvailableThinkingLevels, isThinkingLevel, setExtensionThinkingLevel, } from "./thinking.js";
-function parseSettingsObject(content) {
-    const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
-    if (!isRecord(parsed)) {
-        throw new Error("settings.json must contain a JSON object");
-    }
-    return parsed;
-}
 function readTlhThinkingDefault(primary) {
     const settingsPath = safeTlhProfileFilePath("settings.json");
     const content = settingsPath ? readText(settingsPath) : undefined;
@@ -19,7 +12,7 @@ function readTlhThinkingDefault(primary) {
         return undefined;
     }
     try {
-        const settings = parseSettingsObject(content);
+        const settings = parseTlhSettingsContent(content);
         if (primary !== undefined) {
             const tlh = settings.tlh;
             const primaryAgent = isRecord(tlh) ? tlh.primaryAgent : undefined;
@@ -41,7 +34,7 @@ function readTlhThinkingDefault(primary) {
 }
 function persistTlhThinkingDefault(cwd, level) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write thinking defaults outside the isolated TLH profile.", (current) => {
-        const settings = current && current.trim() ? parseSettingsObject(current) : {};
+        const settings = current && current.trim() ? parseTlhSettingsContent(current) : {};
         if (settings.defaultThinkingLevel === level) {
             return { changed: false };
         }

@@ -1,10 +1,10 @@
 // Generated from extensions/the-last-harness/update-check.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { TLH_LATEST_RELEASE_API_URL, TLH_MAIN_COMPARE_API_URL, TLH_NAME, TLH_RELEASES_URL, TLH_UPDATE_CHECK_INTERVAL_MS, TLH_UPDATE_CHECK_TIMEOUT_MS, } from "./constants.js";
 import { compareTlhVersions, getTlhVersion, isNewerTlhVersion, normalizeTlhVersion, } from "./package-version.js";
 import { readTlhInstallNotice } from "./install-state.js";
 import { readTlhInstallState, readTlhStartupState, tlhStartupStatePath, updateTlhStartupState, } from "./profile-state.js";
 import { isRecord } from "./common.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAIN_TRACK_COMPARISON_STATUSES = new Set([
     "behind",
@@ -374,7 +374,7 @@ export function __resetTlhUpdateCheckForTests() {
 }
 function getTlhUpdateCheckConfig(cwd) {
     try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
+        const settings = getTlhGlobalSettings(cwd);
         return settings.tlh?.updateCheck;
     }
     catch {

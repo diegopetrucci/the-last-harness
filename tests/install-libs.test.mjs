@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -18,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { gitCheckoutIo, listBackupRefs, runCommand } from "./install-git-test-helpers.mjs";
 
 import {
   criticalGitSourceSpec,
@@ -42,15 +42,6 @@ function tempFixture(t, prefix = "tlh-install-lib-test-") {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
-}
-
-function runCommand(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    ...options,
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout || String(result.error));
-  return result.stdout.trim();
 }
 
 function runGit(args, options = {}) {
@@ -78,26 +69,6 @@ function createManagedGitCheckout(t) {
   runGit(["clone", originDir, targetDir]);
 
   return { root, agentDir, originDir, targetDir };
-}
-
-function gitCheckoutIo(warnings) {
-  return {
-    runCommand(_config, commandArgs, options = {}) {
-      const [command, ...args] = commandArgs;
-      runCommand(command, args, {
-        cwd: options.cwd,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
-      });
-    },
-    warn(message) {
-      warnings.push(message);
-    },
-  };
-}
-
-function listBackupRefs(targetDir) {
-  const refs = runGit(["-C", targetDir, "for-each-ref", "refs/tlh-backup", "--format=%(refname)"]);
-  return refs === "" ? [] : refs.split("\n");
 }
 
 function npmInstallMarkerPath(targetDir) {

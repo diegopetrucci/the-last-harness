@@ -1,6 +1,6 @@
 // Generated from extensions/the-last-harness/experimental.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 export const SESSION_MIRROR_OBSERVER_FEATURE = "session-mirror-observer";
 export const NO_DEVELOPER_FEATURE = "no-developer";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
@@ -71,7 +71,7 @@ function enabledPrimaryExperimentalPrompts(primary, config) {
 }
 export function getTlhExperimentalConfig(cwd) {
     try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
+        const settings = getTlhGlobalSettings(cwd);
         return settings.tlh?.experimental;
     }
     catch {

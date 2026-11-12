@@ -19,6 +19,7 @@ import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harnes
 import {
   ARCHITECT_BRANCH,
   createClock,
+  subagentEvent,
 } from "./the-last-harness-provider-auth-health-test-helpers.mjs";
 import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 import {
@@ -49,21 +50,6 @@ function createToolCallCtx({
       ...(getProviderAuth ? { getProviderAuth } : {}),
     },
     model,
-  };
-}
-
-/**
- * Build a subagent tool-call event with a mutated model already set (as
- * applyProviderAwareSubagentModels would produce).
- */
-function subagentEvent(model) {
-  return {
-    toolName: "subagent",
-    input: {
-      agent: "contrarian",
-      task: "Stress-test the plan",
-      model,
-    },
   };
 }
 

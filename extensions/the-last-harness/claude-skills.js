@@ -2,7 +2,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 function getUserClaudeSkills() {
     return join(homedir(), ".claude", "skills");
 }
@@ -38,7 +38,7 @@ function findGitRoot(startDir) {
 }
 function isClaudeSkillsDisabled(cwd) {
     try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
+        const settings = getTlhGlobalSettings(cwd);
         return settings.tlh?.claudeSkills?.disabled === true;
     }
     catch {

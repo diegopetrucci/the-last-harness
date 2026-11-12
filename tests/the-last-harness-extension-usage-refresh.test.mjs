@@ -20,6 +20,17 @@ const footerData = {
   getExtensionStatuses: () => new Map(),
 };
 
+function writeUsageRefreshProfile(agentDir) {
+  writeFileSync(
+    join(agentDir, "settings.json"),
+    `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+  );
+  writeFileSync(
+    join(agentDir, "tlh", "install-state.json"),
+    `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
+  );
+}
+
 function createPi() {
   const handlers = new Map();
   let activeTools = ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"];
@@ -341,14 +352,7 @@ test("subscription usage footer first render stays synchronous before the lazy s
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
-    writeFileSync(
-      join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
-    );
-    writeFileSync(
-      join(agentDir, "tlh", "install-state.json"),
-      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
-    );
+    writeUsageRefreshProfile(agentDir);
 
     globalThis.fetch = async () => {
       fetchCalls += 1;
@@ -434,14 +438,7 @@ test("subscription usage refresh requests a footer render when a runtime overrid
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
-    writeFileSync(
-      join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
-    );
-    writeFileSync(
-      join(agentDir, "tlh", "install-state.json"),
-      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
-    );
+    writeUsageRefreshProfile(agentDir);
 
     globalThis.fetch = async () => {
       fetchCalls += 1;
@@ -525,14 +522,7 @@ test("subscription usage refresh redraws the footer when the event context diffe
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
-    writeFileSync(
-      join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
-    );
-    writeFileSync(
-      join(agentDir, "tlh", "install-state.json"),
-      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
-    );
+    writeUsageRefreshProfile(agentDir);
 
     globalThis.fetch = async () => {
       fetchCalls += 1;
@@ -631,14 +621,7 @@ test("turn_end refresh with a context distinct from registration redraws the foo
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
-    writeFileSync(
-      join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
-    );
-    writeFileSync(
-      join(agentDir, "tlh", "install-state.json"),
-      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
-    );
+    writeUsageRefreshProfile(agentDir);
 
     globalThis.fetch = async () => {
       fetchCalls += 1;
@@ -734,14 +717,7 @@ test("pending refresh before session_shutdown does not redraw the old footer", a
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
-    writeFileSync(
-      join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
-    );
-    writeFileSync(
-      join(agentDir, "tlh", "install-state.json"),
-      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
-    );
+    writeUsageRefreshProfile(agentDir);
 
     // All fetches are deferred so the session_start refresh is in flight when
     // session_shutdown fires.
@@ -842,14 +818,7 @@ test("pending refresh before session switch redraws the new session's footer whe
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
-    writeFileSync(
-      join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
-    );
-    writeFileSync(
-      join(agentDir, "tlh", "install-state.json"),
-      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
-    );
+    writeUsageRefreshProfile(agentDir);
 
     // All fetches are deferred so session_start A's initial refresh is in
     // flight when session_start B fires. Session A and B share the same OAuth
@@ -1058,14 +1027,7 @@ async function withUsageEnv(run) {
     process.env.TLH_SKIP_UPDATE_CHECK = "1";
     mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
-    writeFileSync(
-      join(agentDir, "settings.json"),
-      `${JSON.stringify({ tlh: { primaryAgent: { applyModel: false, applyThinking: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
-    );
-    writeFileSync(
-      join(agentDir, "tlh", "install-state.json"),
-      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
-    );
+    writeUsageRefreshProfile(agentDir);
     const authStorage = {
       runtimeOverrides: new Map(),
       get: (provider) =>

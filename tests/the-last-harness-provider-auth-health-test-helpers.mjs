@@ -17,3 +17,14 @@ export function createClock(start = 0) {
     },
   };
 }
+
+export function subagentEvent(model) {
+  return {
+    toolName: "subagent",
+    input: {
+      agent: "contrarian",
+      task: "Stress-test the plan",
+      model,
+    },
+  };
+}

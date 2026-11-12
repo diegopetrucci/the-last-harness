@@ -34,7 +34,7 @@ import {
   type SocketListener,
 } from "./local-bridge-socket.js";
 
-export const SESSION_MIRROR_REPLY_CHANNEL_DEADLINE_MS = 5_000;
+const SESSION_MIRROR_REPLY_CHANNEL_DEADLINE_MS = 5_000;
 
 type ConnectionFactory = (options: { readonly path: string }) => object;
 type TimerHandle = ReturnType<typeof setTimeout>;

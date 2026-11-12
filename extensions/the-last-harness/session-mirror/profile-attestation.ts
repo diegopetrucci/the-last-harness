@@ -9,12 +9,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
  * `directory-only` is provisional: callers must invoke this boundary again
  * for the concrete session file immediately before publication.
  */
-export const SESSION_MIRROR_ATTESTATION_PHASES = Object.freeze([
-  "directory-only",
-  "session-file",
-] as const);
-
-export type SessionMirrorAttestationPhase = (typeof SESSION_MIRROR_ATTESTATION_PHASES)[number];
+export type SessionMirrorAttestationPhase = "directory-only" | "session-file";
 
 /** Stable, aggregate-only reasons for a rejected attestation. */
 export const SESSION_MIRROR_ATTESTATION_REASONS = Object.freeze([

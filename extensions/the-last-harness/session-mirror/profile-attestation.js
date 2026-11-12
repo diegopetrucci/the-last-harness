@@ -3,10 +3,6 @@ import { lstatSync, realpathSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-export const SESSION_MIRROR_ATTESTATION_PHASES = Object.freeze([
-    "directory-only",
-    "session-file",
-]);
 export const SESSION_MIRROR_ATTESTATION_REASONS = Object.freeze([
     "missing-profile-selection",
     "missing-home",

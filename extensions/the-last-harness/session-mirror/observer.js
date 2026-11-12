@@ -1,19 +1,16 @@
 // Generated from extensions/the-last-harness/session-mirror/observer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
+import { SESSION_MIRROR_OBSERVER_PROFILE, } from "./status-allowlists.js";
 import { projectSessionMirrorSnapshot, } from "./session-adapter.js";
-export const SESSION_MIRROR_OBSERVER_DEFAULT_QUEUE_CAPACITY = 8;
-export const SESSION_MIRROR_OBSERVER_MAX_QUEUE_CAPACITY = 32;
 const MAX_COUNTER = 2_000_000_000;
 const MAX_METADATA_CHARACTERS = 256;
-const DEFAULT_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";
-const DEFAULT_SESSION_SCHEMA_VERSION = "pi-session-schema-v3";
 function nextCounter(value) {
     return value >= MAX_COUNTER ? 1 : value + 1;
 }
 function boundedQueueCapacity(value) {
     if (!Number.isSafeInteger(value) || value === undefined || value < 1) {
-        return SESSION_MIRROR_OBSERVER_DEFAULT_QUEUE_CAPACITY;
+        return SESSION_MIRROR_OBSERVER_PROFILE.defaultQueueCapacity;
     }
-    return Math.min(value, SESSION_MIRROR_OBSERVER_MAX_QUEUE_CAPACITY);
+    return Math.min(value, SESSION_MIRROR_OBSERVER_PROFILE.maxQueueCapacity);
 }
 function boundedMetadata(value, fallback) {
     if (typeof value !== "string" || value.length === 0 || value.length > MAX_METADATA_CHARACTERS) {
@@ -125,8 +122,8 @@ export function createSessionMirrorObserverRuntime(options = {}) {
     const sink = options.sink ?? (() => undefined);
     const attest = options.attest ?? (() => ({ ok: false, reason: "unsafe-profile-metadata" }));
     const project = options.project ?? projectSessionMirrorSnapshot;
-    const runtimeVersion = boundedMetadata(options.runtimeVersion, DEFAULT_RUNTIME_VERSION);
-    const sessionSchemaVersion = boundedMetadata(options.sessionSchemaVersion, DEFAULT_SESSION_SCHEMA_VERSION);
+    const runtimeVersion = boundedMetadata(options.runtimeVersion, SESSION_MIRROR_OBSERVER_PROFILE.runtimeVersion);
+    const sessionSchemaVersion = boundedMetadata(options.sessionSchemaVersion, SESSION_MIRROR_OBSERVER_PROFILE.sessionSchemaVersion);
     const getSessionManager = options.getSessionManager ?? (() => options.sessionManager);
     const state = initialState(queueCapacity);
     let activeSink;

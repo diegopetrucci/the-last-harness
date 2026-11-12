@@ -25,6 +25,31 @@ const {
   sendTlhLaunchTelemetry,
 } = await jiti.import("../extensions/the-last-harness/launch-telemetry.ts");
 
+async function captureLaunchPayload(fixture, run, env = {}) {
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, status: 200, statusText: "OK" };
+  };
+  try {
+    await withEnv(
+      {
+        HOME: fixture.home,
+        PI_CODING_AGENT_DIR: fixture.agent,
+        TLH_TELEMETRY_NAMESPACE: "test-namespace",
+        TLH_TELEMETRY_APP_ID: "test-app-id",
+        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
+        ...env,
+      },
+      run,
+    );
+    return requests;
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
 test("launch telemetry ignores retired experimental flags and reuses the existing install ID", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-test-", { test: t });
   const originalState = writeTelemetryState(fixture);
@@ -49,38 +74,25 @@ test("launch telemetry ignores retired experimental flags and reuses the existin
     )}\n`,
   );
 
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace/",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "openai-codex",
-          modelId: "openai-codex/gpt-4o",
-          primaryAgentName: "architect",
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
+  const requests = await captureLaunchPayload(
+    fixture,
+    async () => {
+      await sendTlhLaunchTelemetry({
+        version: "1.2.3",
+        providerId: "openai-codex",
+        modelId: "openai-codex/gpt-4o",
+        primaryAgentName: "architect",
+      });
+    },
+    {
+      TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace/",
+      PI_OFFLINE: undefined,
+      TLH_SKIP_TELEMETRY: undefined,
+      TLH_TELEMETRY_DISABLED: undefined,
+      PI_TELEMETRY: undefined,
+    },
+  );
+  const request = requests.at(-1);
 
   assert.ok(request, "expected telemetry fetch call");
   assert.equal(request.url, "https://telemetry.example.test/namespace/test-namespace/");
@@ -133,34 +145,15 @@ test("launch telemetry maps unknown provider and primary-agent identifiers to cu
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-test-", { test: t });
   writeTelemetryState(fixture);
 
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "acme-internal",
-          modelId: "acme-internal/super-secret-model",
-          primaryAgentName: "skunkworks",
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
+  const requests = await captureLaunchPayload(fixture, async () => {
+    await sendTlhLaunchTelemetry({
+      version: "1.2.3",
+      providerId: "acme-internal",
+      modelId: "acme-internal/super-secret-model",
+      primaryAgentName: "skunkworks",
+    });
+  });
+  const request = requests.at(-1);
 
   assert.ok(request, "expected telemetry fetch call");
   const [event] = JSON.parse(request.options?.body ?? "[]");
@@ -178,29 +171,10 @@ test("launch telemetry skips when the isolated profile has telemetry opt-out ena
     `${JSON.stringify({ tlh: { telemetry: { enabled: false }, experimental: { enabledFeatures: ["delta-follow-up-reviews"] } } }, null, 2)}\n`,
   );
 
-  const previousFetch = globalThis.fetch;
-  let fetchCalls = 0;
-  globalThis.fetch = async () => {
-    fetchCalls += 1;
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3", modelId: "gpt-4o" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
+  const requests = await captureLaunchPayload(fixture, async () => {
+    await sendTlhLaunchTelemetry({ version: "1.2.3", modelId: "gpt-4o" });
+  });
+  const fetchCalls = requests.length;
 
   assert.equal(fetchCalls, 0);
 });
@@ -213,44 +187,15 @@ test("launch telemetry skips when telemetry settings are malformed", async (t) =
     `${JSON.stringify({ tlh: { telemetry: { enabled: "nope" }, experimental: { enabledFeatures: ["ci-failure-investigation"] } } }, null, 2)}\n`,
   );
 
-  const previousFetch = globalThis.fetch;
-  let fetchCalls = 0;
-  globalThis.fetch = async () => {
-    fetchCalls += 1;
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3", modelId: "gpt-4o" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
+  const requests = await captureLaunchPayload(fixture, async () => {
+    await sendTlhLaunchTelemetry({ version: "1.2.3", modelId: "gpt-4o" });
+  });
+  const fetchCalls = requests.length;
 
   assert.equal(fetchCalls, 0);
 });
 
-// ── Environment opt-out tests ─────────────────────────────────────────────────
-//
-// Each row exercises one independent opt-out path. The truthy flags use isTruthyEnvFlag
-// ("1", "true", "yes" are the accepted values). PI_TELEMETRY uses isFalseyEnvFlag ("0",
-// "false", "no" suppress telemetry; a truthy value like "1" must NOT suppress it).
-//
-// The table format keeps coverage compact and makes the semantics obvious at a glance.
-//
-// Existing tlh.telemetry.enabled:false coverage stays in the test above; this table
-// covers only the environment-variable paths.
-
+// Truthy opt-out flags suppress telemetry; PI_TELEMETRY suppresses falsey values.
 const ENV_OPT_OUT_CASES = [
   // [description, envOverride, expectedFetchCalls]
   [
@@ -310,30 +255,14 @@ for (const [description, envOverride, expectedFetchCalls] of ENV_OPT_OUT_CASES) 
     const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-env-optout-", { test: t });
     writeTelemetryState(fixture);
 
-    const previousFetch = globalThis.fetch;
-    let fetchCalls = 0;
-    globalThis.fetch = async () => {
-      fetchCalls += 1;
-      return { ok: true, status: 200, statusText: "OK" };
-    };
-
-    try {
-      await withEnv(
-        {
-          HOME: fixture.home,
-          PI_CODING_AGENT_DIR: fixture.agent,
-          TLH_TELEMETRY_NAMESPACE: "test-namespace",
-          TLH_TELEMETRY_APP_ID: "test-app-id",
-          TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-          ...envOverride,
-        },
-        async () => {
-          await sendTlhLaunchTelemetry({ version: "1.2.3", modelId: "gpt-4o" });
-        },
-      );
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
+    const requests = await captureLaunchPayload(
+      fixture,
+      async () => {
+        await sendTlhLaunchTelemetry({ version: "1.2.3", modelId: "gpt-4o" });
+      },
+      envOverride,
+    );
+    const fetchCalls = requests.length;
 
     assert.equal(fetchCalls, expectedFetchCalls, description);
   });
@@ -395,38 +324,24 @@ test("launch telemetry emits Tlh.Runtime.modelEffort from snapshot.modelId and t
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-thinking-", { test: t });
   writeTelemetryState(fixture);
 
-  const previousFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({
-          version: "1.2.3",
-          providerId: "anthropic",
-          modelId: "claude-opus-4-5",
-          thinkingLevel: "high",
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
+  const requests = await captureLaunchPayload(
+    fixture,
+    async () => {
+      await sendTlhLaunchTelemetry({
+        version: "1.2.3",
+        providerId: "anthropic",
+        modelId: "claude-opus-4-5",
+        thinkingLevel: "high",
+      });
+    },
+    {
+      PI_OFFLINE: undefined,
+      TLH_SKIP_TELEMETRY: undefined,
+      TLH_TELEMETRY_DISABLED: undefined,
+      PI_TELEMETRY: undefined,
+    },
+  );
+  const request = requests.at(-1);
 
   assert.ok(request, "expected telemetry fetch call");
   const [event] = JSON.parse(request.options?.body ?? "[]");
@@ -438,30 +353,14 @@ test("launch telemetry maps unknown thinkingLevel to unknown and uppercase value
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-thinking-", { test: t });
   writeTelemetryState(fixture);
 
-  const previousFetch = globalThis.fetch;
+  const requests = await captureLaunchPayload(fixture, async () => {
+    await sendTlhLaunchTelemetry({ version: "missing", thinkingLevel: undefined });
+    await sendTlhLaunchTelemetry({ version: "uppercase", thinkingLevel: "High" });
+  });
   const results = {};
-  globalThis.fetch = async (_url, options) => {
+  for (const { options } of requests) {
     const [event] = JSON.parse(options?.body ?? "[]");
     results[event.payload["Tlh.App.version"]] = event.payload["Tlh.Runtime.modelEffort"];
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-      },
-      async () => {
-        await sendTlhLaunchTelemetry({ version: "missing", thinkingLevel: undefined });
-        await sendTlhLaunchTelemetry({ version: "uppercase", thinkingLevel: "High" });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
   }
 
   // No modelId → model side is "unknown"; "High" is not in THINKING_LEVELS (case-sensitive) → "custom".
@@ -489,45 +388,34 @@ test("joinModelEffort degenerate combinations: unknown:unknown, custom:high, and
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-join-", { test: t });
   writeTelemetryState(fixture);
 
-  const previousFetch = globalThis.fetch;
+  const requests = await captureLaunchPayload(
+    fixture,
+    async () => {
+      // "unknown:unknown" — neither side provided
+      await sendTlhLaunchTelemetry({ version: "both-unknown" });
+      // "custom:high" — non-public model + known thinking level
+      await sendTlhLaunchTelemetry({
+        version: "custom-high",
+        modelId: "acme-internal/proprietary-llm",
+        thinkingLevel: "high",
+      });
+      // "claude-opus-4-5:unknown" — public model, no thinking level
+      await sendTlhLaunchTelemetry({
+        version: "model-known-effort-unknown",
+        modelId: "claude-opus-4-5",
+      });
+    },
+    {
+      PI_OFFLINE: undefined,
+      TLH_SKIP_TELEMETRY: undefined,
+      TLH_TELEMETRY_DISABLED: undefined,
+      PI_TELEMETRY: undefined,
+    },
+  );
   const results = {};
-  globalThis.fetch = async (_url, options) => {
+  for (const { options } of requests) {
     const [event] = JSON.parse(options?.body ?? "[]");
     results[event.payload["Tlh.App.version"]] = event.payload["Tlh.Runtime.modelEffort"];
-    return { ok: true, status: 200, statusText: "OK" };
-  };
-
-  try {
-    await withEnv(
-      {
-        HOME: fixture.home,
-        PI_CODING_AGENT_DIR: fixture.agent,
-        TLH_TELEMETRY_NAMESPACE: "test-namespace",
-        TLH_TELEMETRY_APP_ID: "test-app-id",
-        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
-        PI_OFFLINE: undefined,
-        TLH_SKIP_TELEMETRY: undefined,
-        TLH_TELEMETRY_DISABLED: undefined,
-        PI_TELEMETRY: undefined,
-      },
-      async () => {
-        // "unknown:unknown" — neither side provided
-        await sendTlhLaunchTelemetry({ version: "both-unknown" });
-        // "custom:high" — non-public model + known thinking level
-        await sendTlhLaunchTelemetry({
-          version: "custom-high",
-          modelId: "acme-internal/proprietary-llm",
-          thinkingLevel: "high",
-        });
-        // "claude-opus-4-5:unknown" — public model, no thinking level
-        await sendTlhLaunchTelemetry({
-          version: "model-known-effort-unknown",
-          modelId: "claude-opus-4-5",
-        });
-      },
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
   }
 
   assert.equal(

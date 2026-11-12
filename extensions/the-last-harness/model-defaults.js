@@ -70,7 +70,7 @@ export function splitKnownThinkingSuffix(model) {
     }
     return { baseModel: model.slice(0, colon), thinkingSuffix: `:${suffix}` };
 }
-function applyThinkingSuffix(model, thinking) {
+export function applyThinkingSuffix(model, thinking) {
     if (!model || !thinking) {
         return model;
     }
