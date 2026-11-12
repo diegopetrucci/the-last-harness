@@ -21,14 +21,12 @@ import {
   updateTlhStartupState,
 } from "./profile-state.js";
 import { isRecord } from "./common.js";
-import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import type {
   TlhHeaderUpdate,
   TlhInstallNotice,
   TlhInstallState,
   TlhLatestRelease,
   TlhStartupState,
-  TlhUpdateCheckConfig,
 } from "./types.js";
 
 type TlhMainTrackComparisonStatus = "behind" | "ahead" | "identical" | "diverged" | "unavailable";
@@ -219,16 +217,8 @@ function shouldRefreshTlhLatestRelease(state: TlhStartupState): boolean {
   );
 }
 
-function shouldSkipTlhUpdateCheck(cwd: string): boolean {
-  if (
-    !tlhStartupStatePath() ||
-    process.env.PI_OFFLINE ||
-    process.env.PI_SKIP_VERSION_CHECK ||
-    process.env.TLH_SKIP_UPDATE_CHECK
-  ) {
-    return true;
-  }
-  return getTlhUpdateCheckConfig(cwd)?.enabled === false;
+function shouldSkipTlhUpdateCheck(): boolean {
+  return !tlhStartupStatePath() || Boolean(process.env.PI_OFFLINE);
 }
 
 async function fetchLatestTlhRelease(
@@ -302,7 +292,7 @@ export function getTlhMainTrackBehindCount(
   cwd: string,
   installNotice: TlhInstallNotice | undefined = readTlhInstallNotice(),
 ): number | undefined {
-  if (shouldSkipTlhUpdateCheck(cwd)) {
+  if (shouldSkipTlhUpdateCheck()) {
     return undefined;
   }
   const commitSha = getMainTrackCommitSha(installNotice);
@@ -479,7 +469,7 @@ export async function maybeNotifyAvailableTlhUpdate(
   ctx: ExtensionContext,
   options: MaybeNotifyAvailableTlhUpdateOptions = {},
 ): Promise<void> {
-  if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
+  if (shouldSkipTlhUpdateCheck()) {
     return;
   }
   const installNotice = options.installNotice ?? readTlhInstallNotice();
@@ -512,13 +502,4 @@ export function __resetTlhUpdateCheckForTests(): void {
   notifiedTlhUpdateVersions.clear();
   checkedTlhHeaderUpdate = false;
   cachedTlhHeaderUpdate = undefined;
-}
-
-function getTlhUpdateCheckConfig(cwd: string): TlhUpdateCheckConfig | undefined {
-  try {
-    const settings = getTlhGlobalSettings(cwd);
-    return settings.tlh?.updateCheck;
-  } catch {
-    return undefined;
-  }
 }

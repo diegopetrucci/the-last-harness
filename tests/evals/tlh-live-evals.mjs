@@ -292,8 +292,7 @@ export function createContext(args) {
     TLH_SKIP_TELEMETRY: "1",
     TLH_TELEMETRY_DISABLED: "1",
     PI_TELEMETRY: "0",
-    TLH_SKIP_UPDATE_CHECK: "1",
-    PI_SKIP_VERSION_CHECK: "1",
+    PI_OFFLINE: "1",
   };
   const ctx = {
     rootDir,

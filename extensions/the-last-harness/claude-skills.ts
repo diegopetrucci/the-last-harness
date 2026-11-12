@@ -8,8 +8,6 @@ import { dirname, join, resolve } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
-
 /**
  * Return the resolved path to the user-root Claude skills directory.
  * Evaluated lazily (at call time) so changes to HOME in the process environment
@@ -69,15 +67,6 @@ function findGitRoot(startDir: string): string | null {
   }
 }
 
-function isClaudeSkillsDisabled(cwd: string): boolean {
-  try {
-    const settings = getTlhGlobalSettings(cwd);
-    return settings.tlh?.claudeSkills?.disabled === true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Resolve a path to its real path when it exists, otherwise return `null`.
  * Used for deduplication by resolved identity rather than string equality.
@@ -118,10 +107,6 @@ function appendIfNew(candidate: string, seen: Set<string>, skillPaths: string[])
 
 export function registerClaudeSkillsDiscovery(pi: ExtensionAPI): void {
   pi.on("resources_discover", async (event, ctx) => {
-    if (isClaudeSkillsDisabled(event.cwd)) {
-      return undefined;
-    }
-
     const seen = new Set<string>();
     const skillPaths: string[] = [];
 

@@ -23,7 +23,7 @@ function packRepository(destination) {
   const result = spawnSync("npm", ["pack", "--json", "--pack-destination", destination], {
     cwd: repoRoot,
     encoding: "utf8",
-    env: { ...process.env, PI_OFFLINE: "1", TLH_SKIP_TELEMETRY: "1", TLH_SKIP_UPDATE_CHECK: "1" },
+    env: { ...process.env, PI_OFFLINE: "1", TLH_SKIP_TELEMETRY: "1" },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const [pack] = JSON.parse(result.stdout);

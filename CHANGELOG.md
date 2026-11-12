@@ -6,6 +6,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Removed the update-check opt-outs `tlh.updateCheck.enabled`, `TLH_SKIP_UPDATE_CHECK`, and `PI_SKIP_VERSION_CHECK`; `PI_OFFLINE=1` is now the only way to skip the launch update check.
+- Removed the `tlh.claudeSkills.disabled` opt-out; `.claude/skills` discovery is always on and existing settings are ignored.
+- Install and update now always enforce the packaged `compaction.reserveTokens`, overwriting existing values; use `compaction.modelOverrides` for per-model reserves.
 - Bumped the bundled Pi runtime from `1.5.0` to `1.5.2`. Anthropic message threads are now on by default upstream, so live Claude Pro/Max OAuth behavior is a release gate ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892), [#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 
 ### Fixed

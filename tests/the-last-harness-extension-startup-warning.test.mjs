@@ -185,7 +185,7 @@ function withProcessPath(path, callback) {
   }
 }
 
-function writeProfileFixture(agentDir, installState, updateCheckEnabled = false) {
+function writeProfileFixture(agentDir, installState) {
   mkdirSync(join(agentDir, "tlh"), { recursive: true });
   writeFileSync(
     join(agentDir, "settings.json"),
@@ -194,7 +194,6 @@ function writeProfileFixture(agentDir, installState, updateCheckEnabled = false)
         tlh: {
           primaryAgent: { applyModel: false, applyThinking: false },
           telemetry: { enabled: false },
-          updateCheck: updateCheckEnabled ? {} : { enabled: false },
         },
       },
       null,
@@ -252,7 +251,7 @@ async function createExtensionHarness({
     PATH: process.env.PATH,
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+    PI_OFFLINE: process.env.PI_OFFLINE,
     TLH_SKIP_TELEMETRY: process.env.TLH_SKIP_TELEMETRY,
   };
   for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
@@ -262,9 +261,9 @@ async function createExtensionHarness({
   delete process.env.PI_SUBAGENT_CHILD;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   if (updateCheckEnabled) {
-    delete process.env.TLH_SKIP_UPDATE_CHECK;
+    delete process.env.PI_OFFLINE;
   } else {
-    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    process.env.PI_OFFLINE = "1";
   }
   process.env.TLH_SKIP_TELEMETRY = "1";
   for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
@@ -273,7 +272,7 @@ async function createExtensionHarness({
   mkdirSync(cwd, { recursive: true });
   mkdirSync(emptyBinDir, { recursive: true });
   setupWorkspace?.(cwd);
-  writeProfileFixture(agentDir, installState, updateCheckEnabled);
+  writeProfileFixture(agentDir, installState);
   __testing.reset();
   const scheduleDeferredTask = deferredStartupTaskScheduler ?? ((task) => setImmediate(task));
   __testing.setDeferredStartupTaskSchedulerForTests((task) => {

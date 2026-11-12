@@ -12,8 +12,11 @@ Use Node.js (minimum in `engines.node` of `package.json`) from the repository ro
 network access and a PTY. The benchmark creates a temporary `HOME`, isolated
 profile/bin/cwd, npm cache, npm user/global configuration, Git configuration,
 XDG directories, and `TMPDIR`. It runs the installer and package manager in
-those paths, removes inherited credentials, disables telemetry/update checks,
-and intentionally leaves `PI_OFFLINE` unset for the measured first launch.
+those paths, removes inherited credentials, disables telemetry, and intentionally leaves
+`PI_OFFLINE` unset for the measured first launch. Before each measured launch it
+seeds the isolated profile's `tlh/startup-state.json` with a current
+`updateCheck.checkedAt`, so the daily interval guard skips the background GitHub
+update fetch.
 
 Inspect the current CLI without creating a workspace:
 

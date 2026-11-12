@@ -17,6 +17,7 @@ import {
   buildChildEnvironment,
   createBenchmarkWorkspace,
   removeOwnedWorkspace,
+  seedUpdateCheckStartupState,
   writeCredentialFreeTrustMetadata,
   type BenchmarkWorkspace,
   BENCHMARK_ROOT_PREFIX,
@@ -742,6 +743,7 @@ async function prepareFullyLaunchedSeed(
     };
   }
   writeCredentialFreeTrustMetadata(workspace);
+  seedUpdateCheckStartupState(workspace);
   const launch = await measureLaunch(
     workspace,
     buildChildEnvironment(workspace, sourceEnv, { ref: packageRef }),
@@ -1255,6 +1257,7 @@ async function runScenarioSample(
     }
 
     writeCredentialFreeTrustMetadata(workspace);
+    seedUpdateCheckStartupState(workspace);
     const launch = await measureLaunch(
       workspace,
       buildChildEnvironment(workspace, sourceEnv, { ref: selectedRevision }),

@@ -39,7 +39,6 @@ function isolatedEnv(fixture, overrides = {}) {
     PI_CODING_AGENT_DIR: fixture.agent,
     PI_OFFLINE: "1",
     TLH_SKIP_TELEMETRY: "1",
-    TLH_SKIP_UPDATE_CHECK: "1",
     ...overrides,
   };
 }
@@ -166,7 +165,6 @@ test("pinned Pi primary resume applies policy at the provider and execution boun
         tlh: {
           primaryAgent: { enabled: true, selected: "architect" },
           telemetry: { enabled: false },
-          updateCheck: { enabled: false },
         },
       },
       null,
@@ -613,7 +611,6 @@ for (const primaryEnabled of [false, true]) {
           tlh: {
             primaryAgent: { selected: "architect" },
             telemetry: { enabled: false },
-            updateCheck: { enabled: false },
           },
         },
         null,
