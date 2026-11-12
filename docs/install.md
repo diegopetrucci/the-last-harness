@@ -201,6 +201,8 @@ Summaries still grow with the session, so very long sessions can leave little ro
 
 Install and `tlh update` register TLH in the [Herdr](https://herdr.dev) desktop app so it shows TLH's own name, icon, and launcher. This is the only installer write outside the isolated TLH profile.
 
+Herdr.app v0.1.15+ ships its own built-in TLH entry ([herdrdev/herdr-app#676](https://github.com/herdrdev/herdr-app/pull/676)), and Herdr layers `programs.tlh` over it field by field. On those versions the installer entry mainly points `run` at the actual wrapper (a non-default one like `tlh-main`, or one not on the app's `PATH`); on older Herdr.app it also supplies the name and icon.
+
 What is written, in the Herdr.app home (`$HERDR_APP_HOME` when set, otherwise `~/.config/herdr-app`):
 
 - A `programs.tlh` entry in `programs.json`: `{"name": "TLH", "icon": "tlh/tlh.svg", "tint": false, "run": ["<wrapper path>"]}`. `run` is the actual wrapper path the installer wrote, so it differs for installs with a non-default wrapper (for example `tlh-main` for `main`-ref installs). With `--no-wrapper`, `run` is omitted. TLH owns the whole `programs.tlh` object and replaces it on each run; all other programs and top-level keys are preserved.
@@ -221,11 +223,11 @@ Opt out by setting this in `~/.the-last-harness/agent/settings.json`:
 { "tlh": { "herdrApp": { "enabled": false } } }
 ```
 
-The opt-out is persistent, so it applies to later `tlh update` runs too. It skips install/update writes only: it does not remove an existing entry, and it does not stop [uninstall](#uninstall) cleanup.
+The opt-out is persistent, so it applies to later `tlh update` runs too. It skips install/update writes only: it does not remove an existing entry, and it does not stop [uninstall](#uninstall) cleanup. On Herdr.app v0.1.15+, Herdr's built-in TLH entry still applies when TLH writes no entry.
 
 Herdr has a single `programs.tlh` key. Multiple TLH installs on one machine (for example a `tlh-main` dev install alongside a release install, or a fork) overwrite each other's `run`. Uninstall only removes the entry (and then `tlh/tlh.svg`) when this install owns it: `run` is absent or points to this install's wrapper (both compared as physical paths). If `run` points elsewhere, it leaves both untouched and prints a note naming the other run path. Set the opt-out in installs that should not own it.
 
-To undo manually, delete the `tlh` key from `programs` in `programs.json` (back it up first) and remove the `tlh/` folder from the app home.
+To undo manually, delete the `tlh` key from `programs` in `programs.json` (back it up first) and remove the `tlh/` folder from the app home. On v0.1.15+, Herdr then falls back to its built-in TLH entry.
 
 ## Doctor
 
