@@ -6,14 +6,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Added `/skill:herdr-gui-app`, a first-party skill for the Herdr desktop app and its `hc` terminals ([#TBD](https://github.com/diegopetrucci/the-last-harness/pull/TBD)).
+- Added `/skill:herdr-gui-app`, a first-party skill for the Herdr desktop app and its `hc` terminals ([#913](https://github.com/diegopetrucci/the-last-harness/pull/913)).
 
 ### Changed
 
 - Removed the update-check opt-outs `tlh.updateCheck.enabled`, `TLH_SKIP_UPDATE_CHECK`, and `PI_SKIP_VERSION_CHECK`; `PI_OFFLINE=1` is now the only way to skip the launch update check ([#910](https://github.com/diegopetrucci/the-last-harness/pull/910)).
 - Removed the `tlh.claudeSkills.disabled` opt-out; `.claude/skills` discovery is always on and existing settings are ignored ([#910](https://github.com/diegopetrucci/the-last-harness/pull/910)).
 - Install, update, and `tlh doctor --repair` now always enforce the packaged `compaction.reserveTokens`, overwriting existing values; use `compaction.modelOverrides` for per-model reserves ([#910](https://github.com/diegopetrucci/the-last-harness/pull/910)).
-- The bundled Herdr skill is now `/skill:herdr-tui` instead of `/skill:herdr` ([#TBD](https://github.com/diegopetrucci/the-last-harness/pull/TBD)).
+- The bundled Herdr skill is now `/skill:herdr-tui` instead of `/skill:herdr` ([#913](https://github.com/diegopetrucci/the-last-harness/pull/913)).
 - Bumped the bundled Pi runtime from `1.5.0` to `1.5.2`. Anthropic message threads are now on by default upstream, so live Claude Pro/Max OAuth behavior is a release gate ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892), [#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 
 ### Fixed
