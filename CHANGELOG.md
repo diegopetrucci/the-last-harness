@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.29.3` to `npm:@diegopetrucci/pi-web-access@0.29.4`: `get_search_content` now clamps limits above `maxInlineContentChars` (default 12000) instead of failing, and remaining invalid-limit errors state the allowed range.
+
 ## [0.48.0] - 2026-11-13
 
 ### Added
