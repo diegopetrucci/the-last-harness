@@ -1,14 +1,22 @@
 Third-party notices for bundled skills
 
 The Last Harness bundles the following upstream skill files. The source files
-are preserved verbatim; this file consolidates the license texts and attribution
-notices that accompany them.
+are preserved verbatim except where a recorded modification below says
+otherwise; this file consolidates the license texts and attribution notices
+that accompany them. Skills under `skills/` that are first-party TLH content
+rather than upstream imports are not listed here; `skills/herdr-gui-app/SKILL.md`
+is such a skill.
 
 Herdr skill
 -----------
 Source: https://github.com/herdrdev/herdr/tree/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/skills/herdr
 Pinned commit: 2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01 (herdr v0.9.5)
-Bundled files: skills/herdr/SKILL.md
+Bundled files: skills/herdr-tui/SKILL.md
+Modifications: The bundled copy is byte-for-byte the upstream file except for
+two edits applied on refresh: the skill folder is renamed from `skills/herdr`
+to `skills/herdr-tui`, with the frontmatter `name` renamed from `herdr` to
+`herdr-tui`, and this sentence is appended to the frontmatter `description`:
+"For the Herdr desktop app (herdr-app, hc), use herdr-gui-app instead."
 License: Apache-2.0
 Copyright notice: The upstream Herdr LICENSE at this pinned commit does not
 include a separate copyright-holder notice.
