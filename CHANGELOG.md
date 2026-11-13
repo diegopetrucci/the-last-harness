@@ -13,6 +13,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Bumped bundled `pi-anthropic-auth` from 3.4.3 to 3.5.0 so Claude Pro/Max OAuth requests always carry the billing header under Pi 1.5 message threads and Pi 1.5's reworded prompt is shaped again ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 - Documented that Herdr.app v0.1.15+ ships a built-in TLH entry that the installer's `programs.tlh` entry is layered over ([#909](https://github.com/diegopetrucci/the-last-harness/pull/909)).
 - Removed the startup tip for the retired disabled mode ([#895](https://github.com/diegopetrucci/the-last-harness/pull/895)).
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
