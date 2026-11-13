@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.48.0] - 2026-11-13
+
 ### Added
 
 - Added `/skill:herdr-gui-app`, a first-party skill for the Herdr desktop app and its `hc` terminals ([#913](https://github.com/diegopetrucci/the-last-harness/pull/913)).
@@ -18,14 +20,18 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
-- Bumped bundled `pi-anthropic-auth` from 3.4.3 to 3.5.0 so Claude Pro/Max OAuth requests always carry the billing header under Pi 1.5 message threads and Pi 1.5's reworded prompt is shaped again ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- Bumped bundled `pi-anthropic-auth` from 3.4.3 to 3.5.0 so Claude Pro/Max OAuth requests always carry the billing header under Pi 1.5 message threads and Pi 1.5's reworded prompt is shaped again ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891), [#912](https://github.com/diegopetrucci/the-last-harness/pull/912)).
 - Documented that Herdr.app v0.1.15+ ships a built-in TLH entry that the installer's `programs.tlh` entry is layered over ([#909](https://github.com/diegopetrucci/the-last-harness/pull/909)).
 - Removed the startup tip for the retired disabled mode ([#895](https://github.com/diegopetrucci/the-last-harness/pull/895)).
 - Removed outdated install-docs guidance that called `streaming` the upstream `cacheWarming` default ([#892](https://github.com/diegopetrucci/the-last-harness/pull/892)).
 
 ### Internal
 
-- Single-source-of-truth cleanup across code and docs: duplicated prose now points to its owner.
+- Single-source-of-truth cleanup across code and docs: duplicated prose now points to its owner ([#911](https://github.com/diegopetrucci/the-last-harness/pull/911)).
+- Point copied install facts at owning docs and make npm JSON parsing fail closed ([#906](https://github.com/diegopetrucci/the-last-harness/pull/906)).
+- Share resume classification, bound leftover status readers, share discovery helpers, and drop unused session lookups ([#893](https://github.com/diegopetrucci/the-last-harness/pull/893), [#901](https://github.com/diegopetrucci/the-last-harness/pull/901)).
+- Route settings reads through shared helpers, drop tip residue, share session-mirror observer bounds and snapshot envelopes, and drop unused annotate-git-diff review fields ([#903](https://github.com/diegopetrucci/the-last-harness/pull/903), [#904](https://github.com/diegopetrucci/the-last-harness/pull/904), [#905](https://github.com/diegopetrucci/the-last-harness/pull/905)).
+- Share installer, wrapper, resume, primary-runtime, and subagent test fixtures, and drop stale test narration and mode labels ([#899](https://github.com/diegopetrucci/the-last-harness/pull/899), [#900](https://github.com/diegopetrucci/the-last-harness/pull/900), [#902](https://github.com/diegopetrucci/the-last-harness/pull/902), [#907](https://github.com/diegopetrucci/the-last-harness/pull/907), [#908](https://github.com/diegopetrucci/the-last-harness/pull/908)).
 - Check Node requirement copies for drift, derive smoke-test prompts from the installer, and tidy install documentation ([#898](https://github.com/diegopetrucci/the-last-harness/pull/898)).
 - Simplify annotate-git-diff content loading and remove unreachable image-extension checks ([#897](https://github.com/diegopetrucci/the-last-harness/pull/897)).
 - Share the packaged agent roster across guidance, execution budgets, and launch telemetry, and simplify guidance directory checks ([#896](https://github.com/diegopetrucci/the-last-harness/pull/896)).
