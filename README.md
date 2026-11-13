@@ -92,7 +92,8 @@ The footer refreshes local Git status on a short timer. Eligible non-default bra
 
 - [Show me](skills/show-me).
 - [Merge risk](skills/merge-risk).
-- [Herdr](skills/herdr).
+- [Herdr TUI](skills/herdr-tui).
+- [Herdr desktop app](skills/herdr-gui-app).
 - [Cmux](skills/cmux-cli).
 - [Tmux](skills/tmux).
 
