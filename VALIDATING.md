@@ -259,7 +259,7 @@ The following carried-forward checks are required release-preparation work for t
 
 The dated 1.5.0→1.5.2 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-152-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The provider-backed checks below remain pending:
 
-- **Release gate — Claude Pro/Max OAuth message threads:** run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` and verify thread continuations succeed with no extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- **Release gate — Claude Pro/Max OAuth message threads:** run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` with the bundled `pi-anthropic-auth` 3.5.0 and verify they succeed after tool calls with no `claude_code_version_too_old` or extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 - **Carried forward from 1.5.0 (still apply to the pinned runtime):** the items in the [1.5.0 status](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02), including those it carries forward from 1.4.0 and earlier.
 
 Historical Pi 1.5.0, 1.4.0, 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02).
