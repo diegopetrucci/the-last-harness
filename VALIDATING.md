@@ -242,7 +242,7 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following carried-forward checks are required release-preparation work for the pinned Pi version (first listed for Pi 1.1.0; v0.44.0, v0.45.0, v0.46.0, and v0.47.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following carried-forward checks are required release-preparation work for the pinned Pi version (first listed for Pi 1.1.0; v0.44.0, v0.45.0, v0.46.0, v0.47.0, and v0.48.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
 - **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
@@ -257,9 +257,9 @@ The following carried-forward checks are required release-preparation work for t
 
 ### Pi 1.5.2 comparison status (reviewed 2026-11-10)
 
-The dated 1.5.0→1.5.2 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-152-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The provider-backed checks below remain pending:
+The dated 1.5.0→1.5.2 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-152-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The carried-forward item below remains pending:
 
-- **Release gate — Claude Pro/Max OAuth message threads:** run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` with the bundled `pi-anthropic-auth` 3.5.0 and verify they succeed after tool calls with no `claude_code_version_too_old` or extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- **Release gate — Claude Pro/Max OAuth message threads (passed 2026-11-13 for v0.48.0, live-tested by the maintainer):** run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` with the bundled `pi-anthropic-auth` 3.5.0 and verify they succeed after tool calls with no `claude_code_version_too_old` or extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 - **Carried forward from 1.5.0 (still apply to the pinned runtime):** the items in the [1.5.0 status](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02), including those it carries forward from 1.4.0 and earlier.
 
 Historical Pi 1.5.0, 1.4.0, 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02).
