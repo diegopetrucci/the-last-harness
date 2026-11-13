@@ -25,6 +25,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Single-source-of-truth cleanup across code and docs: duplicated prose now points to its owner.
 - Check Node requirement copies for drift, derive smoke-test prompts from the installer, and tidy install documentation ([#898](https://github.com/diegopetrucci/the-last-harness/pull/898)).
 - Simplify annotate-git-diff content loading and remove unreachable image-extension checks ([#897](https://github.com/diegopetrucci/the-last-harness/pull/897)).
 - Share the packaged agent roster across guidance, execution budgets, and launch telemetry, and simplify guidance directory checks ([#896](https://github.com/diegopetrucci/the-last-harness/pull/896)).

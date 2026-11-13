@@ -105,6 +105,8 @@ EOF_ABSENT_GIT
   local present_stdout="${present_dir}/stdout.log"
   local present_stderr="${present_dir}/stderr.log"
   local present_combined="${present_dir}/combined.log"
+  local pinned_pi_version
+  pinned_pi_version="$(install_sh_value TLH_PINNED_PI_VERSION)" || exit 1
   mkdir -p "${present_fakebin}" "${present_dir}/home" "${present_runtime_bin}"
   cat >"${present_fakebin}/sh" <<'EOF_PRESENT_SH'
 #!/bin/sh
@@ -130,9 +132,9 @@ EOF_PRESENT_GIT
   # fake pi at the lib CLI path and link bin/pi to it like a real TLH runtime.
   local present_cli_dir="${present_dir}/runtime/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle"
   mkdir -p "${present_cli_dir}"
-  cat >"${present_cli_dir}/cli.js" <<'EOF_PRESENT_RUNTIME_PI'
+  cat >"${present_cli_dir}/cli.js" <<EOF_PRESENT_RUNTIME_PI
 #!/bin/sh
-if [ "${1:-}" = "--version" ]; then printf '1.5.2\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf '${pinned_pi_version}\\n'; exit 0; fi
 printf 'fake private runtime pi invoked unexpectedly\n' >&2; exit 98
 EOF_PRESENT_RUNTIME_PI
   chmod +x "${present_cli_dir}/cli.js"

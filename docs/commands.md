@@ -211,7 +211,7 @@ Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-stat
 
 ### `/tickets`
 
-`/tickets` shows the current repo/worktree's read-only ticket workflow details from `tk`: ready, blocked, in-progress, active, and total counts, followed by one in-progress detail line or an `In progress:` list when multiple tickets are in progress. Each detail includes the ticket ID and its title when available. TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization.
+`/tickets` shows the current repo/worktree's read-only ticket workflow details from `tk`: ready, blocked, in-progress, active, and total counts, followed by one in-progress detail line or an `In progress:` list when multiple tickets are in progress. Each detail includes the ticket ID and its title when available. Title sanitization and fallback rules are in [Ticket integration](integrations.md#ticket-integration).
 
 ### `/tokens`
 
@@ -384,7 +384,7 @@ These commands are registered and fully functional, but deliberately excluded fr
 | -------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
 | `/quiet-tools` | `pi-quiet-tools` | Show read-only status for the mandatory TLH-managed renderer; this command does not toggle or disable it. |
 
-The status covers only the installer-managed quiet-tools source. Separately loaded third-party extensions are outside its scope. Ctrl+O and per-row expansion remain available for native full output.
+Scope and Ctrl+O behavior are in [Bundled default extensions](install.md#bundled-default-extensions).
 
 ---
 

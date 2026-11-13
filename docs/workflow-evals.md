@@ -45,7 +45,7 @@ The fixtures are designed to stay reviewable:
 - explicit actor/tool/output sequences;
 - stable fixture IDs and expected outcomes;
 - deterministic assertions instead of model scoring;
-- direct deterministic trace-policy coverage for architect, developer, test-runner, code-reviewer, product, Rush, bug-hunter, web-scout, oracle, contrarian, diff-summarizer, librarian, and repo-scout boundaries, including final-validation routing, ordered shell/MCP steps, and the test-runner's repository/ticket-safety policy.
+- direct deterministic trace-policy coverage for every packaged role's boundaries (roster: [subagents.md](subagents.md#isolation-and-discovery)), including final-validation routing, ordered shell/MCP steps, and the test-runner's repository/ticket-safety policy.
 
 ### Incident-to-fixture loop
 

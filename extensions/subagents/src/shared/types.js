@@ -1,7 +1,7 @@
 // Generated from extensions/subagents/src/shared/types.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { resolveTempRootDir } from "../../../shared/subagent-temp-root.js";
-import { MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.js";
+import { MAX_PARALLEL_CONCURRENCY, MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.js";
 export function isSubagentPromptVariant(value) {
     return value === "normal" || value === "ticket-free";
 }
@@ -33,7 +33,6 @@ export const DEFAULT_ARTIFACT_CONFIG = {
     cleanupDays: 7,
 };
 export { MAX_TOP_LEVEL_PARALLEL_TASKS };
-const MAX_CONCURRENCY = 4;
 export { resolveTempRootDir };
 export const TEMP_ROOT_DIR = resolveTempRootDir();
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
@@ -65,7 +64,7 @@ export function resolveTopLevelParallelMaxTasks(value) {
         : Math.min(normalized, MAX_TOP_LEVEL_PARALLEL_TASKS);
 }
 export function resolveTopLevelParallelConcurrency(configValue) {
-    return normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;
+    return normalizeTopLevelParallelValue(configValue) ?? MAX_PARALLEL_CONCURRENCY;
 }
 export function getAsyncConfigPath(suffix) {
     return path.join(TEMP_ROOT_DIR, `async-cfg-${suffix}.json`);

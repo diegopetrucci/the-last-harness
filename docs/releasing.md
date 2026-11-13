@@ -43,7 +43,6 @@ Then draft or edit `release-notes/v$version.md`, the user-facing release body. T
 Before validation, update release-sensitive docs that include concrete versioned install guidance or runtime pins:
 
 - `docs/install.md`: pinned-tag install examples and the non-stable footer-label examples should use `v$version`.
-- `README.md` and `docs/install.md`: any pinned Pi runtime version, minimum Node.js version, managed Gnosis version, managed `tk` version, or bundled default-extension behavior should match the release metadata and installer constants.
 - `docs/releasing.md`: keep this checklist aligned when release validation adds or removes required documentation checks.
 
 For architect-managed work, keep implementation-ticket checks narrow and ticket-scoped, then put the exact validation steps in a separate final-validation `tk` ticket and dispatch it to `test-runner`. The ticket must contain ordered shell commands (with arguments) and/or exact adapter-shaped generic MCP inputs containing only the fields required by the selected status, discovery, search, connect, or call operation; `server`, `tool`, and `args` are optional overall, and `args` is a JSON string for tool calls. Derive the steps from `VALIDATING.md` or repository discovery; assigned MCP calls may invoke tools that change server-side state. `test-runner` executes that list and reports the outcomes without planning, editing, installing dependencies, or fixing failures. Keep dependency installation and release-preparation commands outside the execution-only runner.
@@ -62,7 +61,7 @@ Then run the startup performance checker as release-tier manual validation:
 npm run check:startup-performance
 ```
 
-Keep this separate from `npm run validate`. The checker's behavior, the `1000ms` release objective, and the informational every-PR budget are described in [VALIDATING.md](../VALIDATING.md#release-tier-manual-validation).
+Keep this separate from `npm run validate`. The checker's behavior, the release objective, and the informational every-PR budget are described in [VALIDATING.md](../VALIDATING.md#release-tier-manual-validation).
 
 If the checker fails, investigate before release rather than treating it like a normal deterministic test failure.
 

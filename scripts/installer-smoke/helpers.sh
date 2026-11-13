@@ -252,6 +252,14 @@ combine_output() {
   cat "${stdout_file}" "${stderr_file}" >"${combined_file}"
 }
 
+# Read a simple double-quoted TLH_* assignment owned by install.sh.
+install_sh_value() {
+  local value
+  value="$(sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "${ROOT_DIR}/install.sh" | head -n 1)"
+  [[ -n "${value}" ]] || fail "install.sh is missing a double-quoted $1 assignment"
+  printf '%s\n' "${value}"
+}
+
 extract_stage0_support_manifest() {
   local no_settings="$1"
   node - "${no_settings}" <<'NODE_STAGE0_MANIFEST'

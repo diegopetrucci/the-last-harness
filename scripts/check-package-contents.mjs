@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -211,6 +211,12 @@ if (!Array.isArray(configuredPiEntrypoints) || configuredPiEntrypoints.length ==
   process.exit(1);
 }
 const piEntrypoints = configuredPiEntrypoints.map((entrypoint) => entrypoint.replace(/^\.\//, ""));
+const packagedAgentFiles = ["primary", "subagents"].flatMap((group) =>
+  readdirSync(join(repoRoot, "agents", group))
+    .filter((name) => name.endsWith(".md"))
+    .sort()
+    .map((name) => `agents/${group}/${name}`),
+);
 const requiredFiles = [
   ...piEntrypoints,
   "extensions/the-last-harness.ts",
@@ -221,9 +227,7 @@ const requiredFiles = [
   "extensions/subagents/LICENSE",
   "licenses/terminal-skills.txt",
   ...TERMINAL_SKILL_FILES,
-  "agents/primary/architect.md",
-  "agents/subagents/developer.md",
-  "agents/subagents/test-runner.md",
+  ...packagedAgentFiles,
   "config/herdr/tlh-mark.svg",
   "config/pi-runtime/package.json",
   "config/pi-runtime/package-lock.json",

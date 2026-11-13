@@ -11,7 +11,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
 import type { ProjectAgentIdentity } from "../agents/project-agent-loader.ts";
 import type { ChildLocationSnapshot } from "./child-location.ts";
-import { MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.ts";
+import { MAX_PARALLEL_CONCURRENCY, MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.ts";
 import type { SubagentRunTelemetry } from "./telemetry.ts";
 
 // ============================================================================
@@ -1005,7 +1005,6 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
 };
 
 export { MAX_TOP_LEVEL_PARALLEL_TASKS };
-const MAX_CONCURRENCY = 4;
 
 export { resolveTempRootDir };
 
@@ -1042,7 +1041,7 @@ export function resolveTopLevelParallelMaxTasks(value: unknown): number {
 }
 
 export function resolveTopLevelParallelConcurrency(configValue: unknown): number {
-  return normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;
+  return normalizeTopLevelParallelValue(configValue) ?? MAX_PARALLEL_CONCURRENCY;
 }
 
 export function getAsyncConfigPath(suffix: string): string {

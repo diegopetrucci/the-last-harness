@@ -1,6 +1,9 @@
 // Generated from scripts/lib/default-extensions.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, readFileSync } from "node:fs";
 import { parseGitSource } from "./tlh-install-package-source.mjs";
+/** IDs of bundled default extensions that installer code treats specially (see config/default-extensions.json). */
+export const MCPORTER_EXTENSION_ID = "mcporter";
+export const ANTHROPIC_AUTH_EXTENSION_ID = "anthropic-auth";
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

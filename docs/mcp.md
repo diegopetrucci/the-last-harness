@@ -6,7 +6,7 @@ When the MCP status line is visible, TLH appends an approximate retained-context
 
 ## Default usage
 
-TLH uses the adapter in a proxy-first way: by default you get one `mcp` tool that routes requests to your configured MCP servers, instead of exposing every MCP tool directly. All four packaged primary agents and all nine packaged minor agents declare this generic gateway while preserving their other tools.
+TLH uses the adapter in a proxy-first way: by default you get one `mcp` tool that routes requests to your configured MCP servers, instead of exposing every MCP tool directly. All packaged primary and minor agents declare this generic gateway while preserving their other tools.
 
 - Primary agents and `developer` may call the gateway within their authorized task scope and existing role boundaries.
 - Read-only minors are instructed to avoid mutations and escalate uncertain side effects. This is prompt guidance, not gateway enforcement; the gateway itself may still expose a tool with side effects.

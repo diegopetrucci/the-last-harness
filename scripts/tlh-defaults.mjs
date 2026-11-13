@@ -5,13 +5,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { ANTHROPIC_AUTH_EXTENSION_ID, MCPORTER_EXTENSION_ID, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
 import { parseMcpMigrationArgs, runMcpAdapterMigration } from "./lib/mcp-adapter-migration.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
-const MCPORTER_EXTENSION_ID = "mcporter";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const RETIRED_DEFAULT_PACKAGE_IDENTITIES = new Set(RETIRED_TLH_DEFAULT_PACKAGE_SOURCES.map(packageIdentity).filter((value) => Boolean(value)));
@@ -450,7 +449,7 @@ function commandDisable(settings, defaultExtensions, id) {
     if (extension.id === MCPORTER_EXTENSION_ID) {
         applyBuiltinMcpExclusionOnDisable(settings);
     }
-    if (extension.id === "anthropic-auth") {
+    if (extension.id === ANTHROPIC_AUTH_EXTENSION_ID) {
         return applyAnthropicWarningOnDisable(settings);
     }
     return false;
@@ -467,7 +466,7 @@ function commandEnable(settings, defaultExtensions, id, mcpDecision) {
         !defaultExtensionPackageFilterDisables(settings, extension)) {
         applyBuiltinMcpExclusionOnEnable(settings);
     }
-    if (extension.id === "anthropic-auth") {
+    if (extension.id === ANTHROPIC_AUTH_EXTENSION_ID) {
         return applyAnthropicWarningOnEnable(settings);
     }
     return false;

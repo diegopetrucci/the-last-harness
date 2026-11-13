@@ -241,10 +241,10 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                 stderrLineReader.push(chunk);
         };
         const FINAL_STOP_GRACE_MS = 1000;
-        const HARD_KILL_MS = 3000;
+        const HARD_KILL_MS = CHILD_PROTOCOL_HARD_KILL_GRACE_MS;
         const CLOSE_FALLBACK_MS = 1000;
         const INTERRUPT_HARD_KILL_MS = 4000;
-        const TIMEOUT_HARD_KILL_MS = 3000;
+        const TIMEOUT_HARD_KILL_MS = CHILD_PROTOCOL_HARD_KILL_GRACE_MS;
         let childExited = false;
         let forcedTerminationSignal = false;
         let cleanTerminalAssistantStopReceived = false;

@@ -20,7 +20,7 @@ From that window you can leave:
 - section comments for one block of the message (a run of lines between blank lines; a fenced code block stays in one section even with blank lines, and a block containing only a horizontal rule is not a section), and
 - inline notes tied to individual lines.
 
-When you submit, TLH sends the feedback directly to the agent as a follow-up message. Your existing editor text is left untouched. Closing the window discards unsent notes. Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines. It does not auto-apply changes or rewrite the old message in place.
+When you submit, TLH sends the feedback directly to the agent as a follow-up message. Your existing editor text is left untouched. Closing the window discards unsent notes. Inline-note limits (such as blank lines) are in [commands.md](../../../docs/commands.md#annotate-last-message). It does not auto-apply changes or rewrite the old message in place.
 
 Buttons and keys in the window:
 

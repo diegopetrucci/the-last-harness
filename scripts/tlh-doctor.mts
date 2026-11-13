@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   disabledDefaultExtensionIds,
+  MCPORTER_EXTENSION_ID,
   packageIdentity,
   readDefaultExtensions,
   type DefaultExtensionEntry,
@@ -792,9 +793,9 @@ function addMcpAndWebSearchCheck(
   const defaultExtensions = readDefaultExtensions(defaultExtensionsPath(packageRoot), {
     allowMissing: false,
   });
-  const mcporter = extensionById(defaultExtensions, "mcporter");
+  const mcporter = extensionById(defaultExtensions, MCPORTER_EXTENSION_ID);
   const webAccess = extensionById(defaultExtensions, "pi-web-access");
-  const mcpEnabled = extensionEnabled(settings, defaultExtensions, "mcporter");
+  const mcpEnabled = extensionEnabled(settings, defaultExtensions, MCPORTER_EXTENSION_ID);
   const webEnabled = extensionEnabled(settings, defaultExtensions, "pi-web-access");
   const mcpPresent = extensionPresent(settings, mcporter);
   const webPresent = extensionPresent(settings, webAccess);

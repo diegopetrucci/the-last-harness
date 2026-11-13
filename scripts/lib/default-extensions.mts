@@ -22,6 +22,10 @@ interface RawSettings extends PlainObject {
   tlh?: unknown;
 }
 
+/** IDs of bundled default extensions that installer code treats specially (see config/default-extensions.json). */
+export const MCPORTER_EXTENSION_ID = "mcporter";
+export const ANTHROPIC_AUTH_EXTENSION_ID = "anthropic-auth";
+
 export interface DefaultExtensionEntry {
   id: string;
   aliases: string[];

@@ -413,10 +413,11 @@ export function runPiStreaming(
     // Guard both cases that can leave the parent waiting on `close` forever:
     // a lingering stdio holder after `exit`, or a child that never exits.
     const FINAL_STOP_GRACE_MS = 1000;
-    const HARD_KILL_MS = 3000;
+    const HARD_KILL_MS = CHILD_PROTOCOL_HARD_KILL_GRACE_MS;
     const CLOSE_FALLBACK_MS = 1000;
+    // Intentionally longer than CHILD_PROTOCOL_HARD_KILL_GRACE_MS (interrupt path allows 4000 ms).
     const INTERRUPT_HARD_KILL_MS = 4000;
-    const TIMEOUT_HARD_KILL_MS = 3000;
+    const TIMEOUT_HARD_KILL_MS = CHILD_PROTOCOL_HARD_KILL_GRACE_MS;
     let childExited = false;
     let forcedTerminationSignal = false;
     let cleanTerminalAssistantStopReceived = false;

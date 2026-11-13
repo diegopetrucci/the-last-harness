@@ -12,6 +12,8 @@ run_stage0_node_preflight_smoke() {
   local combined_file="${case_dir}/combined.log"
   local raw_base="https://example.invalid/node-preflight-ref"
   local status=0
+  local node_requirement_text
+  node_requirement_text="$(install_sh_value TLH_NODE_REQUIREMENT_TEXT)" || exit 1
   mkdir -p "${case_dir}" "${home_dir}"
   make_support_copy_curl "${fakebin}"
   make_fake_stage1_support_root "${case_dir}/support-root"
@@ -28,7 +30,7 @@ run_stage0_node_preflight_smoke() {
     fail "stage-0 old Node remote preflight unexpectedly succeeded"
   fi
   assert_contains "${combined_file}" "Refreshing installer..."
-  assert_contains "${combined_file}" "Node.js >=24.22.1 <25 or >=26.12.1 is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "${node_requirement_text} is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -50,7 +52,7 @@ run_stage0_node_preflight_smoke() {
     cat "${combined_file}" >&2
     fail "stage-0 old Node local preflight unexpectedly succeeded"
   fi
-  assert_contains "${combined_file}" "Node.js >=24.22.1 <25 or >=26.12.1 is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
+  assert_contains "${combined_file}" "${node_requirement_text} is required (found v24.22.0). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
