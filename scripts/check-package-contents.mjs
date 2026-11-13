@@ -77,7 +77,8 @@ if (missingDocs.length > 0) {
 // Keep the shipped terminal-skill closure explicit so upstream metadata or
 // unrelated source-checkout skills cannot enter the public package silently.
 const TERMINAL_SKILL_FILES = [
-  "skills/herdr/SKILL.md",
+  "skills/herdr-gui-app/SKILL.md",
+  "skills/herdr-tui/SKILL.md",
   "skills/cmux-cli/SKILL.md",
   "skills/cmux-cli/references/commands.md",
   "skills/tmux/SKILL.md",

@@ -2,7 +2,7 @@ Refresh all direct npm dependencies and bundled default extensions to the latest
 
 Also audit the five pinned bundled-skill closures whenever dependencies or bundled resources are bumped. For each source below, compare the checked-in files byte-for-byte with the exact upstream commit, then update the closure and its documented provenance together when the source changes:
 
-- Herdr: `herdrdev/herdr`, commit `2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01`, `skills/herdr/SKILL.md`.
+- Herdr TUI: `herdrdev/herdr`, commit `2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01`, `skills/herdr-tui/SKILL.md`. This file is byte-for-byte upstream except the modification recorded in `licenses/terminal-skills.txt`: the folder and frontmatter `name` are `herdr-tui` instead of `herdr`, and one sentence pointing at `herdr-gui-app` is appended to the frontmatter `description`. Re-apply both edits on refresh. `skills/herdr-gui-app/SKILL.md` is first-party TLH content and has no upstream pin.
 - cmux CLI: `manaflow-ai/cmux-skills`, commit `c669666f8607529a39a1f74ac0e8462e922dd13f`, `skills/cmux-cli/SKILL.md` and `skills/cmux-cli/references/commands.md`.
 - OpenClaw tmux: `openclaw/openclaw`, commit `7861f59337f9163040c9ccfb1c1f682ede689e27`, `skills/tmux/SKILL.md`, `skills/tmux/scripts/find-sessions.sh`, and `skills/tmux/scripts/wait-for-text.sh`.
 - Show-me: `humanlayer/skills`, commit `6ab9013a10c28f5046f7f999549cd5328a0b30d7`, `plugins/show-me/skills/show-me/SKILL.md`.
