@@ -1193,6 +1193,77 @@ function isGitExecutableForExistingChangesBoundary(commandWord) {
   return pathPosix.basename(commandWord.replaceAll("\\", "/")) === "git";
 }
 
+// Value-taking options per `git <cmd> -h`; their next token is a value, not an option.
+const GIT_IN_PROGRESS_OPERATION_OPTIONS_WITH_VALUES = {
+  merge: {
+    short: new Set(["s", "X", "m", "F"]),
+    long: new Set([
+      "--cleanup",
+      "--strategy",
+      "--strategy-option",
+      "--message",
+      "--file",
+      "--into-name",
+    ]),
+  },
+  rebase: {
+    short: new Set(["C", "x", "s", "X"]),
+    long: new Set([
+      "--onto",
+      "--whitespace",
+      "--empty",
+      "--exec",
+      "--strategy",
+      "--strategy-option",
+    ]),
+  },
+  "cherry-pick": {
+    short: new Set(["m", "X"]),
+    long: new Set(["--cleanup", "--mainline", "--strategy", "--strategy-option", "--empty"]),
+  },
+  revert: {
+    short: new Set(["m", "X"]),
+    long: new Set(["--cleanup", "--mainline", "--strategy", "--strategy-option"]),
+  },
+  am: {
+    short: new Set(["C", "p"]),
+    long: new Set([
+      "--quoted-cr",
+      "--whitespace",
+      "--directory",
+      "--exclude",
+      "--include",
+      "--patch-format",
+      "--resolvemsg",
+      "--empty",
+    ]),
+  },
+};
+
+function gitInProgressOperationControlRequested(subcommand, args) {
+  const { short, long } = GIT_IN_PROGRESS_OPERATION_OPTIONS_WITH_VALUES[subcommand];
+  let skipNext = false;
+
+  for (const arg of args) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (!arg) {
+      continue;
+    }
+    if (arg === "--") {
+      return false;
+    }
+    if (["--abort", "--quit", "--skip"].includes(arg)) {
+      return true;
+    }
+    skipNext = long.has(arg) || gitShortOptionConsumesNextToken(arg, short);
+  }
+
+  return false;
+}
+
 function isRiskyExistingChangesGitInvocation(commandWord, args) {
   if (!isGitExecutableForExistingChangesBoundary(commandWord)) {
     return false;
@@ -1215,6 +1286,12 @@ function isRiskyExistingChangesGitInvocation(commandWord, args) {
     case "restore":
     case "reset":
       return true;
+    case "merge":
+    case "rebase":
+    case "cherry-pick":
+    case "revert":
+    case "am":
+      return gitInProgressOperationControlRequested(subcommand, subcommandArgs);
     case "clean":
       return !gitArgsContainFlag(
         subcommandArgs,

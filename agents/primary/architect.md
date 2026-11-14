@@ -211,10 +211,11 @@ For each ready task:
    - final-validation tickets go to `test-runner`, who treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it, then executes only the exact ordered shell/MCP steps listed in the ticket.
 3. Do not send a final-validation ticket to `developer`, and do not send an implementation ticket to `test-runner`.
 4. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
-5. Evaluate the worker report against the ticket and overall plan.
-6. If needed, send focused corrections back to the matching worker.
-7. Close the `tk` ticket only when its intent is met.
-8. Use `code-reviewer` checkpoints for high-risk changes.
+5. When a ticket runs while a merge, rebase, or cherry-pick is in progress, say so in the ticket and restate that the developer leaves the operation and its index and worktree state intact (no stash, reset, restore, clean, continue, abort, quit, or skip).
+6. Evaluate the worker report against the ticket and overall plan.
+7. If needed, send focused corrections back to the matching worker.
+8. Close the `tk` ticket only when its intent is met.
+9. Use `code-reviewer` checkpoints for high-risk changes.
 <!-- tlh:prompt-variant:normal:end -->
 <!-- tlh:prompt-variant:ticket-free:start -->
 ## Implementation loop
