@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { join } from "node:path";
+import { wrapTmuxPassthrough } from "../shared/tmux-passthrough.js";
 const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
 const HERDR_METADATA_SOURCE = "user:tlh-display";
@@ -799,7 +800,7 @@ export function createProgramStatusActivityReporter(options = {}) {
             if (lastWrittenRoot === undefined ||
                 lastWrittenRoot.state !== resolved.state ||
                 lastWrittenRoot.msg !== resolved.msg) {
-                output.write(formatProgramStatusSequence(resolved));
+                output.write(wrapTmuxPassthrough(formatProgramStatusSequence(resolved), env));
                 lastWrittenRoot = { state: resolved.state, msg: resolved.msg };
             }
             const wanted = new Map();
@@ -811,7 +812,7 @@ export function createProgramStatusActivityReporter(options = {}) {
                 emittedChildren.delete(id);
                 const clear = formatProgramStatusReport({ state: "clear", id });
                 if (clear !== undefined)
-                    output.write(clear);
+                    output.write(wrapTmuxPassthrough(clear, env));
             }
             for (const [id, title] of wanted) {
                 if (emittedChildren.has(id) && emittedChildren.get(id) === title)
@@ -819,7 +820,7 @@ export function createProgramStatusActivityReporter(options = {}) {
                 const report = formatProgramStatusReport({ state: "working", id, title });
                 if (report === undefined)
                     continue;
-                output.write(report);
+                output.write(wrapTmuxPassthrough(report, env));
                 emittedChildren.set(id, title);
             }
         }
@@ -830,7 +831,7 @@ export function createProgramStatusActivityReporter(options = {}) {
         lastWrittenRoot = undefined;
         emittedChildren.clear();
         try {
-            output.write(formatProgramStatusSequence("clear"));
+            output.write(wrapTmuxPassthrough(formatProgramStatusSequence("clear"), env));
         }
         catch {
         }

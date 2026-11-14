@@ -58,6 +58,7 @@ extensions/shared/quiet-glimpse.js linguist-generated=true
 extensions/shared/subagent-temp-root.js linguist-generated=true
 extensions/shared/subagent-restore-contract.js linguist-generated=true
 extensions/shared/tlh-effective-activity.js linguist-generated=true
+extensions/shared/tmux-passthrough.js linguist-generated=true
 extensions/the-last-harness/activity-reporters.js linguist-generated=true
 extensions/the-last-harness/activity-tracker.js linguist-generated=true
 extensions/the-last-harness/annotate-last-message/prompt.js linguist-generated=true

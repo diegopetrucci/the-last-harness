@@ -23,6 +23,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { wrapTmuxPassthrough } from "../shared/tmux-passthrough.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 import type { TlhEffectiveActivityPayload } from "../shared/tlh-effective-activity.js";
 
@@ -245,13 +246,18 @@ function windowsToastScript(title: string, body: string): string {
   ].join("; ");
 }
 
-function notifyOSC777(title: string, body: string): void {
-  process.stdout.write(`\x1b]777;notify;${title};${body}\x07`);
+type TerminalWriter = (sequence: string) => void;
+const writeStdout: TerminalWriter = (sequence) => {
+  process.stdout.write(sequence);
+};
+
+function notifyOSC777(title: string, body: string, write: TerminalWriter = writeStdout): void {
+  write(`\x1b]777;notify;${title};${body}\x07`);
 }
 
-function notifyOSC99(title: string, body: string): void {
-  process.stdout.write(`\x1b]99;i=1:d=0;${title}\x1b\\`);
-  process.stdout.write(`\x1b]99;i=1:p=body;${body}\x1b\\`);
+function notifyOSC99(title: string, body: string, write: TerminalWriter = writeStdout): void {
+  write(`\x1b]99;i=1:d=0;${title}\x1b\\`);
+  write(`\x1b]99;i=1:p=body;${body}\x1b\\`);
 }
 
 function ringBell(): void {
@@ -300,13 +306,16 @@ function sendTerminalNotification(
   title: string,
   body: string,
   backend: Exclude<TerminalBackend, "auto">,
+  write: TerminalWriter = writeStdout,
+  env: { TMUX?: string | undefined } = process.env,
 ): void {
+  const writeWrapped: TerminalWriter = (sequence) => write(wrapTmuxPassthrough(sequence, env));
   if (backend === "osc99") {
-    notifyOSC99(title, body);
+    notifyOSC99(title, body, writeWrapped);
     return;
   }
   if (backend === "osc777") {
-    notifyOSC777(title, body);
+    notifyOSC777(title, body, writeWrapped);
   }
 }
 
@@ -405,6 +414,9 @@ type NotifyExtensionOptions = {
    * this callback is invoked once per notification decision that would have fired.
    */
   onNotify?: () => void;
+  /** Test-only seams for OSC terminal writes and TMUX detection. */
+  terminalWrite?: (sequence: string) => void;
+  env?: { TMUX?: string | undefined };
 };
 
 /**
@@ -447,7 +459,13 @@ export function createNotifyExtension(
       const tasks: Array<Promise<unknown>> = [];
 
       if (config.channels.terminal) {
-        sendTerminalNotification(config.title, config.body, detectTerminalBackend(config));
+        sendTerminalNotification(
+          config.title,
+          config.body,
+          detectTerminalBackend(config),
+          options.terminalWrite,
+          options.env,
+        );
       }
 
       if (config.channels.desktop) {

@@ -15,6 +15,8 @@ This is vendored from [`@diegopetrucci/pi-notify`](https://github.com/diegopetru
 - OSC 777: Ghostty, iTerm2, WezTerm, rxvt-unicode
 - OSC 99: Kitty
 
+Inside tmux, OSC 777 and OSC 99 need passthrough enabled; see [tmux passthrough](../../docs/integrations.md#tmux-passthrough).
+
 ### Desktop notifications
 
 - macOS Notification Center via `osascript`
