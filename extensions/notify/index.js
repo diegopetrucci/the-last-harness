@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { wrapTmuxPassthrough } from "../shared/tmux-passthrough.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 const DEFAULT_CONFIG = {
     enabled: true,
@@ -173,12 +174,15 @@ function windowsToastScript(title, body) {
         `[${type}.ToastNotificationManager]::CreateToastNotifier(${powershellString(title)}).Show(${toast})`,
     ].join("; ");
 }
-function notifyOSC777(title, body) {
-    process.stdout.write(`\x1b]777;notify;${title};${body}\x07`);
+const writeStdout = (sequence) => {
+    process.stdout.write(sequence);
+};
+function notifyOSC777(title, body, write = writeStdout) {
+    write(`\x1b]777;notify;${title};${body}\x07`);
 }
-function notifyOSC99(title, body) {
-    process.stdout.write(`\x1b]99;i=1:d=0;${title}\x1b\\`);
-    process.stdout.write(`\x1b]99;i=1:p=body;${body}\x1b\\`);
+function notifyOSC99(title, body, write = writeStdout) {
+    write(`\x1b]99;i=1:d=0;${title}\x1b\\`);
+    write(`\x1b]99;i=1:p=body;${body}\x1b\\`);
 }
 function ringBell() {
     process.stdout.write("\x07");
@@ -225,13 +229,14 @@ function detectSoundBackend(config) {
         return "linux";
     return "none";
 }
-function sendTerminalNotification(title, body, backend) {
+function sendTerminalNotification(title, body, backend, write = writeStdout, env = process.env) {
+    const writeWrapped = (sequence) => write(wrapTmuxPassthrough(sequence, env));
     if (backend === "osc99") {
-        notifyOSC99(title, body);
+        notifyOSC99(title, body, writeWrapped);
         return;
     }
     if (backend === "osc777") {
-        notifyOSC777(title, body);
+        notifyOSC777(title, body, writeWrapped);
     }
 }
 function appleScriptString(value) {
@@ -305,7 +310,7 @@ export function createNotifyExtension(options = {}) {
             }
             const tasks = [];
             if (config.channels.terminal) {
-                sendTerminalNotification(config.title, config.body, detectTerminalBackend(config));
+                sendTerminalNotification(config.title, config.body, detectTerminalBackend(config), options.terminalWrite, options.env);
             }
             if (config.channels.desktop) {
                 tasks.push(sendDesktopNotification(config.title, config.body, detectDesktopBackend(config)));

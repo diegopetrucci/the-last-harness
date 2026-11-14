@@ -7,6 +7,7 @@ import type {
   TlhEffectiveActivitySnapshot,
   TlhEffectiveActivityTracker,
 } from "./activity-tracker.js";
+import { wrapTmuxPassthrough } from "../shared/tmux-passthrough.js";
 
 const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
@@ -1057,7 +1058,7 @@ export function createProgramStatusActivityReporter(
         lastWrittenRoot.state !== resolved.state ||
         lastWrittenRoot.msg !== resolved.msg
       ) {
-        output.write(formatProgramStatusSequence(resolved));
+        output.write(wrapTmuxPassthrough(formatProgramStatusSequence(resolved), env));
         lastWrittenRoot = { state: resolved.state, msg: resolved.msg };
       }
       const wanted = new Map<string, string | undefined>();
@@ -1066,13 +1067,13 @@ export function createProgramStatusActivityReporter(
         if (wanted.has(id)) continue;
         emittedChildren.delete(id);
         const clear = formatProgramStatusReport({ state: "clear", id });
-        if (clear !== undefined) output.write(clear);
+        if (clear !== undefined) output.write(wrapTmuxPassthrough(clear, env));
       }
       for (const [id, title] of wanted) {
         if (emittedChildren.has(id) && emittedChildren.get(id) === title) continue;
         const report = formatProgramStatusReport({ state: "working", id, title });
         if (report === undefined) continue;
-        output.write(report);
+        output.write(wrapTmuxPassthrough(report, env));
         emittedChildren.set(id, title);
       }
     } catch {
@@ -1084,7 +1085,7 @@ export function createProgramStatusActivityReporter(
     lastWrittenRoot = undefined;
     emittedChildren.clear();
     try {
-      output.write(formatProgramStatusSequence("clear"));
+      output.write(wrapTmuxPassthrough(formatProgramStatusSequence("clear"), env));
     } catch {
       // Write failures must never crash TLH.
     }

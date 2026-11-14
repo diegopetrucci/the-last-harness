@@ -71,6 +71,19 @@ Herdr only accepts native session references from its own official source and ag
 
 This bridge is session-scoped only. TLH does not install, enable, or reconfigure Herdr, cmux, or any other external integration for you, and it does not write persistent external config as part of this bridge. The separate installer-time Herdr.app program entry is documented in [Herdr.app integration](install.md#herdrapp-integration). If your terminal setup does not already support this status handoff, nothing new is installed.
 
+### tmux passthrough
+
+When `TMUX` is set, TLH wraps its OSC 7501 Program Status writes and the [notify extension](../extensions/notify/README.md)'s OSC 777 and OSC 99 terminal notifications in tmux passthrough so they reach the outer terminal. The terminal bell is not wrapped; tmux forwards bells itself according to its `bell-action` option.
+
+This requires `set -g allow-passthrough all` in your tmux config. Use `all`, not `on`: with `on`, tmux only passes sequences from visible panes, so a TLH pane in a background window never reports `done` or `blocked`. Without the setting, tmux drops the sequences silently.
+
+Limits:
+
+- Several TLH panes share one outer-terminal status; the last writer wins.
+- Nested tmux, and tmux inside screen, are not supported.
+
+Termius on iOS reads OSC 7501 Program Status.
+
 ## Rex integration
 
 When TLH runs in a Rex terminal (`REX_SESSION` set), the primary agent's system prompt includes the output of `rex __internal session-start --agent pi --autostart=false`: the same session-start context Rex's SessionStart hook gives Claude Code and Codex (Rex reports Pi hooks as unsupported). It runs once per session and never starts a Rex server. If `rex` is unavailable or the command fails, TLH silently skips it. Subagents do not receive it. There is no opt-out setting.

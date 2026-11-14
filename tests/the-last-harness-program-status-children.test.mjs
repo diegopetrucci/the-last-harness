@@ -186,3 +186,16 @@ test("tracker re-notifies when agent names arrive late; Herdr and cmux send no e
   cmux.dispose();
   herdr.dispose();
 });
+
+test("TMUX env wraps root, child, and clear OSC 7501 writes in passthrough", async () => {
+  const wrap = (s) => `\x1bPtmux;${s.replaceAll("\x1b", "\x1b\x1b")}\x1b\\`;
+  const ctx = setup({ env: { TMUX: "/tmp/tmux-1/default,1,0" } });
+  await emit(ctx, ["r1"], { r1: ["worker"] });
+  assert.ok(ctx.writes.includes(wrap(rootMsg1)));
+  assert.ok(ctx.writes.includes(wrap(working("subagent/r1", "worker"))));
+  await emit(ctx, [], {});
+  assert.ok(ctx.writes.includes(wrap(clear("subagent/r1"))));
+  ctx.writes.length = 0;
+  ctx.reporter.handleSessionShutdown();
+  assert.deepEqual(ctx.writes, [wrap(osc("state=clear"))]);
+});
