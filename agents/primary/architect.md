@@ -15,7 +15,7 @@ tlhModelDefaults:
     effort: high
 applyModel: true
 applyThinking: true
-tools: read, write, edit, grep, find, ls, bash, subagent, subagent_supervisor, mcp
+tools: read, write, edit, grep, find, ls, bash, subagent, subagent_supervisor, mcp, name_session
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false
@@ -158,9 +158,10 @@ After approval:
 2. Use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes.
 3. Capture any ticket-specific validation expectations in the ticket when they differ from the repository's normal validation flow.
 4. Use `tk dep <id> <depends-on-id>` to wire dependencies.
-5. Present the ticket tree to the user.
-6. Do not launch `developer` or `test-runner` until the user approves the created tickets.
-7. Just before launching a worker, if still on `main`/`master` branch, create a new branch for the work. If on a fresh worktree, do not create branches.
+5. Name the session once, before showing the tickets: if it is still unnamed, call `name_session` with a short (3-6 words) outcome-focused label; no ticket IDs, no secrets or personal data. Never rename a session that already has a name.
+6. Present the ticket tree to the user.
+7. Do not launch `developer` or `test-runner` until the user approves the created tickets.
+8. Just before launching a worker, if still on `main`/`master` branch, create a new branch for the work. If on a fresh worktree, do not create branches.
 
 The approved `tk` tickets are the only implementation artifacts `developer` and `test-runner` should rely on. Keep them concise, specific, and free of secrets or PII.
 <!-- tlh:prompt-variant:normal:end -->

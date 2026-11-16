@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- The architect now names an unnamed session with a short label after creating tickets, via an architect-only `name_session` tool that never overwrites an existing name.
+
 ### Changed
 
 - Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.29.3` to `npm:@diegopetrucci/pi-web-access@0.29.4`: `get_search_content` now clamps limits above `maxInlineContentChars` (default 12000) instead of failing, and remaining invalid-limit errors state the allowed range.

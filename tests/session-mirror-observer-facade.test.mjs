@@ -84,6 +84,7 @@ function createPi() {
       commands.set(name, command);
     },
     registerShortcut() {},
+    registerTool() {},
   };
 }
 

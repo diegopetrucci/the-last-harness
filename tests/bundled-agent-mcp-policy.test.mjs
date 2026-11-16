@@ -76,6 +76,7 @@ const EXPECTED_AGENT_TOOLS = {
     "subagent",
     "subagent_supervisor",
     "mcp",
+    "name_session",
   ],
   rush: [
     "read",
@@ -193,4 +194,13 @@ test("all packaged agents declare the generic MCP gateway without dropping tools
     /exact ordered (?:validation|shell\/MCP) steps/,
     "test-runner must retain exact assigned validation steps",
   );
+});
+
+test("only the architect can name the current session", () => {
+  const definitions = [...readPrimaryDefinitions(), ...readBundledDefinitions()];
+  const namingAgents = definitions
+    .filter((definition) => declaredTools(definition).includes("name_session"))
+    .map((definition) => definition.name);
+
+  assert.deepEqual(namingAgents, ["architect"]);
 });

@@ -50,6 +50,7 @@ Again, the core idea: explore and plan with the architect. Double check with the
 A few quick-fire tips to get the most of the architect:
 
 - If the planned work is too big, ask the architect to delegate even just one tk ticket at a time to the developer. Final-validation tickets go to the execution-only test-runner, which can run exact shell and generic MCP steps. You don't need to go all the way at all times.
+- The architect labels an unnamed session once it has created your tickets, so sessions are easy to spot in `/resume` and `/session`. It never renames a session that already has a name, and `/name` always overrides it.
 - `/annotate-last-message` opens a simple native window where you can write comments to specific parts of the architect's last message
 - `/tree` lets you go back and forth in the conversation tree. It's similar to Claude Code's `/btw`, but much, much more powerful. I often use it to explore smaller parts of the conversation, and after having done so, I return to the last "clean" message to clear up context (you can do so with or without generated summaries of your nested conversation).
 - `/annotate-git-diff`: similar to `/annotate-last-message`, but for git diffs (even tickets!).
