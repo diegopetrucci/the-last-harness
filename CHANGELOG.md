@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- The architect now names an unnamed session with a short label after creating tickets, via an architect-only `name_session` tool that never overwrites an existing name.
+- The architect now names an unnamed session with a short label after creating tickets, via an architect-only `name_session` tool that never overwrites an existing name ([#917](https://github.com/diegopetrucci/the-last-harness/pull/917)).
 
 ### Changed
 

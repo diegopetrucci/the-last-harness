@@ -70,6 +70,19 @@ test("normalizeTlhSessionName strips ANSI CSI and OSC sequences", () => {
   );
 });
 
+test("normalizeTlhSessionName strips C1 CSI and OSC sequences", () => {
+  // C1 CSI (U+009B) behaves like ESC [: consume through the final byte.
+  assert.equal(normalizeTlhSessionName("a\u009b31mb"), "ab");
+  assert.equal(normalizeTlhSessionName("\u009b31mRed\u009b0m session"), "Red session");
+  // C1 OSC (U+009D) behaves like ESC ]: consume through BEL, ESC-backslash, or ST.
+  assert.equal(
+    normalizeTlhSessionName("\u009d8;;https://example.com\u0007linked\u009d8;;\u0007 name"),
+    "linked name",
+  );
+  assert.equal(normalizeTlhSessionName("\u009d0;title\u009cnext"), "next");
+  assert.equal(normalizeTlhSessionName("\u009d0;title\u001b\\next"), "next");
+});
+
 test("normalizeTlhSessionName turns control characters into word separators", () => {
   assert.equal(normalizeTlhSessionName("a\u0000b\u007fc\u0085d"), "a b c d");
 });
@@ -86,6 +99,8 @@ test("normalizeTlhSessionName returns an empty string for whitespace, control, a
   assert.equal(normalizeTlhSessionName(""), "");
   assert.equal(normalizeTlhSessionName(" \t\n\r "), "");
   assert.equal(normalizeTlhSessionName("\u0000\u0001\u001b[0m\u001b]0;;\u0007"), "");
+  assert.equal(normalizeTlhSessionName("\u009b31m"), "");
+  assert.equal(normalizeTlhSessionName("\u009d0;title\u0007"), "");
 });
 
 // ── registration ─────────────────────────────────────────────────────────────
@@ -217,7 +232,15 @@ test("name_session errors without setting a name when the input is empty after n
     registerNameSessionTool(pi);
     const tool = pi.tools.get(NAME_SESSION_TOOL_NAME);
 
-    for (const input of ["", "   ", "\n\t", "\u0000\u0001", "\u001b[31m\u001b[0m"]) {
+    for (const input of [
+      "",
+      "   ",
+      "\n\t",
+      "\u0000\u0001",
+      "\u001b[31m\u001b[0m",
+      "\u009b31m",
+      "\u009d0;title\u0007",
+    ]) {
       const result = await tool.execute("call-5", { name: input }, undefined, undefined, ctx);
       assert.equal(result.isError, true, `expected an error result for ${JSON.stringify(input)}`);
       assert.deepEqual(result.details, { changed: false });

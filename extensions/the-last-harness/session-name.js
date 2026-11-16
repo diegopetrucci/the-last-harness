@@ -7,6 +7,9 @@ const ESCAPE_CODE_POINT = 0x1b;
 const BELL_CODE_POINT = 0x07;
 const CSI_FINAL_BYTE_MIN = 0x40;
 const CSI_FINAL_BYTE_MAX = 0x7e;
+const C1_CSI_CODE_POINT = 0x9b;
+const C1_OSC_CODE_POINT = 0x9d;
+const C1_STRING_TERMINATOR_CODE_POINT = 0x9c;
 const NAME_SESSION_TOOL_DESCRIPTION = [
     "Name the current session with a short descriptive label.",
     "Use it once, early, when the session has no name yet and the work has a clear purpose.",
@@ -22,40 +25,50 @@ const NameSessionParameters = Type.Object({
 function isSubagentChildProcess() {
     return process.env[SUBAGENT_CHILD_ENV] === "1";
 }
+function skipCsiSequence(input, start) {
+    for (let index = start; index < input.length; index += 1) {
+        const current = input.charCodeAt(index);
+        if (current >= CSI_FINAL_BYTE_MIN && current <= CSI_FINAL_BYTE_MAX)
+            return index;
+    }
+    return input.length;
+}
+function skipOscSequence(input, start) {
+    for (let index = start; index < input.length; index += 1) {
+        const current = input.charCodeAt(index);
+        if (current === BELL_CODE_POINT || current === C1_STRING_TERMINATOR_CODE_POINT)
+            return index;
+        if (current === ESCAPE_CODE_POINT && input.charCodeAt(index + 1) === 0x5c)
+            return index + 1;
+    }
+    return input.length;
+}
 function stripAnsiSequences(input) {
     let output = "";
     for (let index = 0; index < input.length; index += 1) {
         const codePoint = input.codePointAt(index) ?? 0;
-        if (codePoint !== ESCAPE_CODE_POINT) {
-            output += input[index];
-            continue;
-        }
-        const next = input.charCodeAt(index + 1);
-        if (next === 0x5b) {
-            index += 2;
-            while (index < input.length) {
-                const current = input.charCodeAt(index);
-                if (current >= CSI_FINAL_BYTE_MIN && current <= CSI_FINAL_BYTE_MAX)
-                    break;
-                index += 1;
+        if (codePoint === ESCAPE_CODE_POINT) {
+            const next = input.charCodeAt(index + 1);
+            if (next === 0x5b) {
+                index = skipCsiSequence(input, index + 2);
+                continue;
             }
-            continue;
-        }
-        if (next === 0x5d) {
-            index += 2;
-            while (index < input.length) {
-                const current = input.charCodeAt(index);
-                if (current === BELL_CODE_POINT)
-                    break;
-                if (current === ESCAPE_CODE_POINT && input.charCodeAt(index + 1) === 0x5c) {
-                    index += 1;
-                    break;
-                }
-                index += 1;
+            if (next === 0x5d) {
+                index = skipOscSequence(input, index + 2);
+                continue;
             }
+            index += 1;
             continue;
         }
-        index += 1;
+        if (codePoint === C1_CSI_CODE_POINT) {
+            index = skipCsiSequence(input, index + 1);
+            continue;
+        }
+        if (codePoint === C1_OSC_CODE_POINT) {
+            index = skipOscSequence(input, index + 1);
+            continue;
+        }
+        output += input[index];
     }
     return output;
 }

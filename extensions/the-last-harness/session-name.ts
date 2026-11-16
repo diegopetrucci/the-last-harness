@@ -24,6 +24,11 @@ const ESCAPE_CODE_POINT = 0x1b;
 const BELL_CODE_POINT = 0x07;
 const CSI_FINAL_BYTE_MIN = 0x40;
 const CSI_FINAL_BYTE_MAX = 0x7e;
+// The 8-bit C1 introducers are interchangeable with ESC [ (CSI) and ESC ] (OSC),
+// and U+009C is the 8-bit form of the ESC-backslash string terminator.
+const C1_CSI_CODE_POINT = 0x9b;
+const C1_OSC_CODE_POINT = 0x9d;
+const C1_STRING_TERMINATOR_CODE_POINT = 0x9c;
 
 const NAME_SESSION_TOOL_DESCRIPTION = [
   "Name the current session with a short descriptive label.",
@@ -53,42 +58,62 @@ function isSubagentChildProcess(): boolean {
   return process.env[SUBAGENT_CHILD_ENV] === "1";
 }
 
-/** Drop ANSI escape sequences (CSI, OSC, and two-character escapes) entirely. */
+/**
+ * Return the index of the last UTF-16 unit of a CSI body: the final byte, or
+ * `input.length` when the sequence is unterminated.
+ */
+function skipCsiSequence(input: string, start: number): number {
+  for (let index = start; index < input.length; index += 1) {
+    const current = input.charCodeAt(index);
+    if (current >= CSI_FINAL_BYTE_MIN && current <= CSI_FINAL_BYTE_MAX) return index;
+  }
+  return input.length;
+}
+
+/**
+ * Return the index of the last UTF-16 unit of an OSC body: BEL, the ESC-backslash
+ * terminator, or the C1 string terminator, or `input.length` when unterminated.
+ */
+function skipOscSequence(input: string, start: number): number {
+  for (let index = start; index < input.length; index += 1) {
+    const current = input.charCodeAt(index);
+    if (current === BELL_CODE_POINT || current === C1_STRING_TERMINATOR_CODE_POINT) return index;
+    if (current === ESCAPE_CODE_POINT && input.charCodeAt(index + 1) === 0x5c) return index + 1;
+  }
+  return input.length;
+}
+
+/**
+ * Drop ANSI escape sequences entirely: ESC-introduced CSI/OSC and two-character
+ * escapes, plus the 8-bit C1 CSI (U+009B) and OSC (U+009D) introducers.
+ */
 function stripAnsiSequences(input: string): string {
   let output = "";
   for (let index = 0; index < input.length; index += 1) {
     const codePoint = input.codePointAt(index) ?? 0;
-    if (codePoint !== ESCAPE_CODE_POINT) {
-      output += input[index];
-      continue;
-    }
-    const next = input.charCodeAt(index + 1);
-    if (next === 0x5b) {
-      // CSI: consume up to and including the final byte.
-      index += 2;
-      while (index < input.length) {
-        const current = input.charCodeAt(index);
-        if (current >= CSI_FINAL_BYTE_MIN && current <= CSI_FINAL_BYTE_MAX) break;
-        index += 1;
+    if (codePoint === ESCAPE_CODE_POINT) {
+      const next = input.charCodeAt(index + 1);
+      if (next === 0x5b) {
+        index = skipCsiSequence(input, index + 2);
+        continue;
       }
-      continue;
-    }
-    if (next === 0x5d) {
-      // OSC: consume up to BEL or the ESC \ terminator.
-      index += 2;
-      while (index < input.length) {
-        const current = input.charCodeAt(index);
-        if (current === BELL_CODE_POINT) break;
-        if (current === ESCAPE_CODE_POINT && input.charCodeAt(index + 1) === 0x5c) {
-          index += 1;
-          break;
-        }
-        index += 1;
+      if (next === 0x5d) {
+        index = skipOscSequence(input, index + 2);
+        continue;
       }
+      // Any other escape consumes the escape plus its single following character.
+      index += 1;
       continue;
     }
-    // Any other escape consumes the escape plus its single following character.
-    index += 1;
+    if (codePoint === C1_CSI_CODE_POINT) {
+      index = skipCsiSequence(input, index + 1);
+      continue;
+    }
+    if (codePoint === C1_OSC_CODE_POINT) {
+      index = skipOscSequence(input, index + 1);
+      continue;
+    }
+    output += input[index];
   }
   return output;
 }
