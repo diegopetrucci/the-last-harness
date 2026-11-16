@@ -44,6 +44,7 @@ function createPi() {
       this.commands.set(name, command);
     },
     registerShortcut() {},
+    registerTool() {},
     appendEntry() {},
     getAllTools: () => activeTools.map((name) => ({ name })),
     getActiveTools: () => activeTools,

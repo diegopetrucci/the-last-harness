@@ -38,6 +38,7 @@ import { collectStartupResourceSnapshot } from "./the-last-harness/resources.js"
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-notice.js";
 import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
+import { registerNameSessionTool } from "./the-last-harness/session-name.js";
 import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { registerSessionMirrorObserverFacade } from "./the-last-harness/session-mirror-observer-facade.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
@@ -203,6 +204,10 @@ export default function theLastHarness(pi: ExtensionAPI) {
   if (!primaryAgentRuntime) {
     return;
   }
+
+  // Main sessions only: the primary runtime returns early for child subagent
+  // processes, and the tool module re-checks PI_SUBAGENT_CHILD itself.
+  registerNameSessionTool(pi);
 
   // Parent-only registration keeps minor-agent child processes free of the
   // observer command and lifecycle hooks. The facade still leaves its

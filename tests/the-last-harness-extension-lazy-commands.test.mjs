@@ -25,6 +25,7 @@ function createPiHarness() {
       sentMessages.push(message);
     },
     registerShortcut() {},
+    registerTool() {},
     appendEntry() {},
     getAllTools: () => activeTools.map((name) => ({ name })),
     getActiveTools: () => activeTools,

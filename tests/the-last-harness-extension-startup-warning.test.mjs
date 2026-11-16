@@ -85,6 +85,7 @@ function createPi() {
     registerShortcut(shortcut, options) {
       shortcuts.set(shortcut, options);
     },
+    registerTool() {},
     appendEntry() {},
     getAllTools: () => [],
     getActiveTools: () => [],
