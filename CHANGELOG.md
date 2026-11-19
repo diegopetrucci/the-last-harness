@@ -16,6 +16,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Internal
 
 - AGENTS.md now tells agents to fetch and rebase onto `origin/main` before opening a PR ([#918](https://github.com/diegopetrucci/the-last-harness/pull/918)).
+- Isolate `HOME`, `USERPROFILE`, and `PI_CODING_AGENT_DIR` in the subagents skills-fallback tests so user skills no longer leak into discovery.
 
 ## [0.48.0] - 2026-11-13
 
