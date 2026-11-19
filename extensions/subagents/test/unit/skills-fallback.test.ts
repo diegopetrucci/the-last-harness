@@ -13,6 +13,23 @@ import {
 } from "../../src/agents/skills.ts";
 
 let tempDir = "";
+let isolatedHomeDir = "";
+let isolatedAgentDir = "";
+let previousSkillEnv: Array<string | undefined> = [];
+
+const SKILL_ENV_KEYS = ["HOME", "USERPROFILE", "PI_CODING_AGENT_DIR"] as const;
+
+function saveEnv(keys: readonly string[]): Array<string | undefined> {
+  return keys.map((key) => process.env[key]);
+}
+
+function restoreEnv(keys: readonly string[], previous: Array<string | undefined>): void {
+  keys.forEach((key, index) => {
+    const value = previous[index];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  });
+}
 
 function writeSkillFile(skillDir: string, body: string, description = "Test description"): void {
   fs.mkdirSync(skillDir, { recursive: true });
@@ -77,7 +94,7 @@ async function withSkillsEnv(
     "PI_CODING_AGENT_DIR",
     "PI_SUBAGENT_EXTRA_AGENT_DIRS",
   ] as const;
-  const previous = keys.map((key) => process.env[key]);
+  const previous = saveEnv(keys);
   try {
     delete process.env.PI_CODING_AGENT_DIR;
     delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
@@ -87,23 +104,35 @@ async function withSkillsEnv(
       return fresh;
     });
   } finally {
-    keys.forEach((key, index) => {
-      const value = previous[index];
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    });
+    restoreEnv(keys, previous);
   }
 }
 
 describe("skills filesystem fallback", () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-skills-fallback-"));
+    // buildSkillPaths() always consults user-scoped roots: ~/.claude/skills,
+    // ~/.agents/skills, and the ambient PI_CODING_AGENT_DIR (when unset, its
+    // default under the home dir). Without isolation a contributor's own skills
+    // leak into discovery, so a name that collides with a fixture below turns the
+    // "not discovered" and runtime-fallback assertions red. The home and agent
+    // dirs are siblings of tempDir, never inside it, so they cannot be discovered
+    // as project skills either.
+    isolatedHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-skills-fallback-home-"));
+    isolatedAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-skills-fallback-agent-"));
+    previousSkillEnv = saveEnv(SKILL_ENV_KEYS);
+    process.env.HOME = isolatedHomeDir;
+    process.env.USERPROFILE = isolatedHomeDir;
+    process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
     clearSkillCache();
   });
 
   afterEach(() => {
     clearSkillCache();
+    restoreEnv(SKILL_ENV_KEYS, previousSkillEnv);
     fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(isolatedHomeDir, { recursive: true, force: true });
+    fs.rmSync(isolatedAgentDir, { recursive: true, force: true });
   });
 
   it("discovers project skills from filesystem paths", () => {
