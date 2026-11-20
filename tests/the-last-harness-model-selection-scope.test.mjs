@@ -771,7 +771,7 @@ test("OpenRouter persisted selections keep distinct primary overrides across swi
   });
 });
 
-test("model cycling never creates or edits a primary override", async (t) => {
+test("model cycling persists for the session and never creates or edits a primary override", async (t) => {
   for (const existingOverride of [undefined, "anthropic/claude-opus-5"]) {
     const fixture = createIsolatedProfileFixture("tlh-model-cycle-", { cwd: true, test: t });
     const defaultModel = model("anthropic", "claude-sonnet-4-6");
@@ -818,14 +818,27 @@ test("model cycling never creates or edits a primary override", async (t) => {
       );
       await session.cycleModel("forward", { persist: true });
       await manager.flush();
+      const cycledModel = runtimeHarness.pi.model;
+      assert.notDeepEqual(cycledModel, initialModel);
 
+      await runtimeHarness.beforeAgentStart({ systemPrompt: "base" }, context);
+      await manager.flush();
+      assert.deepEqual(
+        runtimeHarness.pi.model,
+        cycledModel,
+        "cycled model must survive next prompt",
+      );
+
+      const settings = readSettings(fixture.agent);
       assert.equal(
-        readSettings(fixture.agent).tlh.primaryAgent.modelOverrides?.architect,
+        settings.tlh.primaryAgent.modelOverrides?.architect,
         existingOverride,
         existingOverride
           ? "cycle must not edit an existing primary override"
           : "cycle must not create a primary override",
       );
+      // Pi's own persist:true cycle owns defaultModel; TLH must leave it as Pi wrote it.
+      assert.equal(settings.defaultModel, cycledModel.id);
       await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
     });
   }
