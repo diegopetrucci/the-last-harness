@@ -747,6 +747,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 }
                 return;
             }
+            if (event.source === "cycle") {
+                updateSessionOnlyModel(event.model);
+                return;
+            }
             updateSessionOnlyModel(undefined);
             return;
         });

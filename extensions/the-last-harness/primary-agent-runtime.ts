@@ -1345,8 +1345,15 @@ function createTlhPrimaryAgentRuntime(
         return;
       }
 
-      // Cycling and restore/future sources retain their upstream session
-      // semantics and are never interpreted as an explicit default save.
+      if (event.source === "cycle") {
+        // Native model cycling is a session-only choice like Enter: keep it
+        // across prompts and never treat it as a persisted default or override.
+        updateSessionOnlyModel(event.model);
+        return;
+      }
+
+      // Restore/future sources retain their upstream session semantics and
+      // clear the session-only gate; they are never an explicit default save.
       updateSessionOnlyModel(undefined);
       return;
     });

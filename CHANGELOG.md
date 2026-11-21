@@ -13,6 +13,10 @@ All notable changes to The Last Harness will be documented in this file.
 - Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.29.3` to `npm:@diegopetrucci/pi-web-access@0.29.4`: `get_search_content` now clamps limits above `maxInlineContentChars` (default 12000) instead of failing, and remaining invalid-limit errors state the allowed range.
 - Inside tmux, OSC 7501 Program Status and notify OSC 777/99 writes are now wrapped in tmux passthrough; requires `set -g allow-passthrough all` ([docs](docs/integrations.md#tmux-passthrough), [#916](https://github.com/diegopetrucci/the-last-harness/pull/916)).
 
+### Fixed
+
+- A model chosen with Ctrl+P cycling now stays active across later prompts instead of being reset to the primary's model ([#920](https://github.com/diegopetrucci/the-last-harness/pull/920), [#873](https://github.com/diegopetrucci/the-last-harness/issues/873)).
+
 ### Internal
 
 - AGENTS.md now tells agents to fetch and rebase onto `origin/main` before opening a PR ([#918](https://github.com/diegopetrucci/the-last-harness/pull/918)).
