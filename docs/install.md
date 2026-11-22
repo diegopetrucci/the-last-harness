@@ -159,7 +159,7 @@ TLH does not set a `tuiMode` override in its packaged defaults (`config/settings
 
 Edit `~/.the-last-harness/agent/settings.json` directly, or open `/settings` and set **TUI mode** to `regular`. You can also pass `--tui-mode regular` as a per-run flag. To revert to fullscreen, set the value back to `"fullscreen"` or remove the key.
 
-The setting is user-owned and survives `tlh update` and installer reruns. `tlh doctor --repair` does not modify `tuiMode`; it only fills missing keys that TLH actively manages (the one exception is the installer-owned `compaction.reserveTokens`, below).
+The setting is user-owned and survives `tlh update` and installer reruns. `tlh doctor --repair` does not modify `tuiMode`; it only fills missing keys that TLH actively manages (it likewise leaves `compaction.reserveTokens` alone; see [Compaction reserve default](#compaction-reserve-default)).
 
 ## Default theme
 
@@ -183,7 +183,7 @@ If an existing isolated profile still selects `the-last-harness`, an interactive
 
 The notice never changes the selected theme. After the notice is displayed, TLH records `legacyThemeNoticeDisplayed: true` in the profile-scoped `~/.the-last-harness/agent/tlh/startup-state.json` marker file. To show it again, remove only that property from the active profile's `tlh/startup-state.json` (preserving the other startup state) and launch TLH interactively; resetting the marker does not change the theme.
 
-Running `tlh update --force` (or equivalently `bash install.sh --force`) passes `--force` to the settings merger, which overwrites existing scalar values—including `theme`—with the current packaged defaults. `tlh doctor --repair` does not accept a `--force` option and never overwrites an existing theme value; it only fills in missing keys, apart from the enforced `compaction.reserveTokens` (see below). Use `/settings` or manual edits to re-set your preferred theme after a forced update if needed.
+Running `tlh update --force` (or equivalently `bash install.sh --force`) passes `--force` to the settings merger, which overwrites existing scalar values—including `theme`—with the current packaged defaults. `tlh doctor --repair` does not accept a `--force` option and never overwrites an existing theme value; it only fills in missing keys. Use `/settings` or manual edits to re-set your preferred theme after a forced update if needed.
 
 ## Pi-native prompt-cache warming
 
@@ -191,9 +191,9 @@ See [prompt-cache warming](subagents.md#prompt-cache-warming) for modes, install
 
 ## Compaction reserve default
 
-The packaged `compaction.reserveTokens` value lives in [settings.defaults.json](../config/settings.defaults.json); see [child context-window policy](subagents.md#child-context-window-policy) for effective context caps. The reserve controls when auto-compaction starts and indirectly bounds the space available for its summary. It applies globally to primary and child sessions, so small-window models should use a `compaction.modelOverrides` entry with a lower reserve; overrides are never touched by install or update.
+TLH no longer ships a `compaction.reserveTokens` default, so Pi's own default reserve applies (see [child context-window policy](subagents.md#child-context-window-policy) for effective context caps). The reserve controls when auto-compaction starts. You may set `compaction.reserveTokens` yourself (or use a `compaction.modelOverrides` entry for small-window models); install, update, and `tlh doctor --repair` never write or overwrite it.
 
-Every install and update (not only `--force`) writes the packaged value, overwriting any existing `compaction.reserveTokens`, and records `tlh.compactionReserveTokensManaged: true` in `settings.json` as provenance. A value that already matches is left untouched. `tlh doctor --repair` likewise restores the packaged `compaction.reserveTokens` over a custom value, so it is the one existing scalar that repair overwrites. `--no-settings` skips the settings merge entirely.
+TLH previously shipped `49152` and marked it with `tlh.compactionReserveTokensManaged: true` ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785)). A one-time cleanup runs during settings merge (install, update, `update --force`, and `doctor --repair`), only on profiles that still carry that marker: it removes `compaction.reserveTokens` when it is still `49152` (dropping `compaction` if that leaves it empty), keeps any other value, and always clears the marker. Without the marker nothing is touched, even a value of `49152`; other `compaction` keys such as `modelOverrides` are always preserved. `--no-settings` skips the settings merge entirely.
 
 Summaries still grow with the session, so very long sessions can leave little room for a summary, particularly in small windows.
 

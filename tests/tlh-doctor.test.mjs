@@ -873,10 +873,7 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
   const output = `${result.stdout}\n${result.stderr}`;
   const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
   const repairedSubagentConfig = JSON.parse(readFileSync(subagentConfigPath, "utf8"));
-  const packagedReserveTokens = JSON.parse(
-    readFileSync(join(packageRoot, "config", "settings.defaults.json"), "utf8"),
-  ).compaction.reserveTokens;
-  assert.equal(repairedSettings.compaction.reserveTokens, packagedReserveTokens);
+  assert.equal(repairedSettings.compaction.reserveTokens, 1234);
   const backupsAfterRepair = readdirSync(fixture.agentDir).filter((entry) =>
     entry.startsWith("settings.json.backup-"),
   ).length;

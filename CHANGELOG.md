@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Retired the packaged `compaction.reserveTokens` default (`49152`); Pi's default reserve now applies, and a one-time cleanup removes the old TLH-written value only from profiles carrying the TLH marker. Set `compaction.reserveTokens` yourself if you want a custom value ([docs](docs/install.md#compaction-reserve-default), [#785](https://github.com/diegopetrucci/the-last-harness/issues/785)).
 - Bumped bundled `pi-anthropic-auth` 3.5.0 → 3.6.0: Claude Pro/Max OAuth requests now use Pi message threads, with the billing header on every continuation ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 - Bumped the bundled Pi runtime from `1.5.2` to `1.6.0`. Extension `render()` now returns `readonly string[]`, so extensions that mutate render output must copy it; `find` path patterns are now relative to the search directory; Anthropic message threads now apply to any provider with an `api.anthropic.com` base URL ([review evidence](docs/upstream-sync-inventory.md#pi-160-review-evidence)).
 - Bundled OpenAI Codex defaults moved from `gpt-6.1-sol` to `gpt-6.2-sol` and from `gpt-6-astra` to `gpt-6.2-astra`.

@@ -980,39 +980,25 @@ function applyBuiltinMcpExclusionSync(
   }
 }
 
-function compactionReserveTokensOf(settings: unknown): number | undefined {
-  if (!isPlainObject(settings) || !isPlainObject(settings.compaction)) return undefined;
-  const value = settings.compaction.reserveTokens;
-  return typeof value === "number" ? value : undefined;
-}
+/** Retired TLH-packaged compaction.reserveTokens default (#785); Pi >=1.4.0 no longer needs it. */
+const RETIRED_COMPACTION_RESERVE_TOKENS = 49152;
 
 /**
- * Record that TLH wrote the packaged compaction.reserveTokens value (#785). The
- * marker is only set when this merge inserted or overwrote the value; a value
- * that already matched is left alone, and the marker is never cleared here.
+ * One-time cleanup of the retired reserve default. Only acts on profiles that
+ * carry the TLH provenance marker; unmarked values (even 49152) are user-owned.
  */
-function applyCompactionReserveTokensProvenance(
-  settings: JsonObject,
-  existingSettings: unknown,
-  defaults: unknown,
-  changes: string[],
-): void {
-  const packaged = compactionReserveTokensOf(defaults);
-  if (packaged === undefined) return;
-  if (compactionReserveTokensOf(existingSettings) === packaged) return;
-  if (compactionReserveTokensOf(settings) !== packaged) return;
-
+function retireCompactionReserveTokensDefault(settings: JsonObject, changes: string[]): void {
   const tlh = settings.tlh;
-  if (tlh === undefined) {
-    settings.tlh = { compactionReserveTokensManaged: true };
-  } else if (!isPlainObject(tlh)) {
-    return;
-  } else if (tlh.compactionReserveTokensManaged === true) {
-    return;
-  } else {
-    tlh.compactionReserveTokensManaged = true;
+  if (!isPlainObject(tlh) || tlh.compactionReserveTokensManaged !== true) return;
+
+  const compaction = settings.compaction;
+  if (isPlainObject(compaction) && compaction.reserveTokens === RETIRED_COMPACTION_RESERVE_TOKENS) {
+    delete compaction.reserveTokens;
+    if (Object.keys(compaction).length === 0) delete settings.compaction;
+    changes.push("remove retired TLH compaction.reserveTokens default");
   }
-  changes.push("mark compaction.reserveTokens as TLH-managed");
+  delete tlh.compactionReserveTokensManaged;
+  changes.push("clear compaction.reserveTokens ownership marker");
 }
 
 function mergeSettings(
@@ -1046,7 +1032,7 @@ function isPersistentTelemetryOptOut(
 
 function isInstallerOwnedSetting(path: readonly string[]): boolean {
   const joinedPath = path.join(".");
-  return joinedPath === "lastChangelogVersion" || joinedPath === "compaction.reserveTokens";
+  return joinedPath === "lastChangelogVersion";
 }
 
 function isInstallerOwnedObjectContainer(path: readonly string[]): boolean {
@@ -1329,7 +1315,7 @@ function main(): void {
   purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
   pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
   applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
-  applyCompactionReserveTokensProvenance(next, existing, rawDefaults, changes);
+  retireCompactionReserveTokensDefault(next, changes);
   syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes, mcpCutover);
 
   if (heldMcpState && mcporterEntry) {
