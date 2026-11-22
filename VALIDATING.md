@@ -255,14 +255,16 @@ The following carried-forward checks are required release-preparation work for t
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
 - **Published-ref update convergence:** once the release ref advertises the Pi version pinned in `config/pi-runtime/package.json`, verify update convergence from that published ref.
 
-### Pi 1.5.2 comparison status (reviewed 2026-11-10)
+### Pi 1.6.0 comparison status (reviewed 2026-11-21)
 
-The dated 1.5.0→1.5.2 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-152-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The carried-forward item below remains pending:
+The 1.5.2→1.6.0 package comparison is recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-160-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. These checks remain pending:
 
-- **Release gate — Claude Pro/Max OAuth message threads (passed 2026-11-13 for v0.48.0, live-tested by the maintainer):** run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` with the bundled `pi-anthropic-auth` 3.5.0 and verify they succeed after tool calls with no `claude_code_version_too_old` or extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
-- **Carried forward from 1.5.0 (still apply to the pinned runtime):** the items in the [1.5.0 status](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02), including those it carries forward from 1.4.0 and earlier.
+- **Claude Pro/Max OAuth session:** run a multi-turn, tool-using session and verify no message-thread regression for an OAuth provider, including any not shaped by `pi-anthropic-auth` ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- **Real resume and `/tree` tool restoration:** resume a saved session and navigate with `/tree`, verifying the restored tool loadout.
+- **GPT-6.2 Sol/Astra on `openai-codex`:** verify prompt caching and thinking-level behavior.
+- **Carried forward from 1.5.2 (still apply to the pinned runtime):** the items in the [1.5.2 status](docs/pin-bump-verification.md#historical-pi-152-comparison-status-reviewed-2026-11-10), including those it carries forward from 1.5.0 and earlier.
 
-Historical Pi 1.5.0, 1.4.0, 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-150-comparison-status-reviewed-2026-11-02).
+Historical Pi 1.5.2, 1.5.0, 1.4.0, 1.3.0, 1.2.0, and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-152-comparison-status-reviewed-2026-11-10).
 
 ## Final validation guidance
 

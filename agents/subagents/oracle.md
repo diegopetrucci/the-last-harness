@@ -4,7 +4,7 @@ description: Provides read-only high-reasoning second opinions and direct analys
 tools: read, grep, find, ls, contact_supervisor, bash, mcp
 tlhModelDefaults:
   - provider: openai-codex
-    models: [gpt-6-astra]
+    models: [gpt-6.2-astra]
     effort: medium
   - provider: anthropic
     models: [claude-opus-5-5]

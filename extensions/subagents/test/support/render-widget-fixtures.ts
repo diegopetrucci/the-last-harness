@@ -108,7 +108,7 @@ export function assertWrappedSource(lines: string[], source: string, padded = fa
 export function renderWithRealPiTui(lines: string[], width: number): string[] {
   const container = new Container();
   for (const line of lines) container.addChild(new Text(line, 1, 0));
-  return container.render(width);
+  return [...container.render(width)];
 }
 
 export function renderWidgetHarnessLines(

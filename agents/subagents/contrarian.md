@@ -4,7 +4,7 @@ description: Stress-tests plans, designs, and conclusions by steelmanning the st
 tools: read, grep, find, ls, bash, contact_supervisor, mcp
 tlhModelDefaults:
   - provider: openai-codex
-    models: [gpt-6-astra]
+    models: [gpt-6.2-astra]
     effort: medium
   - provider: anthropic
     models: [claude-opus-5-5]

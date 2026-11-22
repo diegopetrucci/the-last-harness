@@ -694,7 +694,7 @@ function renderThroughWidgetComponent(
     const factory = buildWidgetComponent(jobs, controller as any);
     const component = factory(null, theme as any);
     // Use the provided width so wrap/truncation is deterministic in tests.
-    return component.render(width);
+    return [...component.render(width)];
   });
 }
 
