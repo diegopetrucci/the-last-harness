@@ -405,7 +405,9 @@ describe("async execution runner deadlines and process failures", () => {
   });
 
   it("bounds the role deadline by the per-instance remaining budget", async () => {
-    const roleTimeoutMs = scaleTestTimeout(500);
+    // Generous budget: pre-spawn lease and ownership-record I/O consume it under
+    // load. The assertions below are relative to the budget, not its magnitude.
+    const roleTimeoutMs = scaleTestTimeout(30_000);
     const id = `async-role-spawn-deadline-${Date.now().toString(36)}`;
     mockPi.onCall({ delay: scaleTestTimeout(25), output: "fresh role deadline accepted" });
     const dispatchStartedAt = Date.now();

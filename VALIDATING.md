@@ -41,6 +41,10 @@ node --experimental-strip-types --import ./extensions/subagents/test/support/reg
 node --experimental-strip-types --import ./extensions/subagents/test/support/register-loader.mjs --test --test-name-pattern='<pattern>' extensions/subagents/test/unit/<name>.test.ts
 ```
 
+## Temp-dir leak attribution
+
+Both leak guards (`npm test` and the CI shard runner) set `TLH_TEMP_DIR_OWNER_LOG` to a log file inside their per-run `TMPDIR` root (allowlisted, so never reported). Only when it is set, the subagent test helper `createTempDir()` appends the created directory name and the creating test file (`process.argv[1]`, repo-relative when possible, else `unknown`; write failures are ignored), and leak reports print `(created by <file>)` next to each leaked name. The variable is test-only; unset it has no effect.
+
 ## Test-runner concurrency policy
 
 The root test guard, imported subagent runner, and CI shard entrypoint share `TLH_TEST_CONCURRENCY`. When it is unset outside GitHub Actions, they pass Node an adaptive limit of `max(1, floor(availableParallelism / 2))`, which keeps local runs near half of the available CPUs. On GitHub Actions, an unset variable preserves the existing deliberate runner concurrency; a positive-integer override applies in both environments. Invalid values fail fast with a concise error and exit code 2.

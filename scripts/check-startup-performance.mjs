@@ -33,8 +33,9 @@ import { renderWrapper } from "./tlh-wrapper.mjs";
 const DEFAULT_BUDGET_MS = 1000;
 const DEFAULT_RUNS = 6;
 const DEFAULT_TIMEOUT_MS = 15000;
-// Leave more than the bridge's worst-case TERM/KILL cleanup budget before escalation.
-const BRIDGE_CLEANUP_GRACE_MS = 2500;
+// Must exceed the bridge's worst-case INTERRUPT+TERM+KILL escalation (~3.6s) plus margin,
+// so Node never SIGKILLs the bridge mid-escalation.
+const BRIDGE_CLEANUP_GRACE_MS = 6000;
 const DEFAULT_COMMAND = "tlh";
 const CONTROLLED_ENV = {
   PI_OFFLINE: "1",
@@ -69,7 +70,9 @@ import time
 READ_TIMEOUT_SECONDS = 0.05
 POLL_INTERVAL_SECONDS = 0.05
 INTERRUPT_GRACE_SECONDS = 0.4
-TERM_GRACE_SECONDS = 0.6
+# Generous: gives TERM traps headroom to run on a loaded machine. Only costs time
+# when a child ignores TERM.
+TERM_GRACE_SECONDS = 3.0
 KILL_GRACE_SECONDS = 0.2
 WINDOW_ROWS = 50
 WINDOW_COLS = 160

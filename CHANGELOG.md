@@ -27,6 +27,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Adjusted three subagents test helpers for Pi 1.6.0's readonly `render()` output.
 - AGENTS.md now tells agents to fetch and rebase onto `origin/main` before opening a PR ([#918](https://github.com/diegopetrucci/the-last-harness/pull/918)).
 - Isolate `HOME`, `USERPROFILE`, and `PI_CODING_AGENT_DIR` in the subagents skills-fallback tests so user skills no longer leak into discovery ([#919](https://github.com/diegopetrucci/the-last-harness/pull/919)).
+- Widened or decoupled load-sensitive test deadlines (startup-perf SIGINT cleanup, usage-refresh, three subagent deadline tests), made leak guards name the test that created a leaked temp dir, and made close-grace-timer reap its leaked `sleep` ([#884](https://github.com/diegopetrucci/the-last-harness/issues/884)).
 
 ## [0.48.0] - 2026-11-13
 

@@ -56,7 +56,29 @@ export function createMockPi(): MockPi {
 }
 
 export function createTempDir(prefix = "pi-subagent-test-"): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  recordTempDirOwner(dir);
+  return dir;
+}
+
+// Test-only leak attribution (see VALIDATING.md): when the guard runners set
+// TLH_TEMP_DIR_OWNER_LOG, append "<basename>\t<creating file>". Each test file
+// runs in its own Node process, so process.argv[1] is the test file (or the
+// runner script for detached children). Write failures are ignored.
+function recordTempDirOwner(dir: string): void {
+  const logPath = process.env.TLH_TEMP_DIR_OWNER_LOG;
+  if (!logPath) return;
+  try {
+    const script = process.argv[1];
+    let owner = "unknown";
+    if (script) {
+      const rel = path.relative(process.cwd(), path.resolve(script));
+      owner = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : script;
+    }
+    fs.appendFileSync(logPath, `${path.basename(dir)}\t${owner}\n`);
+  } catch {
+    // Attribution is best effort.
+  }
 }
 
 export function removeTempDir(dir: string): void {

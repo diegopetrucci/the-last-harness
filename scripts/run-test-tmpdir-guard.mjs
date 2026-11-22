@@ -17,7 +17,7 @@
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,12 +63,62 @@ const PROCESS_GROUP_POLL_MS = 25;
  *   "jiti" directly inside TMPDIR.
  * - "node-compile-cache": Node's module compile cache directory.
  * - "herdr-app-home": the HERDR_APP_HOME pinned by guardEnv for tests.
+ * - TEMP_DIR_OWNER_LOG_NAME: the owner log the guard runners point
+ *   TEMP_DIR_OWNER_LOG_ENV at (see VALIDATING.md).
  */
+export const TEMP_DIR_OWNER_LOG_ENV = "TLH_TEMP_DIR_OWNER_LOG";
+export const TEMP_DIR_OWNER_LOG_NAME = "tlh-temp-dir-owners.log";
 export const TMPDIR_ALLOWLIST = [
   "jiti", // jiti transform cache
   "node-compile-cache", // Node module compile cache
   "herdr-app-home", // pinned HERDR_APP_HOME for tests (see guardEnv)
+  TEMP_DIR_OWNER_LOG_NAME, // temp-dir owner log written by test helpers
 ];
+
+/**
+ * Read the owner log written by test helpers (one "<basename>\t<test file>"
+ * line per created temp dir) into a name -> sorted unique owner files map.
+ * A missing or unreadable log yields an empty map.
+ *
+ * @param {string} root - the per-run TMPDIR root
+ * @returns {Map<string, string[]>}
+ */
+export function readTempDirOwners(root) {
+  /** @type {Map<string, Set<string>>} */
+  const owners = new Map();
+  let text;
+  try {
+    text = readFileSync(join(root, TEMP_DIR_OWNER_LOG_NAME), "utf8");
+  } catch {
+    return new Map();
+  }
+  for (const line of text.split("\n")) {
+    const tab = line.indexOf("\t");
+    if (tab <= 0) continue;
+    const name = line.slice(0, tab);
+    const file = line.slice(tab + 1).trim();
+    if (!file) continue;
+    if (!owners.has(name)) owners.set(name, new Set());
+    owners.get(name).add(file);
+  }
+  return new Map([...owners].map(([name, files]) => [name, [...files].sort()]));
+}
+
+/**
+ * Format leaked names, appending the creating test file(s) when known.
+ *
+ * @param {readonly string[]} leaks
+ * @param {ReadonlyMap<string, readonly string[]>} owners
+ * @returns {string} newline-joined, two-space-indented lines
+ */
+export function formatLeakLines(leaks, owners) {
+  return leaks
+    .map((name) => {
+      const files = owners.get(name);
+      return files && files.length > 0 ? `  ${name} (created by ${files.join(", ")})` : `  ${name}`;
+    })
+    .join("\n");
+}
 
 /**
  * List the direct-child names inside `dir` that are absent from the
@@ -264,6 +314,7 @@ export async function runWithTmpdirGuard({
     TMP: root,
     TEMP: root,
     HERDR_APP_HOME: join(root, "herdr-app-home"),
+    [TEMP_DIR_OWNER_LOG_ENV]: join(root, TEMP_DIR_OWNER_LOG_NAME),
   };
   // Ambient subagent-child markers (e.g. PI_SUBAGENT_CHILD) must not leak into
   // tests; tests that need child mode set these explicitly.
@@ -409,7 +460,7 @@ export async function runWithTmpdirGuard({
     }
     if (leaks.length > 0) {
       process.stderr.write(
-        `[tlh] temp-dir leaks detected under ${root}:\n${leaks.map((n) => `  ${n}`).join("\n")}\n`,
+        `[tlh] temp-dir leaks detected under ${root}:\n${formatLeakLines(leaks, readTempDirOwners(root))}\n`,
       );
       if (exitCode === 0) exitCode = 1;
     }
