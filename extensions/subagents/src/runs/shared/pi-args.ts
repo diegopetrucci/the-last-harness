@@ -392,6 +392,14 @@ function buildPiArgsInternal(
   env[SUBAGENT_PARENT_SESSION_ENV] =
     input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
 
+  // Children keep the parent's ticket store. Drop the auto-scope marker (undefined removes it at
+  // spawn) so a child in another repo does not re-scope TICKETS_DIR to its own cwd.
+  const parentTicketsDir = process.env.TICKETS_DIR;
+  if (parentTicketsDir) {
+    env.TICKETS_DIR = parentTicketsDir;
+    env.TLH_TICKETS_DIR_AUTO = undefined;
+  }
+
   return { args, env, tempDir };
 }
 

@@ -6,8 +6,7 @@ import type { TlhSettings, TlhTicketsConfig } from "./types.js";
 
 const TK_VALIDATION_TIMEOUT_MS = 5000;
 
-let autoScopedTicketsDir: string | undefined;
-let autoScopedCwd: string | undefined;
+const TICKETS_DIR_AUTO_MARKER = "TLH_TICKETS_DIR_AUTO";
 
 function configuredTicketInstallPath(config: TlhTicketsConfig | undefined): string | undefined {
   const installPath = config?.installPath;
@@ -79,22 +78,30 @@ function resolveDefaultTicketsDir(cwd: string): string {
   return join(resolveGitWorktreeRoot(cwd) ?? resolve(cwd), ".tickets");
 }
 
+// Last auto-scoping done by this process; avoids respawning git for an unchanged cwd.
+let lastAutoScope: { cwd: string; dir: string } | undefined;
+
 export function activateTlhTicketSessionScope(cwd: string): string {
-  const normalizedCwd = resolve(cwd);
   const current = process.env.TICKETS_DIR?.trim();
-  if (current) {
-    const currentIsAutoScoped = current === autoScopedTicketsDir;
-    if (!currentIsAutoScoped) {
-      return current;
-    }
-    if (normalizedCwd === autoScopedCwd) {
-      return current;
-    }
+  const marker = process.env[TICKETS_DIR_AUTO_MARKER]?.trim();
+  if (current && current !== marker) {
+    // Explicit user value: preserve it and drop any stale provenance marker.
+    delete process.env[TICKETS_DIR_AUTO_MARKER];
+    return current;
   }
-  const scopedDir = resolveDefaultTicketsDir(normalizedCwd);
+  const resolvedCwd = resolve(cwd);
+  if (
+    current &&
+    lastAutoScope &&
+    current === lastAutoScope.dir &&
+    resolvedCwd === lastAutoScope.cwd
+  ) {
+    return current;
+  }
+  const scopedDir = resolveDefaultTicketsDir(resolvedCwd);
   process.env.TICKETS_DIR = scopedDir;
-  autoScopedTicketsDir = scopedDir;
-  autoScopedCwd = normalizedCwd;
+  process.env[TICKETS_DIR_AUTO_MARKER] = scopedDir;
+  lastAutoScope = { cwd: resolvedCwd, dir: scopedDir };
   return scopedDir;
 }
 

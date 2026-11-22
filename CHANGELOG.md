@@ -18,6 +18,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Auto-scoped `TICKETS_DIR` values inherited from another session are now re-scoped via a `TLH_TICKETS_DIR_AUTO` marker; explicit unmarked values are still preserved ([docs](docs/integrations.md)).
 - A model chosen with Ctrl+P cycling now stays active across later prompts instead of being reset to the primary's model ([#920](https://github.com/diegopetrucci/the-last-harness/pull/920), [#873](https://github.com/diegopetrucci/the-last-harness/issues/873)).
 
 ### Internal
