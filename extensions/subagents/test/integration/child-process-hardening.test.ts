@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   ASYNC_DIR,
+  RESULTS_DIR,
   executeAsyncSingle,
   requestAsyncInterrupt,
   startedMockPiPids,
@@ -130,13 +131,21 @@ describe("real child process protocol hardening", () => {
         agent: "worker",
         task: "Wait for timeout before emitting overflow",
         agentConfig: makeAgent("worker", {
-          maxExecutionTimeMs: scaleTestTimeout(1_000),
+          // The role budget must outlast pre-spawn lease/ownership I/O and process
+          // start under load, or the deadline can expire before mock call 0 is
+          // recorded. Remaining timing assumption: the child spawns within this
+          // budget. Cost: the test waits out the full budget (>= 5s) for the timeout.
+          maxExecutionTimeMs: scaleTestTimeout(5_000),
         }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: compactArtifactConfig(),
       });
       assert.equal(start.isError, undefined);
-      await waitForMockPiCall(mockPi, 0);
+      // Fail fast with a clear message if the run reaches a terminal state before
+      // the child was ever recorded, instead of hanging on the call wait.
+      await waitForMockPiCall(mockPi, 0, scaleTestTimeout(30_000), {
+        terminalResultPath: path.join(RESULTS_DIR, `${id}.json`),
+      });
       const asyncDir = path.join(ASYNC_DIR, id);
       // Gate on step-level timeout evidence. The role-derived root deadline may
       // publish the terminal timeout (clearing pid) before the child exits, so

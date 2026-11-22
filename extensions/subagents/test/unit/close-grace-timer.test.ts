@@ -51,6 +51,16 @@ function makeChattyLeakyScript(tickMs: number): string {
   ]);
 }
 
+/** SIGKILL the fixture's whole process group, including disowned background jobs. */
+function reapGroup(pid: number | undefined): void {
+  if (pid === undefined || pid <= 1) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // ESRCH: group already gone
+  }
+}
+
 interface RunResult {
   resolvedMs: number;
   exitCode: number | null;
@@ -65,10 +75,14 @@ function runWithGuard(
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const start = Date.now();
-    const child = spawn("bash", [script], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bash", [script], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     const clearGuard = attachPostExitStdioGuard(child, { idleMs, hardMs });
     const hardStop = setTimeout(() => {
+      reapGroup(child.pid);
       try {
         child.kill("SIGKILL");
       } catch {
@@ -87,6 +101,7 @@ function runWithGuard(
     child.on("close", (code) => {
       clearTimeout(hardStop);
       clearGuard();
+      reapGroup(child.pid);
       resolve({ resolvedMs: Date.now() - start, exitCode: code, stdout });
     });
     child.on("error", reject);

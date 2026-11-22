@@ -37,7 +37,13 @@ import {
   testConcurrencyArgs,
 } from "./test-concurrency.mjs";
 import { runLanes } from "./run-lane.mjs";
-import { findLeaks } from "./run-test-tmpdir-guard.mjs";
+import {
+  findLeaks,
+  formatLeakLines,
+  readTempDirOwners,
+  TEMP_DIR_OWNER_LOG_ENV,
+  TEMP_DIR_OWNER_LOG_NAME,
+} from "./run-test-tmpdir-guard.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "..");
@@ -333,7 +339,12 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     timing = timingConfig ? createCiTimingCollector(timingConfig) : null;
-    const tmpdirEnv = { TMPDIR: tmpdirRoot, TMP: tmpdirRoot, TEMP: tmpdirRoot };
+    const tmpdirEnv = {
+      TMPDIR: tmpdirRoot,
+      TMP: tmpdirRoot,
+      TEMP: tmpdirRoot,
+      [TEMP_DIR_OWNER_LOG_ENV]: join(tmpdirRoot, TEMP_DIR_OWNER_LOG_NAME),
+    };
     const lanes = laneDefinitions.map((lane) => ({
       ...lane,
       env: { ...lane.env, ...tmpdirEnv },
@@ -352,7 +363,7 @@ export async function main(argv = process.argv.slice(2)) {
       }
       if (leaks.length > 0) {
         process.stderr.write(
-          `[tlh] temp-dir leaks detected in CI shard:\n${leaks.map((n) => `  ${n}`).join("\n")}\n`,
+          `[tlh] temp-dir leaks detected in CI shard:\n${formatLeakLines(leaks, readTempDirOwners(tmpdirRoot))}\n`,
         );
         if (exitCode === 0) exitCode = 1;
       }

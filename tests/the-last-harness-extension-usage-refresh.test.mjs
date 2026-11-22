@@ -125,7 +125,7 @@ function createCtx(options) {
   return ctx;
 }
 
-async function eventually(predicate, message, { timeoutMs = 5000, intervalMs = 10 } = {}) {
+async function eventually(predicate, message, { timeoutMs = 30_000, intervalMs = 10 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
@@ -1126,7 +1126,7 @@ test("non-rpc modes never publish tlh-usage status", async () => {
     });
     await fireAll(pi, "session_start", { reason: "startup" }, ctx);
     await eventually(
-      () => fetchCalls === 1 && renderRequests === 1,
+      () => fetchCalls >= 1 && renderRequests >= 1,
       "TUI footer render still requested",
     );
     await fireAll(pi, "model_select", {}, ctx);

@@ -967,13 +967,13 @@ describe("async execution lifecycle interruptions", () => {
       const launch = (
         id: string,
         tasks: Array<{ agent: string; task: string }>,
-        options: { agentMaxExecutionTimeMs?: number } = {},
+        { agentMaxExecutionTimeMs }: { agentMaxExecutionTimeMs?: Record<string, number> } = {},
       ) =>
         executeAsyncParallel(id, {
           tasks,
           concurrency: 1,
           agents: tasks.map(({ agent }) =>
-            makeAgent(agent, { maxExecutionTimeMs: options.agentMaxExecutionTimeMs }),
+            makeAgent(agent, { maxExecutionTimeMs: agentMaxExecutionTimeMs?.[agent] }),
           ),
           ctx: {
             pi: { events: { emit() {} } },
@@ -982,7 +982,6 @@ describe("async execution lifecycle interruptions", () => {
           },
           artifactConfig: DISABLED_ARTIFACT_CONFIG,
           shareEnabled: false,
-          ...options,
         });
 
       const childDelayMs = scaleTestTimeout(5_000);
@@ -1031,7 +1030,15 @@ describe("async execution lifecycle interruptions", () => {
           { agent: "timeout-one", task: "Timeout first" },
           { agent: "timeout-two", task: "Timeout second" },
         ],
-        { agentMaxExecutionTimeMs: timedOutMs },
+        // Only the first sibling gets the short product deadline. The fast second
+        // sibling gets a generous budget so spawn latency under load cannot make
+        // it time out too.
+        {
+          agentMaxExecutionTimeMs: {
+            "timeout-one": timedOutMs,
+            "timeout-two": scaleTestTimeout(30_000),
+          },
+        },
       );
       const timedOutPayload = JSON.parse(
         fs.readFileSync(
@@ -1041,6 +1048,7 @@ describe("async execution lifecycle interruptions", () => {
       ) as AsyncResultPayload;
       assert.equal(timedOutPayload.state, "failed");
       assert.equal(timedOutPayload.timedOut, true);
+      assert.equal(timedOutPayload.deadlineAt, undefined);
       assert.deepEqual(
         timedOutPayload.results.map((result) => result.terminationReason),
         ["timed_out", "completed"],

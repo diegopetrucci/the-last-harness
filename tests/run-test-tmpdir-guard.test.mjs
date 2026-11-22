@@ -16,7 +16,10 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   findLeaks,
+  formatLeakLines,
   main,
+  readTempDirOwners,
+  TEMP_DIR_OWNER_LOG_NAME,
   signalExitCode,
   TMPDIR_ALLOWLIST,
   runWithTmpdirGuard,
@@ -808,3 +811,31 @@ test(
     );
   },
 );
+
+// ---------------------------------------------------------------------------
+// temp-dir owner attribution
+// ---------------------------------------------------------------------------
+
+test("owner log name is allowlisted so it is never reported as a leak", () => {
+  const dir = tempDir();
+  writeFileSync(join(dir, TEMP_DIR_OWNER_LOG_NAME), "x\ty\n");
+  assert.deepEqual(findLeaks(dir), []);
+});
+
+test("readTempDirOwners groups, dedupes and tolerates a missing or malformed log", () => {
+  const dir = tempDir();
+  assert.equal(readTempDirOwners(dir).size, 0);
+  writeFileSync(
+    join(dir, TEMP_DIR_OWNER_LOG_NAME),
+    "pi-a\tb.test.ts\npi-a\ta.test.ts\npi-a\ta.test.ts\nbroken\n\tnoname\n",
+  );
+  assert.deepEqual([...readTempDirOwners(dir)], [["pi-a", ["a.test.ts", "b.test.ts"]]]);
+});
+
+test("formatLeakLines prints owners when known and plain names otherwise", () => {
+  const owners = new Map([["pi-a", ["a.test.ts", "b.test.ts"]]]);
+  assert.equal(
+    formatLeakLines(["pi-a", "other"], owners),
+    "  pi-a (created by a.test.ts, b.test.ts)\n  other",
+  );
+});
