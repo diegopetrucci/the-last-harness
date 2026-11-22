@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped bundled `pi-anthropic-auth` 3.5.0 → 3.6.0: Claude Pro/Max OAuth requests now use Pi message threads, with the billing header on every continuation ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
 - Bumped the bundled Pi runtime from `1.5.2` to `1.6.0`. Extension `render()` now returns `readonly string[]`, so extensions that mutate render output must copy it; `find` path patterns are now relative to the search directory; Anthropic message threads now apply to any provider with an `api.anthropic.com` base URL ([review evidence](docs/upstream-sync-inventory.md#pi-160-review-evidence)).
 - Bundled OpenAI Codex defaults moved from `gpt-6.1-sol` to `gpt-6.2-sol` and from `gpt-6-astra` to `gpt-6.2-astra`.
 - Bumped bundled `pi-fast` 0.1.11 → 0.1.14 and `pi-quiet-tools` 0.1.15 → 0.1.18. `pi-fast` adds Fast mode for GPT-6.2 Sol/Astra (Codex priority and direct OpenAI API), extends `/ultrafast` to GPT-6.2 Astra/Sol and GPT-6.1 Sol on direct OpenAI API keys, adds `gpt-6.1-terra` (and `gpt-5.6-sol` on direct API) and Claude Fable 5.2 and Mythos 5.2, and drops Claude Opus 4.8 from Anthropic Fast mode. `pi-quiet-tools` adds Pi 1.6.0 readonly `render()` compatibility and uses Pi's context `keyHint` for the expand hint.
