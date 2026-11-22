@@ -10,6 +10,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled Pi runtime from `1.5.2` to `1.6.0`. Extension `render()` now returns `readonly string[]`, so extensions that mutate render output must copy it; `find` path patterns are now relative to the search directory; Anthropic message threads now apply to any provider with an `api.anthropic.com` base URL ([review evidence](docs/upstream-sync-inventory.md#pi-160-review-evidence)).
+- Bundled OpenAI Codex defaults moved from `gpt-6.1-sol` to `gpt-6.2-sol` and from `gpt-6-astra` to `gpt-6.2-astra`.
+- Bumped bundled `pi-fast` 0.1.11 → 0.1.14 and `pi-quiet-tools` 0.1.15 → 0.1.18. `pi-fast` adds Fast mode for GPT-6.2 Sol/Astra (Codex priority and direct OpenAI API), extends `/ultrafast` to GPT-6.2 Astra/Sol and GPT-6.1 Sol on direct OpenAI API keys, adds `gpt-6.1-terra` (and `gpt-5.6-sol` on direct API) and Claude Fable 5.2 and Mythos 5.2, and drops Claude Opus 4.8 from Anthropic Fast mode. `pi-quiet-tools` adds Pi 1.6.0 readonly `render()` compatibility and uses Pi's context `keyHint` for the expand hint.
 - Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.29.3` to `npm:@diegopetrucci/pi-web-access@0.29.4`: `get_search_content` now clamps limits above `maxInlineContentChars` (default 12000) instead of failing, and remaining invalid-limit errors state the allowed range.
 - Inside tmux, OSC 7501 Program Status and notify OSC 777/99 writes are now wrapped in tmux passthrough; requires `set -g allow-passthrough all` ([docs](docs/integrations.md#tmux-passthrough), [#916](https://github.com/diegopetrucci/the-last-harness/pull/916)).
 
@@ -19,6 +22,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Adjusted three subagents test helpers for Pi 1.6.0's readonly `render()` output.
 - AGENTS.md now tells agents to fetch and rebase onto `origin/main` before opening a PR ([#918](https://github.com/diegopetrucci/the-last-harness/pull/918)).
 - Isolate `HOME`, `USERPROFILE`, and `PI_CODING_AGENT_DIR` in the subagents skills-fallback tests so user skills no longer leak into discovery ([#919](https://github.com/diegopetrucci/the-last-harness/pull/919)).
 

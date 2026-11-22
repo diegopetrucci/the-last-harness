@@ -216,6 +216,13 @@ At the time of this candidate-only run, published-ref update convergence was **n
 
 The post-publication check used a ticket-owned isolated `v0.42.1` latest-release install. Updating it converged to ref `v0.43.0` with `track=latest-release` and private Pi `0.87.1`. The isolated profile, runtime, wrapper, and temporary artifacts were cleaned up after verification; no secrets or ephemeral credential material were recorded.
 
+## Historical Pi 1.5.2 comparison status (reviewed 2026-11-10)
+
+The dated 1.5.0→1.5.2 package comparison is complete and recorded in [the upstream-sync inventory](upstream-sync-inventory.md#historical-pi-152-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The items below remain pending:
+
+- **Release gate — Claude Pro/Max OAuth message threads (passed 2026-11-13 for v0.48.0, live-tested by the maintainer):** run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` with the bundled `pi-anthropic-auth` 3.5.0 and verify they succeed after tool calls with no `claude_code_version_too_old` or extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- **Carried forward from 1.5.0 (still apply to the pinned runtime):** the items in the [1.5.0 status](#historical-pi-150-comparison-status-reviewed-2026-11-02), including those it carries forward from 1.4.0 and earlier.
+
 ## Historical Pi 1.5.0 comparison status (reviewed 2026-11-02)
 
 The dated 1.4.0→1.5.0 package comparison is complete and recorded in [the upstream-sync inventory](upstream-sync-inventory.md#historical-pi-150-review-evidence). It was source/package inspection plus deterministic test runs, not live release validation: no provider, credential, installed-profile, or release-tier checks were run. The provider-backed checks below remain pending:

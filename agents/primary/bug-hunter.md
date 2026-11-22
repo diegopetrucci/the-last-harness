@@ -6,7 +6,7 @@ tlhModelDefaults:
     models: [claude-opus-5-5]
     effort: medium
   - provider: openai-codex
-    models: [gpt-6.1-sol]
+    models: [gpt-6.2-sol]
     effort: medium
   - provider: xai
     models: [grok-4.6]

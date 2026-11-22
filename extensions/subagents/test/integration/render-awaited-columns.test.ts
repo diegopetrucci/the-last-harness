@@ -42,7 +42,7 @@ function render(mode: "single" | "parallel", results: unknown[], expanded: boole
     } as never,
     { expanded },
     theme,
-  ).render(140);
+  ).render(140) as string[];
 }
 
 const indentOf = (line: string) => line.length - line.trimStart().length;
