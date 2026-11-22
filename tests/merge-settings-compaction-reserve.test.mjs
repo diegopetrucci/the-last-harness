@@ -78,7 +78,16 @@ test("migration is idempotent", () => {
   assert.match(second, /No settings changes needed\./);
 });
 
-test("shipped settings.defaults.json no longer contains compaction", () => {
-  const shipped = readJson(join(repoRoot, "config", "settings.defaults.json"));
-  assert.equal("compaction" in shipped, false);
+const shippedDefaults = readJson(join(repoRoot, "config", "settings.defaults.json"));
+
+test("merging shipped defaults into a fresh profile sets no compaction.reserveTokens", () => {
+  const fixture = tempFixture(shippedDefaults, {});
+  runMerge(fixture);
+  assert.equal(readJson(fixture.settings).compaction?.reserveTokens, undefined);
+});
+
+test("merging shipped defaults preserves an unmarked custom compaction.reserveTokens", () => {
+  const fixture = tempFixture(shippedDefaults, { compaction: { reserveTokens: 16384 } });
+  runMerge(fixture);
+  assert.equal(readJson(fixture.settings).compaction.reserveTokens, 16384);
 });
