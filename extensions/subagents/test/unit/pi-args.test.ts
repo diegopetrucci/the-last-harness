@@ -17,6 +17,7 @@ import {
   cleanupTempDir,
   INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
 } from "../../src/runs/shared/pi-args.ts";
+import { buildSubagentSpawnEnv } from "../../src/runs/shared/pi-spawn.ts";
 
 const originalEnv = {
   HOME: process.env.HOME,
@@ -26,6 +27,8 @@ const originalEnv = {
   PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
   PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE,
   PI_SUBAGENT_TK_TICKET_ID: process.env.PI_SUBAGENT_TK_TICKET_ID,
+  TICKETS_DIR: process.env.TICKETS_DIR,
+  TLH_TICKETS_DIR_AUTO: process.env.TLH_TICKETS_DIR_AUTO,
 };
 
 afterEach(() => {
@@ -146,6 +149,39 @@ describe("buildPiArgs session wiring", () => {
     });
 
     assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "direct-parent");
+  });
+
+  it("passes the parent TICKETS_DIR explicitly and drops the auto-scope marker", () => {
+    process.env.TICKETS_DIR = "/parent/.tickets";
+    process.env.TLH_TICKETS_DIR_AUTO = "/parent/.tickets";
+    const { env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
+
+    assert.equal(env.TICKETS_DIR, "/parent/.tickets");
+    assert.equal(Object.hasOwn(env, "TLH_TICKETS_DIR_AUTO") && env.TLH_TICKETS_DIR_AUTO, undefined);
+    const spawnEnv = buildSubagentSpawnEnv(process.env, env);
+    assert.equal(spawnEnv.TICKETS_DIR, "/parent/.tickets");
+    assert.equal(Object.hasOwn(spawnEnv, "TLH_TICKETS_DIR_AUTO"), false);
+  });
+
+  it("adds neither ticket env key when the parent has no TICKETS_DIR", () => {
+    delete process.env.TICKETS_DIR;
+    process.env.TLH_TICKETS_DIR_AUTO = "/stale";
+    const { env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
+
+    assert.equal(Object.hasOwn(env, "TICKETS_DIR"), false);
+    assert.equal(Object.hasOwn(env, "TLH_TICKETS_DIR_AUTO"), false);
   });
 
   it("falls back to inherited parent session env for permission forwarding", () => {

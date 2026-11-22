@@ -3,8 +3,7 @@ import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { expandHomePath } from "./common.js";
 const TK_VALIDATION_TIMEOUT_MS = 5000;
-let autoScopedTicketsDir;
-let autoScopedCwd;
+const TICKETS_DIR_AUTO_MARKER = "TLH_TICKETS_DIR_AUTO";
 function configuredTicketInstallPath(config) {
     const installPath = config?.installPath;
     if (typeof installPath !== "string" || !installPath.trim()) {
@@ -70,22 +69,25 @@ function resolveGitWorktreeRoot(cwd) {
 function resolveDefaultTicketsDir(cwd) {
     return join(resolveGitWorktreeRoot(cwd) ?? resolve(cwd), ".tickets");
 }
+let lastAutoScope;
 export function activateTlhTicketSessionScope(cwd) {
-    const normalizedCwd = resolve(cwd);
     const current = process.env.TICKETS_DIR?.trim();
-    if (current) {
-        const currentIsAutoScoped = current === autoScopedTicketsDir;
-        if (!currentIsAutoScoped) {
-            return current;
-        }
-        if (normalizedCwd === autoScopedCwd) {
-            return current;
-        }
+    const marker = process.env[TICKETS_DIR_AUTO_MARKER]?.trim();
+    if (current && current !== marker) {
+        delete process.env[TICKETS_DIR_AUTO_MARKER];
+        return current;
     }
-    const scopedDir = resolveDefaultTicketsDir(normalizedCwd);
+    const resolvedCwd = resolve(cwd);
+    if (current &&
+        lastAutoScope &&
+        current === lastAutoScope.dir &&
+        resolvedCwd === lastAutoScope.cwd) {
+        return current;
+    }
+    const scopedDir = resolveDefaultTicketsDir(resolvedCwd);
     process.env.TICKETS_DIR = scopedDir;
-    autoScopedTicketsDir = scopedDir;
-    autoScopedCwd = normalizedCwd;
+    process.env[TICKETS_DIR_AUTO_MARKER] = scopedDir;
+    lastAutoScope = { cwd: resolvedCwd, dir: scopedDir };
     return scopedDir;
 }
 export function findValidTlhTicketCommand(settings, agentDir, options = {}) {

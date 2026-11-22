@@ -29,7 +29,12 @@ export function buildSubagentSpawnEnv(
   const filteredInheritedEnv = Object.fromEntries(
     Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("HERDR_")),
   );
-  return { ...filteredInheritedEnv, ...explicitEnv };
+  const merged: NodeJS.ProcessEnv = { ...filteredInheritedEnv, ...explicitEnv };
+  // An explicit undefined means "remove": never let a key reach the child as the string "undefined".
+  for (const [key, value] of Object.entries(merged)) {
+    if (value === undefined) delete merged[key];
+  }
+  return merged;
 }
 
 function findPiPackageRootFromEntry(entryPoint: string): string | undefined {

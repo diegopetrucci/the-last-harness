@@ -260,6 +260,11 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     }
     env[SUBAGENT_PARENT_SESSION_ENV] =
         input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
+    const parentTicketsDir = process.env.TICKETS_DIR;
+    if (parentTicketsDir) {
+        env.TICKETS_DIR = parentTicketsDir;
+        env.TLH_TICKETS_DIR_AUTO = undefined;
+    }
     return { args, env, tempDir };
 }
 export function cleanupTempDir(tempDir) {

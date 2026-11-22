@@ -22,6 +22,7 @@ const { activateTlhTicketRuntime, activateTlhTicketSessionScope } = await jiti.i
 
 function resetTicketRuntimeTestState() {
   delete process.env.TICKETS_DIR;
+  delete process.env.TLH_TICKETS_DIR_AUTO;
 }
 
 const _tmpDirs = [];
@@ -166,7 +167,7 @@ test(
 );
 
 test(
-  "ticket session scope reuses the same cwd but updates for a different cwd",
+  "ticket session scope memoizes auto-scoped dirs for an unchanged cwd and updates for a different cwd",
   {
     skip: process.platform === "win32",
   },
@@ -358,7 +359,7 @@ esac
       const expected = join(realpathSync(repoRoot), ".tickets");
       activateTlhTicketSessionScope(nestedCwd);
       withPath("", () => {
-        const command = activateTlhTicketRuntime({}, fixture.agent, nestedCwd);
+        const command = activateTlhTicketRuntime({}, fixture.agent);
         assert.equal(command, join(managedBin, "tk"));
         assert.equal(process.env.TICKETS_DIR, expected);
 
@@ -400,5 +401,96 @@ exit 0
       assert.equal(process.env.PATH, "");
       assert.equal(existsSync(sentinel), false);
     });
+  },
+);
+
+test(
+  "ticket session scope re-scopes inherited marked TICKETS_DIR, preserves unmarked or mismatched values",
+  {
+    skip: process.platform === "win32",
+  },
+  () => {
+    const fixture = tempFixture();
+    const otherRepo = join(fixture.dir, "other");
+    const repo = join(fixture.dir, "repo");
+    const nested = join(repo, "packages", "app");
+    mkdirSync(otherRepo, { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    runGit(otherRepo, "init");
+    runGit(repo, "init");
+    const otherStore = join(realpathSync(otherRepo), ".tickets");
+    const expected = join(realpathSync(repo), ".tickets");
+
+    // (1) inherited marked value from another worktree is re-scoped.
+    process.env.TICKETS_DIR = otherStore;
+    process.env.TLH_TICKETS_DIR_AUTO = otherStore;
+    assert.equal(activateTlhTicketSessionScope(repo), expected);
+    assert.equal(process.env.TICKETS_DIR, expected);
+    assert.equal(process.env.TLH_TICKETS_DIR_AUTO, expected);
+
+    // (4) subdirectory of the same repo resolves to the same store.
+    assert.equal(activateTlhTicketSessionScope(nested), expected);
+    assert.equal(process.env.TLH_TICKETS_DIR_AUTO, expected);
+
+    // (2) inherited unmarked value is preserved.
+    delete process.env.TLH_TICKETS_DIR_AUTO;
+    process.env.TICKETS_DIR = otherStore;
+    assert.equal(activateTlhTicketSessionScope(repo), otherStore);
+    assert.equal(process.env.TICKETS_DIR, otherStore);
+    assert.equal(process.env.TLH_TICKETS_DIR_AUTO, undefined);
+
+    // (3) marker differing from TICKETS_DIR: preserve value, remove marker.
+    process.env.TICKETS_DIR = otherStore;
+    process.env.TLH_TICKETS_DIR_AUTO = expected;
+    assert.equal(activateTlhTicketSessionScope(repo), otherStore);
+    assert.equal(process.env.TICKETS_DIR, otherStore);
+    assert.equal(process.env.TLH_TICKETS_DIR_AUTO, undefined);
+  },
+);
+
+test(
+  "ticket session scope skips git for repeat calls with the same cwd but rescopes on cwd change",
+  {
+    skip: process.platform === "win32",
+  },
+  () => {
+    const fixture = tempFixture();
+    const repoA = join(fixture.dir, "a");
+    const repoB = join(fixture.dir, "b");
+    mkdirSync(repoA, { recursive: true });
+    mkdirSync(repoB, { recursive: true });
+    runGit(repoA, "init");
+    runGit(repoB, "init");
+    const expectedA = join(realpathSync(repoA), ".tickets");
+    const expectedB = join(realpathSync(repoB), ".tickets");
+    const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    const shimDir = join(fixture.dir, "shim");
+    const countFile = join(fixture.dir, "git-count");
+    mkdirSync(shimDir);
+    writeFileSync(
+      join(shimDir, "git"),
+      `#!/bin/sh\necho x >> "${countFile}"\nexec "${realGit}" "$@"\n`,
+      {
+        mode: 0o755,
+      },
+    );
+    const count = () =>
+      existsSync(countFile)
+        ? readFileSync(countFile, "utf8").split("\n").filter(Boolean).length
+        : 0;
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${shimDir}${delimiter}${originalPath}`;
+    try {
+      delete process.env.TICKETS_DIR;
+      delete process.env.TLH_TICKETS_DIR_AUTO;
+      assert.equal(activateTlhTicketSessionScope(repoA), expectedA);
+      assert.equal(count(), 1);
+      assert.equal(activateTlhTicketSessionScope(repoA), expectedA);
+      assert.equal(count(), 1);
+      assert.equal(activateTlhTicketSessionScope(repoB), expectedB);
+      assert.equal(count(), 2);
+    } finally {
+      process.env.PATH = originalPath;
+    }
   },
 );

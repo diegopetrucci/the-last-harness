@@ -93,6 +93,8 @@ Pass a ticket ID through the model-facing `ticket` parameter rather than embeddi
 
 The exact stdout body is appended only to that child’s initial prompt under `## Ticket <id>`. Persisted status and result artifacts carry only the child’s normalized `ticketId`; ticket bodies stay out of status text, notifications, and result metadata. A resumed or replacement child may carry the persisted ID without re-reading or copying the original body; its existing session remains the source of the earlier prompt context. Child role prompts should treat an injected ticket body as the source of truth and may run `tk show <id>` only to re-read it.
 
+When the parent has a non-empty `TICKETS_DIR`, each child receives that value explicitly and never inherits `TLH_TICKETS_DIR_AUTO`, so a child whose cwd is in another repo keeps the parent's ticket store instead of re-scoping to its own cwd.
+
 After each successful compaction, a pinned canonical developer receives exactly one visible scope reminder to re-run `tk show <id>`, reread the ticket acceptance criteria, and remain within scope. For overflow retries, TLH queues that custom message with Pi's `steer` delivery mode so it is present before the guaranteed retry; for non-retry compaction, it uses Pi's `nextTurn` delivery so the pending message is included with the next real prompt without creating an extra assistant turn. `session_compact_failed` events never inject it. Other agents and unpinned developer sessions receive no reminder, and Pi's default summary generation remains unchanged.
 
 ### Final-validation test-runner

@@ -66,6 +66,12 @@ describe("buildSubagentSpawnEnv", () => {
     );
     assert.equal(deliberateHerdrEnv.HERDR_PANE_ID, "explicit-pane");
   });
+
+  it("removes keys whose explicit value is undefined", () => {
+    const spawnEnv = buildSubagentSpawnEnv({ KEEP: "1", DROP: "x" }, { DROP: undefined });
+    assert.equal(spawnEnv.KEEP, "1");
+    assert.equal(Object.hasOwn(spawnEnv, "DROP"), false);
+  });
 });
 
 describe("getPiSpawnCommand", () => {
