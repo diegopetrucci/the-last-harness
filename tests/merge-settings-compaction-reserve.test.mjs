@@ -7,107 +7,87 @@ import { tempFixture, runMerge, readJson } from "./support/merge-settings-fixtur
 const repoRoot = resolve(import.meta.dirname, "..");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 
-const defaults = { packages: [], compaction: { reserveTokens: 49152 } };
-const base = { packages: [harnessPackage] };
+const defaults = { packages: [] };
+const marker = { compactionReserveTokensManaged: true };
 
 function merged(settingsExtra, opts) {
-  const fixture = tempFixture(defaults, { ...base, ...settingsExtra });
+  const fixture = tempFixture(defaults, { packages: [harnessPackage], ...settingsExtra });
   const output = runMerge(fixture, { quiet: false, ...opts });
   return { fixture, output, result: readJson(fixture.settings) };
 }
 
-test("missing compaction key gets reserveTokens and the marker", () => {
-  const { result, output } = merged({});
-  assert.deepEqual(result.compaction, { reserveTokens: 49152 });
-  assert.equal(result.tlh.compactionReserveTokensManaged, true);
-  assert.match(output, /mark compaction\.reserveTokens as TLH-managed/);
+test("marker + 49152 removes the reserve, the empty compaction object, and the marker", () => {
+  const { result, output } = merged({ compaction: { reserveTokens: 49152 }, tlh: marker });
+  assert.equal(result.compaction, undefined);
+  assert.equal(result.tlh.compactionReserveTokensManaged, undefined);
+  assert.match(output, /remove retired TLH compaction\.reserveTokens default/);
 });
 
-test("compaction {enabled:false} keeps enabled and gains reserveTokens + marker", () => {
-  const { result } = merged({ compaction: { enabled: false } });
-  assert.deepEqual(result.compaction, { enabled: false, reserveTokens: 49152 });
-  assert.equal(result.tlh.compactionReserveTokensManaged, true);
-});
-
-test("compaction with only modelOverrides keeps them and gains reserveTokens + marker", () => {
+test("marker + 49152 preserves other compaction keys", () => {
   const modelOverrides = { "p/m": { reserveTokens: 8000 } };
-  const { result } = merged({ compaction: { modelOverrides } });
-  assert.deepEqual(result.compaction, { modelOverrides, reserveTokens: 49152 });
-  assert.equal(result.tlh.compactionReserveTokensManaged, true);
+  const { result } = merged({
+    compaction: { enabled: false, reserveTokens: 49152, modelOverrides },
+    tlh: marker,
+  });
+  assert.deepEqual(result.compaction, { enabled: false, modelOverrides });
+  assert.equal(result.tlh.compactionReserveTokensManaged, undefined);
 });
 
-test("different user reserveTokens is overwritten without --force and the marker is set", () => {
-  const { result, output } = merged({ compaction: { reserveTokens: 16384 } });
-  assert.equal(result.compaction.reserveTokens, 49152);
-  assert.equal(result.tlh.compactionReserveTokensManaged, true);
-  assert.match(output, /overwrite compaction\.reserveTokens/);
-});
-
-test("overwrite preserves compaction.modelOverrides", () => {
-  const modelOverrides = { "p/m": { reserveTokens: 8000 } };
-  const { result } = merged({ compaction: { reserveTokens: 16384, modelOverrides } });
-  assert.deepEqual(result.compaction, { reserveTokens: 49152, modelOverrides });
-});
-
-test("dry-run reports overwriting a different user value without writing", () => {
-  const settings = { ...base, compaction: { reserveTokens: 16384 } };
-  const fixture = tempFixture(defaults, settings);
-  const output = runMerge(fixture, { dryRun: true, quiet: false });
-  assert.match(output, /Would overwrite compaction\.reserveTokens/);
-  assert.deepEqual(readJson(fixture.settings), settings);
-});
-
-for (const value of [null, "custom"]) {
-  test(`non-object compaction (${JSON.stringify(value)}) is preserved without --force`, () => {
-    const { result } = merged({ compaction: value });
-    assert.equal(result.compaction, value);
-    assert.equal(result.tlh?.compactionReserveTokensManaged, undefined);
+for (const value of [16384, 1234]) {
+  test(`marker + custom reserve ${value} is kept and the marker is cleared`, () => {
+    const { result } = merged({ compaction: { reserveTokens: value }, tlh: marker });
+    assert.equal(result.compaction.reserveTokens, value);
+    assert.equal(result.tlh.compactionReserveTokensManaged, undefined);
   });
 }
 
-test("marker is skipped when tlh is not a plain object", () => {
-  const { result } = merged({ tlh: "x" });
-  assert.equal(result.compaction.reserveTokens, 49152);
-  assert.equal(result.tlh, "x");
-});
-
-test("a second merge reports no changes and keeps the marker", () => {
-  const { fixture } = merged({});
-  const second = runMerge(fixture, { quiet: false });
-  assert.match(second, /No settings changes needed\./);
-  assert.equal(readJson(fixture.settings).tlh.compactionReserveTokensManaged, true);
-});
-
-test("dry-run reports the change but does not write", () => {
-  const fixture = tempFixture(defaults, base);
-  const output = runMerge(fixture, { dryRun: true, quiet: false });
-  assert.match(output, /Would mark compaction\.reserveTokens as TLH-managed/);
-  assert.deepEqual(readJson(fixture.settings), base);
-});
-
-test("shipped settings.defaults.json ships compaction.reserveTokens 49152", () => {
-  const shipped = readJson(join(repoRoot, "config", "settings.defaults.json"));
-  assert.equal(shipped.compaction?.reserveTokens, 49152);
-  const fixture = tempFixture(shipped, base);
-  runMerge(fixture);
-  const result = readJson(fixture.settings);
-  assert.equal(result.compaction.reserveTokens, 49152);
-  assert.equal(result.tlh.compactionReserveTokensManaged, true);
+test("marker without a compaction object just clears the marker", () => {
+  const { result } = merged({ tlh: marker });
+  assert.equal(result.compaction, undefined);
+  assert.equal(result.tlh.compactionReserveTokensManaged, undefined);
 });
 
 for (const force of [false, true]) {
-  test(`existing reserveTokens 49152 without marker stays unmarked (force=${force})`, () => {
+  test(`no marker leaves 49152 untouched (force=${force})`, () => {
     const { result } = merged({ compaction: { reserveTokens: 49152 } }, { force });
-    assert.equal(result.compaction.reserveTokens, 49152);
-    assert.equal(result.tlh?.compactionReserveTokensManaged, undefined);
+    assert.deepEqual(result.compaction, { reserveTokens: 49152 });
+  });
+
+  test(`marker + 49152 is migrated with force=${force}`, () => {
+    const { result } = merged({ compaction: { reserveTokens: 49152 }, tlh: marker }, { force });
+    assert.equal(result.compaction, undefined);
   });
 }
 
-test("existing marker with a different value is overwritten and stays set", () => {
-  const { result } = merged({
-    compaction: { reserveTokens: 16384 },
-    tlh: { compactionReserveTokensManaged: true },
-  });
-  assert.equal(result.compaction.reserveTokens, 49152);
-  assert.equal(result.tlh.compactionReserveTokensManaged, true);
+test("dry-run reports the migration without writing", () => {
+  const settings = {
+    packages: [harnessPackage],
+    compaction: { reserveTokens: 49152 },
+    tlh: marker,
+  };
+  const fixture = tempFixture(defaults, settings);
+  const output = runMerge(fixture, { dryRun: true, quiet: false });
+  assert.match(output, /Would remove retired TLH compaction\.reserveTokens default/);
+  assert.match(output, /Would clear compaction\.reserveTokens ownership marker/);
+  assert.deepEqual(readJson(fixture.settings), settings);
+});
+
+test("migration is idempotent", () => {
+  const { fixture } = merged({ compaction: { reserveTokens: 49152 }, tlh: marker });
+  const second = runMerge(fixture, { quiet: false });
+  assert.match(second, /No settings changes needed\./);
+});
+
+const shippedDefaults = readJson(join(repoRoot, "config", "settings.defaults.json"));
+
+test("merging shipped defaults into a fresh profile sets no compaction.reserveTokens", () => {
+  const fixture = tempFixture(shippedDefaults, {});
+  runMerge(fixture);
+  assert.equal(readJson(fixture.settings).compaction?.reserveTokens, undefined);
+});
+
+test("merging shipped defaults preserves an unmarked custom compaction.reserveTokens", () => {
+  const fixture = tempFixture(shippedDefaults, { compaction: { reserveTokens: 16384 } });
+  runMerge(fixture);
+  assert.equal(readJson(fixture.settings).compaction.reserveTokens, 16384);
 });
