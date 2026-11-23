@@ -358,6 +358,7 @@ These bundled skills ship with TLH and remain visible in TLH autocomplete.
 | Command                | Description                                                                                                            |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `/skill:cmux-cli`      | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows                         |
+| `/skill:ghostty`       | Load the bundled Ghostty skill for driving Ghostty.app on macOS through AppleScript                                    |
 | `/skill:herdr-gui-app` | Load the bundled Herdr desktop app skill for the Herdr.app GUI and hc terminals                                        |
 | `/skill:herdr-tui`     | Load the bundled Herdr TUI skill for explicitly requested pane, tab, workspace, and agent control                      |
 | `/skill:merge-risk`    | Load the bundled merge-risk skill to score a PR on alignment, impact, verification, rollback cost, and error detection |
