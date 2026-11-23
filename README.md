@@ -97,6 +97,7 @@ The footer refreshes local Git status on a short timer. Eligible non-default bra
 - [Herdr desktop app](skills/herdr-gui-app).
 - [Cmux](skills/cmux-cli).
 - [Tmux](skills/tmux).
+- [Ghostty](skills/ghostty).
 
 ### Customisation
 

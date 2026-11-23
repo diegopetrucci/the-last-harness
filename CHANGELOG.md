@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - The architect now names an unnamed session with a short label after creating tickets, via an architect-only `name_session` tool that never overwrites an existing name ([#917](https://github.com/diegopetrucci/the-last-harness/pull/917)).
+- Added `/skill:ghostty`, a first-party macOS skill that drives Ghostty.app through its AppleScript dictionary ([#928](https://github.com/diegopetrucci/the-last-harness/pull/928)).
 
 ### Changed
 
