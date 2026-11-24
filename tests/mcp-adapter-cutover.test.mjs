@@ -19,7 +19,7 @@ import { evaluateMcpAdapterCutover } from "../scripts/lib/mcp-adapter-cutover.mj
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
-const targetSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.2";
+const targetSource = "npm:@diegopetrucci/pi-mcp-adapter@5.2.0";
 const oldSource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
 const oldGitSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
 const builtinMcpExclusion = "-builtin:mcp";
@@ -371,17 +371,17 @@ test("unpinned installed adapter metadata gates v2, permits v5 pinning, and hold
 test("already-native pins are not implicitly downgraded, including installed metadata conflicts", () => {
   const newer = createFixture(
     {
-      packages: [harnessPackage, "npm:@diegopetrucci/pi-mcp-adapter@5.1.0"],
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-mcp-adapter@5.3.0"],
       tlh: {
         defaultExtensionProvenance: {
           managedPackageIdentities: ["npm:@diegopetrucci/pi-mcp-adapter"],
         },
       },
     },
-    { installedVersion: "5.1.0" },
+    { installedVersion: "5.3.0" },
   );
   const newerResult = runMerge(newer);
-  assert.equal(newerResult.settings.packages[1], "npm:@diegopetrucci/pi-mcp-adapter@5.1.0");
+  assert.equal(newerResult.settings.packages[1], "npm:@diegopetrucci/pi-mcp-adapter@5.3.0");
   assert.equal(newerResult.stderr, "");
 
   const conflict = createFixture(
@@ -454,7 +454,7 @@ test("pre-v5 manifest migrations remain ordinary, but cannot downgrade a native 
 
   const native = createFixture(
     {
-      packages: [harnessPackage, "npm:@diegopetrucci/pi-mcp-adapter@5.1.0"],
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-mcp-adapter@5.3.0"],
       tlh: {
         defaultExtensionProvenance: {
           managedPackageIdentities: ["npm:@diegopetrucci/pi-mcp-adapter"],
@@ -464,7 +464,7 @@ test("pre-v5 manifest migrations remain ordinary, but cannot downgrade a native 
     { extensions: [oldManifest] },
   );
   const nativeResult = runMerge(native);
-  assert.equal(nativeResult.settings.packages[1], "npm:@diegopetrucci/pi-mcp-adapter@5.1.0");
+  assert.equal(nativeResult.settings.packages[1], "npm:@diegopetrucci/pi-mcp-adapter@5.3.0");
 });
 
 test("unrelated package names do not select the MCP adapter", () => {
