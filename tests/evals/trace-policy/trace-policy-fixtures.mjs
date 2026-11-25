@@ -821,6 +821,43 @@ export const TRACE_POLICY_FIXTURES = [
     },
   },
   {
+    id: "developer-invalid-git-stash-mid-merge-without-pre-existing-changes",
+    name: "developer invalid if it stashes mid-merge even without pre-existing changes (#819)",
+    expectedResult: "reject",
+    expectedCodes: ["developer.git_state_authorization_required"],
+    transcript: {
+      agent: "developer",
+      metadata: { hasPreExistingChanges: false },
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlhm-hdng"] },
+        { type: "tool", tool: "bash", argv: ["git", "stash", "push"] },
+      ],
+    },
+  },
+  {
+    id: "developer-valid-safe-baseline-git-alternatives",
+    name: "developer valid if it uses read-only git and a temporary worktree for baseline comparison",
+    expectedResult: "allow",
+    transcript: {
+      agent: "developer",
+      metadata: { hasPreExistingChanges: false },
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlhm-hdng"] },
+        { type: "tool", tool: "bash", argv: ["git", "show", "HEAD:README.md"] },
+        {
+          type: "tool",
+          tool: "bash",
+          argv: ["git", "worktree", "add", "/tmp/tlh-baseline", "HEAD"],
+        },
+        {
+          type: "tool",
+          tool: "bash",
+          argv: ["git", "worktree", "remove", "/tmp/tlh-baseline"],
+        },
+      ],
+    },
+  },
+  {
     id: "developer-invalid-pre-existing-changes-bare-dot-checkout",
     name: "developer invalid if it runs git checkout . with pre-existing changes and no explicit authorization",
     expectedResult: "reject",

@@ -898,7 +898,7 @@ test("developer existing-changes boundary uses exact boolean metadata and flags"
       violationCodes(transcript),
       transcript.metadata?.hasPreExistingChanges === true
         ? ["developer.pre_existing_changes_authorization_required"]
-        : [],
+        : ["developer.git_state_authorization_required"],
     );
   }
 
@@ -914,6 +914,46 @@ test("developer existing-changes boundary uses exact boolean metadata and flags"
 
   assert.equal(authorizedResult.ok, true);
   assert.deepEqual(authorizedResult.violations, []);
+});
+
+test("developer treats abort/quit/skip of in-progress git operations as risky but not continue or plain forms", () => {
+  for (const [command, expectedCodes] of [
+    ["git merge --abort", ["developer.git_state_authorization_required"]],
+    ["git rebase --abort", ["developer.git_state_authorization_required"]],
+    ["git rebase --quit", ["developer.git_state_authorization_required"]],
+    ["git rebase --skip", ["developer.git_state_authorization_required"]],
+    ["git cherry-pick --abort", ["developer.git_state_authorization_required"]],
+    ["git cherry-pick --quit", ["developer.git_state_authorization_required"]],
+    ["git revert --skip", ["developer.git_state_authorization_required"]],
+    ["git am --abort", ["developer.git_state_authorization_required"]],
+    ["git merge --continue", []],
+    ["git merge main", []],
+    ["git rebase --continue", []],
+    ["git rebase main", []],
+    ["git cherry-pick --continue", []],
+    ["git revert --continue", []],
+    ["git am --continue", []],
+    ["git merge -m --abort main", []],
+    ["git merge --message --quit main", []],
+    ["git merge -- --abort", []],
+    ["git rebase --onto main --skip", ["developer.git_state_authorization_required"]],
+    ["git rebase --exec --abort", []],
+    ["git cherry-pick -m --abort abc123", []],
+    ["git am --directory --skip x.mbox", []],
+    ["git merge -m msg --abort", ["developer.git_state_authorization_required"]],
+  ]) {
+    assert.deepEqual(
+      violationCodes({
+        agent: "developer",
+        steps: [
+          { type: "tool", tool: "bash", argv: ["tk", "show", "tlhm-hdng"] },
+          { type: "tool", tool: "bash", command },
+        ],
+      }),
+      expectedCodes,
+      command,
+    );
+  }
 });
 
 test("git risky-existing-changes parser handles dedicated #331 option-value regressions", () => {
