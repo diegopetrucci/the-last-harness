@@ -196,6 +196,11 @@ function renderWrapper(args: WrapperRenderArgs): string {
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     `# ${DEFAULT_MARKER}`,
+    // Unconditionally drop the terminal's OSC 7577 program-resume token so no
+    // child (pi or node helpers) can claim or report a resume command that
+    // bypasses this wrapper; see GitHub issue #931. Must stay right after the
+    // line-3 marker and before any export, helper or exec.
+    "unset -v OSC7577_TOKEN",
     `default_agent_dir=${shellQuote(args.agentDir)}`,
     `default_tlh_package_root=${shellQuote(args.packageRoot)}`,
     `default_bin_dir=${shellQuote(args.binDir)}`,

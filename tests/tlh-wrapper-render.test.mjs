@@ -455,3 +455,76 @@ test(
     assert.match(readFileSync(path, "utf8"), new RegExp(DEFAULT_MARKER));
   },
 );
+
+test("renderWrapper: unsets OSC7577_TOKEN once, right after the line-3 marker, before any export or exec", () => {
+  const rendered = renderWrapper(PINNED_ARGS);
+  const lines = rendered.split("\n");
+  assert.equal(lines[2], `# ${DEFAULT_MARKER}`);
+  assert.equal(lines[3], "unset -v OSC7577_TOKEN");
+  assert.equal(rendered.split("unset -v OSC7577_TOKEN").length - 1, 1);
+  const unsetIndex = rendered.indexOf("unset -v OSC7577_TOKEN");
+  assert.ok(unsetIndex < rendered.indexOf("export "));
+  assert.ok(unsetIndex < rendered.indexOf("tlh_js_relative_imports_exist() {"));
+  assert.ok(unsetIndex < rendered.indexOf("exec "));
+  for (const match of rendered.matchAll(/exec "/g)) {
+    assert.ok(unsetIndex < match.index);
+  }
+});
+
+function launchOsc(t, { token, subcommand }) {
+  const root = mkdtempSync(join(tmpdir(), "tlh-wrapper-osc7577-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const piCmd = join(root, "runtime", "bin", "pi");
+  mkdirSync(dirname(piCmd), { recursive: true });
+  writeFileSync(piCmd, '#!/usr/bin/env bash\nprintf "pi:%s\\n" "${OSC7577_TOKEN-unset}"\n', {
+    mode: 0o755,
+  });
+  const fakeBin = join(root, "fakebin");
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, "node"),
+    '#!/bin/sh\nprintf "node:%s\\n" "${OSC7577_TOKEN-unset}"\n',
+    {
+      mode: 0o755,
+    },
+  );
+  const wrapperPath = join(root, "tlh");
+  writeFileSync(
+    wrapperPath,
+    renderWrapper({
+      ...BASE_ARGS,
+      agentDir: join(root, "agent"),
+      binDir: root,
+      packageRoot: REPO_ROOT,
+      piCmd,
+    }),
+    { mode: 0o755 },
+  );
+  const env = { ...process.env, HOME: root, PATH: `${fakeBin}:${process.env.PATH}` };
+  delete env.OSC7577_TOKEN;
+  if (token !== undefined) env.OSC7577_TOKEN = token;
+  return spawnSync("bash", subcommand ? [wrapperPath, subcommand] : [wrapperPath], {
+    cwd: root,
+    env,
+    encoding: "utf8",
+  });
+}
+
+test("rendered wrapper: pi exec does not receive OSC7577_TOKEN", (t) => {
+  const result = launchOsc(t, { token: "secret-token" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /^pi:unset$/m);
+  assert.doesNotMatch(result.stdout + result.stderr, /secret-token/);
+});
+
+test("rendered wrapper: node helper subcommands do not receive OSC7577_TOKEN", (t) => {
+  const result = launchOsc(t, { token: "secret-token", subcommand: "defaults" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /^node:unset$/m);
+});
+
+test("rendered wrapper: runs normally under set -u when OSC7577_TOKEN is absent", (t) => {
+  const result = launchOsc(t, {});
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /^pi:unset$/m);
+});

@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- The `tlh` wrapper now removes `OSC7577_TOKEN` before launching anything, so terminal program-resume cannot restore a TLH pane through a bare `pi` that bypasses the wrapper ([docs](docs/integrations.md#program-resume-osc-7577), [#931](https://github.com/diegopetrucci/the-last-harness/issues/931), [#933](https://github.com/diegopetrucci/the-last-harness/pull/933)).
+
 ## [0.49.0] - 2026-11-24
 
 ### Added
