@@ -26,7 +26,7 @@ let cached: { context: string | undefined } | undefined;
 
 /** Rex session-start context for the primary prompt, or undefined outside Rex or on any failure. */
 export function getRexSessionContext(): string | undefined {
-  if (!process.env.REX_SESSION) return undefined;
+  if (!process.env.REX_BLOCK) return undefined;
   if (!cached) {
     let context: string | undefined;
     try {

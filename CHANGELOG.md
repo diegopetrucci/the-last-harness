@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - The `tlh` wrapper now removes `OSC7577_TOKEN` before launching anything, so terminal program-resume cannot restore a TLH pane through a bare `pi` that bypasses the wrapper ([docs](docs/integrations.md#program-resume-osc-7577), [#931](https://github.com/diegopetrucci/the-last-harness/issues/931), [#933](https://github.com/diegopetrucci/the-last-harness/pull/933)).
+- Rex session-start context is now gated on `REX_BLOCK`, which Rex sets in panes, instead of `REX_SESSION`, which it never sets, so the context is actually injected ([docs](docs/integrations.md#rex-integration), [#935](https://github.com/diegopetrucci/the-last-harness/issues/935), [#936](https://github.com/diegopetrucci/the-last-harness/pull/936)).
 
 ## [0.49.0] - 2026-11-24
 

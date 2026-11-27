@@ -29,22 +29,35 @@ test("rex context runs once with exact args and returns trimmed output", async (
     calls.push({ command, args });
     return "\n  rex context  \n";
   });
-  await withEnv({ REX_SESSION: "abc" }, () => {
+  await withEnv({ REX_BLOCK: "abc" }, () => {
     assert.equal(getRexSessionContext(), "rex context");
     assert.equal(getRexSessionContext(), "rex context");
   });
   assert.deepEqual(calls, [{ command: "rex", args: EXPECTED_ARGS }]);
 });
 
-test("rex context never runs when REX_SESSION is unset or empty", async (t) => {
+test("rex context never runs when REX_BLOCK is unset or empty", async (t) => {
   t.after(() => __testing.resetForTests());
   let calls = 0;
   __testing.setRunnerForTests(() => {
     calls += 1;
     return "x";
   });
-  await withEnv({ REX_SESSION: undefined }, () => assert.equal(getRexSessionContext(), undefined));
-  await withEnv({ REX_SESSION: "" }, () => assert.equal(getRexSessionContext(), undefined));
+  await withEnv({ REX_BLOCK: undefined }, () => assert.equal(getRexSessionContext(), undefined));
+  await withEnv({ REX_BLOCK: "" }, () => assert.equal(getRexSessionContext(), undefined));
+  assert.equal(calls, 0);
+});
+
+test("rex context ignores REX_SESSION when REX_BLOCK is unset", async (t) => {
+  t.after(() => __testing.resetForTests());
+  let calls = 0;
+  __testing.setRunnerForTests(() => {
+    calls += 1;
+    return "x";
+  });
+  await withEnv({ REX_BLOCK: undefined, REX_SESSION: "abc" }, () =>
+    assert.equal(getRexSessionContext(), undefined),
+  );
   assert.equal(calls, 0);
 });
 
@@ -61,7 +74,7 @@ test("rex context failure and empty output are silent and cached", async (t) => 
       calls += 1;
       return runner(...args);
     });
-    await withEnv({ REX_SESSION: "abc" }, () => {
+    await withEnv({ REX_BLOCK: "abc" }, () => {
       assert.equal(getRexSessionContext(), undefined);
       assert.equal(getRexSessionContext(), undefined);
     });
@@ -86,7 +99,7 @@ test("rex context is appended to the primary prompt once and never to child prom
   generatedTesting.setRunnerForTests(runner);
   const base = { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined };
 
-  await withEnv({ ...base, REX_SESSION: "abc" }, async () => {
+  await withEnv({ ...base, REX_BLOCK: "abc" }, async () => {
     const child = registerRuntimeHarness({
       env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
     });
