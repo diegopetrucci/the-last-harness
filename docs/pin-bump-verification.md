@@ -216,6 +216,15 @@ At the time of this candidate-only run, published-ref update convergence was **n
 
 The post-publication check used a ticket-owned isolated `v0.42.1` latest-release install. Updating it converged to ref `v0.43.0` with `track=latest-release` and private Pi `0.87.1`. The isolated profile, runtime, wrapper, and temporary artifacts were cleaned up after verification; no secrets or ephemeral credential material were recorded.
 
+## Historical Pi 1.6.0 comparison status (reviewed 2026-11-21)
+
+The dated 1.5.2→1.6.0 package comparison is complete and recorded in [the upstream-sync inventory](upstream-sync-inventory.md#historical-pi-160-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The items below were pending when recorded and are carried forward in the [current VALIDATING.md status](../VALIDATING.md#pi-170-comparison-status-reviewed-2026-11-27):
+
+- **Claude Pro/Max OAuth session:** with bundled `pi-anthropic-auth` 3.6.0 (threads on for OAuth), run multi-turn, tool-using sessions on `claude-opus-5-5` and `claude-fable-5-2` and verify they succeed after tool calls with no `claude_code_version_too_old` or extra-usage rejections or charges ([#891](https://github.com/diegopetrucci/the-last-harness/issues/891)).
+- **Real resume and `/tree` tool restoration:** resume a saved session and navigate with `/tree`, verifying the restored tool loadout.
+- **GPT-6.2 Sol/Astra on `openai-codex`:** verify prompt caching and thinking-level behavior.
+- **Carried forward from 1.5.2 (still apply to the pinned runtime):** the items in the [1.5.2 status](#historical-pi-152-comparison-status-reviewed-2026-11-10), including those it carries forward from 1.5.0 and earlier.
+
 ## Historical Pi 1.5.2 comparison status (reviewed 2026-11-10)
 
 The dated 1.5.0→1.5.2 package comparison is complete and recorded in [the upstream-sync inventory](upstream-sync-inventory.md#historical-pi-152-review-evidence). It was source/package inspection only: no provider, credential, installed-profile, or release-tier checks were run. The items below remain pending:

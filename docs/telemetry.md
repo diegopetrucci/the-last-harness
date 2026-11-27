@@ -110,6 +110,6 @@ For a single run, set one of:
 - `PI_OFFLINE=1`
 - `TLH_SKIP_TELEMETRY=1`
 - `TLH_TELEMETRY_DISABLED=1`
-- `PI_TELEMETRY=0`
+- `PI_TELEMETRY=0` (Pi 1.7.0 removed Pi's own install telemetry and no longer reads this variable; TLH still honours `0` as an opt-out for its own telemetry)
 
 To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
