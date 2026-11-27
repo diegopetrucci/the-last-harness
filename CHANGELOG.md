@@ -6,13 +6,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
-- The `tlh` wrapper now refuses Pi's `--agent-dir` flag so Pi 1.7.0 cannot be pointed away from the isolated TLH profile ([docs](docs/install.md#installer-options), [#932](https://github.com/diegopetrucci/the-last-harness/issues/932)).
+- The `tlh` wrapper now refuses Pi's `--agent-dir` flag so Pi 1.7.0 cannot be pointed away from the isolated TLH profile ([docs](docs/install.md#installer-options), [#932](https://github.com/diegopetrucci/the-last-harness/issues/932), [#937](https://github.com/diegopetrucci/the-last-harness/pull/937)).
 - The `tlh` wrapper now removes `OSC7577_TOKEN` before launching anything, so terminal program-resume cannot restore a TLH pane through a bare `pi` that bypasses the wrapper ([docs](docs/integrations.md#program-resume-osc-7577), [#931](https://github.com/diegopetrucci/the-last-harness/issues/931), [#933](https://github.com/diegopetrucci/the-last-harness/pull/933)).
 - Rex session-start context is now gated on `REX_BLOCK`, which Rex sets in panes, instead of `REX_SESSION`, which it never sets, so the context is actually injected ([docs](docs/integrations.md#rex-integration), [#935](https://github.com/diegopetrucci/the-last-harness/issues/935), [#936](https://github.com/diegopetrucci/the-last-harness/pull/936)).
 
 ### Changed
 
-- Bumped the bundled Pi runtime from `1.6.0` to `1.7.0` ([#932](https://github.com/diegopetrucci/the-last-harness/issues/932), [Pi v1.7.0](https://github.com/earendil-works/pi/releases/tag/v1.7.0)). Pi removed its own telemetry and `PI_TELEMETRY` (TLH still honours `PI_TELEMETRY=0` for its launch telemetry); Pi split `showCacheMissNotices` into `notices.*` settings with unchanged behaviour; and Pi's exit hint now prints `pi --agent-dir ...`, so resume with `tlh --session <id>` instead.
+- Bumped the bundled Pi runtime from `1.6.0` to `1.7.0` ([#932](https://github.com/diegopetrucci/the-last-harness/issues/932), [#937](https://github.com/diegopetrucci/the-last-harness/pull/937), [Pi v1.7.0](https://github.com/earendil-works/pi/releases/tag/v1.7.0)). Pi removed its own telemetry and `PI_TELEMETRY` (TLH still honours `PI_TELEMETRY=0` for its launch telemetry); Pi split `showCacheMissNotices` into `notices.*` settings with unchanged behaviour; and Pi's exit hint now prints `pi --agent-dir ...`, so resume with `tlh --session <id>` instead.
 
 ## [0.49.0] - 2026-11-24
 
