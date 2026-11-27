@@ -528,3 +528,82 @@ test("rendered wrapper: runs normally under set -u when OSC7577_TOKEN is absent"
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /^pi:unset$/m);
 });
+
+// Matrix derived from Pi 1.7.0 dist/cli/agent-dir-arg.js: early extraction
+// compares each arg to exactly "--agent-dir" (taking the next arg as value, even
+// if it is another option's value), stops at "--", does not parse "--agent-dir=X"
+// (rejected anyway), and a missing value is a Pi error. Repeats are all honoured.
+function runAgentDirWrapper(t, args) {
+  const root = mkdtempSync(join(tmpdir(), "tlh-wrapper-agent-dir-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const piCmd = join(root, "runtime", "bin", "pi");
+  const marker = join(root, "pi-ran");
+  mkdirSync(dirname(piCmd), { recursive: true });
+  writeFileSync(
+    piCmd,
+    `#!/usr/bin/env bash\nprintf 'ARGS:' > "${marker}"\nfor a in "$@"; do printf '[%s]' "$a" >> "${marker}"; done\n`,
+    { mode: 0o755 },
+  );
+  const wrapperPath = join(root, "tlh");
+  writeFileSync(
+    wrapperPath,
+    renderWrapper({
+      ...BASE_ARGS,
+      agentDir: join(root, "agent"),
+      binDir: root,
+      packageRoot: join(root, "pkg"),
+      piCmd,
+    }),
+    { mode: 0o755 },
+  );
+  const result = spawnSync("bash", [wrapperPath, ...args], {
+    cwd: root,
+    env: { ...process.env, HOME: root },
+    encoding: "utf8",
+  });
+  return { result, ran: existsSync(marker), marker };
+}
+
+test("rendered wrapper: refuses every argv shape Pi 1.7.0 honours as --agent-dir", (t) => {
+  const refusedArgv = [
+    ["--agent-dir", "/x"],
+    ["--agent-dir"],
+    ["--agent-dir=/x"],
+    ["--agent-dir", "/x", "--agent-dir", "/y"],
+    ["-p", "--agent-dir", "/x", "hi"],
+    ["--model", "m", "--agent-dir", "/x"],
+    ["--session", "s", "--agent-dir", "/x"],
+    ["--model", "--agent-dir", "/x"],
+    ["hello", "--agent-dir", "/x"],
+    ["--agent-dir", "--", "x"],
+    ["mcp", "--agent-dir", "/x"],
+  ];
+  for (const args of refusedArgv) {
+    const { result, ran } = runAgentDirWrapper(t, args);
+    const label = JSON.stringify(args);
+    assert.notEqual(result.status, 0, label);
+    assert.match(result.stderr, /--agent-dir/, label);
+    assert.match(result.stderr, /not supported/, label);
+    assert.equal(ran, false, `pi must not run: ${label}`);
+    // The MCP guard would fail on the missing package root with a different message.
+    assert.doesNotMatch(result.stderr, /startup guard/, label);
+  }
+});
+
+test("rendered wrapper: ordinary args and --agent-dir substrings or after -- reach pi unchanged", (t) => {
+  const cases = [
+    ["--session", "abc"],
+    ["explain --agent-dir to me"],
+    ["x--agent-dir", "--agent-dirs"],
+    ["--", "--agent-dir", "/x"],
+  ];
+  for (const args of cases) {
+    const { result, ran, marker } = runAgentDirWrapper(t, ["mcp", ...args]);
+    assert.equal(result.status, 0, `${JSON.stringify(args)}: ${result.stderr}`);
+    assert.equal(ran, true);
+    assert.equal(
+      readFileSync(marker, "utf8"),
+      `ARGS:${["mcp", ...args].map((a) => `[${a}]`).join("")}`,
+    );
+  }
+});

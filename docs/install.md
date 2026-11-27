@@ -83,6 +83,8 @@ Example pinned-tag install:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.49.0/install.sh | bash -s -- --track pinned-tag
 ```
 
+The `tlh` wrapper passes other arguments through to Pi unchanged, but refuses Pi's own `--agent-dir` flag (and `--agent-dir=...`) with a non-zero exit because the isolated profile is fixed at install time; re-run the installer with `--agent-dir` to change it.
+
 ## Update
 
 You can just run `tlh update`.

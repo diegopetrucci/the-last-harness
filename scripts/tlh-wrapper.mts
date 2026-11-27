@@ -538,6 +538,19 @@ function renderWrapper(args: WrapperRenderArgs): string {
     '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-version.mjs" --agent-dir "${default_agent_dir}" --package-root "${default_tlh_package_root}" --pi-cmd "${default_pi_cmd}" "$@"',
     "fi",
     "",
+    // Pi >=1.7.0 honours `--agent-dir <dir>` (any position before `--`) by
+    // overwriting PI_CODING_AGENT_DIR, which would escape the isolated profile.
+    // Refuse it (and the `=` form, to be conservative) before guard and exec.
+    'for tlh_agent_dir_arg in "$@"; do',
+    '  case "${tlh_agent_dir_arg}" in',
+    "    --) break ;;",
+    "    --agent-dir|--agent-dir=*)",
+    "      printf 'error: --agent-dir is not supported by the tlh wrapper; the profile is fixed at install time. Re-run the installer with --agent-dir to change it.\\n' >&2",
+    "      exit 2",
+    "      ;;",
+    "  esac",
+    "done",
+    "",
     "tlh_mcp_adapter_guard_required=1",
     'case "${1:-}" in',
     "  --version|-v|install|remove|uninstall|list|mcp) tlh_mcp_adapter_guard_required=0 ;;",

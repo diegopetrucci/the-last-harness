@@ -92,4 +92,4 @@ The context follows Rex's session-naming default, so it asks the agent to name t
 
 ### Program resume (OSC 7577)
 
-The `tlh` wrapper removes `OSC7577_TOKEN` before launching anything, so terminals that implement OSC 7577 program resume, such as Rex, restore a TLH pane as a plain shell in its directory instead of a bare `pi` command that would bypass TLH. Resume with `tlh -c` or `/resume`. Do not add a Rex `pi` trust rule for TLH sessions. See [#931](https://github.com/diegopetrucci/the-last-harness/issues/931).
+The `tlh` wrapper removes `OSC7577_TOKEN` before launching anything, so terminals that implement OSC 7577 program resume, such as Rex, restore a TLH pane as a plain shell in its directory instead of a bare `pi` command that would bypass TLH. Pi's exit hint prints a bare `pi --agent-dir ... --session <id>` that bypasses the wrapper; resume that exact session with `tlh --session <id>` instead. `tlh -c` resumes the most recent session, and `/resume` picks one inside TLH. Do not add a Rex `pi` trust rule for TLH sessions. See [#931](https://github.com/diegopetrucci/the-last-harness/issues/931).

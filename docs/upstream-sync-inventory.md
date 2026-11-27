@@ -14,9 +14,27 @@ Explicitly excluded here:
 - ordinary dependency pins by themselves
 - generated runtime `scripts/**/*.mjs` outputs that mirror same-named `scripts/**/*.mts` sources, plus generated same-layout `extensions/**/*.js` outputs that mirror authoritative `extensions/**/*.ts` sources; see [local development](local-development.md) for the generation/freshness workflow
 
-## Pi 1.6.0 review evidence
+## Pi 1.7.0 review evidence
 
-Reviewed 2026-11-21 by diffing the published 1.5.2 and 1.6.0 tarballs of all eight `@earendil-works` packages (`pi-coding-agent`, `pi-ai`, `pi-tui`, `pi-agent-core`, `pi-codemode`, `pi-mcp`, `pi-telemetry`, and `pi-schema`). This was source/package inspection only: it ran no provider, credential, or installed-profile checks. Pending provider-backed checks are in [VALIDATING.md](../VALIDATING.md#pi-160-comparison-status-reviewed-2026-11-21).
+Reviewed 2026-11-27 by diffing the published 1.6.0 and 1.7.0 tarballs of `pi-coding-agent`, `pi-ai`, `pi-tui`, and `pi-agent-core`; each claim below was checked against both versions' `dist/`. The 1.7.0 tarballs also carry the 1.6.1 changes, so the notice migration and `ModelRuntime` change below arrived with 1.6.1, not 1.7.0 alone. This was source/package inspection plus the packaged-install smoke: it ran no provider, credential, or live-session checks. Pending provider-backed checks are in [VALIDATING.md](../VALIDATING.md#pi-170-comparison-status-reviewed-2026-11-27).
+
+| Seam | 1.6.0 → 1.7.0 upstream evidence | TLH impact and decision |
+| --- | --- | --- |
+| Interactive-mode hooks and `AgentSession` | The method bodies of `showNewVersionNotification`, `showPackageUpdateNotification`, `findExactModelMatch`, and `getExtensionChangelogUpdates` are byte-identical (the file as a whole is not). `AgentSession.setModel` is unchanged; the only other `agent-session.js` change adds `fullOutputError` to bash results. | Call sites are unchanged, so the TLH patches still apply. |
+| Bundle | `dist/bundle/cli.js` is byte-identical. `dist/bundle/index.js` differs only in chunk hashes, and its export list is unchanged. | No impact. |
+| Settings | `FileSettingsStorage`, the lock path, and the rest of the load path are unchanged. `showCacheMissNotices` is replaced by `notices.cacheMisses`, `cacheWarming`, `compactionCosts`, and `reasoningDrops`; a stored boolean migrates to all four on load (explicit `notices` keys win) and `get/setShowCacheMissNotices` are removed. The 1.6.0 key already gated all four notice kinds, so behaviour is unchanged. | TLH keeps its `showCacheMissNotices` default in `config/settings.defaults.json`; the migration turns it into the same four-way default. Covered by `tests/merge-settings-notices-migration.test.mjs`. |
+| Extension and event contracts | Extension event names, `modes/json-event.js`, `ThinkingLevel`, and `pi-tui` `program-status` are unchanged. `ctx.ui.select/confirm/input` gain an optional `blockedKind`. | No adaptation. |
+| Program resume (OSC 7577) | OSC 7577 support is added in 1.7.0 (none in 1.6.0). `main()` calls `takeProgramResumeToken()` first, which deletes `OSC7577_TOKEN` from the environment and returns it, in every mode. | The wrapper already removes the token ([#933](https://github.com/diegopetrucci/the-last-harness/pull/933)), so Pi's reporter stays inert under `tlh`. See [Program resume](integrations.md#program-resume-osc-7577). |
+| `--agent-dir` and exit hint | New `--agent-dir <dir>` flag sets `PI_CODING_AGENT_DIR`. The exit hint already printed `pi --session <id>` in 1.6.0; in 1.7.0, it and the new OSC 7577 command include `--agent-dir <dir>` when the agent dir is not `~/.pi/agent`, which is always the case under `tlh`. | The wrapper refuses `--agent-dir` so Pi cannot be pointed away from the isolated profile ([installer options](install.md#installer-options)). The printed hint bypasses the wrapper; resume with `tlh --session <id>` ([#932](https://github.com/diegopetrucci/the-last-harness/issues/932)). |
+| Telemetry | Pi's install report (`/api/report-install`), `enableInstallTelemetry`, `isInstallTelemetryEnabled`, and `PI_TELEMETRY` are removed. `enableAnalytics` and its first-run dialog existed in 1.6.0 with the same `PI_CODING_AGENT_DIR` gate; 1.7.0 drops the theme step and reports the dialog as blocked program status. | TLH's own launch telemetry still honours `PI_TELEMETRY=0` ([telemetry](telemetry.md)). The dialog stays gated off under `tlh`. |
+| Credential status | `ModelRuntime.getProviderAuthStatus` now reports a stored credential as configured only when it resolves (a failing `!command` key is unconfigured); `source` stays `stored`. | No TLH call sites; the live Claude Pro/Max check is pending. |
+| Sessions | `CURRENT_SESSION_VERSION` is still 3. `session-manager.js` changes are read-path performance only. | No migration needed. |
+| Model catalog and agents | All `tlhModelDefaults` model ids in `agents/` are present in both versions' `pi-ai` catalogs. | TLH agent models are unchanged. |
+| Packaging | `pi-ai` moves `@google/genai` from 2.32.0 to 3.6.1 (a major bump); sibling packages are in lockstep at 1.7.0. | Gemini streaming and tool calls are unverified live; check is pending. |
+
+## Historical Pi 1.6.0 review evidence
+
+Reviewed 2026-11-21 by diffing the published 1.5.2 and 1.6.0 tarballs of all eight `@earendil-works` packages (`pi-coding-agent`, `pi-ai`, `pi-tui`, `pi-agent-core`, `pi-codemode`, `pi-mcp`, `pi-telemetry`, and `pi-schema`). This was source/package inspection only: it ran no provider, credential, or installed-profile checks. Pending provider-backed checks are in [VALIDATING.md](pin-bump-verification.md#historical-pi-160-comparison-status-reviewed-2026-11-21).
 
 | Seam | 1.5.2 → 1.6.0 upstream evidence | TLH impact and decision |
 | --- | --- | --- |
