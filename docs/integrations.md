@@ -89,3 +89,7 @@ Termius on iOS reads OSC 7501 Program Status.
 When TLH runs in a Rex terminal (`REX_SESSION` set), the primary agent's system prompt includes the output of `rex __internal session-start --agent pi --autostart=false`: the same session-start context Rex's SessionStart hook gives Claude Code and Codex (Rex reports Pi hooks as unsupported). It runs once per session and never starts a Rex server. If `rex` is unavailable or the command fails, TLH silently skips it. Subagents do not receive it. There is no opt-out setting.
 
 The context follows Rex's session-naming default, so it asks the agent to name the Rex session. TLH does not bundle a Rex skill; `rex skill setup` installs it into `~/.agents/skills`, which TLH already reads.
+
+### Program resume (OSC 7577)
+
+The `tlh` wrapper removes `OSC7577_TOKEN` before launching anything, so terminals that implement OSC 7577 program resume, such as Rex, restore a TLH pane as a plain shell in its directory instead of a bare `pi` command that would bypass TLH. Resume with `tlh -c` or `/resume`. Do not add a Rex `pi` trust rule for TLH sessions. See [#931](https://github.com/diegopetrucci/the-last-harness/issues/931).
