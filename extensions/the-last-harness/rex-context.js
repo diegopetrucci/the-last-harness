@@ -16,7 +16,7 @@ const runRexSessionStartWithSubprocess = (command, args) => execFileSync(command
 let runRexSessionStart = runRexSessionStartWithSubprocess;
 let cached;
 export function getRexSessionContext() {
-    if (!process.env.REX_SESSION)
+    if (!process.env.REX_BLOCK)
         return undefined;
     if (!cached) {
         let context;
