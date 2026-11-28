@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added `/skill:bb`, a first-party skill for inspecting bb (tlh gui) threads, projects, and environments through the installed bb CLI.
+
 ### Fixed
 
 - The `tlh` wrapper now refuses Pi's `--agent-dir` flag so Pi 1.7.0 cannot be pointed away from the isolated TLH profile ([docs](docs/install.md#installer-options), [#932](https://github.com/diegopetrucci/the-last-harness/issues/932), [#937](https://github.com/diegopetrucci/the-last-harness/pull/937)).
