@@ -147,11 +147,18 @@ function renderWrapper(args) {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         `# ${DEFAULT_MARKER}`,
-        // Unconditionally drop the terminal's OSC 7577 program-resume token so no
-        // child (pi or node helpers) can claim or report a resume command that
-        // bypasses this wrapper; see GitHub issue #931. Must stay right after the
-        // line-3 marker and before any export, helper or exec.
+        // Take the terminal's OSC 7577 program-resume token out of the environment
+        // before anything else runs, so no child (pi or node helpers/subcommands)
+        // can claim or report a resume command that bypasses this wrapper; see
+        // GitHub issue #931. The value is kept in a shell-local stash that is made
+        // non-exported (a caller may have exported that name; plain assignment would
+        // keep the export attribute) and is handed to node only on the opt-in
+        // bridge launch below. An inherited bridge marker is dropped too. Must stay
+        // right after the line-3 marker and before any export, helper or exec.
+        'tlh_osc7577_stash="${OSC7577_TOKEN-}"',
         "unset -v OSC7577_TOKEN",
+        "export -n tlh_osc7577_stash",
+        "unset -v TLH_PROGRAM_RESUME_ACTIVE",
         `default_agent_dir=${shellQuote(args.agentDir)}`,
         `default_tlh_package_root=${shellQuote(args.packageRoot)}`,
         `default_bin_dir=${shellQuote(args.binDir)}`,
@@ -536,6 +543,44 @@ function renderWrapper(args) {
         // listed in RUNTIME_OWNED_TOPLEVEL and the uninstall allow-list; Node creates
         // it automatically.  Scope: interactive pi exec path only.
         'export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"',
+        // Opt-in OSC 7577 bridge (GitHub issue #934): only for a plain interactive
+        // launch outside terminal multiplexers, with a usable preload and node.
+        // Everything else execs exactly as before, with no token and no marker.
+        // The ineligible-argument list comes from Pi 1.7.0: main.js dispatches
+        // `auth`, install/remove/uninstall/update/list (package-manager-cli.js),
+        // `config` and `mcp` on args[0]; args.js/main.js resolve help, version,
+        // --list-models, --export, -p/--print and --mode to non-interactive or
+        // informational runs. Subcommand words are matched in any position (false
+        // negatives are fine); scanning stops at a bare `--`.
+        "tlh_program_resume_eligible=0",
+        'if [[ "${TLH_PROGRAM_RESUME-}" == "1" && -n "${tlh_osc7577_stash}" && -z "${TMUX-}${STY-}${ZELLIJ-}${HERDR_ENV-}${HERDR_PANE_ID-}" && -t 0 && -t 1 ]]; then',
+        "  tlh_program_resume_eligible=1",
+        '  for tlh_resume_arg in "$@"; do',
+        '    case "${tlh_resume_arg}" in',
+        "      --) break ;;",
+        "      install|remove|uninstall|update|list|config|mcp|auth|-p|--print|--print=*|--mode|--mode=*|--export|--export=*|-h|--help|-v|--version|--list-models|--list-models=*)",
+        "        tlh_program_resume_eligible=0",
+        "        break",
+        "        ;;",
+        "    esac",
+        "  done",
+        "fi",
+        'tlh_program_resume_name_pattern="^[A-Za-z0-9][A-Za-z0-9._-]*$"',
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! [[ "${default_wrapper_name}" =~ ${tlh_program_resume_name_pattern} ]]; then',
+        "  tlh_program_resume_eligible=0",
+        "fi",
+        'tlh_program_resume_preload="${default_tlh_package_root}/scripts/tlh-program-resume-preload.mjs"',
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! tlh_package_script_is_usable "${tlh_program_resume_preload}"; then',
+        "  tlh_program_resume_eligible=0",
+        "fi",
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! (tlh_resolve_node) >/dev/null 2>&1; then',
+        "  tlh_program_resume_eligible=0",
+        "fi",
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]]; then',
+        "  tlh_resolve_node",
+        "  export TLH_PROGRAM_RESUME_ACTIVE=1",
+        '  OSC7577_TOKEN="${tlh_osc7577_stash}" exec "${tlh_node_cmd}" --import "${tlh_program_resume_preload}" "${default_pi_cmd}" "$@"',
+        "fi",
         'exec "${default_pi_cmd}" "$@"',
     ];
     return `${lines.join("\n")}\n`;

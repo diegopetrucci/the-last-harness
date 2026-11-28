@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - Added `/skill:bb`, a first-party skill for inspecting bb (tlh gui) threads, projects, and environments through the installed bb CLI ([#939](https://github.com/diegopetrucci/the-last-harness/pull/939)).
+- Opt-in `TLH_PROGRAM_RESUME=1` lets OSC 7577 terminals such as Rex and Herdr.app resume plain interactive `tlh` sessions as `tlh --session <uuid>`; off by default ([docs](docs/integrations.md#program-resume-osc-7577), [#934](https://github.com/diegopetrucci/the-last-harness/issues/934)).
 
 ### Fixed
 

@@ -153,6 +153,7 @@ This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: 
 - Install, update, uninstall, paths, undo steps, and the Herdr.app entry opt-out: [`docs/install.md`](docs/install.md)
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
+- Opt-in terminal program resume (`TLH_PROGRAM_RESUME=1`): [`docs/integrations.md`](docs/integrations.md#program-resume-osc-7577)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
 - MCP usage, guarded migration, and rollback: [`docs/mcp.md`](docs/mcp.md)
 - Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
