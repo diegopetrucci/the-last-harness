@@ -138,6 +138,24 @@ test("parser rejects adversarial frames", () => {
   assert.ok(parseFrame(signBody(`pid=1:time=2:argv=${b64("/bin/pi")},`)));
 });
 
+test("comma-containing keys are rejected without throwing; separate argv and cwd parse", () => {
+  const argv = b64("pi");
+  const cwd = b64("/work");
+  for (const body of [
+    `pid=1:time=2:argv,cwd=${argv}`,
+    `pid=1:time=2:argv,cwd=${argv},${cwd}`,
+    `pid=1:time=2:argv=${argv}:cwd,x=${cwd}`,
+    `pid=1:time=2:clear,argv=1`,
+    `pid,time=1:argv=${argv}:cwd=${cwd}`,
+  ]) {
+    assert.doesNotThrow(() => parseFrame(signBody(body)), body);
+    assert.equal(parseFrame(signBody(body)), undefined, body);
+  }
+  const parsed = parseFrame(signBody(`pid=1:time=2:argv=${argv}:cwd=${cwd}`));
+  assert.deepEqual(parsed.argv, ["pi"]);
+  assert.equal(parsed.cwd, "/work");
+});
+
 test("verification fails on tampered body and wrong token", () => {
   const frame = signBody(`pid=1:time=2:argv=${b64("pi")}`);
   assert.equal(verifyFrame(parseFrame(frame), TOKEN), true);

@@ -123,6 +123,47 @@ test("rewrites decoy-signed frames with the real token and preserves surrounding
   assert.equal(result.stdout.toString("hex"), expected.toString("hex"));
 });
 
+test("a malformed 7577 frame is dropped alone while a valid decoy-signed report is re-signed", () => {
+  const script = `
+const { formatProgramResume, takeProgramResumeToken } = await import(${JSON.stringify(
+    new URL("../node_modules/@earendil-works/pi-tui/dist/index.js", import.meta.url).href,
+  )});
+const token = takeProgramResumeToken();
+const pid = process.pid;
+const report = formatProgramResume({ argv: ["pi", "--agent-dir", ${JSON.stringify(AGENT_DIR)}, "--session", ${JSON.stringify(UUID)}], cwd: "/work" }, { pid, time: ${TIME}, token });
+const malformed = "\\x1b]7577;pid=1:time=2:argv,cwd=Zm9v:mac=zz\\x1b\\\\";
+process.stdout.write("a" + malformed + "b" + report + "c");
+process.stderr.write(JSON.stringify({ pid }));
+`;
+  for (const extra of [{}, { TLH_PROGRAM_RESUME_TEST_FAIL: "frame" }]) {
+    const result = run(script, activeEnv(extra));
+    const { pid } = JSON.parse(result.stderr.toString());
+    const signed = extra.TLH_PROGRAM_RESUME_TEST_FAIL ? expectedClear(pid) : expectedReport(pid);
+    assert.equal(result.stdout.toString("utf8"), "ab" + signed + "c");
+  }
+});
+
+test("a decoy-verified frame with a different pid is dropped without a clear", () => {
+  const script = `
+const { formatProgramResume, takeProgramResumeToken } = await import(${JSON.stringify(
+    new URL("../node_modules/@earendil-works/pi-tui/dist/index.js", import.meta.url).href,
+  )});
+const token = takeProgramResumeToken();
+const pid = process.pid;
+const argv = ["pi", "--agent-dir", ${JSON.stringify(AGENT_DIR)}, "--session", ${JSON.stringify(UUID)}];
+const wrong = formatProgramResume({ argv, cwd: "/work" }, { pid: pid + 1, time: ${TIME}, token });
+const report = formatProgramResume({ argv, cwd: "/work" }, { pid, time: ${TIME}, token });
+process.stdout.write("a" + wrong + "b" + report + "c");
+process.stderr.write(JSON.stringify({ pid }));
+`;
+  for (const extra of [{}, { TLH_PROGRAM_RESUME_TEST_FAIL: "frame" }]) {
+    const result = run(script, activeEnv(extra));
+    const { pid } = JSON.parse(result.stderr.toString());
+    const signed = extra.TLH_PROGRAM_RESUME_TEST_FAIL ? expectedClear(pid) : expectedReport(pid);
+    assert.equal(result.stdout.toString("utf8"), "ab" + signed + "c");
+  }
+});
+
 test("a throwing underlying writer or callback propagates and the writer is not retried", () => {
   const patch = `data:text/javascript,${encodeURIComponent(
     `globalThis.__calls = 0; globalThis.__cbs = 0; const orig = process.stdout.write; process.stdout.write = function (c, ...r) { globalThis.__calls++; if (typeof c === "string" && c.startsWith("W")) throw new Error("writer boom"); const cb = r.find((x) => typeof x === "function"); if (cb) { cb(); } return true; };`,
@@ -164,22 +205,29 @@ test("fallback clears use Unix seconds and verify with the real token", () => {
   for (const mode of ["transform", "all"]) {
     const result = run(FRAMES_SCRIPT, activeEnv({ TLH_PROGRAM_RESUME_TEST_FAIL: mode }));
     const text = result.stdout.toString("latin1");
+    const childPid = JSON.parse(result.stderr.toString()).pid;
     const intro = "\u001b]7577;";
     const frames = text
-      .split("\u001b\\")
-      .filter((part) => part.includes(intro))
-      .map((part) => part.slice(part.lastIndexOf(intro) + intro.length))
-      // Split halves pass through as an unverifiable decoy-signed report; only clears are real-signed.
-      .filter((frame) => frame.includes(":clear=1:"));
-    assert.ok(frames.length > 0);
+      .split(intro)
+      .slice(1)
+      .filter((part) => part.includes("\u001b\\"))
+      .map((part) => part.slice(0, part.indexOf("\u001b\\")));
+    const real = frames.filter((frame) => {
+      const at = frame.lastIndexOf(":mac=");
+      if (at === -1) return false;
+      const digest = createHash("sha256")
+        .update(`${frame.slice(0, at)}:${REAL}`)
+        .digest("hex");
+      return frame.slice(at + 5) === digest;
+    });
+    assert.ok(real.length >= 1, `no real-token-verified frame in ${JSON.stringify(frames)}`);
     const now = Math.floor(Date.now() / 1000);
-    for (const frame of frames) {
-      const [, pid, time, mac] = /^pid=(\d+):time=(\d+):clear=1:mac=([0-9a-f]{64})$/.exec(frame);
-      assert.ok(Math.abs(Number(time) - now) <= 5, `time ${time} not within 5s of ${now}`);
-      const body = `pid=${pid}:time=${time}:clear=1`;
-      assert.equal(mac, createHash("sha256").update(`${body}:${REAL}`).digest("hex"));
+    for (const frame of real) {
+      const m = /^pid=(\d+):time=(\d+):clear=1:mac=[0-9a-f]{64}$/.exec(frame);
+      assert.ok(m, `real-signed frame is not a clear: ${frame}`);
+      assert.equal(Number(m[1]), childPid);
+      assert.ok(Math.abs(Number(m[2]) - now) <= 5, `time ${m[2]} not within 5s of ${now}`);
     }
-    assert.equal(text.includes("tlh"), false);
   }
 });
 

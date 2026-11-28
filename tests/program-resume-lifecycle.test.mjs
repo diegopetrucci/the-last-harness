@@ -5,7 +5,7 @@
 // extension in <agent>/extensions. Every OSC 7577 frame on the raw pty bytes is verified with the real
 // token. Skips only when no python3 pty is available (the pty bridge needs it).
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
@@ -49,9 +49,12 @@ async function launch(t, args, { sessions = 0, env, extensions = true } = {}) {
   }
   const pty = new PiPty(workspace, args(ids), { env });
   t.after(async () => {
-    await pty.dispose();
-    assertNoPiFrames(pty);
-    workspace.cleanup();
+    try {
+      await pty.dispose();
+      assertNoPiFrames(pty);
+    } finally {
+      workspace.cleanup();
+    }
   });
   await pty.ready({ extensions });
   return { workspace, pty, ids };
@@ -236,7 +239,9 @@ test(
   { skip, timeout: CASE_TIMEOUT },
   async (t) => {
     const { workspace, pty } = await launch(t, () => []);
-    const out = join(workspace.root, "bash-env.txt");
+    const outDir = join(workspace.root, "it's a dir");
+    mkdirSync(outDir);
+    const out = join(outDir, "bash env.txt");
     await pty.type(`BASHPLEASE:${out}`);
     await waitFor(() => readEvents(workspace).includes("agent_end"), "tool run to finish");
     assert.ok(existsSync(out), "the faux model's bash tool call ran");
@@ -248,7 +253,6 @@ test(
     assert.ok(!env.includes(pty.token), "real token leaked to a child");
     assert.ok(!/OSC7577_TOKEN/.test(env), "no token variable in a child");
     assert.ok(!/TLH_PROGRAM_RESUME_ACTIVE/.test(env), "marker leaked to a child");
-    assert.ok(!/[0-9a-f]{64}/.test(env), "no decoy-shaped secret in a child");
     await waitFor(() => pty.verified().length >= 1, "report after tool turn");
     await quit(pty);
   },

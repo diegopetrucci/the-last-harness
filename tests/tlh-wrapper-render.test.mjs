@@ -460,10 +460,13 @@ test("renderWrapper: stashes then unsets OSC7577_TOKEN right after the line-3 ma
   const rendered = renderWrapper(PINNED_ARGS);
   const lines = rendered.split("\n");
   assert.equal(lines[2], `# ${DEFAULT_MARKER}`);
-  assert.equal(lines[3], 'tlh_osc7577_stash="${OSC7577_TOKEN-}"');
-  assert.equal(lines[4], "unset -v OSC7577_TOKEN");
-  assert.equal(lines[5], "export -n tlh_osc7577_stash");
-  assert.equal(lines[6], "unset -v TLH_PROGRAM_RESUME_ACTIVE");
+  assert.equal(lines[3], "tlh_xtrace_was_on=0; if [[ $- == *x* ]]; then tlh_xtrace_was_on=1; fi");
+  assert.equal(lines[4], "{ set +x; } 2>/dev/null");
+  assert.equal(lines[5], 'tlh_osc7577_stash="${OSC7577_TOKEN-}"');
+  assert.equal(lines[6], 'if [[ "${tlh_xtrace_was_on}" == "1" ]]; then set -x; fi');
+  assert.equal(lines[7], "unset -v OSC7577_TOKEN");
+  assert.equal(lines[8], "export -n tlh_osc7577_stash");
+  assert.equal(lines[9], "unset -v TLH_PROGRAM_RESUME_ACTIVE");
   assert.equal(rendered.split("unset -v OSC7577_TOKEN").length - 1, 1);
   const unsetIndex = rendered.indexOf("unset -v OSC7577_TOKEN");
   assert.ok(unsetIndex < rendered.indexOf("export PATH"));

@@ -159,9 +159,14 @@ export default function (pi) {
   const reply = (context) => {
     const last = context.messages[context.messages.length - 1];
     if (last && last.role === "toolResult") return fauxAssistantMessage(fauxText("FAUXTOOLDONE"));
-    const text = JSON.stringify(last?.content ?? "");
-    const bash = /BASHPLEASE:([^"\\s\\\\]+)/.exec(text);
-    if (bash) return fauxAssistantMessage(fauxToolCall("bash", { command: "env > " + bash[1] }));
+    const content = last?.role === "user" ? last.content : "";
+    const text = typeof content === "string" ? content : (Array.isArray(content) ? content : []).filter((part) => part?.type === "text").map((part) => part.text).join("\\n");
+    const at = text.indexOf("BASHPLEASE:");
+    if (at !== -1) {
+      const path = text.slice(at + "BASHPLEASE:".length);
+      const quoted = "'" + path.replaceAll("'", "'\\\\''") + "'";
+      return fauxAssistantMessage(fauxToolCall("bash", { command: "env > " + quoted }));
+    }
     n += 1;
     return fauxAssistantMessage(fauxText("FAUXREPLY" + n));
   };

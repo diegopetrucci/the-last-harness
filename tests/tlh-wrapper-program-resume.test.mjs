@@ -4,9 +4,15 @@
  * happens only for opt-in, non-nested, TTY, plain interactive launches.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import {
+  BASH_SUPPORTS_XTRACEFD,
   REPO_ROOT,
   TOKEN,
   parseRecord,
@@ -129,13 +135,106 @@ for (const args of INELIGIBLE_ARGS) {
   });
 }
 
-test("gating: ineligible words after a bare -- do not disable the bridge", (t) => {
-  const args = ["--", "-p", "list"];
-  const run = runWrapper(t, { args, env: { ...OPT_IN }, tty: true });
-  assert.equal(run.result.status, 0, run.result.stderr);
-  assert.match(run.node, /--import/);
-  assert.equal(run.pi, undefined, "node stub does not exec pi");
+test("gating: bare -- is not a stop marker (Pi options may consume it)", (t) => {
+  for (const args of [
+    ["--name", "--", "--print", "hi"],
+    ["--", "list"],
+  ]) {
+    const run = runWrapper(t, { args, env: { ...OPT_IN }, tty: true });
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(parseRecord(run.pi)?.argv, args.map((a) => `[${a}]`).join(""));
+    assert.ok(!(run.node ?? "").includes("--import"));
+    assertNoTokenAnywhere(run);
+  }
 });
+
+test("gating: plain and --session launches stay eligible", (t) => {
+  for (const args of [[], ["--session", "123e4567-e89b-12d3-a456-426614174000"]]) {
+    const run = runWrapper(t, { args, env: { ...OPT_IN }, tty: true });
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.match(run.node, /--import/);
+  }
+});
+
+test("preload is passed as a file URL that node loads, for paths with # ? % and space", (t) => {
+  const run = runWrapper(t, {
+    env: { ...OPT_IN },
+    tty: true,
+    stubPackageDir: "pkg #1 ?q %41 x",
+  });
+  assert.equal(run.result.status, 0, run.result.stderr);
+  const launch = parseRecord(
+    run.node
+      .split("ARGV:")
+      .filter((r) => r.includes("--import"))
+      .map((r) => `ARGV:${r}`)[0],
+  );
+  const url = /^\[--import\]\[([^\]]*)\]/.exec(launch.argv)[1];
+  assert.equal(url, pathToFileURL(run.preloadPath).href);
+  assert.ok(url.startsWith("file://") && !url.includes("#1") && !url.includes(" "));
+  const loaded = spawnSync(process.execPath, ["--import", url, "-e", ""], {
+    env: { ...process.env, TLH_TEST_RECORD_DIR: run.record },
+    encoding: "utf8",
+  });
+  assert.equal(loaded.status, 0, loaded.stderr);
+  assert.equal(readFileSync(join(run.record, "preload-ran.txt"), "utf8"), "ran");
+});
+
+test("relative --package-root -> empty preload URL and plain pi exec without token", (t) => {
+  // Resolves to the real repo from the wrapper's cwd (a dir under tmpdir), so only the
+  // absolute-root requirement can make the bridge ineligible.
+  const packageRoot = join("..", relative(realpathSync(tmpdir()), realpathSync(REPO_ROOT)));
+  const run = runWrapper(t, { args: ["hello"], env: { ...OPT_IN }, tty: true, packageRoot });
+  const wrapper = readFileSync(join(run.root, "wrapper-bin", "tlh"), "utf8");
+  assert.match(wrapper, /^tlh_program_resume_preload_url=''$/m);
+  assert.equal(run.result.status, 0, run.result.stderr);
+  assert.ok(!(run.node ?? "").includes("--import"), "bridge launch must not happen");
+  assert.equal(parseRecord(run.pi)?.argv, "[hello]");
+  assertNoTokenAnywhere(run);
+});
+
+test("unreadable preload -> plain pi exec, no permission error", (t) => {
+  if (process.getuid?.() === 0) return t.skip("running as root");
+  const run = runWrapper(t, {
+    args: ["hello"],
+    env: { ...OPT_IN },
+    tty: true,
+    stubPackageDir: "pkg",
+    unreadablePreload: true,
+  });
+  chmodSync(run.preloadPath, 0o644);
+  assert.equal(run.result.status, 0, run.result.stderr);
+  assert.ok(!(run.node ?? "").includes("--import"));
+  assert.equal(parseRecord(run.pi)?.argv, "[hello]");
+  assert.ok(!/permission denied/i.test(run.result.stderr));
+  assertNoTokenAnywhere(run);
+});
+
+for (const [label, options] of [
+  ["eligible", { args: [] }],
+  ["ineligible", { args: ["--print", "hi"] }],
+  ["not opted in", { args: [], env: { OSC7577_TOKEN: TOKEN } }],
+]) {
+  for (const mode of ["stderr", "xtracefd"]) {
+    test(`xtrace never prints the token: ${label}, ${mode}`, (t) => {
+      if (mode === "xtracefd" && !BASH_SUPPORTS_XTRACEFD) return t.skip("bash < 4.1");
+      const xtraceFile = join(mkdtempSync(join(tmpdir(), "tlh-xtrace-")), "trace.txt");
+      t.after(() => rmSync(dirname(xtraceFile), { recursive: true, force: true }));
+      const run = runWrapper(t, {
+        env: { ...OPT_IN },
+        ...options,
+        tty: true,
+        bashArgs: ["-x"],
+        ...(mode === "xtracefd" ? { xtraceFile } : {}),
+      });
+      assert.equal(run.result.status, 0, run.result.stderr);
+      const trace = mode === "xtracefd" ? readFileSync(xtraceFile, "utf8") : "";
+      assert.ok(!run.result.stderr.includes(TOKEN), "token in stderr trace");
+      assert.ok(!trace.includes(TOKEN), "token in BASH_XTRACEFD trace");
+      assert.ok(mode === "xtracefd" ? trace.length > 0 : run.result.stderr.includes("+ "));
+    });
+  }
+}
 
 test("eligible TTY launch: node --import preload pi with token and marker", (t) => {
   const args = ["--model", "x", "hello world"];
@@ -146,7 +245,7 @@ test("eligible TTY launch: node --import preload pi with token and marker", (t) 
   const launch = parseRecord(`ARGV:${launches[0]}`);
   assert.equal(
     launch.argv,
-    `[--import][${REPO_ROOT}/scripts/tlh-program-resume-preload.mjs][${run.piCmd}][--model][x][hello world]`,
+    `[--import][${pathToFileURL(`${REPO_ROOT}/scripts/tlh-program-resume-preload.mjs`).href}][${run.piCmd}][--model][x][hello world]`,
   );
   assert.equal(launch.env.get("OSC7577_TOKEN"), TOKEN);
   assert.equal(launch.env.get("TLH_PROGRAM_RESUME_ACTIVE"), "1");

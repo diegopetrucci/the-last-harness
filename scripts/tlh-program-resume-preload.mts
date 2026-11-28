@@ -9,7 +9,10 @@
  *      command (or a clear) with the real token,
  *   3. pins process.title to the wrapper name so Pi's later `process.title = "pi"` is a no-op,
  *   4. hands Pi a fresh random decoy token. Pi takes (and deletes) it, so children get no token.
- * Any setup failure leaves the token deleted and installs nothing else: tlh starts without resume.
+ * A setup failure inside install() leaves the token deleted and installs nothing else: tlh starts without
+ * resume. A missing, unreadable or corrupt preload dependency (this file or ./lib/program-resume-frame.mjs)
+ * instead fails Node module loading before that handling runs; the wrapper preflight only checks presence
+ * and readability.
  *
  * Threat model: this guarantees that unmodified, supported Pi only emits re-signed wrapper/clear reports
  * and that its children get no token. It is NOT a boundary against hostile startup code (NODE_OPTIONS
@@ -17,10 +20,11 @@
  *
  * Hook contract: write(chunk, encoding?, callback?) keeps its signature, arguments and return value
  * (backpressure). Chunks without ESC ] 7577 ; pass through untouched. For complete frames: verified with
- * the decoy and pid === process.pid -> transformed and real-signed; decoy-authenticated but unsupported
- * -> real-signed clear; anything else -> dropped. Bytes around frames are preserved exactly. Incomplete
- * (split) frames pass through unchanged (decoy-signed, so the terminal rejects them); nothing is buffered
- * across chunks. Any hook exception writes the chunk minus frames plus one real-signed clear.
+ * the decoy and pid === process.pid -> transformed and real-signed; decoy-authenticated with pid !==
+ * process.pid -> dropped (no clear); decoy-authenticated but unsupported or failing to transform ->
+ * real-signed clear; unparseable or unauthenticated frames -> dropped individually (no clear). Bytes around frames are preserved exactly. Incomplete (split) frames pass through unchanged
+ * (decoy-signed, so the terminal rejects them); nothing is buffered across chunks. An unexpected exception
+ * outside per-frame handling writes the chunk minus frames plus one real-signed clear.
  */
 import { randomBytes } from "node:crypto";
 
@@ -52,7 +56,8 @@ function install(): void {
   const agentDir = process.env.PI_CODING_AGENT_DIR;
   delete process.env[TOKEN_ENV];
   delete process.env[MARKER_ENV];
-  // Test-only failure injection ("transform" fails the normal path, "all" also fails the fallback); deleted here.
+  // Test-only failure injection, deleted here: "frame" fails each authenticated frame's transform,
+  // "transform" fails the whole-chunk normal path, "all" also fails the whole-chunk fallback.
   const testFail = process.env[TEST_FAIL_ENV];
   delete process.env[TEST_FAIL_ENV];
 
@@ -80,10 +85,20 @@ function install(): void {
         if (location.start > cursor) pieces.push(slice(cursor, location.start));
         cursor = location.end;
         if (fallbackClear) continue;
-        const parsed = parseFrame(location.frame);
-        if (parsed === undefined || !verifyFrame(parsed, decoy)) continue;
+        // Per-frame handling: anything unparseable or not authenticated by the decoy is dropped alone.
+        let parsed: ReturnType<typeof parseFrame>;
+        try {
+          parsed = parseFrame(location.frame);
+          if (parsed === undefined || !verifyFrame(parsed, decoy)) continue;
+          // Decoy-verified but reported for another pid: drop without a clear.
+          if (parsed.pid !== String(process.pid)) continue;
+        } catch {
+          continue;
+        }
+        // Authenticated by the decoy: a failure to transform or sign yields a real-signed clear.
         let replacement: string | undefined;
-        if (parsed.pid === String(process.pid)) {
+        try {
+          if (testFail === "frame") throw new Error("injected test failure");
           const result = transformPiReport(parsed, {
             expectedAgentDir: agentDir,
             wrapperName: name,
@@ -97,6 +112,8 @@ function install(): void {
               { pid: process.pid, time: parsed.time, token: realToken },
             );
           }
+        } catch {
+          replacement = undefined;
         }
         pieces.push(Buffer.from(replacement ?? signedClear(parsed.time), "latin1"));
       }

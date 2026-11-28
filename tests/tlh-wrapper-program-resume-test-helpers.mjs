@@ -5,7 +5,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  chmodSync,
+  closeSync,
   existsSync,
+  openSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -16,6 +19,14 @@ import { fileURLToPath } from "node:url";
 import { renderWrapper } from "../scripts/tlh-wrapper.mjs";
 
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+// BASH_XTRACEFD needs bash >= 4.1 (macOS ships 3.2).
+export const BASH_SUPPORTS_XTRACEFD = (() => {
+  const out = spawnSync("bash", ["-c", 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'], {
+    encoding: "utf8",
+  }).stdout.trim();
+  const [major, minor] = out.split(".").map(Number);
+  return major > 4 || (major === 4 && minor >= 1);
+})();
 export const TOKEN = "secret-osc7577-token";
 
 function stub(name) {
@@ -37,6 +48,10 @@ export function runWrapper(t, options = {}) {
     wrapperName = "tlh",
     packageRoot,
     missingPreload = false,
+    stubPackageDir,
+    unreadablePreload = false,
+    bashArgs = [],
+    xtraceFile,
   } = options;
   const root = mkdtempSync(join(tmpdir(), "tlh wrapper resume-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -61,6 +76,25 @@ export function runWrapper(t, options = {}) {
       symlinkSync(join(REPO_ROOT, "scripts", entry), join(pkg, "scripts", entry));
     }
   }
+  let preloadPath;
+  if (stubPackageDir !== undefined) {
+    // Package root with an awkward directory name and a real node preload stub
+    // that records it ran (no relative imports, so the usability check passes).
+    pkg = join(root, stubPackageDir);
+    mkdirSync(join(pkg, "scripts"), { recursive: true });
+    symlinkSync(join(REPO_ROOT, "config"), join(pkg, "config"));
+    for (const entry of readdirSync(join(REPO_ROOT, "scripts"))) {
+      if (entry.startsWith("tlh-program-resume-preload")) continue;
+      symlinkSync(join(REPO_ROOT, "scripts", entry), join(pkg, "scripts", entry));
+    }
+    preloadPath = join(pkg, "scripts", "tlh-program-resume-preload.mjs");
+    writeFileSync(
+      preloadPath,
+      'import { writeFileSync } from "node:fs";\n' +
+        'writeFileSync(process.env.TLH_TEST_RECORD_DIR + "/preload-ran.txt", "ran");\n',
+    );
+  }
+  if (unreadablePreload) chmodSync(preloadPath, 0o000);
   writeFileSync(
     wrapperPath,
     renderWrapper({
@@ -92,35 +126,47 @@ export function runWrapper(t, options = {}) {
     delete env[key];
   }
   Object.assign(env, extraEnv);
+  let xtraceFd;
+  if (xtraceFile) {
+    xtraceFd = openSync(xtraceFile, "w");
+    t.after(() => closeSync(xtraceFd));
+    env.BASH_XTRACEFD = "3";
+  }
+  const stdio = ["pipe", "pipe", "pipe"];
+  if (xtraceFd !== undefined) stdio.push(xtraceFd);
   let result;
   if (tty) {
     const bridge = [
       "import os, pty, subprocess, sys",
       "m, s = pty.openpty()",
-      "p = subprocess.Popen(sys.argv[1:], stdin=s, stdout=s, stderr=subprocess.PIPE, close_fds=True)",
+      "p = subprocess.Popen(sys.argv[1:], stdin=s, stdout=s, stderr=subprocess.PIPE, close_fds=True, pass_fds=(3,) if os.environ.get('BASH_XTRACEFD') else ())",
       "os.close(s)",
       "_, err = p.communicate()",
       "sys.stderr.write(err.decode())",
       "sys.exit(p.returncode)",
     ].join("\n");
-    result = spawnSync("python3", ["-c", bridge, "bash", wrapperPath, ...args], {
+    result = spawnSync("python3", ["-c", bridge, "bash", ...bashArgs, wrapperPath, ...args], {
       cwd: root,
       env,
       encoding: "utf8",
+      stdio,
+      maxBuffer: 64 * 1024 * 1024,
     });
   } else {
-    result = spawnSync("bash", [wrapperPath, ...args], {
+    result = spawnSync("bash", [...bashArgs, wrapperPath, ...args], {
       cwd: root,
       env,
       encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio,
+      maxBuffer: 64 * 1024 * 1024,
     });
   }
+  if (result.error) throw result.error; // e.g. ENOBUFS / ETIMEDOUT
   const read = (name) => {
     const file = join(record, `${name}.txt`);
     return existsSync(file) ? readFileSync(file, "utf8") : undefined;
   };
-  return { result, node: read("node"), pi: read("pi"), root, piCmd };
+  return { result, node: read("node"), pi: read("pi"), root, piCmd, preloadPath, record };
 }
 
 export function parseRecord(text) {

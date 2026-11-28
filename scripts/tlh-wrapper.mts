@@ -10,7 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -192,6 +192,12 @@ function wrapperIsManaged(path: string, marker = DEFAULT_MARKER): boolean {
 }
 
 function renderWrapper(args: WrapperRenderArgs): string {
+  // Only absolute roots get a URL, so the checked path and the imported URL cannot
+  // resolve against different directories; empty makes the bridge ineligible.
+  const preloadUrl =
+    args.packageRoot !== "" && isAbsolute(args.packageRoot)
+      ? pathToFileURL(join(args.packageRoot, "scripts/tlh-program-resume-preload.mjs")).href
+      : "";
   const lines = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
@@ -204,7 +210,11 @@ function renderWrapper(args: WrapperRenderArgs): string {
     // keep the export attribute) and is handed to node only on the opt-in
     // bridge launch below. An inherited bridge marker is dropped too. Must stay
     // right after the line-3 marker and before any export, helper or exec.
+    // xtrace must never print the token: pause it around the assignment.
+    "tlh_xtrace_was_on=0; if [[ $- == *x* ]]; then tlh_xtrace_was_on=1; fi",
+    "{ set +x; } 2>/dev/null",
     'tlh_osc7577_stash="${OSC7577_TOKEN-}"',
+    'if [[ "${tlh_xtrace_was_on}" == "1" ]]; then set -x; fi',
     "unset -v OSC7577_TOKEN",
     "export -n tlh_osc7577_stash",
     "unset -v TLH_PROGRAM_RESUME_ACTIVE",
@@ -601,13 +611,13 @@ function renderWrapper(args: WrapperRenderArgs): string {
     // `config` and `mcp` on args[0]; args.js/main.js resolve help, version,
     // --list-models, --export, -p/--print and --mode to non-interactive or
     // informational runs. Subcommand words are matched in any position (false
-    // negatives are fine); scanning stops at a bare `--`.
+    // negatives are fine); every argument is scanned (Pi options such as
+    // --name consume a bare `--` as their value, so it is not a stop marker).
     "tlh_program_resume_eligible=0",
-    'if [[ "${TLH_PROGRAM_RESUME-}" == "1" && -n "${tlh_osc7577_stash}" && -z "${TMUX-}${STY-}${ZELLIJ-}${HERDR_ENV-}${HERDR_PANE_ID-}" && -t 0 && -t 1 ]]; then',
+    'if [[ "${TLH_PROGRAM_RESUME-}" == "1" && "${tlh_osc7577_stash:+1}" == "1" && -z "${TMUX-}${STY-}${ZELLIJ-}${HERDR_ENV-}${HERDR_PANE_ID-}" && -t 0 && -t 1 ]]; then',
     "  tlh_program_resume_eligible=1",
     '  for tlh_resume_arg in "$@"; do',
     '    case "${tlh_resume_arg}" in',
-    "      --) break ;;",
     "      install|remove|uninstall|update|list|config|mcp|auth|-p|--print|--print=*|--mode|--mode=*|--export|--export=*|-h|--help|-v|--version|--list-models|--list-models=*)",
     "        tlh_program_resume_eligible=0",
     "        break",
@@ -620,6 +630,10 @@ function renderWrapper(args: WrapperRenderArgs): string {
     "  tlh_program_resume_eligible=0",
     "fi",
     'tlh_program_resume_preload="${default_tlh_package_root}/scripts/tlh-program-resume-preload.mjs"',
+    `tlh_program_resume_preload_url=${shellQuote(preloadUrl)}`,
+    'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! [[ -n "${tlh_program_resume_preload_url}" && -r "${tlh_program_resume_preload}" && -r "${default_tlh_package_root}/scripts/lib/program-resume-frame.mjs" ]]; then',
+    "  tlh_program_resume_eligible=0",
+    "fi",
     'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! tlh_package_script_is_usable "${tlh_program_resume_preload}"; then',
     "  tlh_program_resume_eligible=0",
     "fi",
@@ -629,7 +643,8 @@ function renderWrapper(args: WrapperRenderArgs): string {
     'if [[ "${tlh_program_resume_eligible}" == "1" ]]; then',
     "  tlh_resolve_node",
     "  export TLH_PROGRAM_RESUME_ACTIVE=1",
-    '  OSC7577_TOKEN="${tlh_osc7577_stash}" exec "${tlh_node_cmd}" --import "${tlh_program_resume_preload}" "${default_pi_cmd}" "$@"',
+    "  { set +x; } 2>/dev/null",
+    '  OSC7577_TOKEN="${tlh_osc7577_stash}" exec "${tlh_node_cmd}" --import "${tlh_program_resume_preload_url}" "${default_pi_cmd}" "$@"',
     "fi",
     'exec "${default_pi_cmd}" "$@"',
   ];

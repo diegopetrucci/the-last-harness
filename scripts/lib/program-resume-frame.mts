@@ -28,6 +28,12 @@ const MAC_PATTERN = /^[0-9a-f]{64}$/;
 const DIGITS = /^[0-9]{1,20}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const ALLOWED_LAYOUTS: readonly (readonly string[])[] = [
+  ["pid", "time", "argv", "mac"],
+  ["pid", "time", "argv", "cwd", "mac"],
+  ["pid", "time", "clear", "mac"],
+];
+
 export interface FrameSender {
   pid: number | string;
   time: number | string;
@@ -177,10 +183,12 @@ export function parseFrame(frame: string): ParsedFrame | undefined {
     parsedPairs.push([key, pair.slice(eq + 1)]);
   }
 
-  const keys = parsedPairs.map(([key]) => key).join(",");
-  if (!["pid,time,argv,mac", "pid,time,argv,cwd,mac", "pid,time,clear,mac"].includes(keys)) {
-    return undefined;
-  }
+  const keys = parsedPairs.map(([key]) => key);
+  // Positional comparison: a key that merely contains a comma (e.g. "argv,cwd") never matches a layout.
+  const layoutMatches = ALLOWED_LAYOUTS.some(
+    (layout) => layout.length === keys.length && layout.every((key, index) => key === keys[index]),
+  );
+  if (!layoutMatches) return undefined;
   const values = new Map(parsedPairs);
   const pid = values.get("pid") as string;
   const time = values.get("time") as string;
