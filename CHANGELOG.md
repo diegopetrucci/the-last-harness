@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Documented Rex program-resume setup and the blank restored pane workaround for prompt frameworks such as Powerlevel10k ([docs](docs/integrations.md#set-up-resume-in-rex), [#934](https://github.com/diegopetrucci/the-last-harness/issues/934)).
+
 ## [0.50.0] - 2026-11-28
 
 ### Added
