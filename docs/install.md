@@ -31,7 +31,7 @@ Only the generated GitHub Release `install.sh` asset is pinned and integrity-ver
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.49.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.50.0/install.sh | bash -s -- --track pinned-tag
 ```
 
 - Any remote branch, eg `main`:
@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
   TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
 ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.49.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; after the background GitHub comparison succeeds, it may append `1 commit behind origin/main` or `N commits behind origin/main`. Older main-track state without that metadata continues to show `TLH main`, and current, divergent, failed, or unavailable comparisons show no behind suffix.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.50.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; after the background GitHub comparison succeeds, it may append `1 commit behind origin/main` or `N commits behind origin/main`. Older main-track state without that metadata continues to show `TLH main`, and current, divergent, failed, or unavailable comparisons show no behind suffix.
 
 ## Installer options
 
@@ -80,7 +80,7 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.49.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.50.0/install.sh | bash -s -- --track pinned-tag
 ```
 
 The `tlh` wrapper passes other arguments through to Pi unchanged, but refuses Pi's own `--agent-dir` flag (and `--agent-dir=...`) with a non-zero exit because the isolated profile is fixed at install time; re-run the installer with `--agent-dir` to change it.
