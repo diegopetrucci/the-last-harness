@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.50.0] - 2026-11-28
+
 ### Added
 
 - Added `/skill:bb`, a first-party skill for inspecting bb (tlh gui) threads, projects, and environments through the installed bb CLI ([#939](https://github.com/diegopetrucci/the-last-harness/pull/939)).
