@@ -140,7 +140,7 @@ test("renderWrapper: NODE_COMPILE_CACHE export is present exactly once in the pi
   );
 });
 
-test("renderWrapper: NODE_COMPILE_CACHE export appears immediately before exec of pinned pi", () => {
+test("renderWrapper: NODE_COMPILE_CACHE export precedes both the bridge launch and the plain pinned pi exec", () => {
   const rendered = renderWrapper(PINNED_ARGS);
   const lines = rendered.split("\n");
 
@@ -148,14 +148,14 @@ test("renderWrapper: NODE_COMPILE_CACHE export appears immediately before exec o
     'export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"',
   );
   const execIndex = lines.indexOf('exec "${default_pi_cmd}" "$@"');
+  const bridgeIndex = lines.findIndex((line) => line.includes('exec "${tlh_node_cmd}" --import'));
 
   assert.ok(ncIndex >= 0, "NODE_COMPILE_CACHE export line must be present");
   assert.ok(execIndex >= 0, 'exec "${default_pi_cmd}" "$@" line must be present');
-  assert.equal(
-    ncIndex + 1,
-    execIndex,
-    "NODE_COMPILE_CACHE export must be the line immediately before the pi exec",
-  );
+  assert.ok(bridgeIndex > ncIndex, "bridge launch must come after the NODE_COMPILE_CACHE export");
+  assert.ok(execIndex > bridgeIndex, "plain pi exec must remain the final line of the wrapper");
+  assert.equal(lines[execIndex + 1], "");
+  assert.equal(lines.length, execIndex + 2);
 });
 
 test("renderWrapper: helper branch exec lines do not include NODE_COMPILE_CACHE", () => {
@@ -456,16 +456,22 @@ test(
   },
 );
 
-test("renderWrapper: unsets OSC7577_TOKEN once, right after the line-3 marker, before any export or exec", () => {
+test("renderWrapper: stashes then unsets OSC7577_TOKEN right after the line-3 marker, before any export or exec", () => {
   const rendered = renderWrapper(PINNED_ARGS);
   const lines = rendered.split("\n");
   assert.equal(lines[2], `# ${DEFAULT_MARKER}`);
-  assert.equal(lines[3], "unset -v OSC7577_TOKEN");
+  assert.equal(lines[3], "tlh_xtrace_was_on=0; if [[ $- == *x* ]]; then tlh_xtrace_was_on=1; fi");
+  assert.equal(lines[4], "{ set +x; } 2>/dev/null");
+  assert.equal(lines[5], 'tlh_osc7577_stash="${OSC7577_TOKEN-}"');
+  assert.equal(lines[6], 'if [[ "${tlh_xtrace_was_on}" == "1" ]]; then set -x; fi');
+  assert.equal(lines[7], "unset -v OSC7577_TOKEN");
+  assert.equal(lines[8], "export -n tlh_osc7577_stash");
+  assert.equal(lines[9], "unset -v TLH_PROGRAM_RESUME_ACTIVE");
   assert.equal(rendered.split("unset -v OSC7577_TOKEN").length - 1, 1);
   const unsetIndex = rendered.indexOf("unset -v OSC7577_TOKEN");
-  assert.ok(unsetIndex < rendered.indexOf("export "));
+  assert.ok(unsetIndex < rendered.indexOf("export PATH"));
+  assert.ok(unsetIndex < rendered.indexOf("export TLH_PROGRAM_RESUME_ACTIVE"));
   assert.ok(unsetIndex < rendered.indexOf("tlh_js_relative_imports_exist() {"));
-  assert.ok(unsetIndex < rendered.indexOf("exec "));
   for (const match of rendered.matchAll(/exec "/g)) {
     assert.ok(unsetIndex < match.index);
   }

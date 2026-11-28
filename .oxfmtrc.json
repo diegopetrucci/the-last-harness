@@ -32,6 +32,8 @@
     "scripts/lib/tlh-install-support-files.mjs",
     "scripts/lib/tlh-install-support-manifest.mjs",
     "scripts/lib/tlh-install-utils.mjs",
+    "scripts/lib/program-resume-frame.mjs",
+    "scripts/tlh-program-resume-preload.mjs",
     "scripts/lib/tlh-safe-profile-write.mjs",
     "scripts/lib/check-installer-performance-process.mjs",
     "scripts/lib/check-installer-performance-workspace.mjs",

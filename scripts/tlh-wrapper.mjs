@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Generated from scripts/tlh-wrapper.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertNotInNormalPiConfig, assignOptionValue, renderShellWords, shellQuote, } from "./lib/tlh-install-utils.mjs";
@@ -143,15 +143,31 @@ function wrapperIsManaged(path, marker = DEFAULT_MARKER) {
     }
 }
 function renderWrapper(args) {
+    // Only absolute roots get a URL, so the checked path and the imported URL cannot
+    // resolve against different directories; empty makes the bridge ineligible.
+    const preloadUrl = args.packageRoot !== "" && isAbsolute(args.packageRoot)
+        ? pathToFileURL(join(args.packageRoot, "scripts/tlh-program-resume-preload.mjs")).href
+        : "";
     const lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         `# ${DEFAULT_MARKER}`,
-        // Unconditionally drop the terminal's OSC 7577 program-resume token so no
-        // child (pi or node helpers) can claim or report a resume command that
-        // bypasses this wrapper; see GitHub issue #931. Must stay right after the
-        // line-3 marker and before any export, helper or exec.
+        // Take the terminal's OSC 7577 program-resume token out of the environment
+        // before anything else runs, so no child (pi or node helpers/subcommands)
+        // can claim or report a resume command that bypasses this wrapper; see
+        // GitHub issue #931. The value is kept in a shell-local stash that is made
+        // non-exported (a caller may have exported that name; plain assignment would
+        // keep the export attribute) and is handed to node only on the opt-in
+        // bridge launch below. An inherited bridge marker is dropped too. Must stay
+        // right after the line-3 marker and before any export, helper or exec.
+        // xtrace must never print the token: pause it around the assignment.
+        "tlh_xtrace_was_on=0; if [[ $- == *x* ]]; then tlh_xtrace_was_on=1; fi",
+        "{ set +x; } 2>/dev/null",
+        'tlh_osc7577_stash="${OSC7577_TOKEN-}"',
+        'if [[ "${tlh_xtrace_was_on}" == "1" ]]; then set -x; fi',
         "unset -v OSC7577_TOKEN",
+        "export -n tlh_osc7577_stash",
+        "unset -v TLH_PROGRAM_RESUME_ACTIVE",
         `default_agent_dir=${shellQuote(args.agentDir)}`,
         `default_tlh_package_root=${shellQuote(args.packageRoot)}`,
         `default_bin_dir=${shellQuote(args.binDir)}`,
@@ -536,6 +552,49 @@ function renderWrapper(args) {
         // listed in RUNTIME_OWNED_TOPLEVEL and the uninstall allow-list; Node creates
         // it automatically.  Scope: interactive pi exec path only.
         'export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"',
+        // Opt-in OSC 7577 bridge (GitHub issue #934): only for a plain interactive
+        // launch outside terminal multiplexers, with a usable preload and node.
+        // Everything else execs exactly as before, with no token and no marker.
+        // The ineligible-argument list comes from Pi 1.7.0: main.js dispatches
+        // `auth`, install/remove/uninstall/update/list (package-manager-cli.js),
+        // `config` and `mcp` on args[0]; args.js/main.js resolve help, version,
+        // --list-models, --export, -p/--print and --mode to non-interactive or
+        // informational runs. Subcommand words are matched in any position (false
+        // negatives are fine); every argument is scanned (Pi options such as
+        // --name consume a bare `--` as their value, so it is not a stop marker).
+        "tlh_program_resume_eligible=0",
+        'if [[ "${TLH_PROGRAM_RESUME-}" == "1" && "${tlh_osc7577_stash:+1}" == "1" && -z "${TMUX-}${STY-}${ZELLIJ-}${HERDR_ENV-}${HERDR_PANE_ID-}" && -t 0 && -t 1 ]]; then',
+        "  tlh_program_resume_eligible=1",
+        '  for tlh_resume_arg in "$@"; do',
+        '    case "${tlh_resume_arg}" in',
+        "      install|remove|uninstall|update|list|config|mcp|auth|-p|--print|--print=*|--mode|--mode=*|--export|--export=*|-h|--help|-v|--version|--list-models|--list-models=*)",
+        "        tlh_program_resume_eligible=0",
+        "        break",
+        "        ;;",
+        "    esac",
+        "  done",
+        "fi",
+        'tlh_program_resume_name_pattern="^[A-Za-z0-9][A-Za-z0-9._-]*$"',
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! [[ "${default_wrapper_name}" =~ ${tlh_program_resume_name_pattern} ]]; then',
+        "  tlh_program_resume_eligible=0",
+        "fi",
+        'tlh_program_resume_preload="${default_tlh_package_root}/scripts/tlh-program-resume-preload.mjs"',
+        `tlh_program_resume_preload_url=${shellQuote(preloadUrl)}`,
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! [[ -n "${tlh_program_resume_preload_url}" && -r "${tlh_program_resume_preload}" && -r "${default_tlh_package_root}/scripts/lib/program-resume-frame.mjs" ]]; then',
+        "  tlh_program_resume_eligible=0",
+        "fi",
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! tlh_package_script_is_usable "${tlh_program_resume_preload}"; then',
+        "  tlh_program_resume_eligible=0",
+        "fi",
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]] && ! (tlh_resolve_node) >/dev/null 2>&1; then',
+        "  tlh_program_resume_eligible=0",
+        "fi",
+        'if [[ "${tlh_program_resume_eligible}" == "1" ]]; then',
+        "  tlh_resolve_node",
+        "  export TLH_PROGRAM_RESUME_ACTIVE=1",
+        "  { set +x; } 2>/dev/null",
+        '  OSC7577_TOKEN="${tlh_osc7577_stash}" exec "${tlh_node_cmd}" --import "${tlh_program_resume_preload_url}" "${default_pi_cmd}" "$@"',
+        "fi",
         'exec "${default_pi_cmd}" "$@"',
     ];
     return `${lines.join("\n")}\n`;

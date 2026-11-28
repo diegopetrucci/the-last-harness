@@ -92,4 +92,22 @@ The context follows Rex's session-naming default, so it asks the agent to name t
 
 ### Program resume (OSC 7577)
 
-The `tlh` wrapper removes `OSC7577_TOKEN` before launching anything, so terminals that implement OSC 7577 program resume, such as Rex, restore a TLH pane as a plain shell in its directory instead of a bare `pi` command that would bypass TLH. Pi's exit hint prints a bare `pi --agent-dir ... --session <id>` that bypasses the wrapper; resume that exact session with `tlh --session <id>` instead. `tlh -c` resumes the most recent session, and `/resume` picks one inside TLH. Do not add a Rex `pi` trust rule for TLH sessions. See [#931](https://github.com/diegopetrucci/the-last-harness/issues/931).
+By default (`TLH_PROGRAM_RESUME` unset) the `tlh` wrapper removes `OSC7577_TOKEN` before launching anything, so terminals that implement OSC 7577 program resume, such as Rex, restore a TLH pane as a plain shell in its directory instead of a bare `pi` command that would bypass TLH. Apart from the opt-in below, there is no way to keep the token. See [#931](https://github.com/diegopetrucci/the-last-harness/issues/931).
+
+Set `TLH_PROGRAM_RESUME=1` to opt in. A plain interactive session then resumes as `<wrapper name> --session <uuid>` in the session's working directory, where `<wrapper name>` is the name of the `tlh` wrapper you launched. The bridge is active only when all of these hold; otherwise the token is dropped as above:
+
+- The terminal provided a token, and stdin and stdout are a TTY.
+- None of `TMUX`, `STY`, `ZELLIJ`, `HERDR_ENV` or `HERDR_PANE_ID` is set, so tmux, screen, zellij and the Herdr TUI are excluded.
+- The arguments contain no subcommand (`install`, `remove`, `uninstall`, `update`, `list`, `config`, `mcp`, `auth`), print or RPC mode (`-p`, `--print`, `--mode`), `--export`, help or version flag, or `--list-models`, before any bare `--`.
+- The wrapper name uses only letters, digits, `.`, `_` and `-`, and starts with a letter or digit.
+
+Only the exact shape `<wrapper name> --session <uuid>` resumes. A session started with restriction or resource flags (Pi's resume flags such as `--tools`, `-e`, `--no-extensions`, `--approve` or `--models`) or with a custom session dir is cleared instead, so the pane restores as a plain shell rather than a session with different capabilities.
+
+- **Rex** needs a trust rule, because it does not trust the command by default. Add this to your Rex `init.lua`; the rule name must match your wrapper name if you use a custom one: `rex.set("resume.trust.tlh", { command = { "tlh", "--session", rex.match.uuid } })`. Do not add a Rex `pi` rule for TLH sessions.
+- **Herdr.app** resumes authenticated reports without a rule.
+- **Process title:** while the bridge is active, the process title is the wrapper name instead of `pi`. Rex then shows the generic node glyph instead of the Pi glyph, and Herdr.app can match the TLH `programs` entry. The Herdr TUI is excluded because it detects agents by process name.
+- **PATH:** the terminal runs the resumed command on the login-shell `PATH`, which may find a different `tlh` install than the one you launched.
+
+The bridge guarantees that unmodified, supported Pi only emits wrapper or clear reports and that its children get no token. It is not a boundary against hostile startup code, extensions or debuggers.
+
+Manual recovery still works: Pi's exit hint prints a bare `pi --agent-dir ... --session <id>` that bypasses the wrapper, so resume that exact session with `tlh --session <id>`. `tlh -c` resumes the most recent session, and `/resume` picks one inside TLH.
