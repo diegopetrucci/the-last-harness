@@ -98,12 +98,12 @@ Set `TLH_PROGRAM_RESUME=1` to opt in. A plain interactive session then resumes a
 
 - The terminal provided a token, and stdin and stdout are a TTY.
 - None of `TMUX`, `STY`, `ZELLIJ`, `HERDR_ENV` or `HERDR_PANE_ID` is set, so tmux, screen, zellij and the Herdr TUI are excluded.
-- The arguments contain no subcommand (`install`, `remove`, `uninstall`, `update`, `list`, `config`, `mcp`, `auth`), print or RPC mode (`-p`, `--print`, `--mode`), `--export`, help or version flag, or `--list-models`, before any bare `--`.
+- The arguments contain no subcommand (`install`, `remove`, `uninstall`, `update`, `list`, `config`, `mcp`, `auth`), print or RPC mode (`-p`, `--print`, `--mode`), `--export`, help or version flag, or `--list-models`, matched anywhere in the arguments (a bare `--` does not end the scan).
 - The wrapper name uses only letters, digits, `.`, `_` and `-`, and starts with a letter or digit.
 
 Only the exact shape `<wrapper name> --session <uuid>` resumes. A session started with restriction or resource flags (Pi's resume flags such as `--tools`, `-e`, `--no-extensions`, `--approve` or `--models`) or with a custom session dir is cleared instead, so the pane restores as a plain shell rather than a session with different capabilities.
 
-- **Rex** needs a trust rule, because it does not trust the command by default. Add this to your Rex `init.lua`; the rule name must match your wrapper name if you use a custom one: `rex.set("resume.trust.tlh", { command = { "tlh", "--session", rex.match.uuid } })`. Do not add a Rex `pi` rule for TLH sessions.
+- **Rex** needs a trust rule; see [Set up resume in Rex](#set-up-resume-in-rex). Do not add a Rex `pi` rule for TLH sessions.
 - **Herdr.app** resumes authenticated reports without a rule.
 - **Process title:** while the bridge is active, the process title is the wrapper name instead of `pi`. Rex then shows the generic node glyph instead of the Pi glyph, and Herdr.app can match the TLH `programs` entry. The Herdr TUI is excluded because it detects agents by process name.
 - **PATH:** the terminal runs the resumed command on the login-shell `PATH`, which may find a different `tlh` install than the one you launched.
@@ -111,3 +111,30 @@ Only the exact shape `<wrapper name> --session <uuid>` resumes. A session starte
 The bridge guarantees that unmodified, supported Pi only emits wrapper or clear reports and that its children get no token. It is not a boundary against hostile startup code, extensions or debuggers.
 
 Manual recovery still works: Pi's exit hint prints a bare `pi --agent-dir ... --session <id>` that bypasses the wrapper, so resume that exact session with `tlh --session <id>`. `tlh -c` resumes the most recent session, and `/resume` picks one inside TLH.
+
+#### Set up resume in Rex
+
+1. Export `TLH_PROGRAM_RESUME=1` from your interactive shell config (for zsh, `~/.zshrc` or a file it sources), because Rex runs the resumed command through an interactive login shell.
+2. Add this to Rex's `init.lua` (`~/.config/rex/init.lua` on macOS and Linux, or the path in `REX_CONFIG`); the rule name must match your wrapper name if you use a custom one: `rex.set("resume.trust.tlh", { command = { "tlh", "--session", rex.match.uuid } })`. Then run `rex config check` and `rex config reload`.
+3. Start `tlh` in a new Rex pane, since existing panes keep their old environment. `rex block call program_resume_records` in that pane should show a trusted `tlh` record.
+
+#### Restored pane is blank
+
+Observed with Rex 0.1.0-preview.25: Rex relaunches the command through `/usr/bin/login ... zsh +m -ilc`, so the shell is not the terminal's foreground process group. Prompt frameworks that enable job control while loading (seen with Powerlevel10k, whose gitstatus worker runs `setopt monitor`) then start `tlh` in the background. The TUI fails with `setRawMode ENOENT` (recorded in `<agent dir>/crashes.json`) and the shell is stopped.
+
+Workaround: skip the prompt framework when zsh runs a command, which is when `ZSH_EXECUTION_STRING` is set. For Powerlevel10k, guard the instant-prompt block and the theme and config sourcing:
+
+```zsh
+# Near the top of ~/.zshrc: the instant-prompt block
+if [[ -z ${ZSH_EXECUTION_STRING-} && -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+# Wherever the theme and its config are sourced
+if [[ -z ${ZSH_EXECUTION_STRING-} ]]; then
+  source /path/to/powerlevel10k.zsh-theme
+  [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+fi
+```
+
+This is a Rex relaunch issue and can affect other resumed TUIs too. Drop the guard once Rex runs resumed commands in the foreground.
