@@ -4,8 +4,8 @@ The Last Harness bundles the following upstream skill files. The source files
 are preserved verbatim except where a recorded modification below says
 otherwise; this file consolidates the license texts and attribution notices
 that accompany them. Skills under `skills/` that are first-party TLH content
-rather than upstream imports are not listed here; `skills/herdr-gui-app/SKILL.md`
-and `skills/ghostty/SKILL.md` are such skills.
+rather than upstream imports are not listed here; `skills/herdr-gui-app/SKILL.md`,
+`skills/ghostty/SKILL.md`, and `skills/bb/SKILL.md` are such skills.
 
 Herdr skill
 -----------

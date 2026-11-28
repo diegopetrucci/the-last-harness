@@ -357,6 +357,7 @@ These bundled skills ship with TLH and remain visible in TLH autocomplete.
 
 | Command                | Description                                                                                                            |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `/skill:bb`            | Load the bundled bb skill for inspecting tlh gui threads, projects, and environments through the bb CLI                |
 | `/skill:cmux-cli`      | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows                         |
 | `/skill:ghostty`       | Load the bundled Ghostty skill for driving Ghostty.app on macOS through AppleScript                                    |
 | `/skill:herdr-gui-app` | Load the bundled Herdr desktop app skill for the Herdr.app GUI and hc terminals                                        |

@@ -98,6 +98,7 @@ The footer refreshes local Git status on a short timer. Eligible non-default bra
 - [Cmux](skills/cmux-cli).
 - [Tmux](skills/tmux).
 - [Ghostty](skills/ghostty).
+- [bb](skills/bb).
 
 ### Customisation
 
